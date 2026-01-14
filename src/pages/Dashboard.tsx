@@ -9,10 +9,12 @@ import {
   Clock, 
   Key,
   Copy,
-  Check
+  Check,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -23,88 +25,114 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import Logo from "@/components/Logo";
-import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { useCampaigns } from "@/hooks/useCampaigns";
 import { useToast } from "@/hooks/use-toast";
-
-// Mock campaigns for UI demo
-const mockCampaigns = [
-  {
-    id: "1",
-    name: "The Dragon's Lair",
-    players: 4,
-    lastPlayed: "2 hours ago",
-    inviteCode: "DRAGON42"
-  },
-  {
-    id: "2", 
-    name: "Shadows of Neverwinter",
-    players: 3,
-    lastPlayed: "Yesterday",
-    inviteCode: "SHADOW99"
-  }
-];
+import { formatDistanceToNow } from "date-fns";
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [user, setUser] = useState<any>(null);
-  const [campaigns] = useState(mockCampaigns);
+  const { user, profile, isLoading: authLoading, signOut } = useAuth();
+  const { campaigns, isLoading: campaignsLoading, createCampaign, joinCampaign } = useCampaigns();
+  
   const [newCampaignName, setNewCampaignName] = useState("");
+  const [newCampaignDescription, setNewCampaignDescription] = useState("");
   const [joinCode, setJoinCode] = useState("");
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [joinDialogOpen, setJoinDialogOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
 
+  // Redirect if not logged in
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (!session) {
-          navigate("/login");
-        } else {
-          setUser(session.user);
-        }
-      }
-    );
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        navigate("/login");
-      } else {
-        setUser(session.user);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [navigate]);
+    if (!authLoading && !user) {
+      navigate("/login");
+    }
+  }, [user, authLoading, navigate]);
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
-    navigate("/login");
+    try {
+      await signOut();
+      navigate("/login");
+    } catch (error: any) {
+      toast({
+        title: "Logout failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    }
   };
 
-  const handleCreateCampaign = () => {
+  const handleCreateCampaign = async () => {
     if (!newCampaignName.trim()) return;
-    toast({
-      title: "Campaign created!",
-      description: `"${newCampaignName}" is ready for adventure.`,
-    });
-    setNewCampaignName("");
+    setIsCreating(true);
+    
+    try {
+      const campaign = await createCampaign(newCampaignName, newCampaignDescription || undefined);
+      toast({
+        title: "Campaign created!",
+        description: `"${campaign.name}" is ready. Invite code: ${campaign.invite_code}`,
+      });
+      setNewCampaignName("");
+      setNewCampaignDescription("");
+      setCreateDialogOpen(false);
+    } catch (error: any) {
+      toast({
+        title: "Failed to create campaign",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreating(false);
+    }
   };
 
-  const handleJoinCampaign = () => {
+  const handleJoinCampaign = async () => {
     if (!joinCode.trim()) return;
-    toast({
-      title: "Joining campaign...",
-      description: "Looking for the adventure party.",
-    });
-    setJoinCode("");
+    setIsJoining(true);
+    
+    try {
+      const campaign = await joinCampaign(joinCode);
+      toast({
+        title: "Joined campaign!",
+        description: `Welcome to "${campaign.name}"!`,
+      });
+      setJoinCode("");
+      setJoinDialogOpen(false);
+    } catch (error: any) {
+      toast({
+        title: "Failed to join campaign",
+        description: error.message,
+        variant: "destructive",
+      });
+    } finally {
+      setIsJoining(false);
+    }
   };
 
   const copyInviteCode = (code: string) => {
     navigator.clipboard.writeText(code);
     setCopiedCode(code);
+    toast({
+      title: "Copied!",
+      description: "Invite code copied to clipboard",
+    });
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   if (!user) return null;
+
+  const displayName = profile?.display_name || user.email?.split("@")[0] || "Adventurer";
 
   return (
     <div className="min-h-screen bg-background">
@@ -114,7 +142,7 @@ const Dashboard = () => {
           <Logo size="md" />
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground hidden sm:block">
-              {user.email}
+              {displayName}
             </span>
             <Button variant="ghost" size="sm" onClick={handleLogout}>
               <LogOut className="w-4 h-4 mr-2" />
@@ -132,7 +160,7 @@ const Dashboard = () => {
           className="mb-8"
         >
           <h1 className="font-display text-3xl md:text-4xl font-bold text-foreground mb-2">
-            Welcome, <span className="text-primary">Adventurer</span>
+            Welcome, <span className="text-primary">{displayName}</span>
           </h1>
           <p className="text-muted-foreground">
             Choose a campaign to continue or start a new adventure
@@ -141,7 +169,7 @@ const Dashboard = () => {
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-4 mb-8">
-          <Dialog>
+          <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="hero">
                 <Plus className="w-4 h-4 mr-2" />
@@ -166,14 +194,36 @@ const Dashboard = () => {
                     className="bg-input"
                   />
                 </div>
-                <Button onClick={handleCreateCampaign} className="w-full">
-                  Create Campaign
+                <div className="space-y-2">
+                  <Label htmlFor="campaign-description">Description (optional)</Label>
+                  <Textarea
+                    id="campaign-description"
+                    placeholder="A tale of adventure and mystery..."
+                    value={newCampaignDescription}
+                    onChange={(e) => setNewCampaignDescription(e.target.value)}
+                    className="bg-input resize-none"
+                    rows={3}
+                  />
+                </div>
+                <Button 
+                  onClick={handleCreateCampaign} 
+                  className="w-full"
+                  disabled={isCreating || !newCampaignName.trim()}
+                >
+                  {isCreating ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    "Create Campaign"
+                  )}
                 </Button>
               </div>
             </DialogContent>
           </Dialog>
 
-          <Dialog>
+          <Dialog open={joinDialogOpen} onOpenChange={setJoinDialogOpen}>
             <DialogTrigger asChild>
               <Button variant="arcane">
                 <Key className="w-4 h-4 mr-2" />
@@ -192,69 +242,96 @@ const Dashboard = () => {
                   <Label htmlFor="invite-code">Invite Code</Label>
                   <Input
                     id="invite-code"
-                    placeholder="DRAGON42"
+                    placeholder="ABC123XY"
                     value={joinCode}
                     onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
                     className="bg-input uppercase tracking-wider"
                   />
                 </div>
-                <Button onClick={handleJoinCampaign} variant="arcane" className="w-full">
-                  Join Adventure
+                <Button 
+                  onClick={handleJoinCampaign} 
+                  variant="arcane" 
+                  className="w-full"
+                  disabled={isJoining || !joinCode.trim()}
+                >
+                  {isJoining ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Joining...
+                    </>
+                  ) : (
+                    "Join Adventure"
+                  )}
                 </Button>
               </div>
             </DialogContent>
           </Dialog>
         </div>
 
-        {/* Campaigns Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {campaigns.map((campaign, index) => (
-            <motion.div
-              key={campaign.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className="card-parchment rounded-xl overflow-hidden group cursor-pointer hover:border-primary/50 transition-colors"
-            >
-              <div className="h-32 bg-gradient-to-br from-primary/20 to-arcane/20 flex items-center justify-center">
-                <Scroll className="w-12 h-12 text-primary/50 group-hover:text-primary transition-colors" />
-              </div>
-              <div className="p-6">
-                <h3 className="font-display text-lg text-foreground mb-2">{campaign.name}</h3>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
-                  <span className="flex items-center gap-1">
-                    <Users className="w-4 h-4" />
-                    {campaign.players} players
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-4 h-4" />
-                    {campaign.lastPlayed}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <Button variant="outline" size="sm" asChild>
-                    <Link to={`/game/${campaign.id}`}>
-                      Continue
-                    </Link>
-                  </Button>
-                  <button
-                    onClick={() => copyInviteCode(campaign.inviteCode)}
-                    className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
-                  >
-                    {copiedCode === campaign.inviteCode ? (
-                      <Check className="w-3 h-3" />
-                    ) : (
-                      <Copy className="w-3 h-3" />
-                    )}
-                    {campaign.inviteCode}
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
+        {/* Loading State */}
+        {campaignsLoading && (
+          <div className="flex items-center justify-center py-16">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          </div>
+        )}
 
-        {campaigns.length === 0 && (
+        {/* Campaigns Grid */}
+        {!campaignsLoading && campaigns.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {campaigns.map((campaign, index) => (
+              <motion.div
+                key={campaign.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.1 }}
+                className="card-parchment rounded-xl overflow-hidden group cursor-pointer hover:border-primary/50 transition-colors"
+              >
+                <div className="h-32 bg-gradient-to-br from-primary/20 to-arcane/20 flex items-center justify-center">
+                  <Scroll className="w-12 h-12 text-primary/50 group-hover:text-primary transition-colors" />
+                </div>
+                <div className="p-6">
+                  <h3 className="font-display text-lg text-foreground mb-2">{campaign.name}</h3>
+                  {campaign.description && (
+                    <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
+                      {campaign.description}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
+                    <span className="flex items-center gap-1">
+                      <Users className="w-4 h-4" />
+                      Party
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-4 h-4" />
+                      {formatDistanceToNow(new Date(campaign.updated_at), { addSuffix: true })}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Button variant="outline" size="sm" asChild>
+                      <Link to={`/game/${campaign.id}`}>
+                        Continue
+                      </Link>
+                    </Button>
+                    <button
+                      onClick={() => copyInviteCode(campaign.invite_code)}
+                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-primary transition-colors"
+                    >
+                      {copiedCode === campaign.invite_code ? (
+                        <Check className="w-3 h-3" />
+                      ) : (
+                        <Copy className="w-3 h-3" />
+                      )}
+                      {campaign.invite_code}
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+
+        {/* Empty State */}
+        {!campaignsLoading && campaigns.length === 0 && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
