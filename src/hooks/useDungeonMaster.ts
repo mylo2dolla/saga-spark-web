@@ -12,6 +12,46 @@ export interface DMMessage {
   parsed?: DMResponse;
 }
 
+export interface DMMapTile {
+  x: number;
+  y: number;
+  terrain: "tree" | "rock" | "river" | "floor" | "wall" | string;
+  occupant: string | null;
+  blocked: boolean;
+}
+
+export interface DMMapData {
+  type: "world" | "city" | "dungeon" | "combat";
+  tiles: DMMapTile[];
+  partyPositions: Array<{ name: string; x: number; y: number }>;
+  enemyPositions: Array<{ name: string; x: number; y: number }>;
+}
+
+export interface DMPartyMember {
+  name: string;
+  class: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+  abilities: string[];
+  xp: number;
+}
+
+export interface DMLootItem {
+  name: string;
+  type: "weapon" | "armor" | "consumable" | "treasure";
+  description: string;
+  stats?: Record<string, string | number>;
+}
+
+export interface DMPersistentData {
+  party: DMPartyMember[];
+  enemies: Array<{ name: string; hp: number; maxHp: number; position?: { x: number; y: number } }>;
+  loot: DMLootItem[];
+  mapState: DMMapData | Record<string, unknown>;
+  combatState: Record<string, unknown>;
+}
+
 export interface DMResponse {
   narration: string;
   scene?: {
@@ -25,6 +65,7 @@ export interface DMResponse {
     dialogue: string;
     attitude: "friendly" | "hostile" | "neutral";
   }>;
+  party?: DMPartyMember[];
   combat?: {
     active: boolean;
     enemies: Array<{
@@ -51,11 +92,7 @@ export interface DMResponse {
     value: number;
     description: string;
   }>;
-  loot?: Array<{
-    name: string;
-    type: "weapon" | "armor" | "consumable" | "treasure";
-    description: string;
-  }>;
+  loot?: DMLootItem[];
   xpGained?: number;
   levelUps?: Array<{
     character: string;
@@ -70,7 +107,9 @@ export interface DMResponse {
     };
     abilitiesGained: string[];
   }>;
+  map?: DMMapData;
   suggestions?: string[];
+  persistentData?: DMPersistentData;
 }
 
 interface CombatEventForDM {
