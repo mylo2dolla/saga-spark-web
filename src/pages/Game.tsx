@@ -1,24 +1,17 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Swords,
-  MessageSquare,
   Users,
   Settings,
   ChevronLeft,
-  Send,
   Heart,
-  Shield,
-  Zap,
   Sparkles,
-  Map,
-  X
+  Play
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import Logo from "@/components/Logo";
 import { 
   Dice3D, 
   CombatGrid, 
@@ -30,15 +23,10 @@ import {
   type Character,
   type Ability
 } from "@/components/combat";
+import { DMChat } from "@/components/DMChat";
+import { useDungeonMaster } from "@/hooks/useDungeonMaster";
 
 // Mock data for UI demo
-const mockMessages = [
-  { id: 1, type: "dm", content: "You find yourselves at the entrance of a dark cavern. The air is thick with the smell of sulfur...", timestamp: "10:30 AM" },
-  { id: 2, type: "player", author: "Thorin", content: "I light my torch and peer into the darkness.", timestamp: "10:31 AM" },
-  { id: 3, type: "roll", author: "Thorin", content: "Perception Check", roll: { dice: "d20", result: 18, modifier: 3, total: 21 }, timestamp: "10:31 AM" },
-  { id: 4, type: "dm", content: "Your keen dwarven eyes spot ancient runes on the walls, and gold coins scattered ahead...", timestamp: "10:32 AM" }
-];
-
 const mockCharacters: Character[] = [
   { id: "1", name: "Thorin", class: "Fighter", level: 5, hp: 45, maxHp: 52, ac: 18, initiative: 14, position: { x: 2, y: 3 } },
   { id: "2", name: "Elara", class: "Wizard", level: 5, hp: 22, maxHp: 24, ac: 13, initiative: 18, position: { x: 3, y: 4 } },
@@ -56,18 +44,96 @@ const mockAbilities: Ability[] = [
 
 const Game = () => {
   const { campaignId } = useParams();
-  const [messages] = useState(mockMessages);
-  const [inputMessage, setInputMessage] = useState("");
   const [showDice, setShowDice] = useState(false);
   const [inCombat, setInCombat] = useState(false);
   const [currentTurn, setCurrentTurn] = useState(0);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [selectedAbility, setSelectedAbility] = useState<Ability | null>(null);
+  const [characters, setCharacters] = useState(mockCharacters);
   const { damages, addDamage, removeDamage } = useFloatingDamage();
+  
+  const { 
+    messages, 
+    isLoading, 
+    currentResponse, 
+    sendMessage, 
+    startNewAdventure 
+  } = useDungeonMaster();
 
-  const handleSendMessage = () => {
-    if (!inputMessage.trim()) return;
-    setInputMessage("");
+  // Get last suggestions from DM
+  const lastDMMessage = messages.filter(m => m.role === "assistant").pop();
+  const suggestions = lastDMMessage?.parsed?.suggestions;
+
+  // Handle effects from DM response
+  useEffect(() => {
+    if (lastDMMessage?.parsed?.effects) {
+      lastDMMessage.parsed.effects.forEach(effect => {
+        const targetChar = characters.find(c => c.name.toLowerCase() === effect.target.toLowerCase());
+        if (targetChar && targetChar.position) {
+          // Generate random screen position based on character grid position
+          const screenX = targetChar.position.x * 50 + 200;
+          const screenY = targetChar.position.y * 50 + 100;
+          
+          addDamage(
+            effect.value,
+            effect.effect === "heal" ? "heal" : "damage",
+            { x: screenX, y: screenY }
+          );
+
+          // Update character HP
+          setCharacters(prev => prev.map(c => {
+            if (c.id === targetChar.id) {
+              const newHp = effect.effect === "heal" 
+                ? Math.min(c.maxHp, c.hp + effect.value)
+                : Math.max(0, c.hp - effect.value);
+              return { ...c, hp: newHp };
+            }
+            return c;
+          }));
+        }
+      });
+    }
+
+    // Handle combat state from DM
+    if (lastDMMessage?.parsed?.combat) {
+      setInCombat(lastDMMessage.parsed.combat.active);
+    }
+  }, [lastDMMessage]);
+
+  const handleSendMessage = (message: string) => {
+    const context = {
+      party: characters.filter(c => !c.isEnemy).map(c => ({
+        name: c.name,
+        class: c.class,
+        level: c.level,
+        hp: c.hp,
+        maxHp: c.maxHp,
+      })),
+      location: "The Dragon's Lair Cavern",
+      campaignName: "The Dragon's Lair",
+      inCombat,
+      enemies: inCombat ? characters.filter(c => c.isEnemy).map(c => ({
+        name: c.name,
+        hp: c.hp,
+        maxHp: c.maxHp,
+      })) : undefined,
+    };
+    sendMessage(message, context);
+  };
+
+  const handleStartAdventure = () => {
+    const context = {
+      party: characters.filter(c => !c.isEnemy).map(c => ({
+        name: c.name,
+        class: c.class,
+        level: c.level,
+        hp: c.hp,
+        maxHp: c.maxHp,
+      })),
+      location: "Unknown",
+      campaignName: "The Dragon's Lair",
+    };
+    startNewAdventure(context);
   };
 
   return (
@@ -95,61 +161,88 @@ const Game = () => {
 
       {/* Main Game Area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Chat Panel */}
+        {/* Left: AI DM Chat Panel */}
         <div className={`${inCombat ? "w-1/3 hidden lg:flex" : "flex-1"} flex-col min-w-0 flex`}>
-          <ScrollArea className="flex-1 p-4">
-            <div className="space-y-4 max-w-3xl mx-auto">
-              {messages.map((message) => (
-                <motion.div key={message.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                  className={`${message.type === "dm" ? "bg-primary/10 border-l-4 border-primary" : message.type === "roll" ? "bg-arcane/10 border border-arcane/30" : "bg-card/50"} rounded-lg p-4`}>
-                  {message.type === "dm" && <div className="flex items-center gap-2 mb-2"><Sparkles className="w-4 h-4 text-primary" /><span className="text-xs font-display text-primary uppercase">Dungeon Master</span></div>}
-                  {message.type === "player" && <div className="flex items-center gap-2 mb-2"><span className="text-sm font-medium">{message.author}</span></div>}
-                  {message.type === "roll" && message.roll ? (
-                    <div className="flex items-center gap-4">
-                      <div className="bg-arcane/20 rounded-lg px-4 py-2 text-center">
-                        <div className="text-2xl font-display font-bold text-arcane">{message.roll.result}</div>
-                        <div className="text-xs text-muted-foreground">{message.roll.dice}</div>
-                      </div>
-                      <div className="text-muted-foreground">+{message.roll.modifier}</div>
-                      <div className="text-xl font-bold">= {message.roll.total}</div>
-                    </div>
-                  ) : <p className={message.type === "dm" ? "font-narrative text-lg italic text-parchment" : ""}>{message.content}</p>}
+          {messages.length === 0 ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="max-w-md"
+              >
+                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-primary/20 flex items-center justify-center">
+                  <Sparkles className="w-10 h-10 text-primary" />
+                </div>
+                <h2 className="font-display text-2xl mb-4">Welcome, Adventurer</h2>
+                <p className="text-muted-foreground mb-8">
+                  The AI Dungeon Master awaits to guide you through perilous dungeons, 
+                  ancient mysteries, and epic battles. Your story begins now.
+                </p>
+                <Button onClick={handleStartAdventure} size="lg" className="gap-2">
+                  <Play className="w-5 h-5" />
+                  Begin Your Adventure
+                </Button>
+              </motion.div>
+            </div>
+          ) : (
+            <>
+              <DMChat
+                messages={messages}
+                isLoading={isLoading}
+                currentResponse={currentResponse}
+                onSendMessage={handleSendMessage}
+                suggestions={suggestions}
+              />
+              {showDice && (
+                <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} className="border-t border-border p-4">
+                  <Dice3D size="md" />
                 </motion.div>
-              ))}
-            </div>
-          </ScrollArea>
-
-          {showDice && <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} className="border-t border-border p-4"><Dice3D size="md" /></motion.div>}
-
-          <div className="border-t border-border p-4">
-            <div className="max-w-3xl mx-auto flex gap-2">
-              <Input placeholder="Describe your action..." value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleSendMessage()} className="bg-input" />
-              <Button onClick={handleSendMessage}><Send className="w-4 h-4" /></Button>
-            </div>
-          </div>
+              )}
+            </>
+          )}
         </div>
 
         {/* Center: Combat Grid (when in combat) */}
         {inCombat && (
           <div className="flex-1 flex flex-col p-4 gap-4">
-            <TurnTracker characters={mockCharacters} currentTurnIndex={currentTurn} roundNumber={1} onEndTurn={() => setCurrentTurn((currentTurn + 1) % mockCharacters.length)} />
+            <TurnTracker 
+              characters={characters} 
+              currentTurnIndex={currentTurn} 
+              roundNumber={1} 
+              onEndTurn={() => setCurrentTurn((currentTurn + 1) % characters.length)} 
+            />
             <div className="flex-1 relative">
-              <CombatGrid characters={mockCharacters} selectedCharacterId={selectedCharacter?.id} onCharacterClick={setSelectedCharacter} />
+              <CombatGrid 
+                characters={characters} 
+                selectedCharacterId={selectedCharacter?.id} 
+                onCharacterClick={setSelectedCharacter} 
+              />
               <FloatingDamage damages={damages} onComplete={removeDamage} />
             </div>
-            <AbilityBar abilities={mockAbilities} selectedAbilityId={selectedAbility?.id} onAbilitySelect={setSelectedAbility} />
+            <AbilityBar 
+              abilities={mockAbilities} 
+              selectedAbilityId={selectedAbility?.id} 
+              onAbilitySelect={setSelectedAbility} 
+            />
           </div>
         )}
 
         {/* Right: Party Sidebar */}
         <aside className="w-72 border-l border-border bg-card/30 hidden lg:flex flex-col">
           <div className="p-4 border-b border-border">
-            <div className="flex items-center gap-2"><Users className="w-4 h-4 text-primary" /><h2 className="font-display text-sm uppercase">Party</h2></div>
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-primary" />
+              <h2 className="font-display text-sm uppercase">Party</h2>
+            </div>
           </div>
           <ScrollArea className="flex-1 p-4">
             <div className="space-y-3">
-              {mockCharacters.filter(c => !c.isEnemy).map((member) => (
-                <div key={member.id} onClick={() => setSelectedCharacter(member)} className="card-parchment rounded-lg p-3 cursor-pointer hover:border-primary/50 transition-colors">
+              {characters.filter(c => !c.isEnemy).map((member) => (
+                <div 
+                  key={member.id} 
+                  onClick={() => setSelectedCharacter(member)} 
+                  className="card-parchment rounded-lg p-3 cursor-pointer hover:border-primary/50 transition-colors"
+                >
                   <div className="flex items-center justify-between mb-2">
                     <span className="font-display text-sm">{member.name}</span>
                     <span className="text-xs text-muted-foreground">{member.class}</span>
@@ -157,7 +250,12 @@ const Game = () => {
                   <div className="flex items-center gap-2">
                     <Heart className="w-3 h-3 text-destructive" />
                     <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                      <div className="h-full bg-destructive" style={{ width: `${(member.hp / member.maxHp) * 100}%` }} />
+                      <motion.div 
+                        className="h-full bg-destructive" 
+                        initial={false}
+                        animate={{ width: `${(member.hp / member.maxHp) * 100}%` }}
+                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                      />
                     </div>
                     <span className="text-xs text-muted-foreground">{member.hp}/{member.maxHp}</span>
                   </div>
@@ -166,8 +264,13 @@ const Game = () => {
             </div>
           </ScrollArea>
           <div className="p-4 border-t border-border">
-            <Button variant={inCombat ? "destructive" : "combat"} className="w-full" onClick={() => setInCombat(!inCombat)}>
-              <Swords className="w-4 h-4 mr-2" />{inCombat ? "Exit Combat" : "Enter Combat"}
+            <Button 
+              variant={inCombat ? "destructive" : "combat"} 
+              className="w-full" 
+              onClick={() => setInCombat(!inCombat)}
+            >
+              <Swords className="w-4 h-4 mr-2" />
+              {inCombat ? "Exit Combat" : "Enter Combat"}
             </Button>
           </div>
         </aside>
@@ -175,8 +278,22 @@ const Game = () => {
         {/* Character Sheet Modal */}
         <AnimatePresence>
           {selectedCharacter && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80">
-              <CharacterSheet character={{ ...selectedCharacter, stats: { strength: 16, dexterity: 14, constitution: 15, intelligence: 10, wisdom: 12, charisma: 8 }, xp: 2400, xpToNext: 6500, abilities: mockAbilities }} onClose={() => setSelectedCharacter(null)} />
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80"
+            >
+              <CharacterSheet 
+                character={{ 
+                  ...selectedCharacter, 
+                  stats: { strength: 16, dexterity: 14, constitution: 15, intelligence: 10, wisdom: 12, charisma: 8 }, 
+                  xp: 2400, 
+                  xpToNext: 6500, 
+                  abilities: mockAbilities 
+                }} 
+                onClose={() => setSelectedCharacter(null)} 
+              />
             </motion.div>
           )}
         </AnimatePresence>
