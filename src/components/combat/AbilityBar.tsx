@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Sword, Shield, Wand2, Heart, Zap, Move, MoreHorizontal } from "lucide-react";
+import { Sword, Shield, Wand2, Heart, Zap, Move, MoreHorizontal, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export interface Ability {
@@ -25,7 +25,7 @@ interface AbilityBarProps {
   maxMana?: number;
 }
 
-const abilityIcons: Record<Ability["type"], typeof Sword> = {
+const abilityIcons: Record<Ability["type"], LucideIcon> = {
   attack: Sword,
   spell: Wand2,
   defense: Shield,
@@ -79,7 +79,7 @@ const AbilityBar = ({
       {/* Abilities Grid */}
       <div className="grid grid-cols-4 gap-2 sm:flex sm:flex-wrap sm:gap-2">
         {abilities.map((ability, index) => {
-          const Icon = abilityIcons[ability.type];
+          const Icon = abilityIcons[ability.type] || Zap;
           const isSelected = selectedAbilityId === ability.id;
           const isOnCooldown = (ability.currentCooldown || 0) > 0;
           const canUse = canUseAbility(ability);
