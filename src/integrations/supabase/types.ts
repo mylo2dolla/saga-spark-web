@@ -79,6 +79,44 @@ export type Database = {
           },
         ]
       }
+      ai_generated_content: {
+        Row: {
+          campaign_id: string
+          content: Json
+          content_id: string
+          content_type: string
+          created_at: string
+          generation_context: Json | null
+          id: string
+        }
+        Insert: {
+          campaign_id: string
+          content: Json
+          content_id: string
+          content_type: string
+          created_at?: string
+          generation_context?: Json | null
+          id?: string
+        }
+        Update: {
+          campaign_id?: string
+          content?: Json
+          content_id?: string
+          content_type?: string
+          created_at?: string
+          generation_context?: Json | null
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_generated_content_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       campaign_members: {
         Row: {
           campaign_id: string
@@ -316,6 +354,59 @@ export type Database = {
             foreignKeyName: "combat_state_campaign_id_fkey"
             columns: ["campaign_id"]
             isOneToOne: true
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      game_saves: {
+        Row: {
+          campaign_id: string
+          campaign_seed: Json
+          created_at: string
+          game_state: Json
+          id: string
+          player_level: number
+          playtime_seconds: number
+          save_name: string
+          total_xp: number
+          updated_at: string
+          user_id: string
+          world_state: Json
+        }
+        Insert: {
+          campaign_id: string
+          campaign_seed: Json
+          created_at?: string
+          game_state: Json
+          id?: string
+          player_level?: number
+          playtime_seconds?: number
+          save_name?: string
+          total_xp?: number
+          updated_at?: string
+          user_id: string
+          world_state: Json
+        }
+        Update: {
+          campaign_id?: string
+          campaign_seed?: Json
+          created_at?: string
+          game_state?: Json
+          id?: string
+          player_level?: number
+          playtime_seconds?: number
+          save_name?: string
+          total_xp?: number
+          updated_at?: string
+          user_id?: string
+          world_state?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "game_saves_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
             referencedRelation: "campaigns"
             referencedColumns: ["id"]
           },
