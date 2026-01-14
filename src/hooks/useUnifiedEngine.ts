@@ -43,6 +43,7 @@ import type {
   NPC,
   Quest,
   Item,
+  Location,
   Inventory,
   Equipment,
   EnhancedStatus,
@@ -52,12 +53,21 @@ import * as World from "@/engine/narrative/World";
 import * as NPCModule from "@/engine/narrative/NPC";
 import * as ItemModule from "@/engine/narrative/Item";
 import * as StatusModule from "@/engine/narrative/Status";
+import {
+  createTravelState,
+  startTravel,
+  completeTravel,
+  canTravel,
+  type TravelState,
+  type EnhancedLocation,
+} from "@/engine/narrative/Travel";
 
 export interface UseUnifiedEngineOptions {
   rows?: number;
   cols?: number;
   cellSize?: number;
   campaignSeed: CampaignSeed;
+  startingLocationId?: string;
   onGameEvent?: (event: GameEvent) => void;
   onWorldEvent?: (event: WorldEvent) => void;
 }
@@ -68,6 +78,7 @@ export function useUnifiedEngine(options: UseUnifiedEngineOptions) {
     cols = 12, 
     cellSize = 1, 
     campaignSeed,
+    startingLocationId = "starting_location",
     onGameEvent, 
     onWorldEvent 
   } = options;
@@ -78,6 +89,10 @@ export function useUnifiedEngine(options: UseUnifiedEngineOptions) {
   
   const [unified, setUnified] = useState<UnifiedState>(() =>
     createUnifiedState(campaignSeed, [], rows, cols)
+  );
+  
+  const [travelState, setTravelState] = useState<TravelState>(() =>
+    createTravelState(startingLocationId)
   );
   
   // Keep unified game state in sync with engine context
@@ -240,6 +255,43 @@ export function useUnifiedEngine(options: UseUnifiedEngineOptions) {
     result.narrativeEvents.forEach(e => onWorldEvent?.(e));
   }, [unified, onWorldEvent]);
   
+  // Travel to a new location
+  const travelTo = useCallback((destinationId: string) => {
+    // Check if travel is allowed
+    const playerStatuses: EnhancedStatus[] = []; // Would get from player entity
+    const validation = canTravel(unified.world, travelState, "player", destinationId, ctx.state.isInCombat, playerStatuses);
+    
+    if (!validation.canTravel) {
+      console.warn("Cannot travel:", validation.reason);
+      return;
+    }
+    
+    // Start travel
+    const startResult = startTravel(unified.world, travelState, "player", destinationId);
+    if (!startResult.success) {
+      console.warn("Travel failed:", startResult.message);
+      return;
+    }
+    
+    setUnified(prev => ({ ...prev, world: startResult.world }));
+    startResult.events.forEach(e => onWorldEvent?.(e));
+    
+    // Complete travel immediately (could add travel time delay)
+    const completeResult = completeTravel(startResult.world, startResult.travelState, "player", Date.now());
+    
+    setUnified(prev => ({ ...prev, world: completeResult.world }));
+    setTravelState(completeResult.travelState);
+    completeResult.events.forEach(e => onWorldEvent?.(e));
+    
+    // Handle encounter if any
+    if (completeResult.encounter) {
+      console.log("Encounter:", completeResult.encounter);
+      if (completeResult.encounter.type === "combat") {
+        // Could auto-start combat
+      }
+    }
+  }, [unified.world, travelState, ctx.state.isInCombat, onWorldEvent]);
+  
   // Derived state
   const entities = getEntities(ctx);
   const currentTurn = getCurrentTurn(ctx);
@@ -254,6 +306,7 @@ export function useUnifiedEngine(options: UseUnifiedEngineOptions) {
   const completedQuests = World.getCompletedQuests(unified.world);
   const items = unified.world.items;
   const campaignInfo = unified.world.campaignSeed;
+  const locations = Array.from(unified.world.locations.values());
   
   return {
     // Engine State
@@ -272,6 +325,8 @@ export function useUnifiedEngine(options: UseUnifiedEngineOptions) {
     completedQuests,
     items,
     campaignInfo,
+    travelState,
+    locations,
     
     // Game Actions
     spawn,
@@ -289,6 +344,7 @@ export function useUnifiedEngine(options: UseUnifiedEngineOptions) {
     completeQuest,
     addItem,
     discoverLocation,
+    travelTo,
     
     // Queries
     getValidMoves: (entityId: string) => getValidMoves(ctx, entityId),

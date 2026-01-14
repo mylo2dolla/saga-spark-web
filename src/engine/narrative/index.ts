@@ -213,3 +213,30 @@ export {
   deserializeWorld,
   type WorldActionResult,
 } from "./World";
+
+// ============= Travel Module =============
+export {
+  createTravelState,
+  createEnhancedLocation,
+  canTravel,
+  startTravel,
+  completeTravel,
+  getConnectedLocations,
+  getNPCsAtLocation as getTravelNPCsAtLocation,
+  getQuestsAtLocation,
+  getLocationsByFaction,
+  processLocationEvents,
+  worldTick,
+  serializeTravelState,
+  deserializeTravelState,
+  type TravelState,
+  type EnhancedLocation,
+  type LocationType,
+  type LocationService,
+  type WeatherType,
+  type TravelAction,
+  type TravelResult,
+  type EncounterType,
+  type EncounterResult,
+  type EncounterEnemy,
+} from "./Travel";
