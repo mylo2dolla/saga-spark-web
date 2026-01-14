@@ -12,6 +12,7 @@ export { default as SpellEffect } from "./SpellEffect";
 export { default as CharacterSheet } from "./CharacterSheet";
 export { default as CombatHUD } from "./CombatHUD";
 export { default as WorldMap } from "./WorldMap";
+export { default as AuthoritativeGrid } from "./AuthoritativeGrid";
 
 export type { Character } from "./CombatMiniature";
 export type { Ability } from "./AbilityBar";
