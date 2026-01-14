@@ -10,7 +10,6 @@ import {
   Sparkles,
   Play,
   Loader2,
-  Zap,
   Target,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,53 +17,19 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { 
   Dice3D, 
-  TurnTracker, 
-  AbilityBar, 
   CharacterSheet,
-  FloatingDamage,
-  useFloatingDamage,
+  CombatArena,
   type Character,
   type Ability
 } from "@/components/combat";
-import { AuthoritativeGrid } from "@/components/combat/AuthoritativeGrid";
 import { DMChat } from "@/components/DMChat";
 import { useDungeonMaster } from "@/hooks/useDungeonMaster";
-import { useRealtimeCharacters, useRealtimeCombat, type GameCharacter, type CombatEnemy } from "@/hooks/useRealtimeGame";
+import { useRealtimeCharacters, type GameCharacter, type CombatEnemy } from "@/hooks/useRealtimeGame";
 import { useCharacter, type CharacterAbility } from "@/hooks/useCharacter";
-import { useGridState } from "@/hooks/useGridState";
-import { useAbilityTargeting } from "@/hooks/useAbilityTargeting";
 import { supabase } from "@/integrations/supabase/client";
-import type { CombatEntity, GameAbility, GridPosition } from "@/types/game";
+import type { GameEvent, Vec2 } from "@/engine";
 
-// Convert GameCharacter to CombatEntity format for new grid
-function toCombatEntity(char: GameCharacter, initiative: number = 10): CombatEntity {
-  return {
-    id: char.id,
-    name: char.name,
-    hp: char.hp,
-    maxHp: char.max_hp,
-    ac: char.ac,
-    initiative,
-    position: char.position || { x: Math.floor(Math.random() * 5), y: Math.floor(Math.random() * 5) },
-    isEnemy: false,
-  };
-}
-
-// Convert CombatEnemy to CombatEntity format
-function enemyToCombatEntity(enemy: CombatEnemy): CombatEntity {
-  return {
-    id: enemy.id,
-    name: enemy.name,
-    hp: enemy.hp,
-    maxHp: enemy.maxHp,
-    ac: enemy.ac,
-    initiative: enemy.initiative,
-    position: enemy.position,
-    isEnemy: true,
-  };
-}
-
-// Convert GameCharacter to old Character format (for character sheet compatibility)
+// Convert GameCharacter to Character format (for character sheet compatibility)
 function toGridCharacter(char: GameCharacter, initiative: number = 10): Character {
   return {
     id: char.id,
@@ -78,22 +43,6 @@ function toGridCharacter(char: GameCharacter, initiative: number = 10): Characte
     position: char.position || { x: Math.floor(Math.random() * 5), y: Math.floor(Math.random() * 5) },
     statusEffects: char.status_effects,
     isEnemy: false,
-  };
-}
-
-// Convert CharacterAbility to GameAbility format
-function toGameAbility(ability: CharacterAbility): GameAbility {
-  return {
-    id: ability.id,
-    name: ability.name,
-    description: ability.description,
-    abilityType: "active",
-    damage: ability.damage,
-    range: ability.range || 1,
-    cost: ability.manaCost || 0,
-    costType: "mana",
-    cooldown: ability.cooldown || 0,
-    targetingType: "single",
   };
 }
 
@@ -116,30 +65,12 @@ const Game = () => {
   const navigate = useNavigate();
   const [showDice, setShowDice] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
-  const [selectedAbility, setSelectedAbility] = useState<GameAbility | null>(null);
   const [campaign, setCampaign] = useState<{ name: string; current_scene: string | null } | null>(null);
-  const [targetingMode, setTargetingMode] = useState(false);
-  const { damages, addDamage, removeDamage } = useFloatingDamage();
+  const [inCombat, setInCombat] = useState(false);
   
   // Real data hooks
-  const { character: myCharacter, isLoading: charLoading, updateCharacter: updateMyCharacter } = useCharacter(campaignId);
+  const { character: myCharacter, isLoading: charLoading } = useCharacter(campaignId);
   const { characters: partyCharacters, isLoading: partyLoading, updateCharacter } = useRealtimeCharacters(campaignId);
-  const { 
-    combatState, 
-    isLoading: combatLoading, 
-    startCombat, 
-    endCombat, 
-    nextTurn, 
-    updateEnemies 
-  } = useRealtimeCombat(campaignId);
-  
-  const { 
-    gridState,
-    isLoading: gridLoading,
-    initializeGrid,
-    moveEntity,
-    isPositionBlocked,
-  } = useGridState(campaignId);
 
   const { 
     messages, 
@@ -149,45 +80,7 @@ const Game = () => {
     startNewAdventure 
   } = useDungeonMaster();
 
-  // Convert all entities for the grid
-  const combatEntities = useMemo((): CombatEntity[] => {
-    const initiativeMap = new Map<string, number>();
-    combatState?.initiative_order?.forEach((id, index) => {
-      initiativeMap.set(id, 20 - index);
-    });
-
-    return [
-      ...partyCharacters.map(c => toCombatEntity(c, initiativeMap.get(c.id) ?? 10)),
-      ...(combatState?.enemies || []).map(enemyToCombatEntity),
-    ];
-  }, [partyCharacters, combatState]);
-
-  // Get current turn entity
-  const currentTurnId = useMemo(() => {
-    if (!combatState?.is_active || !combatState.initiative_order.length) return undefined;
-    return combatState.initiative_order[combatState.current_turn_index];
-  }, [combatState]);
-
-  // Ability targeting hook
-  const {
-    getValidTargets,
-    getAreaOfEffect,
-    executeAbility,
-  } = useAbilityTargeting({
-    gridSize: gridState?.gridSize || { rows: 10, cols: 12 },
-    entities: combatEntities,
-    isPositionBlocked,
-  });
-
-  // Calculate valid targets when ability is selected
-  const validTargets = useMemo(() => {
-    if (!selectedAbility || !myCharacter) return [];
-    const myEntity = combatEntities.find(e => e.id === myCharacter.id);
-    if (!myEntity) return [];
-    return getValidTargets(selectedAbility, myEntity.position, myEntity.id);
-  }, [selectedAbility, myCharacter, combatEntities, getValidTargets]);
-
-  // Fetch campaign data and initialize grid
+  // Fetch campaign data
   useEffect(() => {
     if (!campaignId) return;
     
@@ -206,8 +99,7 @@ const Game = () => {
     };
     
     fetchCampaign();
-    initializeGrid();
-  }, [campaignId, initializeGrid]);
+  }, [campaignId]);
 
   // Redirect to character creation if no character
   useEffect(() => {
@@ -220,208 +112,65 @@ const Game = () => {
   const lastDMMessage = messages.filter(m => m.role === "assistant").pop();
   const suggestions = lastDMMessage?.parsed?.suggestions;
 
-  const inCombat = combatState?.is_active ?? false;
-  const currentTurnIndex = combatState?.current_turn_index ?? 0;
-  const roundNumber = combatState?.round_number ?? 1;
-
-  // Create old-format grid characters for compatibility
+  // Create grid characters for party sidebar compatibility
   const gridCharacters: Character[] = useMemo(() => {
-    const initiativeMap = new Map<string, number>();
-    combatState?.initiative_order?.forEach((id, index) => {
-      initiativeMap.set(id, 20 - index);
-    });
+    return partyCharacters.map((c, i) => toGridCharacter(c, 20 - i));
+  }, [partyCharacters]);
 
-    return [
-      ...partyCharacters.map(c => toGridCharacter(c, initiativeMap.get(c.id) ?? 10)),
-      ...(combatState?.enemies || []).map(e => ({
-        id: e.id,
-        name: e.name,
-        class: "Monster",
-        level: 1,
-        hp: e.hp,
-        maxHp: e.maxHp,
-        ac: e.ac,
-        initiative: e.initiative,
-        position: e.position,
-        isEnemy: true,
-      } as Character)),
+  // Convert party to engine entity format for CombatArena
+  const combatEntities = useMemo(() => {
+    return partyCharacters.map((c, i) => ({
+      id: c.id,
+      name: c.name,
+      faction: "player" as const,
+      position: { x: (i % 4) * 1 + 1, y: Math.floor(i / 4) * 1 + 4 } as Vec2,
+      hp: c.hp,
+      maxHp: c.max_hp,
+      ac: c.ac,
+      initiative: 10 + Math.floor(Math.random() * 10),
+    }));
+  }, [partyCharacters]);
+
+  // Add some test enemies when combat starts
+  const allCombatEntities = useMemo(() => {
+    if (!inCombat) return combatEntities;
+    
+    // Add some enemies for testing
+    const enemies = [
+      { id: "enemy-1", name: "Goblin", faction: "enemy" as const, position: { x: 8, y: 2 } as Vec2, hp: 12, maxHp: 12, ac: 13, initiative: 15 },
+      { id: "enemy-2", name: "Orc", faction: "enemy" as const, position: { x: 9, y: 3 } as Vec2, hp: 20, maxHp: 20, ac: 14, initiative: 12 },
     ];
-  }, [partyCharacters, combatState]);
+    return [...combatEntities, ...enemies];
+  }, [combatEntities, inCombat]);
 
-  // Get my character's abilities
-  const myAbilities: Ability[] = myCharacter?.abilities?.map(toAbility) ?? [];
-  const myGameAbilities: GameAbility[] = myCharacter?.abilities?.map(toGameAbility) ?? [];
-
-  // Handle ability selection
-  const handleAbilitySelect = useCallback((ability: Ability | null) => {
-    if (!ability) {
-      setSelectedAbility(null);
-      setTargetingMode(false);
-      return;
+  // Handle engine events
+  const handleEngineEvent = useCallback((event: GameEvent) => {
+    console.log("Engine event:", event);
+    
+    // Sync damage back to database
+    if (event.type === "entity_damaged" && event.entityId && event.value) {
+      const char = partyCharacters.find(c => c.id === event.entityId);
+      if (char) {
+        updateCharacter(char.id, { hp: Math.max(0, char.hp - event.value) });
+      }
     }
     
-    const gameAbility = myGameAbilities.find(a => a.id === ability.id);
-    if (gameAbility) {
-      setSelectedAbility(gameAbility);
-      setTargetingMode(true);
-      toast.info(`Select a target for ${ability.name}`);
-    }
-  }, [myGameAbilities]);
-
-  // Handle cell click (for movement or ability targeting)
-  const handleCellClick = useCallback(async (position: GridPosition) => {
-    if (!myCharacter) return;
-
-    if (targetingMode && selectedAbility) {
-      // Execute ability on this position
-      const myEntity = combatEntities.find(e => e.id === myCharacter.id);
-      if (!myEntity) return;
-
-      const targetEntity = combatEntities.find(e => 
-        e.position.x === position.x && e.position.y === position.y
-      );
-
-      const result = executeAbility(
-        selectedAbility,
-        myEntity,
-        position,
-        targetEntity?.ac
-      );
-
-      // Show damage/heal animation
-      if (result.success) {
-        if (result.damage && targetEntity) {
-          addDamage(result.damage, result.isCritical ? "critical" : "damage", { 
-            x: position.x * 50 + 200, 
-            y: position.y * 50 + 100 
-          });
-
-          // Update target HP
-          if (targetEntity.isEnemy && combatState?.enemies) {
-            const updatedEnemies = combatState.enemies.map(e => {
-              if (e.id === targetEntity.id) {
-                return { ...e, hp: Math.max(0, e.hp - (result.damage || 0)) };
-              }
-              return e;
-            });
-            updateEnemies(updatedEnemies);
-          } else {
-            const targetChar = partyCharacters.find(c => c.id === targetEntity.id);
-            if (targetChar) {
-              updateCharacter(targetChar.id, { hp: Math.max(0, targetChar.hp - (result.damage || 0)) });
-            }
-          }
-        }
-
-        if (result.healing) {
-          addDamage(result.healing, "heal", { 
-            x: position.x * 50 + 200, 
-            y: position.y * 50 + 100 
-          });
-
-          const targetChar = partyCharacters.find(c => c.id === myCharacter.id);
-          if (targetChar) {
-            updateCharacter(targetChar.id, { 
-              hp: Math.min(targetChar.max_hp, targetChar.hp + (result.healing || 0)) 
-            });
-          }
-        }
-
-        toast.success(result.description);
-      } else {
-        toast.error(result.description);
-      }
-
-      setSelectedAbility(null);
-      setTargetingMode(false);
-    } else if (inCombat && currentTurnId === myCharacter.id) {
-      // Movement
-      const myEntity = combatEntities.find(e => e.id === myCharacter.id);
-      if (myEntity && !isPositionBlocked(position.x, position.y)) {
-        await moveEntity(myCharacter.id, "character", myEntity.position, position);
-        await updateCharacter(myCharacter.id, { position });
-        toast.success(`Moved to (${position.x}, ${position.y})`);
+    if (event.type === "entity_healed" && event.entityId && event.value) {
+      const char = partyCharacters.find(c => c.id === event.entityId);
+      if (char) {
+        updateCharacter(char.id, { hp: Math.min(char.max_hp, char.hp + event.value) });
       }
     }
-  }, [
-    myCharacter, targetingMode, selectedAbility, combatEntities, executeAbility, 
-    addDamage, combatState, updateEnemies, partyCharacters, updateCharacter,
-    inCombat, currentTurnId, isPositionBlocked, moveEntity
-  ]);
-
-  // Handle entity click
-  const handleEntityClick = useCallback((entity: CombatEntity) => {
-    if (targetingMode && selectedAbility && myCharacter) {
-      // Use ability on this entity
-      handleCellClick(entity.position);
-    } else {
-      // Show character sheet
-      const gridChar = gridCharacters.find(c => c.id === entity.id);
-      if (gridChar) setSelectedCharacter(gridChar);
+    
+    // Show toast for significant events
+    if (event.type === "entity_died") {
+      toast.error(event.description);
     }
-  }, [targetingMode, selectedAbility, myCharacter, gridCharacters, handleCellClick]);
-
-  // Handle effects from DM response
-  useEffect(() => {
-    if (lastDMMessage?.parsed?.effects) {
-      lastDMMessage.parsed.effects.forEach(effect => {
-        const targetEntity = combatEntities.find(c => c.name.toLowerCase() === effect.target.toLowerCase());
-        if (targetEntity) {
-          addDamage(
-            effect.value,
-            effect.effect === "heal" ? "heal" : "damage",
-            { x: targetEntity.position.x * 50 + 200, y: targetEntity.position.y * 50 + 100 }
-          );
-
-          if (!targetEntity.isEnemy) {
-            const partyChar = partyCharacters.find(c => c.id === targetEntity.id);
-            if (partyChar) {
-              const newHp = effect.effect === "heal" 
-                ? Math.min(partyChar.max_hp, partyChar.hp + effect.value)
-                : Math.max(0, partyChar.hp - effect.value);
-              updateCharacter(partyChar.id, { hp: newHp });
-            }
-          } else if (combatState?.enemies) {
-            const updatedEnemies = combatState.enemies.map(e => {
-              if (e.id === targetEntity.id) {
-                const newHp = effect.effect === "heal" 
-                  ? Math.min(e.maxHp, e.hp + effect.value)
-                  : Math.max(0, e.hp - effect.value);
-                return { ...e, hp: newHp };
-              }
-              return e;
-            });
-            updateEnemies(updatedEnemies);
-          }
-        }
-      });
+    if (event.type === "combat_ended") {
+      toast.success(event.description);
+      setInCombat(false);
     }
-
-    // Handle combat state from DM
-    if (lastDMMessage?.parsed?.combat) {
-      const dmCombat = lastDMMessage.parsed.combat;
-      if (dmCombat.active && !inCombat) {
-        const enemies: CombatEnemy[] = (dmCombat.enemies || []).map((e: { name: string; hp?: number; ac?: number }, i: number) => ({
-          id: `enemy-${Date.now()}-${i}`,
-          name: e.name,
-          hp: e.hp || 15,
-          maxHp: e.hp || 15,
-          ac: e.ac || 12,
-          initiative: Math.floor(Math.random() * 20) + 1,
-          position: { x: 8 + (i % 3), y: 3 + Math.floor(i / 3) },
-        }));
-        
-        const allCombatants = [
-          ...partyCharacters.map(c => ({ id: c.id, initiative: Math.floor(Math.random() * 20) + 1 })),
-          ...enemies.map(e => ({ id: e.id, initiative: e.initiative })),
-        ].sort((a, b) => b.initiative - a.initiative);
-        
-        startCombat(enemies, allCombatants.map(c => c.id));
-      } else if (!dmCombat.active && inCombat) {
-        endCombat();
-      }
-    }
-  }, [lastDMMessage, combatEntities, addDamage, partyCharacters, updateCharacter, combatState, updateEnemies, inCombat, startCombat, endCombat]);
+  }, [partyCharacters, updateCharacter]);
 
   const handleSendMessage = (message: string) => {
     const context = {
@@ -435,11 +184,6 @@ const Game = () => {
       location: campaign?.current_scene || "Unknown",
       campaignName: campaign?.name || "Adventure",
       inCombat,
-      enemies: inCombat ? combatState?.enemies?.map(e => ({
-        name: e.name,
-        hp: e.hp,
-        maxHp: e.maxHp,
-      })) : undefined,
     };
     sendMessage(message, context);
   };
@@ -459,23 +203,12 @@ const Game = () => {
     startNewAdventure(context);
   };
 
-  const handleEndTurn = () => {
-    setSelectedAbility(null);
-    setTargetingMode(false);
-    nextTurn();
-  };
-
   const handleToggleCombat = () => {
-    if (inCombat) {
-      endCombat();
-    } else {
-      const order = partyCharacters.map(c => c.id);
-      startCombat([], order);
-    }
+    setInCombat(!inCombat);
   };
 
   // Loading state
-  if (charLoading || partyLoading || combatLoading || gridLoading) {
+  if (charLoading || partyLoading) {
     return (
       <div className="h-screen bg-background flex items-center justify-center">
         <div className="text-center">
@@ -503,12 +236,6 @@ const Game = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {targetingMode && (
-              <Button variant="outline" size="sm" onClick={() => { setSelectedAbility(null); setTargetingMode(false); }}>
-                <Target className="w-4 h-4 mr-1" />
-                Cancel Targeting
-              </Button>
-            )}
             <Button variant={showDice ? "default" : "ghost"} size="sm" onClick={() => setShowDice(!showDice)}>
               <Sparkles className="w-4 h-4" />
             </Button>
@@ -560,47 +287,15 @@ const Game = () => {
           )}
         </div>
 
-        {/* Center: Combat Grid (when in combat) */}
+        {/* Center: Combat Arena (engine-driven) */}
         {inCombat && (
-          <div className="flex-1 flex flex-col p-4 gap-4">
-            <TurnTracker 
-              characters={gridCharacters} 
-              currentTurnIndex={currentTurnIndex} 
-              roundNumber={roundNumber} 
-              onEndTurn={handleEndTurn}
-              onSkipTurn={handleEndTurn}
-            />
-            
-            {/* Targeting Info */}
-            {targetingMode && selectedAbility && (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 border border-primary/30">
-                <Zap className="w-4 h-4 text-primary" />
-                <span className="text-sm">
-                  <strong>{selectedAbility.name}</strong> - Range: {selectedAbility.range} | 
-                  Click a highlighted target
-                </span>
-              </div>
-            )}
-            
-            <div className="flex-1 relative">
-              <AuthoritativeGrid 
-                gridSize={gridState?.gridSize || { rows: 10, cols: 12 }}
-                tiles={gridState?.tiles || []}
-                entities={combatEntities}
-                selectedEntityId={myCharacter?.id}
-                selectedAbility={selectedAbility}
-                validTargets={validTargets}
-                currentTurnId={currentTurnId}
-                onCellClick={handleCellClick}
-                onEntityClick={handleEntityClick}
-              />
-              <FloatingDamage damages={damages} onComplete={removeDamage} />
-            </div>
-            
-            <AbilityBar 
-              abilities={myAbilities} 
-              selectedAbilityId={selectedAbility?.id} 
-              onAbilitySelect={handleAbilitySelect} 
+          <div className="flex-1 flex flex-col">
+            <CombatArena
+              initialEntities={allCombatEntities}
+              myEntityId={myCharacter?.id}
+              rows={10}
+              cols={12}
+              onEvent={handleEngineEvent}
             />
           </div>
         )}
@@ -617,14 +312,13 @@ const Game = () => {
             <div className="space-y-3">
               {partyCharacters.map((member) => {
                 const gridChar = gridCharacters.find(c => c.id === member.id);
-                const isMyTurn = currentTurnId === member.id;
                 return (
                   <div 
                     key={member.id} 
                     onClick={() => gridChar && setSelectedCharacter(gridChar)} 
                     className={`card-parchment rounded-lg p-3 cursor-pointer hover:border-primary/50 transition-colors ${
                       member.id === myCharacter?.id ? "ring-2 ring-primary/50" : ""
-                    } ${isMyTurn ? "border-accent animate-pulse" : ""}`}
+                    }`}
                   >
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-display text-sm">{member.name}</span>
@@ -646,9 +340,6 @@ const Game = () => {
                       {member.id === myCharacter?.id && (
                         <span className="text-xs text-primary">You</span>
                       )}
-                      {isMyTurn && (
-                        <span className="text-xs text-accent font-medium">Your Turn!</span>
-                      )}
                       <span className="text-xs text-muted-foreground ml-auto">
                         ({member.position?.x || 0}, {member.position?.y || 0})
                       </span>
@@ -659,13 +350,8 @@ const Game = () => {
             </div>
           </ScrollArea>
           <div className="p-4 border-t border-border space-y-2">
-            {inCombat && currentTurnId === myCharacter?.id && (
-              <Button variant="outline" className="w-full" onClick={handleEndTurn}>
-                End Turn
-              </Button>
-            )}
             <Button 
-              variant={inCombat ? "destructive" : "combat"} 
+              variant={inCombat ? "destructive" : "default"} 
               className="w-full" 
               onClick={handleToggleCombat}
             >

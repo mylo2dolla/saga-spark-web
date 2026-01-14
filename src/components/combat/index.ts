@@ -13,6 +13,9 @@ export { default as CharacterSheet } from "./CharacterSheet";
 export { default as CombatHUD } from "./CombatHUD";
 export { default as WorldMap } from "./WorldMap";
 export { default as AuthoritativeGrid } from "./AuthoritativeGrid";
+export { EngineGrid } from "./EngineGrid";
+export { EngineTurnTracker } from "./EngineTurnTracker";
+export { CombatArena } from "./CombatArena";
 
 export type { Character } from "./CombatMiniature";
 export type { Ability } from "./AbilityBar";
