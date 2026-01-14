@@ -30,8 +30,8 @@ import { useGamePersistence } from "@/hooks/useGamePersistence";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { processAITurns, generateNarrativeAction } from "@/engine/AI";
 import { toast } from "sonner";
-import type { GameEvent } from "@/engine";
-import type { WorldEvent, NPC } from "@/engine/narrative/types";
+import type { GameEvent, Faction } from "@/engine";
+import type { WorldEvent, NPC, EnhancedStatus, Inventory, Equipment, CharacterProgression } from "@/engine/narrative/types";
 
 interface GameLoopProps {
   campaignId: string;
@@ -175,8 +175,42 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
     await persistence.saveGame(engine.unified, "Quicksave", playtimeSeconds);
   }, [engine.unified, persistence, playtimeSeconds]);
 
-  // Get player progression
+  // Get player progression and data
   const playerProgression = engine.getProgression(playerId);
+  
+  // Get player entity statuses (empty array if not found)
+  const playerEntity = engine.entities.find(e => e.id === playerId);
+  const playerStatuses: readonly EnhancedStatus[] = playerEntity?.statusEffects?.map(s => ({
+    id: s.id,
+    name: s.name,
+    description: `Duration: ${s.duration} turns`,
+    category: "neutral" as const,
+    source: "unknown",
+    duration: s.duration,
+    stacks: 1,
+    maxStacks: 1,
+    stackBehavior: "refresh" as const,
+    statModifiers: {},
+    triggers: [],
+  })) ?? [];
+
+  // Get inventory and equipment (mock for now - would come from world state)
+  const playerInventory: Inventory = { slots: [], maxSlots: 20, gold: 100 };
+  const playerEquipment: Equipment = {};
+
+  // Filter entities for combat (only player and enemy factions)
+  const combatEntities = engine.entities
+    .filter(e => e.faction === "player" || e.faction === "enemy")
+    .map(e => ({
+      id: e.id,
+      name: e.name,
+      faction: e.faction as "player" | "enemy",
+      position: e.position,
+      hp: e.hp,
+      maxHp: e.maxHp,
+      ac: e.ac,
+      initiative: e.initiative,
+    }));
 
   return (
     <div className="h-full flex flex-col">
@@ -184,7 +218,7 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
       <div className="flex-shrink-0 border-b border-border bg-card/50 p-2">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <StatusEffects entityId={playerId} />
+            <StatusEffects statuses={playerStatuses} compact />
           </div>
           
           <div className="flex items-center gap-2">
@@ -280,16 +314,7 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
             <TabsContent value="combat" className="flex-1 overflow-hidden">
               {engine.isInCombat && (
                 <CombatArena
-                  initialEntities={engine.entities.map(e => ({
-                    id: e.id,
-                    name: e.name,
-                    faction: e.faction,
-                    position: e.position,
-                    hp: e.hp,
-                    maxHp: e.maxHp,
-                    ac: e.ac,
-                    initiative: e.initiative,
-                  }))}
+                  initialEntities={combatEntities}
                   myEntityId={playerId}
                   rows={engine.board.rows}
                   cols={engine.board.cols}
@@ -299,7 +324,11 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
             </TabsContent>
 
             <TabsContent value="inventory" className="flex-1 p-4 overflow-auto">
-              <InventoryPanel entityId={playerId} />
+              <InventoryPanel 
+                inventory={playerInventory}
+                equipment={playerEquipment}
+                items={engine.items}
+              />
             </TabsContent>
 
             <TabsContent value="quests" className="flex-1 p-4 overflow-auto">
@@ -309,20 +338,41 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
         </div>
 
         {/* Right panel: Progression and active effects */}
-        <aside className="w-72 border-l border-border bg-card/30 hidden lg:flex flex-col">
-          <ProgressionPanel entityId={playerId} />
+        <aside className="w-72 border-l border-border bg-card/30 hidden lg:flex flex-col p-4">
+          {playerProgression ? (
+            <ProgressionPanel progression={playerProgression} />
+          ) : (
+            <div className="text-center text-muted-foreground py-8">
+              <p>No progression data</p>
+            </div>
+          )}
         </aside>
       </div>
 
       {/* NPC Dialog Modal */}
       <AnimatePresence>
         {selectedNPC && (
-          <NPCDialog
-            npc={selectedNPC}
-            playerId={playerId}
-            onClose={() => setSelectedNPC(null)}
-            onAcceptQuest={handleAcceptQuest}
-          />
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80"
+            onClick={() => setSelectedNPC(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.95 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.95 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <NPCDialog
+                npc={selectedNPC}
+                playerId={playerId}
+                onClose={() => setSelectedNPC(null)}
+                onStartQuest={handleAcceptQuest}
+              />
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
