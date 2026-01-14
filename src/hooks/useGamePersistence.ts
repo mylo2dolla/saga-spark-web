@@ -11,6 +11,8 @@ import {
 } from "@/engine/UnifiedState";
 import * as World from "@/engine/narrative/World";
 import { toast } from "sonner";
+import type { Json } from "@/integrations/supabase/types";
+import type { GameState, Entity } from "@/engine/types";
 
 export interface GameSave {
   id: string;
@@ -64,6 +66,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     try {
       // Serialize the state
       const serialized = serializeUnifiedState(state);
+      const parsedSerialized = JSON.parse(serialized);
       const worldSerialized = World.serializeWorld(state.world);
       
       // Get player progression for quick access fields
@@ -71,15 +74,20 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       const playerLevel = playerProgression?.level ?? 1;
       const totalXp = playerProgression?.totalXpEarned ?? 0;
 
+      // Cast to Json type for Supabase
+      const campaignSeedJson = JSON.parse(JSON.stringify(state.world.campaignSeed)) as Json;
+      const worldStateJson = JSON.parse(worldSerialized) as Json;
+      const gameStateJson = parsedSerialized.game as Json;
+
       const { data, error } = await supabase
         .from("game_saves")
         .insert({
           campaign_id: campaignId,
           user_id: userId,
           save_name: saveName,
-          campaign_seed: state.world.campaignSeed,
-          world_state: JSON.parse(worldSerialized),
-          game_state: JSON.parse(serialized).game,
+          campaign_seed: campaignSeedJson,
+          world_state: worldStateJson,
+          game_state: gameStateJson,
           player_level: playerLevel,
           total_xp: totalXp,
           playtime_seconds: playtimeSeconds,
@@ -110,18 +118,24 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     setIsSaving(true);
     try {
       const serialized = serializeUnifiedState(state);
+      const parsedSerialized = JSON.parse(serialized);
       const worldSerialized = World.serializeWorld(state.world);
       
       const playerProgression = Array.from(state.world.playerProgression.values())[0];
       const playerLevel = playerProgression?.level ?? 1;
       const totalXp = playerProgression?.totalXpEarned ?? 0;
 
+      // Cast to Json type for Supabase
+      const campaignSeedJson = JSON.parse(JSON.stringify(state.world.campaignSeed)) as Json;
+      const worldStateJson = JSON.parse(worldSerialized) as Json;
+      const gameStateJson = parsedSerialized.game as Json;
+
       const { error } = await supabase
         .from("game_saves")
         .update({
-          campaign_seed: state.world.campaignSeed,
-          world_state: JSON.parse(worldSerialized),
-          game_state: JSON.parse(serialized).game,
+          campaign_seed: campaignSeedJson,
+          world_state: worldStateJson,
+          game_state: gameStateJson,
           player_level: playerLevel,
           total_xp: totalXp,
           playtime_seconds: playtimeSeconds,
@@ -153,13 +167,17 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       if (error) throw error;
       if (!data) throw new Error("Save not found");
 
+      // Cast the JSON data to proper types
+      const gameStateData = data.game_state as Record<string, unknown>;
+      const entitiesArray = (gameStateData.entities ?? []) as Array<[string, Entity]>;
+      
       // Reconstruct the unified state
-      const gameState = {
-        tick: data.game_state.tick ?? 0,
-        entities: new Map(data.game_state.entities ?? []),
-        board: data.game_state.board,
-        turnOrder: data.game_state.turnOrder ?? { order: [], currentIndex: 0, roundNumber: 1 },
-        isInCombat: data.game_state.isInCombat ?? false,
+      const gameState: GameState = {
+        tick: (gameStateData.tick as number) ?? 0,
+        entities: new Map<string, Entity>(entitiesArray),
+        board: gameStateData.board as GameState["board"],
+        turnOrder: (gameStateData.turnOrder as GameState["turnOrder"]) ?? { order: [], currentIndex: 0, roundNumber: 1 },
+        isInCombat: (gameStateData.isInCombat as boolean) ?? false,
         pendingEvents: [],
       };
 
