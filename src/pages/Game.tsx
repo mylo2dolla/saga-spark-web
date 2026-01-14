@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Swords,
@@ -8,7 +8,8 @@ import {
   ChevronLeft,
   Heart,
   Sparkles,
-  Play
+  Play,
+  Loader2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -25,52 +26,140 @@ import {
 } from "@/components/combat";
 import { DMChat } from "@/components/DMChat";
 import { useDungeonMaster } from "@/hooks/useDungeonMaster";
+import { useRealtimeCharacters, useRealtimeCombat, type GameCharacter, type CombatEnemy } from "@/hooks/useRealtimeGame";
+import { useCharacter, type CharacterAbility } from "@/hooks/useCharacter";
+import { supabase } from "@/integrations/supabase/client";
 
-// Mock data for UI demo
-const mockCharacters: Character[] = [
-  { id: "1", name: "Thorin", class: "Fighter", level: 5, hp: 45, maxHp: 52, ac: 18, initiative: 14, position: { x: 2, y: 3 } },
-  { id: "2", name: "Elara", class: "Wizard", level: 5, hp: 22, maxHp: 24, ac: 13, initiative: 18, position: { x: 3, y: 4 } },
-  { id: "3", name: "Shadowmere", class: "Rogue", level: 5, hp: 31, maxHp: 38, ac: 15, initiative: 20, position: { x: 4, y: 3 }, statusEffects: ["blessed"] },
-  { id: "e1", name: "Goblin", class: "Monster", level: 2, hp: 12, maxHp: 15, ac: 12, initiative: 10, isEnemy: true, position: { x: 6, y: 2 } },
-  { id: "e2", name: "Orc", class: "Monster", level: 4, hp: 28, maxHp: 30, ac: 14, initiative: 8, isEnemy: true, position: { x: 7, y: 4 } },
-];
+// Convert GameCharacter to combat Character format
+function toGridCharacter(char: GameCharacter, initiative: number = 10): Character {
+  return {
+    id: char.id,
+    name: char.name,
+    class: char.class,
+    level: char.level,
+    hp: char.hp,
+    maxHp: char.max_hp,
+    ac: char.ac,
+    initiative,
+    position: char.position || { x: Math.floor(Math.random() * 5), y: Math.floor(Math.random() * 5) },
+    statusEffects: char.status_effects,
+    isEnemy: false,
+  };
+}
 
-const mockAbilities: Ability[] = [
-  { id: "1", name: "Strike", type: "attack", description: "A basic melee attack", damage: "1d8+3", range: 1 },
-  { id: "2", name: "Fireball", type: "spell", description: "Hurl a ball of fire", damage: "8d6", range: 20, manaCost: 15, cooldown: 2 },
-  { id: "3", name: "Shield", type: "defense", description: "Increase AC by 5", manaCost: 5 },
-  { id: "4", name: "Heal", type: "heal", description: "Restore 2d8+3 HP", manaCost: 10 },
-];
+// Convert CombatEnemy to Character format
+function enemyToGridCharacter(enemy: CombatEnemy): Character {
+  return {
+    id: enemy.id,
+    name: enemy.name,
+    class: "Monster",
+    level: 1,
+    hp: enemy.hp,
+    maxHp: enemy.maxHp,
+    ac: enemy.ac,
+    initiative: enemy.initiative,
+    position: enemy.position,
+    isEnemy: true,
+  };
+}
+
+// Convert CharacterAbility to Ability format
+function toAbility(ability: CharacterAbility): Ability {
+  return {
+    id: ability.id,
+    name: ability.name,
+    type: ability.type as Ability["type"],
+    description: ability.description,
+    damage: ability.damage,
+    range: ability.range,
+    manaCost: ability.manaCost,
+    cooldown: ability.cooldown,
+  };
+}
 
 const Game = () => {
   const { campaignId } = useParams();
+  const navigate = useNavigate();
   const [showDice, setShowDice] = useState(false);
-  const [inCombat, setInCombat] = useState(false);
-  const [currentTurn, setCurrentTurn] = useState(0);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [selectedAbility, setSelectedAbility] = useState<Ability | null>(null);
-  const [characters, setCharacters] = useState(mockCharacters);
+  const [campaign, setCampaign] = useState<{ name: string; current_scene: string | null } | null>(null);
   const { damages, addDamage, removeDamage } = useFloatingDamage();
+  
+  // Real data hooks
+  const { character: myCharacter, isLoading: charLoading, updateCharacter: updateMyCharacter } = useCharacter(campaignId);
+  const { characters: partyCharacters, isLoading: partyLoading, updateCharacter } = useRealtimeCharacters(campaignId);
+  const { 
+    combatState, 
+    isLoading: combatLoading, 
+    startCombat, 
+    endCombat, 
+    nextTurn, 
+    updateEnemies 
+  } = useRealtimeCombat(campaignId);
   
   const { 
     messages, 
-    isLoading, 
+    isLoading: dmLoading, 
     currentResponse, 
     sendMessage, 
     startNewAdventure 
   } = useDungeonMaster();
 
+  // Fetch campaign data
+  useEffect(() => {
+    if (!campaignId) return;
+    
+    const fetchCampaign = async () => {
+      const { data } = await supabase
+        .from("campaigns")
+        .select("name, current_scene")
+        .eq("id", campaignId)
+        .single();
+      
+      if (data) setCampaign(data);
+    };
+    
+    fetchCampaign();
+  }, [campaignId]);
+
+  // Redirect to character creation if no character
+  useEffect(() => {
+    if (!charLoading && !myCharacter && campaignId) {
+      navigate(`/game/${campaignId}/create-character`);
+    }
+  }, [charLoading, myCharacter, campaignId, navigate]);
+
   // Get last suggestions from DM
   const lastDMMessage = messages.filter(m => m.role === "assistant").pop();
   const suggestions = lastDMMessage?.parsed?.suggestions;
+
+  // Combine party members and enemies for grid
+  const inCombat = combatState?.is_active ?? false;
+  const currentTurnIndex = combatState?.current_turn_index ?? 0;
+  const roundNumber = combatState?.round_number ?? 1;
+  
+  // Create initiative map from combat state
+  const initiativeMap = new Map<string, number>();
+  combatState?.initiative_order?.forEach((id, index) => {
+    initiativeMap.set(id, 20 - index); // Higher index = lower initiative
+  });
+
+  // Convert to grid characters
+  const gridCharacters: Character[] = [
+    ...partyCharacters.map(c => toGridCharacter(c, initiativeMap.get(c.id) ?? 10)),
+    ...(combatState?.enemies || []).map(enemyToGridCharacter),
+  ];
+
+  // Get my character's abilities for the ability bar
+  const myAbilities: Ability[] = myCharacter?.abilities?.map(toAbility) ?? [];
 
   // Handle effects from DM response
   useEffect(() => {
     if (lastDMMessage?.parsed?.effects) {
       lastDMMessage.parsed.effects.forEach(effect => {
-        const targetChar = characters.find(c => c.name.toLowerCase() === effect.target.toLowerCase());
+        const targetChar = gridCharacters.find(c => c.name.toLowerCase() === effect.target.toLowerCase());
         if (targetChar && targetChar.position) {
-          // Generate random screen position based on character grid position
           const screenX = targetChar.position.x * 50 + 200;
           const screenY = targetChar.position.y * 50 + 100;
           
@@ -80,42 +169,76 @@ const Game = () => {
             { x: screenX, y: screenY }
           );
 
-          // Update character HP
-          setCharacters(prev => prev.map(c => {
-            if (c.id === targetChar.id) {
+          // Update character HP in database
+          if (!targetChar.isEnemy) {
+            const partyChar = partyCharacters.find(c => c.id === targetChar.id);
+            if (partyChar) {
               const newHp = effect.effect === "heal" 
-                ? Math.min(c.maxHp, c.hp + effect.value)
-                : Math.max(0, c.hp - effect.value);
-              return { ...c, hp: newHp };
+                ? Math.min(partyChar.max_hp, partyChar.hp + effect.value)
+                : Math.max(0, partyChar.hp - effect.value);
+              updateCharacter(partyChar.id, { hp: newHp });
             }
-            return c;
-          }));
+          } else if (combatState?.enemies) {
+            // Update enemy HP
+            const updatedEnemies = combatState.enemies.map(e => {
+              if (e.id === targetChar.id) {
+                const newHp = effect.effect === "heal" 
+                  ? Math.min(e.maxHp, e.hp + effect.value)
+                  : Math.max(0, e.hp - effect.value);
+                return { ...e, hp: newHp };
+              }
+              return e;
+            });
+            updateEnemies(updatedEnemies);
+          }
         }
       });
     }
 
     // Handle combat state from DM
     if (lastDMMessage?.parsed?.combat) {
-      setInCombat(lastDMMessage.parsed.combat.active);
+      const dmCombat = lastDMMessage.parsed.combat;
+      if (dmCombat.active && !inCombat) {
+        // DM started combat - create enemies from the response
+        const enemies: CombatEnemy[] = (dmCombat.enemies || []).map((e: { name: string; hp?: number; ac?: number }, i: number) => ({
+          id: `enemy-${Date.now()}-${i}`,
+          name: e.name,
+          hp: e.hp || 15,
+          maxHp: e.hp || 15,
+          ac: e.ac || 12,
+          initiative: Math.floor(Math.random() * 20) + 1,
+          position: { x: 6 + i, y: 2 + (i % 3) },
+        }));
+        
+        // Build initiative order
+        const allCombatants = [
+          ...partyCharacters.map(c => ({ id: c.id, initiative: Math.floor(Math.random() * 20) + 1 })),
+          ...enemies.map(e => ({ id: e.id, initiative: e.initiative })),
+        ].sort((a, b) => b.initiative - a.initiative);
+        
+        startCombat(enemies, allCombatants.map(c => c.id));
+      } else if (!dmCombat.active && inCombat) {
+        endCombat();
+      }
     }
   }, [lastDMMessage]);
 
   const handleSendMessage = (message: string) => {
     const context = {
-      party: characters.filter(c => !c.isEnemy).map(c => ({
+      party: partyCharacters.map(c => ({
         name: c.name,
         class: c.class,
         level: c.level,
         hp: c.hp,
-        maxHp: c.maxHp,
+        maxHp: c.max_hp,
       })),
-      location: "The Dragon's Lair Cavern",
-      campaignName: "The Dragon's Lair",
+      location: campaign?.current_scene || "Unknown",
+      campaignName: campaign?.name || "Adventure",
       inCombat,
-      enemies: inCombat ? characters.filter(c => c.isEnemy).map(c => ({
-        name: c.name,
-        hp: c.hp,
-        maxHp: c.maxHp,
+      enemies: inCombat ? combatState?.enemies?.map(e => ({
+        name: e.name,
+        hp: e.hp,
+        maxHp: e.maxHp,
       })) : undefined,
     };
     sendMessage(message, context);
@@ -123,18 +246,44 @@ const Game = () => {
 
   const handleStartAdventure = () => {
     const context = {
-      party: characters.filter(c => !c.isEnemy).map(c => ({
+      party: partyCharacters.map(c => ({
         name: c.name,
         class: c.class,
         level: c.level,
         hp: c.hp,
-        maxHp: c.maxHp,
+        maxHp: c.max_hp,
       })),
       location: "Unknown",
-      campaignName: "The Dragon's Lair",
+      campaignName: campaign?.name || "New Adventure",
     };
     startNewAdventure(context);
   };
+
+  const handleEndTurn = () => {
+    nextTurn();
+  };
+
+  const handleToggleCombat = () => {
+    if (inCombat) {
+      endCombat();
+    } else {
+      // Start combat with no enemies initially (DM will add them)
+      const order = partyCharacters.map(c => c.id);
+      startCombat([], order);
+    }
+  };
+
+  // Loading state
+  if (charLoading || partyLoading || combatLoading) {
+    return (
+      <div className="h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading adventure...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen bg-background flex flex-col">
@@ -146,8 +295,10 @@ const Game = () => {
               <Button variant="ghost" size="sm"><ChevronLeft className="w-4 h-4 mr-1" />Back</Button>
             </Link>
             <div className="hidden sm:block">
-              <h1 className="font-display text-lg text-foreground">The Dragon's Lair</h1>
-              <p className="text-xs text-muted-foreground">Campaign ID: {campaignId}</p>
+              <h1 className="font-display text-lg text-foreground">{campaign?.name || "Adventure"}</h1>
+              <p className="text-xs text-muted-foreground">
+                {myCharacter ? `Playing as ${myCharacter.name}` : "Loading..."}
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -173,12 +324,12 @@ const Game = () => {
                 <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-primary/20 flex items-center justify-center">
                   <Sparkles className="w-10 h-10 text-primary" />
                 </div>
-                <h2 className="font-display text-2xl mb-4">Welcome, Adventurer</h2>
+                <h2 className="font-display text-2xl mb-4">Welcome, {myCharacter?.name || "Adventurer"}</h2>
                 <p className="text-muted-foreground mb-8">
                   The AI Dungeon Master awaits to guide you through perilous dungeons, 
                   ancient mysteries, and epic battles. Your story begins now.
                 </p>
-                <Button onClick={handleStartAdventure} size="lg" className="gap-2">
+                <Button onClick={handleStartAdventure} size="lg" className="gap-2" disabled={dmLoading}>
                   <Play className="w-5 h-5" />
                   Begin Your Adventure
                 </Button>
@@ -188,7 +339,7 @@ const Game = () => {
             <>
               <DMChat
                 messages={messages}
-                isLoading={isLoading}
+                isLoading={dmLoading}
                 currentResponse={currentResponse}
                 onSendMessage={handleSendMessage}
                 suggestions={suggestions}
@@ -206,21 +357,22 @@ const Game = () => {
         {inCombat && (
           <div className="flex-1 flex flex-col p-4 gap-4">
             <TurnTracker 
-              characters={characters} 
-              currentTurnIndex={currentTurn} 
-              roundNumber={1} 
-              onEndTurn={() => setCurrentTurn((currentTurn + 1) % characters.length)} 
+              characters={gridCharacters} 
+              currentTurnIndex={currentTurnIndex} 
+              roundNumber={roundNumber} 
+              onEndTurn={handleEndTurn}
+              onSkipTurn={handleEndTurn}
             />
             <div className="flex-1 relative">
               <CombatGrid 
-                characters={characters} 
+                characters={gridCharacters} 
                 selectedCharacterId={selectedCharacter?.id} 
                 onCharacterClick={setSelectedCharacter} 
               />
               <FloatingDamage damages={damages} onComplete={removeDamage} />
             </div>
             <AbilityBar 
-              abilities={mockAbilities} 
+              abilities={myAbilities} 
               selectedAbilityId={selectedAbility?.id} 
               onAbilitySelect={setSelectedAbility} 
             />
@@ -232,42 +384,50 @@ const Game = () => {
           <div className="p-4 border-b border-border">
             <div className="flex items-center gap-2">
               <Users className="w-4 h-4 text-primary" />
-              <h2 className="font-display text-sm uppercase">Party</h2>
+              <h2 className="font-display text-sm uppercase">Party ({partyCharacters.length})</h2>
             </div>
           </div>
           <ScrollArea className="flex-1 p-4">
             <div className="space-y-3">
-              {characters.filter(c => !c.isEnemy).map((member) => (
-                <div 
-                  key={member.id} 
-                  onClick={() => setSelectedCharacter(member)} 
-                  className="card-parchment rounded-lg p-3 cursor-pointer hover:border-primary/50 transition-colors"
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-display text-sm">{member.name}</span>
-                    <span className="text-xs text-muted-foreground">{member.class}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Heart className="w-3 h-3 text-destructive" />
-                    <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
-                      <motion.div 
-                        className="h-full bg-destructive" 
-                        initial={false}
-                        animate={{ width: `${(member.hp / member.maxHp) * 100}%` }}
-                        transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                      />
+              {partyCharacters.map((member) => {
+                const gridChar = gridCharacters.find(c => c.id === member.id);
+                return (
+                  <div 
+                    key={member.id} 
+                    onClick={() => gridChar && setSelectedCharacter(gridChar)} 
+                    className={`card-parchment rounded-lg p-3 cursor-pointer hover:border-primary/50 transition-colors ${
+                      member.id === myCharacter?.id ? "ring-2 ring-primary/50" : ""
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-display text-sm">{member.name}</span>
+                      <span className="text-xs text-muted-foreground">{member.class}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground">{member.hp}/{member.maxHp}</span>
+                    <div className="flex items-center gap-2">
+                      <Heart className="w-3 h-3 text-destructive" />
+                      <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+                        <motion.div 
+                          className="h-full bg-destructive" 
+                          initial={false}
+                          animate={{ width: `${(member.hp / member.max_hp) * 100}%` }}
+                          transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                        />
+                      </div>
+                      <span className="text-xs text-muted-foreground">{member.hp}/{member.max_hp}</span>
+                    </div>
+                    {member.id === myCharacter?.id && (
+                      <div className="mt-2 text-xs text-primary">You</div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </ScrollArea>
           <div className="p-4 border-t border-border">
             <Button 
               variant={inCombat ? "destructive" : "combat"} 
               className="w-full" 
-              onClick={() => setInCombat(!inCombat)}
+              onClick={handleToggleCombat}
             >
               <Swords className="w-4 h-4 mr-2" />
               {inCombat ? "Exit Combat" : "Enter Combat"}
@@ -284,16 +444,38 @@ const Game = () => {
               exit={{ opacity: 0 }} 
               className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80"
             >
-              <CharacterSheet 
-                character={{ 
-                  ...selectedCharacter, 
-                  stats: { strength: 16, dexterity: 14, constitution: 15, intelligence: 10, wisdom: 12, charisma: 8 }, 
-                  xp: 2400, 
-                  xpToNext: 6500, 
-                  abilities: mockAbilities 
-                }} 
-                onClose={() => setSelectedCharacter(null)} 
-              />
+              {(() => {
+                // Find the full character data
+                const fullChar = partyCharacters.find(c => c.id === selectedCharacter.id);
+                if (!fullChar) {
+                  // It's an enemy - show basic sheet
+                  return (
+                    <CharacterSheet 
+                      character={{ 
+                        ...selectedCharacter, 
+                        stats: { strength: 10, dexterity: 10, constitution: 10, intelligence: 10, wisdom: 10, charisma: 10 }, 
+                        xp: 0, 
+                        xpToNext: 100, 
+                        abilities: [] 
+                      }} 
+                      onClose={() => setSelectedCharacter(null)} 
+                    />
+                  );
+                }
+                
+                return (
+                  <CharacterSheet 
+                    character={{ 
+                      ...selectedCharacter, 
+                      stats: fullChar.stats, 
+                      xp: fullChar.xp, 
+                      xpToNext: fullChar.xp_to_next, 
+                      abilities: fullChar.abilities.map(toAbility)
+                    }} 
+                    onClose={() => setSelectedCharacter(null)} 
+                  />
+                );
+              })()}
             </motion.div>
           )}
         </AnimatePresence>
