@@ -47,7 +47,7 @@ const CreateCharacter = () => {
       const hp = hitDie + conMod;
       const ac = data.baseAC + dexMod;
 
-      const { error } = await supabase.from("characters").insert({
+      const { error } = await supabase.from("characters").insert([{
         name: data.name,
         class: data.class,
         class_description: data.classDescription,
@@ -57,16 +57,16 @@ const CreateCharacter = () => {
         hp,
         max_hp: hp,
         ac,
-        stats: data.stats,
-        resources: data.resources,
-        passives: data.passives,
-        abilities: data.abilities.map((a, i) => ({ ...a, id: `ability-${i}` })),
+        stats: JSON.parse(JSON.stringify(data.stats)),
+        resources: JSON.parse(JSON.stringify(data.resources)),
+        passives: JSON.parse(JSON.stringify(data.passives)),
+        abilities: JSON.parse(JSON.stringify(data.abilities.map((a, i) => ({ ...a, id: `ability-${i}` })))),
         xp: 0,
         xp_to_next: 300,
-        position: { x: 2, y: 2 },
-        equipment: { weapon: null, armor: null, shield: null, helmet: null, boots: null, gloves: null, ring1: null, ring2: null, trinket1: null, trinket2: null, trinket3: null },
-        backpack: [],
-      });
+        position: JSON.parse(JSON.stringify({ x: 2, y: 2 })),
+        equipment: JSON.parse(JSON.stringify({ weapon: null, armor: null, shield: null, helmet: null, boots: null, gloves: null, ring1: null, ring2: null, trinket1: null, trinket2: null, trinket3: null })),
+        backpack: JSON.parse(JSON.stringify([])),
+      }]);
 
       if (error) throw error;
 
