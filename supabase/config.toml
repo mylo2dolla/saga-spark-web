@@ -1,1 +1,10 @@
 project_id = "noypvqheloeqkfbjckee"
+
+[functions.dungeon-master]
+verify_jwt = false
+
+[functions.generate-class]
+verify_jwt = false
+
+[functions.world-generator]
+verify_jwt = false
