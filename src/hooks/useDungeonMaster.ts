@@ -59,6 +59,24 @@ export interface DMResponse {
   suggestions?: string[];
 }
 
+interface CombatEventForDM {
+  type: string;
+  actor?: string;
+  target?: string;
+  ability?: string;
+  damage?: number;
+  healing?: number;
+  success?: boolean;
+  rolls?: Array<{
+    type: string;
+    result: number;
+    total: number;
+    isCritical?: boolean;
+    isFumble?: boolean;
+  }>;
+  description?: string;
+}
+
 interface GameContext {
   party?: Array<{
     name: string;
@@ -76,6 +94,9 @@ interface GameContext {
     maxHp: number;
   }>;
   history?: string;
+  combatEvents?: CombatEventForDM[];
+  currentTurn?: string;
+  roundNumber?: number;
 }
 
 const DM_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dungeon-master`;

@@ -27,6 +27,25 @@ const EnemySchema = z.object({
   maxHp: z.number().int().min(1),
 }).passthrough();
 
+// Combat event schema for engine-driven combat
+const CombatEventSchema = z.object({
+  type: z.string(),
+  actor: z.string().optional(),
+  target: z.string().optional(),
+  ability: z.string().optional(),
+  damage: z.number().optional(),
+  healing: z.number().optional(),
+  success: z.boolean().optional(),
+  rolls: z.array(z.object({
+    type: z.string(),
+    result: z.number(),
+    total: z.number(),
+    isCritical: z.boolean().optional(),
+    isFumble: z.boolean().optional(),
+  })).optional(),
+  description: z.string().optional(),
+}).passthrough();
+
 const ContextSchema = z.object({
   party: z.array(PartyMemberSchema).max(10).optional(),
   location: z.string().max(200).optional(),
@@ -34,6 +53,10 @@ const ContextSchema = z.object({
   inCombat: z.boolean().optional(),
   enemies: z.array(EnemySchema).max(20).optional(),
   history: z.string().max(2000).optional(),
+  // New: combat events from the game engine for the DM to narrate
+  combatEvents: z.array(CombatEventSchema).max(50).optional(),
+  currentTurn: z.string().optional(),
+  roundNumber: z.number().optional(),
 }).optional();
 
 const RequestSchema = z.object({
@@ -46,39 +69,42 @@ const DM_SYSTEM_PROMPT = `You are the Dungeon Master for MythWeaver, an immersiv
 ## Core Responsibilities
 - Narrate scenes vividly with atmospheric descriptions
 - Control all NPCs with distinct personalities and motivations
-- Manage combat encounters fairly and dynamically
-- Enforce game rules while keeping the story engaging
+- **IMPORTANT: You do NOT roll dice or invent numbers. The game engine handles all dice rolls and combat mechanics.**
+- Narrate the RESULTS of combat events provided to you by the game engine
+- Describe attacks, spells, damage, and healing based on the actual dice rolls from the engine
 - Track player actions and maintain world continuity
+
+## CRITICAL: Combat Event Narration
+When combat events are provided in the context, you MUST narrate them using the EXACT values from the events:
+- Use the actual damage/healing numbers provided
+- Reference the actual dice roll results
+- Describe critical hits and fumbles when flagged
+- Narrate character deaths when they occur
+- DO NOT invent or modify any numbers - use only what the engine provides
 
 ## Response Format
 Always respond with a JSON object containing:
 {
-  "narration": "Your narrative text here",
+  "narration": "Your narrative text describing what happened based on the combat events",
   "scene": {
     "type": "exploration" | "dialogue" | "combat",
     "mood": "tense" | "peaceful" | "mysterious" | "dangerous" | "celebratory",
     "location": "Brief location description"
   },
   "npcs": [{ "name": "NPC Name", "dialogue": "What they say", "attitude": "friendly" | "hostile" | "neutral" }],
-  "combat": {
-    "active": boolean,
-    "enemies": [{ "name": "Enemy", "hp": number, "maxHp": number, "ac": number, "initiative": number }],
-    "round": number,
-    "currentTurn": "Character name whose turn it is"
-  },
-  "rolls": [{ "type": "attack" | "skill" | "save", "dice": "d20", "result": number, "modifier": number, "total": number, "success": boolean }],
-  "effects": [{ "target": "Character name", "effect": "damage" | "heal" | "buff" | "debuff", "value": number, "description": "Effect description" }],
-  "loot": [{ "name": "Item name", "type": "weapon" | "armor" | "consumable" | "treasure", "description": "Brief description" }],
-  "xpGained": number,
   "suggestions": ["Possible action 1", "Possible action 2", "Possible action 3"]
 }
 
-## Combat Rules
-- Roll d20 for attacks, add modifiers
-- Critical hit on natural 20, critical fail on natural 1
-- Track HP, AC, and status effects
-- Manage initiative order
-- Describe attacks and spells dramatically
+## Combat Narration Guidelines
+When narrating combat events from the engine:
+- For "attack" events: Describe the weapon swing, the impact, the damage dealt
+- For "spell" events: Describe the magical energy, the effects, the outcome
+- For "critical" events: Make it EPIC and dramatic
+- For "fumble" events: Describe the embarrassing failure
+- For "miss" events: Describe the near-miss, the dodge, the deflection
+- For "damage" events: Describe the pain, the wound, the blood
+- For "heal" events: Describe the warm glow, the mending flesh, the relief
+- For "death" events: Describe the final moments, the fall, the silence
 
 ## Storytelling Guidelines
 - Use rich, evocative language
@@ -86,8 +112,9 @@ Always respond with a JSON object containing:
 - Reward creative solutions
 - Balance challenge and fun
 - Maintain narrative consistency
+- Trust the game engine for all mechanical outcomes
 
-Keep responses immersive and engaging. Roll dice when appropriate and describe outcomes vividly.`;
+Remember: You are the NARRATOR, not the referee. The game engine handles all mechanics - you bring them to life with words.`;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -158,8 +185,33 @@ serve(async (req) => {
 - Current Location: ${context.location || "Unknown"}
 - Campaign: ${context.campaignName || "Unnamed Adventure"}
 - In Combat: ${context.inCombat ? "Yes" : "No"}
+${context.inCombat ? `- Round: ${context.roundNumber || 1}` : ""}
+${context.inCombat && context.currentTurn ? `- Current Turn: ${context.currentTurn}` : ""}
 ${context.inCombat && context.enemies ? `- Enemies: ${context.enemies.map((e) => `${e.name} (HP: ${e.hp}/${e.maxHp})`).join(", ")}` : ""}
 ${context.history ? `- Recent Events: ${context.history}` : ""}`;
+
+      // Add combat events for narration
+      if (context.combatEvents && context.combatEvents.length > 0) {
+        systemPrompt += `\n\n## COMBAT EVENTS TO NARRATE
+The following combat events just occurred in the game engine. Narrate these events using the EXACT values provided:
+
+${context.combatEvents.map((event, i) => {
+  let eventDesc = `${i + 1}. ${event.type.toUpperCase()}`;
+  if (event.actor) eventDesc += ` - Actor: ${event.actor}`;
+  if (event.target) eventDesc += ` - Target: ${event.target}`;
+  if (event.ability) eventDesc += ` - Ability: ${event.ability}`;
+  if (event.rolls && event.rolls.length > 0) {
+    eventDesc += ` - Rolls: ${event.rolls.map(r => `${r.type || "d20"}=${r.result}${r.isCritical ? " (CRITICAL!)" : ""}${r.isFumble ? " (FUMBLE!)" : ""} total=${r.total}`).join(", ")}`;
+  }
+  if (event.damage !== undefined) eventDesc += ` - Damage: ${event.damage}`;
+  if (event.healing !== undefined) eventDesc += ` - Healing: ${event.healing}`;
+  if (event.success !== undefined) eventDesc += ` - Success: ${event.success}`;
+  if (event.description) eventDesc += ` - Note: ${event.description}`;
+  return eventDesc;
+}).join("\n")}
+
+IMPORTANT: Use these EXACT numbers in your narration. Do not invent different values.`;
+      }
     }
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {

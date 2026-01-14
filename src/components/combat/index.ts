@@ -17,3 +17,7 @@ export type { Character } from "./CombatMiniature";
 export type { Ability } from "./AbilityBar";
 export type { DiceType, DiceRoller3DRef } from "./DiceRoller3D";
 export type { TerrainType } from "./TerrainTile";
+
+// Combat Engine
+export { useCombatEngine } from "../../hooks/useCombatEngine";
+export type { CombatEvent, CombatAction, CombatEventType, DiceRollResult } from "../../hooks/useCombatEngine";
