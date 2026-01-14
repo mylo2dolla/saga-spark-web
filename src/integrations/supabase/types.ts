@@ -14,6 +14,71 @@ export type Database = {
   }
   public: {
     Tables: {
+      abilities: {
+        Row: {
+          ability_type: string
+          area_size: number | null
+          character_id: string
+          cooldown: number | null
+          cost: number | null
+          cost_type: string | null
+          created_at: string
+          damage: string | null
+          description: string
+          effects: Json | null
+          healing: string | null
+          id: string
+          is_equipped: boolean | null
+          name: string
+          range: number | null
+          targeting_type: string | null
+        }
+        Insert: {
+          ability_type?: string
+          area_size?: number | null
+          character_id: string
+          cooldown?: number | null
+          cost?: number | null
+          cost_type?: string | null
+          created_at?: string
+          damage?: string | null
+          description: string
+          effects?: Json | null
+          healing?: string | null
+          id?: string
+          is_equipped?: boolean | null
+          name: string
+          range?: number | null
+          targeting_type?: string | null
+        }
+        Update: {
+          ability_type?: string
+          area_size?: number | null
+          character_id?: string
+          cooldown?: number | null
+          cost?: number | null
+          cost_type?: string | null
+          created_at?: string
+          damage?: string | null
+          description?: string
+          effects?: Json | null
+          healing?: string | null
+          id?: string
+          is_equipped?: boolean | null
+          name?: string
+          range?: number | null
+          targeting_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "abilities_character_id_fkey"
+            columns: ["character_id"]
+            isOneToOne: false
+            referencedRelation: "characters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       campaign_members: {
         Row: {
           campaign_id: string
@@ -90,9 +155,12 @@ export type Database = {
           abilities: Json | null
           ac: number
           avatar_url: string | null
+          backpack: Json | null
           campaign_id: string
           class: string
+          class_description: string | null
           created_at: string
+          equipment: Json | null
           hp: number
           id: string
           inventory: Json | null
@@ -100,7 +168,9 @@ export type Database = {
           level: number
           max_hp: number
           name: string
+          passives: Json | null
           position: Json | null
+          resources: Json | null
           stats: Json | null
           status_effects: string[] | null
           updated_at: string
@@ -112,9 +182,12 @@ export type Database = {
           abilities?: Json | null
           ac?: number
           avatar_url?: string | null
+          backpack?: Json | null
           campaign_id: string
           class: string
+          class_description?: string | null
           created_at?: string
+          equipment?: Json | null
           hp?: number
           id?: string
           inventory?: Json | null
@@ -122,7 +195,9 @@ export type Database = {
           level?: number
           max_hp?: number
           name: string
+          passives?: Json | null
           position?: Json | null
+          resources?: Json | null
           stats?: Json | null
           status_effects?: string[] | null
           updated_at?: string
@@ -134,9 +209,12 @@ export type Database = {
           abilities?: Json | null
           ac?: number
           avatar_url?: string | null
+          backpack?: Json | null
           campaign_id?: string
           class?: string
+          class_description?: string | null
           created_at?: string
+          equipment?: Json | null
           hp?: number
           id?: string
           inventory?: Json | null
@@ -144,7 +222,9 @@ export type Database = {
           level?: number
           max_hp?: number
           name?: string
+          passives?: Json | null
           position?: Json | null
+          resources?: Json | null
           stats?: Json | null
           status_effects?: string[] | null
           updated_at?: string
@@ -240,6 +320,80 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      grid_state: {
+        Row: {
+          campaign_id: string
+          grid_size: Json
+          id: string
+          tiles: Json | null
+          updated_at: string
+        }
+        Insert: {
+          campaign_id: string
+          grid_size?: Json
+          id?: string
+          tiles?: Json | null
+          updated_at?: string
+        }
+        Update: {
+          campaign_id?: string
+          grid_size?: Json
+          id?: string
+          tiles?: Json | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grid_state_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: true
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      items: {
+        Row: {
+          abilities_granted: Json | null
+          created_at: string
+          description: string
+          effects: Json | null
+          id: string
+          item_type: string
+          name: string
+          rarity: string
+          slot: string | null
+          stat_modifiers: Json | null
+          value: number | null
+        }
+        Insert: {
+          abilities_granted?: Json | null
+          created_at?: string
+          description: string
+          effects?: Json | null
+          id?: string
+          item_type?: string
+          name: string
+          rarity?: string
+          slot?: string | null
+          stat_modifiers?: Json | null
+          value?: number | null
+        }
+        Update: {
+          abilities_granted?: Json | null
+          created_at?: string
+          description?: string
+          effects?: Json | null
+          id?: string
+          item_type?: string
+          name?: string
+          rarity?: string
+          slot?: string | null
+          stat_modifiers?: Json | null
+          value?: number | null
+        }
+        Relationships: []
       }
       profiles: {
         Row: {
