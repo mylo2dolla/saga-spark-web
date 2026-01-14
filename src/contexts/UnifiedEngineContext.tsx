@@ -22,7 +22,9 @@ import type {
   Quest,
   Item,
   CharacterProgression,
+  Location,
 } from "@/engine/narrative/types";
+import type { TravelState } from "@/engine/narrative/Travel";
 import type { UnifiedState } from "@/engine/UnifiedState";
 
 interface UnifiedEngineContextValue {
@@ -42,6 +44,8 @@ interface UnifiedEngineContextValue {
   completedQuests: Quest[];
   items: ReadonlyMap<string, Item>;
   campaignInfo: CampaignSeed;
+  travelState: TravelState | null;
+  locations: Location[];
   
   // Game Actions
   spawn: (params: {
@@ -69,6 +73,7 @@ interface UnifiedEngineContextValue {
   completeQuest: (playerId: string, questId: string) => void;
   addItem: (item: Item) => void;
   discoverLocation: (playerId: string, locationId: string) => void;
+  travelTo: (destinationId: string) => void;
   
   // Queries
   getValidMoves: (entityId: string) => Vec2[];
@@ -116,8 +121,17 @@ export function UnifiedEngineProvider({
     onWorldEvent: handleWorldEvent,
   });
   
+  // Add default travel state and locations
+  const contextValue: UnifiedEngineContextValue = {
+    ...engine,
+    eventLog,
+    travelState: engine.travelState ?? null,
+    locations: engine.locations ?? [],
+    travelTo: engine.travelTo ?? (() => {}),
+  };
+  
   return (
-    <UnifiedEngineReactContext.Provider value={{ ...engine, eventLog }}>
+    <UnifiedEngineReactContext.Provider value={contextValue}>
       {children}
     </UnifiedEngineReactContext.Provider>
   );
