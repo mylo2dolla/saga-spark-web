@@ -484,13 +484,13 @@ export function getNPCsAtLocation(
 export function getQuestsAtLocation(
   world: WorldState,
   locationId: string
-): Quest[] {
+): QuestType[] {
   const location = world.locations.get(locationId) as EnhancedLocation | undefined;
   if (!location) return [];
   
   return (location.questHooks ?? [])
     .map(questId => world.quests.get(questId))
-    .filter((quest): quest is Quest => quest !== undefined);
+    .filter((quest): quest is QuestType => quest !== undefined);
 }
 
 export function getLocationsByFaction(
