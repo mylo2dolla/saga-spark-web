@@ -29,6 +29,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { toast } from "sonner";
+import type { Json } from "@/integrations/supabase/types";
 
 // Preset campaign themes
 const CAMPAIGN_PRESETS = [
@@ -178,35 +179,35 @@ export default function NewCampaign() {
       });
 
       if (generatedWorld) {
-        // Store the generated content
+        // Store the generated content - cast to Json for Supabase
         const contentToStore = [
           ...generatedWorld.factions.map(f => ({
             campaign_id: campaign.id,
             content_type: "faction",
             content_id: f.id,
-            content: f,
-            generation_context: { title, description, themes: selectedThemes },
+            content: JSON.parse(JSON.stringify(f)) as Json,
+            generation_context: { title, description, themes: selectedThemes } as Json,
           })),
           ...generatedWorld.npcs.map((npc, i) => ({
             campaign_id: campaign.id,
             content_type: "npc",
             content_id: `npc_initial_${i}`,
-            content: npc,
-            generation_context: { title, description, themes: selectedThemes },
+            content: JSON.parse(JSON.stringify(npc)) as Json,
+            generation_context: { title, description, themes: selectedThemes } as Json,
           })),
           {
             campaign_id: campaign.id,
             content_type: "quest",
             content_id: "initial_quest",
-            content: generatedWorld.initialQuest,
-            generation_context: { title, description, themes: selectedThemes },
+            content: JSON.parse(JSON.stringify(generatedWorld.initialQuest)) as Json,
+            generation_context: { title, description, themes: selectedThemes } as Json,
           },
           {
             campaign_id: campaign.id,
             content_type: "location",
             content_id: "starting_location",
-            content: generatedWorld.startingLocation,
-            generation_context: { title, description, themes: selectedThemes },
+            content: JSON.parse(JSON.stringify(generatedWorld.startingLocation)) as Json,
+            generation_context: { title, description, themes: selectedThemes } as Json,
           },
         ];
 
