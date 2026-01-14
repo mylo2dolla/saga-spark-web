@@ -1,0 +1,285 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+interface CampaignSeed {
+  title: string;
+  description: string;
+  themes?: string[];
+}
+
+interface GenerationRequest {
+  type: "npc" | "quest" | "dialog" | "faction" | "location" | "initial_world";
+  campaignSeed: CampaignSeed;
+  context?: {
+    playerLevel?: number;
+    existingNPCs?: string[];
+    existingQuests?: string[];
+    playerActions?: string[];
+    npcId?: string;
+    npcName?: string;
+    npcPersonality?: string[];
+    playerRelationship?: string;
+    worldState?: Record<string, unknown>;
+  };
+}
+
+const SYSTEM_PROMPT = `You are the World Generator for a procedural RPG engine. You generate rich, interconnected content based on campaign seeds.
+
+RULES:
+1. All content must fit the campaign's themes and tone
+2. NPCs must have distinct personalities, goals, and memories
+3. Quests must emerge from NPC goals and world state
+4. Factions must have clear relationships and conflicts
+5. Dialog must reflect NPC personality and relationship with player
+6. All content must be internally consistent
+
+OUTPUT FORMAT: Always respond with valid JSON matching the requested schema.`;
+
+function getNPCPrompt(seed: CampaignSeed, context: GenerationRequest["context"]) {
+  return `Generate an NPC for this campaign:
+Title: "${seed.title}"
+Description: "${seed.description}"
+Themes: ${seed.themes?.join(", ") || "fantasy adventure"}
+Player Level: ${context?.playerLevel || 1}
+Existing NPCs: ${context?.existingNPCs?.join(", ") || "none yet"}
+
+Generate a unique NPC with:
+- name: string
+- title: optional title/role (e.g., "The Blacksmith", "Merchant of Shadows")
+- personality: array of 2-4 traits from: honest, deceptive, brave, cowardly, kind, cruel, greedy, generous, wise, foolish, proud, humble, loyal, treacherous, patient, impulsive
+- goals: array of 2-3 goals with id, description, priority (1-10)
+- factionId: faction they belong to
+- canTrade: boolean
+- dialogue: initial greeting dialogue node with text and 2-3 response options
+- questHook: a potential quest this NPC could offer (title, brief description, objective type)
+- secrets: 1-2 secrets they know
+
+Respond with JSON only.`;
+}
+
+function getQuestPrompt(seed: CampaignSeed, context: GenerationRequest["context"]) {
+  return `Generate a quest for this campaign:
+Title: "${seed.title}"
+Description: "${seed.description}"
+Themes: ${seed.themes?.join(", ") || "fantasy adventure"}
+Player Level: ${context?.playerLevel || 1}
+Recent Player Actions: ${context?.playerActions?.slice(-5).join(", ") || "just started"}
+Existing Quests: ${context?.existingQuests?.join(", ") || "none"}
+
+Generate a quest with:
+- title: engaging quest name
+- description: full narrative description
+- briefDescription: one-line summary
+- importance: "side" | "main" | "legendary"
+- objectives: array of 1-3 objectives, each with:
+  - type: kill | kill_type | collect | deliver | escort | explore | talk | protect | survive
+  - description: what player must do
+  - targetType: for kill_type (e.g., "goblin", "undead")
+  - required: number needed
+- rewards: { xp: number, gold: number, items: string[], storyFlags: string[] }
+- storyArc: optional overarching story this belongs to
+- timeLimit: optional turns until failure
+
+The quest should feel organic to the world and player's current situation.
+Respond with JSON only.`;
+}
+
+function getDialogPrompt(seed: CampaignSeed, context: GenerationRequest["context"]) {
+  return `Generate dialog for an NPC interaction:
+Campaign: "${seed.title}" - ${seed.description}
+NPC: ${context?.npcName || "Unknown"}
+NPC Personality: ${context?.npcPersonality?.join(", ") || "neutral"}
+Player Relationship: ${context?.playerRelationship || "stranger"}
+
+Generate a dialogue tree with:
+- greeting: initial text based on relationship
+- nodes: array of 3-5 dialogue nodes, each with:
+  - id: unique identifier
+  - text: what the NPC says
+  - speakerMood: emotional state
+  - responses: array of 2-4 player response options with:
+    - text: what player can say
+    - nextNodeId: which node this leads to
+    - effects: optional array of effects (modify_relationship, give_item, start_quest, etc.)
+
+The dialogue should reflect the NPC's personality and their relationship with the player.
+Respond with JSON only.`;
+}
+
+function getFactionPrompt(seed: CampaignSeed, context: GenerationRequest["context"]) {
+  return `Generate factions for this campaign:
+Title: "${seed.title}"
+Description: "${seed.description}"
+Themes: ${seed.themes?.join(", ") || "fantasy adventure"}
+
+Generate 3-5 factions, each with:
+- id: unique identifier
+- name: faction name
+- description: who they are and what they represent
+- alignment: one of lawful_good, neutral_good, chaotic_good, lawful_neutral, true_neutral, chaotic_neutral, lawful_evil, neutral_evil, chaotic_evil
+- goals: array of 2-3 faction goals
+- enemies: array of faction IDs they oppose
+- allies: array of faction IDs they support
+
+Factions should create interesting political dynamics and conflict opportunities.
+Respond with JSON only.`;
+}
+
+function getLocationPrompt(seed: CampaignSeed, context: GenerationRequest["context"]) {
+  return `Generate a location for this campaign:
+Title: "${seed.title}"
+Description: "${seed.description}"
+Themes: ${seed.themes?.join(", ") || "fantasy adventure"}
+Player Level: ${context?.playerLevel || 1}
+
+Generate a location with:
+- name: memorable location name
+- description: vivid description of the place
+- type: town | dungeon | wilderness | ruins | temple | castle | cave
+- dangerLevel: 1-10
+- inhabitants: array of NPC types that might be found here
+- loot: array of potential item types
+- secrets: 1-2 hidden things to discover
+- connectedTo: types of locations this might connect to
+
+The location should feel alive and full of adventure potential.
+Respond with JSON only.`;
+}
+
+function getInitialWorldPrompt(seed: CampaignSeed) {
+  return `Generate the initial world state for a new campaign:
+Title: "${seed.title}"
+Description: "${seed.description}"
+Themes: ${seed.themes?.join(", ") || "fantasy adventure"}
+
+Generate a complete starting world with:
+
+1. factions: array of 3-4 factions (see faction schema above)
+
+2. startingLocation: the town/area where the adventure begins with:
+   - name, description, type
+   
+3. npcs: array of 3-5 starting NPCs with:
+   - name, title, personality traits, factionId
+   - canTrade, greeting dialogue
+   - a questHook each might offer
+
+4. initialQuest: the first quest to hook the player with:
+   - title, description, objectives, rewards
+   
+5. worldHooks: 3-4 story seeds that can develop into future quests
+
+This should feel like a rich, living world ready for adventure.
+Respond with JSON only.`;
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const { type, campaignSeed, context } = (await req.json()) as GenerationRequest;
+    
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) {
+      throw new Error("LOVABLE_API_KEY is not configured");
+    }
+
+    let prompt: string;
+    switch (type) {
+      case "npc":
+        prompt = getNPCPrompt(campaignSeed, context);
+        break;
+      case "quest":
+        prompt = getQuestPrompt(campaignSeed, context);
+        break;
+      case "dialog":
+        prompt = getDialogPrompt(campaignSeed, context);
+        break;
+      case "faction":
+        prompt = getFactionPrompt(campaignSeed, context);
+        break;
+      case "location":
+        prompt = getLocationPrompt(campaignSeed, context);
+        break;
+      case "initial_world":
+        prompt = getInitialWorldPrompt(campaignSeed);
+        break;
+      default:
+        throw new Error(`Unknown generation type: ${type}`);
+    }
+
+    console.log(`Generating ${type} for campaign: ${campaignSeed.title}`);
+
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.8,
+        max_tokens: 4096,
+      }),
+    });
+
+    if (!response.ok) {
+      if (response.status === 429) {
+        return new Response(
+          JSON.stringify({ error: "Rate limit exceeded. Please try again later." }),
+          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      if (response.status === 402) {
+        return new Response(
+          JSON.stringify({ error: "Usage limit reached. Please add credits." }),
+          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      const errorText = await response.text();
+      console.error("AI Gateway error:", response.status, errorText);
+      throw new Error(`AI Gateway error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content;
+
+    if (!content) {
+      throw new Error("No content in AI response");
+    }
+
+    // Parse the JSON response
+    let parsed;
+    try {
+      // Try to extract JSON from the response (handle markdown code blocks)
+      const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, content];
+      parsed = JSON.parse(jsonMatch[1].trim());
+    } catch (parseError) {
+      console.error("Failed to parse AI response:", content);
+      throw new Error("Invalid JSON response from AI");
+    }
+
+    console.log(`Successfully generated ${type}`);
+
+    return new Response(
+      JSON.stringify({ type, content: parsed }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  } catch (error) {
+    console.error("World generator error:", error);
+    return new Response(
+      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+});
