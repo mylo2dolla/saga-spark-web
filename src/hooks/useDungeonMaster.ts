@@ -18,6 +18,7 @@ export interface DMResponse {
     type: "exploration" | "dialogue" | "combat";
     mood: string;
     location: string;
+    environment?: string;
   };
   npcs?: Array<{
     name: string;
@@ -56,6 +57,19 @@ export interface DMResponse {
     description: string;
   }>;
   xpGained?: number;
+  levelUps?: Array<{
+    character: string;
+    newLevel: number;
+    gainedStats: {
+      strength?: number;
+      dexterity?: number;
+      constitution?: number;
+      intelligence?: number;
+      wisdom?: number;
+      charisma?: number;
+    };
+    abilitiesGained: string[];
+  }>;
   suggestions?: string[];
 }
 
