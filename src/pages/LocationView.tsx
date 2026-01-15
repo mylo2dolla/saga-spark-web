@@ -46,14 +46,6 @@ export default function LocationView() {
     }
   }, [world, campaignId, navigate, gameSession.isLoading]);
 
-  if (gameSession.isLoading) {
-    return (
-      <div className="h-screen flex items-center justify-center bg-background">
-        <p className="text-muted-foreground">Loading location...</p>
-      </div>
-    );
-  }
-
   // Get location from engine
   const location = world?.locations.get(locationId ?? "") as EnhancedLocation | undefined;
   const currentLocationId = travelState?.currentLocationId;
@@ -127,6 +119,14 @@ export default function LocationView() {
     toast.info("Combat encounters start during travel.");
     navigate(`/game/${campaignId}`);
   }, [campaignId, navigate]);
+
+  if (gameSession.isLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <p className="text-muted-foreground">Loading location...</p>
+      </div>
+    );
+  }
 
   if (!location || !world || !travelState) {
     return (
