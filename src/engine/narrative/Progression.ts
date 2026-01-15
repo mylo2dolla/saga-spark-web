@@ -9,6 +9,7 @@ import type {
   XPSource,
   StatModifiers,
 } from "./types";
+import { createEquipment, createInventory } from "./Item";
 
 // ============= Level Curve =============
 
@@ -70,6 +71,8 @@ export function createProgression(
     baseStats,
     abilitySlots: 2,
     unlockedAbilities: [],
+    inventory: createInventory(),
+    equipment: createEquipment(),
   };
 }
 

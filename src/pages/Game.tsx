@@ -25,12 +25,15 @@ import {
   type Ability
 } from "@/components/combat";
 import { TravelPanel } from "@/components/game/TravelPanel";
+import { SettingsPanel } from "@/components/game/SettingsPanel";
 import { DMChat } from "@/components/DMChat";
 import { useDungeonMaster } from "@/hooks/useDungeonMaster";
 import { useRealtimeCharacters, type GameCharacter } from "@/hooks/useRealtimeGame";
 import { useCharacter, type CharacterAbility } from "@/hooks/useCharacter";
 import { useServerHeartbeat } from "@/hooks/useServerHeartbeat";
 import { useGameSession } from "@/hooks/useGameSession";
+import { useNarrator } from "@/hooks/useNarrator";
+import { useSettings } from "@/hooks/useSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { beginTravel, resumeTravelAfterCombat, type BeginTravelResult } from "@/engine/WorldTravelEngine";
@@ -76,6 +79,7 @@ const Game = () => {
   const { user } = useAuth();
   const [showDice, setShowDice] = useState(false);
   const [showTravelPanel, setShowTravelPanel] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [campaign, setCampaign] = useState<{ name: string; current_scene: string | null } | null>(null);
   const [inCombat, setInCombat] = useState(false);
@@ -96,6 +100,8 @@ const Game = () => {
 
   // Game session with persistence
   const gameSession = useGameSession({ campaignId: campaignId ?? "" });
+  const { settings, updateSettings } = useSettings();
+  const { entries: narrationEntries, appendFromEvent, clearNarration } = useNarrator({ settings });
 
   const { 
     messages, 
@@ -210,11 +216,13 @@ const Game = () => {
   // Handle world events
   const handleWorldEvent = useCallback((event: WorldEvent) => {
     console.log("World event:", event);
-  }, []);
+    appendFromEvent(event);
+  }, [appendFromEvent]);
 
   // Handle engine events (including combat end -> world bridge)
   const handleEngineEvent = useCallback((event: GameEvent) => {
     console.log("Engine event:", event);
+    appendFromEvent(event);
     
     // Sync damage back to database
     if (event.type === "entity_damaged" && event.entityId && event.value) {
@@ -315,7 +323,7 @@ const Game = () => {
       // Clear combat entities
       setCombatEntitiesForArena([]);
     }
-  }, [partyCharacters, updateCharacter, travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession, combatEntitiesForArena]);
+  }, [partyCharacters, updateCharacter, travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession, combatEntitiesForArena, appendFromEvent]);
 
   const handleSendMessage = (message: string) => {
     const context = {
@@ -427,7 +435,9 @@ const Game = () => {
             <Button variant={showDice ? "default" : "ghost"} size="sm" onClick={() => setShowDice(!showDice)}>
               <Sparkles className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="sm"><Settings className="w-4 h-4" /></Button>
+            <Button variant="ghost" size="sm" onClick={() => setShowSettings(true)}>
+              <Settings className="w-4 h-4" />
+            </Button>
           </div>
         </div>
       </header>
@@ -630,6 +640,15 @@ const Game = () => {
           )}
         </AnimatePresence>
       </div>
+
+      <SettingsPanel
+        open={showSettings}
+        onOpenChange={setShowSettings}
+        settings={settings}
+        onSettingsChange={updateSettings}
+        narration={narrationEntries}
+        onClearNarration={clearNarration}
+      />
     </div>
   );
 };
