@@ -10,7 +10,6 @@ import {
   deserializeUnifiedState,
   type UnifiedState 
 } from "@/engine/UnifiedState";
-import * as World from "@/engine/narrative/World";
 import * as TravelPersistence from "@/engine/narrative/TravelPersistence";
 import { type TravelState, createTravelState } from "@/engine/narrative/Travel";
 import { toast } from "sonner";
@@ -202,7 +201,9 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
         pendingEvents: [],
       };
 
-      const worldState = World.deserializeWorld(JSON.stringify(data.world_state));
+      const worldState = TravelPersistence.deserializeTravelWorldState(
+        JSON.stringify(data.world_state)
+      );
 
       const unifiedState: UnifiedState = {
         game: gameState,

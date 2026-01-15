@@ -26,7 +26,7 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { useGameSession } from "@/hooks/useGameSession";
+import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import * as World from "@/engine/narrative/World";
 import type { Quest, QuestObjective, NPC } from "@/engine/narrative/types";
 
@@ -43,7 +43,7 @@ export default function QuestView() {
   const { campaignId, questId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
+  const gameSession = useGameSessionContext();
   const world = gameSession.unifiedState?.world;
   const playerId = user?.id ?? "";
 
