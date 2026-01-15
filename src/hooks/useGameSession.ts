@@ -408,36 +408,39 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   }, [autosave]);
 
   // Initialize on mount
-  useEffect(() => {
+useEffect(() => {
+  if (!campaignId || !userId) {
+    setSessionState(prev => ({
+      ...prev,
+      isInitialized: false,
+      isLoading: false,
+      error: null,
+    }));
     hasInitializedRef.current = false;
-  }, [userId, campaignId]);
+    return;
+  }
 
-  useEffect(() => {
-    if (!campaignId || !userId) {
-      setSessionState(prev => ({
-        ...prev,
-        isInitialized: false,
-        isLoading: false,
-        error: null,
-      }));
-      hasInitializedRef.current = false;
-      return;
-    }
-    if (!hasLoadedContent) return;
-    if (hasInitializedRef.current) return;
+  if (!hasLoadedContent) return;
+  if (hasInitializedRef.current) return;
 
-    hasInitializedRef.current = true;
-    void initializeSession().catch(error => {
+  void (async () => {
+    try {
+      await initializeSession();
+      hasInitializedRef.current = true;
+    } catch (error) {
       console.error("Failed to initialize game session:", error);
       const message = error instanceof Error ? error.message : "Failed to load game";
+      hasInitializedRef.current = false;
       setSessionState(prev => ({
         ...prev,
         isInitialized: false,
         isLoading: false,
         error: message,
       }));
-    });
-  }, [userId, campaignId, hasLoadedContent, initializeSession]);
+    }
+  })();
+}, [userId, campaignId, hasLoadedContent, initializeSession]);
+
 
   useEffect(() => {
     if (!sessionState.unifiedState || !worldContent) return;
