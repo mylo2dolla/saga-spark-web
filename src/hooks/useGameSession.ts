@@ -70,9 +70,16 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       
       if (campaignError) throw campaignError;
       
-      // Check for existing save
-      await persistence.fetchSaves();
-      const existingSaves = persistence.saves;
+      // Fetch saves directly to ensure we have latest data
+      const { data: savesData } = await supabase
+        .from("game_saves")
+        .select("*")
+        .eq("campaign_id", campaignId)
+        .eq("user_id", userId)
+        .order("updated_at", { ascending: false })
+        .limit(10);
+      
+      const existingSaves = savesData ?? [];
       const latestSave = existingSaves[0]; // Most recent
       
       let unifiedState: UnifiedState;
@@ -90,6 +97,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           travelState = worldWithTravel.travelState ?? createTravelState("starting_location");
           initialPlaytime = latestSave.playtime_seconds;
           lastSaveIdRef.current = latestSave.id;
+          
+          // Re-merge world content to pick up any new generated content
+          if (worldContent) {
+            unifiedState = {
+              ...unifiedState,
+              world: mergeIntoWorldState(unifiedState.world, worldContent),
+            };
+          }
         } else {
           throw new Error("Failed to load save");
         }
@@ -107,7 +122,39 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         // Create base state
         unifiedState = createUnifiedState(campaignSeed, [], 10, 12);
         
-        // Merge in generated content if available
+        // Add a default starting location if none exists from world content
+        const defaultStartingLocation: EnhancedLocation = {
+          id: "starting_location",
+          name: "Haven Village",
+          description: "A peaceful village at the crossroads of adventure. Travelers gather here before venturing into the unknown.",
+          type: "town",
+          connectedTo: [],
+          position: { x: 100, y: 100 },
+          radius: 30,
+          discovered: true,
+          items: [],
+          dangerLevel: 1,
+          npcs: [],
+          factionControl: null,
+          questHooks: [],
+          services: ["rest", "trade", "heal"] as const,
+          ambientDescription: "The sounds of a bustling marketplace fill the air. Smoke rises from the inn's chimney.",
+          shops: [],
+          inn: true,
+          travelTime: {},
+          currentEvents: [],
+        };
+        
+        // Add starting location to world
+        unifiedState = {
+          ...unifiedState,
+          world: {
+            ...unifiedState.world,
+            locations: new Map([[defaultStartingLocation.id, defaultStartingLocation]]),
+          },
+        };
+        
+        // Merge in generated content if available (this will add more locations, NPCs, etc.)
         if (worldContent) {
           unifiedState = {
             ...unifiedState,
