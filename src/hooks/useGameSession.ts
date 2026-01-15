@@ -77,9 +77,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const autosaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveIdRef = useRef<string | null>(null);
   const lastMergedContentRef = useRef<typeof worldContent>(null);
-  const hasInitializedRef = useRef(false);
+  const initializedKeyRef = useRef<string | null>(null);
   const initializingRef = useRef(false); // Prevents concurrent initializations
-  const hasLoggedWorldInitRef = useRef(false);
 
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
@@ -91,12 +90,16 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
     if (locations.size === 0) {
       locations.set(DEFAULT_STARTING_LOCATION.id, DEFAULT_STARTING_LOCATION);
+    } else if (!locations.has(DEFAULT_STARTING_LOCATION.id)) {
+      locations.set(DEFAULT_STARTING_LOCATION.id, DEFAULT_STARTING_LOCATION);
     }
 
     const locationIds = Array.from(locations.keys());
     let currentLocationId = nextTravel.currentLocationId;
     if (!locations.has(currentLocationId)) {
-      currentLocationId = locationIds[0];
+      currentLocationId = locations.has(DEFAULT_STARTING_LOCATION.id)
+        ? DEFAULT_STARTING_LOCATION.id
+        : locationIds[0];
     }
 
     if (nextTravel.isInTransit && nextTravel.transitDestinationId) {
@@ -157,8 +160,17 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   }, []);
 
   // Initialize session from saved state or fresh
-  const initializeSession = useCallback(async () => {
-    if (!campaignId || !userId) return;
+  const initializeSession = useCallback(async (initKey: string) => {
+    if (!campaignId || !userId) {
+      setSessionState(prev => ({
+        ...prev,
+        isInitialized: false,
+        isLoading: false,
+        error: "Missing campaign or user information.",
+      }));
+      initializingRef.current = false;
+      return;
+    }
     if (initializingRef.current) return; // Prevent concurrent init
     initializingRef.current = true;
     
@@ -267,7 +279,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         playtimeSeconds: initialPlaytime,
       });
       
-      hasInitializedRef.current = true;
+      initializedKeyRef.current = initKey;
       initializingRef.current = false;
       
     } catch (error) {
@@ -275,7 +287,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       const message = error instanceof Error ? error.message : "Failed to load game";
       toast.error(message);
       initializingRef.current = false;
-      hasInitializedRef.current = false;
+      initializedKeyRef.current = null;
       setSessionState(prev => ({
         ...prev,
         isInitialized: false,
@@ -412,7 +424,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     if (loaded) {
       const worldWithTravel = loaded.world as unknown as TravelWorldState;
       const travelState = worldWithTravel.travelState ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
-      const invariantResult = ensureWorldInvariants(loaded, travelState);
+      const mergedWorld = worldContent
+        ? mergeIntoWorldState(loaded.world, worldContent)
+        : loaded.world;
+      const invariantResult = ensureWorldInvariants(
+        { ...loaded, world: mergedWorld },
+        travelState
+      );
       
       lastSaveIdRef.current = saveId;
       
@@ -426,7 +444,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       return true;
     }
     return false;
-  }, [persistence, ensureWorldInvariants]);
+  }, [persistence, ensureWorldInvariants, worldContent, mergeIntoWorldState]);
 
   // Start playtime tracking
   useEffect(() => {
@@ -463,18 +481,20 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         ...prev,
         isInitialized: false,
         isLoading: false,
-        error: null,
+        error: "Missing campaign or user information.",
       }));
-      hasInitializedRef.current = false;
+      initializedKeyRef.current = null;
       initializingRef.current = false;
       return;
     }
 
     if (!hasLoadedContent) return;
-    if (hasInitializedRef.current) return;
     if (initializingRef.current) return;
 
-    initializeSession();
+    const initKey = `${userId}:${campaignId}`;
+    if (initializedKeyRef.current === initKey) return;
+
+    initializeSession(initKey);
   }, [userId, campaignId, hasLoadedContent, initializeSession]);
 
   // Trigger autosave after successful initialization
@@ -495,33 +515,18 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     lastMergedContentRef.current = worldContent;
     setSessionState(prev => {
       if (!prev.unifiedState) return prev;
+      const mergedWorld = mergeIntoWorldState(prev.unifiedState.world, worldContent);
+      const invariantResult = ensureWorldInvariants(
+        { ...prev.unifiedState, world: mergedWorld },
+        prev.travelState
+      );
       return {
         ...prev,
-        unifiedState: {
-          ...prev.unifiedState,
-          world: mergeIntoWorldState(prev.unifiedState.world, worldContent),
-        },
+        unifiedState: invariantResult.unified,
+        travelState: invariantResult.travel,
       };
     });
-  }, [worldContent, mergeIntoWorldState, sessionState.unifiedState]);
-
-  useEffect(() => {
-    if (!sessionState.isInitialized || !sessionState.unifiedState || hasLoggedWorldInitRef.current) return;
-    const locations = sessionState.unifiedState.world.locations;
-    const missingConnections: Array<{ from: string; to: string }> = [];
-    for (const [locationId, location] of locations) {
-      for (const targetId of location.connectedTo) {
-        if (!locations.has(targetId)) {
-          missingConnections.push({ from: locationId, to: targetId });
-        }
-      }
-    }
-    console.info("[GameSession] World initialized", {
-      locations: locations.size,
-      missingConnections,
-    });
-    hasLoggedWorldInitRef.current = true;
-  }, [sessionState.isInitialized, sessionState.unifiedState]);
+  }, [worldContent, mergeIntoWorldState, sessionState.unifiedState, ensureWorldInvariants]);
 
   // Cleanup
   useEffect(() => {
