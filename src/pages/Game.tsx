@@ -36,7 +36,7 @@ import { useNarrator } from "@/hooks/useNarrator";
 import { useSettings } from "@/hooks/useSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { beginTravel, resumeTravelAfterCombat, type BeginTravelResult } from "@/engine/WorldTravelEngine";
+import { resumeTravelAfterCombat } from "@/engine/WorldTravelEngine";
 import { applyCombatOutcome, buildCombatOutcome } from "@/engine/CombatWorldBridge";
 import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import type { GameEvent, Vec2, Entity } from "@/engine";
@@ -225,9 +225,8 @@ const Game = () => {
     appendFromEvent(event);
   }, [appendFromEvent]);
 
-  // Handle engine events (including combat end -> world bridge)
+  // Handle engine events (excluding combat end which is handled by onCombatEnd)
   const handleEngineEvent = useCallback((event: GameEvent) => {
-    console.log("Engine event:", event);
     appendFromEvent(event);
     
     // Sync damage back to database
@@ -250,86 +249,64 @@ const Game = () => {
       toast.error(event.description);
     }
     
-    // Handle combat end with proper world state updates
-    if (event.type === "combat_ended") {
-      toast.success(event.description);
-      setInCombat(false);
+    // Note: combat_ended is now handled by onCombatEnd callback
+  }, [partyCharacters, updateCharacter, appendFromEvent]);
+
+  // Handle combat end with real entity state from the arena
+  const handleCombatEnd = useCallback((finalEntities: Entity[], victory: boolean) => {
+    setInCombat(false);
+    
+    // Apply combat outcome to world state
+    if (travelWorldState && user?.id) {
+      // Build and apply combat outcome using the actual final entity state
+      const locationId = travelWorldState.travelState.isInTransit 
+        ? travelWorldState.travelState.transitDestinationId ?? travelWorldState.travelState.currentLocationId
+        : travelWorldState.travelState.currentLocationId;
       
-      // Apply combat outcome to world state
-      if (travelWorldState && user?.id) {
-        // Determine victory from combat state
-        const playerSurvivors = combatEntitiesForArena.filter(
-          e => e.faction === "player" && e.hp > 0
-        );
-        const enemySurvivors = combatEntitiesForArena.filter(
-          e => e.faction === "enemy" && e.hp > 0
-        );
-        const victory = playerSurvivors.length > 0 && enemySurvivors.length === 0;
-        
-        // Build and apply combat outcome
-        const locationId = travelWorldState.travelState.isInTransit 
-          ? travelWorldState.travelState.transitDestinationId ?? travelWorldState.travelState.currentLocationId
-          : travelWorldState.travelState.currentLocationId;
-        
-        const outcome = buildCombatOutcome(
-          { 
-            tick: Date.now(), 
-            entities: new Map(combatEntitiesForArena.map(e => [e.id ?? e.name, {
-              id: e.id ?? e.name,
-              name: e.name,
-              faction: e.faction,
-              position: e.position,
-              velocity: { x: 0, y: 0 },
-              radius: 0.4,
-              mass: 1,
-              hp: e.hp,
-              maxHp: e.maxHp ?? e.hp,
-              ac: e.ac ?? 10,
-              initiative: e.initiative ?? 10,
-              isAlive: e.hp > 0,
-              statusEffects: [],
-            }] as [string, Entity])),
-            board: { rows: 10, cols: 12, cellSize: 1, tiles: [] },
-            isInCombat: false,
-            turnOrder: { order: [], currentIndex: 0, roundNumber: 1 },
-            pendingEvents: [],
-          },
-          locationId,
-          0,
-          false,
-          []
-        );
-        
-        const combatResult = applyCombatOutcome(travelWorldState, outcome, user.id);
-        
-        // Notify about XP and level up
-        if (combatResult.playerXpGained > 0) {
-          toast.success(`Gained ${combatResult.playerXpGained} XP!`);
-        }
-        if (combatResult.playerLeveledUp) {
-          toast.success(`Level up! Now level ${combatResult.newLevel}!`);
-        }
-        
-        // Resume travel after combat
-        const travelResult = resumeTravelAfterCombat(combatResult.world, user.id, victory);
-        
-        handleWorldUpdate(travelResult.world);
-        handleTravelStateUpdate(travelResult.travelState);
-        
-        if (travelResult.arrived) {
-          toast.success(`Arrived at destination!`);
-        } else if (!victory) {
-          toast.warning(`Retreated to safety.`);
-        }
-        
-        // Trigger autosave after combat
-        gameSession.triggerAutosave();
+      const outcome = buildCombatOutcome(
+        { 
+          tick: Date.now(), 
+          entities: new Map(finalEntities.map(e => [e.id, e])),
+          board: { rows: 10, cols: 12, cellSize: 1, tiles: [] },
+          isInCombat: false,
+          turnOrder: { order: [], currentIndex: 0, roundNumber: 1 },
+          pendingEvents: [],
+        },
+        locationId,
+        0,
+        false,
+        []
+      );
+      
+      const combatResult = applyCombatOutcome(travelWorldState, outcome, user.id);
+      
+      // Notify about XP and level up
+      if (combatResult.playerXpGained > 0) {
+        toast.success(`Gained ${combatResult.playerXpGained} XP!`);
+      }
+      if (combatResult.playerLeveledUp) {
+        toast.success(`Level up! Now level ${combatResult.newLevel}!`);
       }
       
-      // Clear combat entities
-      setCombatEntitiesForArena([]);
+      // Resume travel after combat
+      const travelResult = resumeTravelAfterCombat(combatResult.world, user.id, victory);
+      
+      handleWorldUpdate(travelResult.world);
+      handleTravelStateUpdate(travelResult.travelState);
+      
+      if (travelResult.arrived) {
+        toast.success(`Arrived at destination!`);
+      } else if (!victory) {
+        toast.warning(`Retreated to safety.`);
+      }
+      
+      // Trigger autosave after combat
+      gameSession.triggerAutosave();
     }
-  }, [partyCharacters, updateCharacter, travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession, combatEntitiesForArena, appendFromEvent]);
+    
+    // Clear combat entities
+    setCombatEntitiesForArena([]);
+  }, [travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession]);
 
   const handleSendMessage = (message: string) => {
     const context = {
@@ -562,6 +539,7 @@ const Game = () => {
               rows={10}
               cols={12}
               onEvent={handleEngineEvent}
+              onCombatEnd={handleCombatEnd}
             />
           </div>
         )}

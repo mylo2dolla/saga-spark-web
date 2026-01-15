@@ -19,9 +19,10 @@ import { toast } from "sonner";
 interface CombatArenaInnerProps {
   myEntityId?: string;
   onEvent?: (event: GameEvent) => void;
+  onCombatEnd?: (entities: Entity[], victory: boolean) => void;
 }
 
-function CombatArenaInner({ myEntityId, onEvent }: CombatArenaInnerProps) {
+function CombatArenaInner({ myEntityId, onEvent, onCombatEnd }: CombatArenaInnerProps) {
   const { 
     entities, 
     currentTurn, 
@@ -141,12 +142,14 @@ function CombatArenaInner({ myEntityId, onEvent }: CombatArenaInnerProps) {
     
     if (aliveAllies.length === 0) {
       toast.error("Defeat! All allies have fallen.");
+      onCombatEnd?.(entities, false);
       finishCombat();
     } else if (aliveEnemies.length === 0 && entities.some(e => e.faction === "enemy")) {
       toast.success("Victory! All enemies defeated.");
+      onCombatEnd?.(entities, true);
       finishCombat();
     }
-  }, [isInCombat, aliveAllies.length, aliveEnemies.length, entities, finishCombat]);
+  }, [isInCombat, aliveAllies.length, aliveEnemies.length, entities, finishCombat, onCombatEnd]);
 
   return (
     <div className="flex flex-col gap-4 p-4 h-full">
@@ -262,6 +265,7 @@ interface CombatArenaProps {
   rows?: number;
   cols?: number;
   onEvent?: (event: GameEvent) => void;
+  onCombatEnd?: (entities: Entity[], victory: boolean) => void;
 }
 
 export function CombatArena({
@@ -270,6 +274,7 @@ export function CombatArena({
   rows = 10,
   cols = 12,
   onEvent,
+  onCombatEnd,
 }: CombatArenaProps) {
   return (
     <EngineProvider 
@@ -279,6 +284,7 @@ export function CombatArena({
         initialEntities={initialEntities} 
         myEntityId={myEntityId}
         onEvent={onEvent}
+        onCombatEnd={onCombatEnd}
       />
     </EngineProvider>
   );
@@ -289,10 +295,12 @@ function CombatArenaWithEntities({
   initialEntities, 
   myEntityId,
   onEvent,
+  onCombatEnd,
 }: { 
   initialEntities: CombatArenaProps["initialEntities"]; 
   myEntityId?: string;
   onEvent?: (event: GameEvent) => void;
+  onCombatEnd?: (entities: Entity[], victory: boolean) => void;
 }) {
   const { spawn } = useEngine();
 
@@ -302,7 +310,7 @@ function CombatArenaWithEntities({
     initialEntities.forEach(e => spawn(e));
   }, []); // Only run once on mount
 
-  return <CombatArenaInner myEntityId={myEntityId} onEvent={onEvent} />;
+  return <CombatArenaInner myEntityId={myEntityId} onEvent={onEvent} onCombatEnd={onCombatEnd} />;
 }
 
 export default CombatArena;

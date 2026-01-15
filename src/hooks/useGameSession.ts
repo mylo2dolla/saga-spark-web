@@ -18,12 +18,13 @@ import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import type { CampaignSeed } from "@/engine/narrative/types";
 import { toast } from "sonner";
 
+// Default fallback location with a self-referencing connection to prevent travel errors
 const DEFAULT_STARTING_LOCATION: EnhancedLocation = {
   id: "starting_location",
   name: "Haven Village",
   description: "A peaceful village at the crossroads of adventure. Travelers gather here before venturing into the unknown.",
   type: "town",
-  connectedTo: [],
+  connectedTo: ["starting_location"], // Self-reference prevents "no connected locations" issue
   position: { x: 100, y: 100 },
   radius: 30,
   discovered: true,
@@ -77,6 +78,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const lastSaveIdRef = useRef<string | null>(null);
   const lastMergedContentRef = useRef<typeof worldContent>(null);
   const hasInitializedRef = useRef(false);
+  const initializingRef = useRef(false); // Prevents concurrent initializations
 
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
@@ -156,6 +158,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   // Initialize session from saved state or fresh
   const initializeSession = useCallback(async () => {
     if (!campaignId || !userId) return;
+    if (initializingRef.current) return; // Prevent concurrent init
+    initializingRef.current = true;
     
     setSessionState(prev => ({ ...prev, isLoading: true, error: null }));
     
@@ -262,10 +266,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         playtimeSeconds: initialPlaytime,
       });
       
+      hasInitializedRef.current = true;
+      initializingRef.current = false;
+      
     } catch (error) {
       console.error("Failed to initialize game session:", error);
       const message = error instanceof Error ? error.message : "Failed to load game";
       toast.error(message);
+      initializingRef.current = false;
+      hasInitializedRef.current = false;
       setSessionState(prev => ({
         ...prev,
         isInitialized: false,
@@ -408,40 +417,38 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   }, [autosave]);
 
   // Initialize on mount
-useEffect(() => {
-  if (!campaignId || !userId) {
-    setSessionState(prev => ({
-      ...prev,
-      isInitialized: false,
-      isLoading: false,
-      error: null,
-    }));
-    hasInitializedRef.current = false;
-    return;
-  }
-
-  if (!hasLoadedContent) return;
-  if (hasInitializedRef.current) return;
-
-  void (async () => {
-    try {
-      await initializeSession();
-      hasInitializedRef.current = true;
-    } catch (error) {
-      console.error("Failed to initialize game session:", error);
-      const message = error instanceof Error ? error.message : "Failed to load game";
-      hasInitializedRef.current = false;
+  useEffect(() => {
+    if (!campaignId || !userId) {
       setSessionState(prev => ({
         ...prev,
         isInitialized: false,
         isLoading: false,
-        error: message,
+        error: null,
       }));
+      hasInitializedRef.current = false;
+      initializingRef.current = false;
+      return;
     }
-  })();
-}, [userId, campaignId, hasLoadedContent, initializeSession]);
 
+    if (!hasLoadedContent) return;
+    if (hasInitializedRef.current) return;
+    if (initializingRef.current) return;
 
+    initializeSession();
+  }, [userId, campaignId, hasLoadedContent, initializeSession]);
+
+  // Trigger autosave after successful initialization
+  useEffect(() => {
+    if (sessionState.isInitialized && sessionState.unifiedState && sessionState.travelState) {
+      // Debounced autosave after init
+      const timeout = setTimeout(() => {
+        autosave();
+      }, 3000);
+      return () => clearTimeout(timeout);
+    }
+  }, [sessionState.isInitialized, autosave]); // Only on first init
+
+  // Merge new world content into state
   useEffect(() => {
     if (!sessionState.unifiedState || !worldContent) return;
     if (lastMergedContentRef.current === worldContent) return;
