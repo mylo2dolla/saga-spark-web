@@ -3,7 +3,7 @@
  * Shows locations, connections, and player position from engine state.
  */
 
-import { useMemo, useCallback, useEffect } from "react";
+import { useMemo, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import type { EnhancedLocation, LocationType } from "@/engine/narrative/Travel";
 
@@ -47,6 +46,7 @@ export default function WorldMap() {
   const navigate = useNavigate();
   const gameSession = useGameSessionContext();
   const world = gameSession.unifiedState?.world;
+  const travelState = gameSession.travelState;
 
   // Get all locations from engine
   const locations = useMemo(() => {
@@ -55,17 +55,8 @@ export default function WorldMap() {
   }, [world]);
 
   // Get current location
-  const currentLocationId = gameSession.travelState?.currentLocationId;
-  const discoveredLocations = gameSession.travelState?.discoveredLocations ?? new Set();
-
-  useEffect(() => {
-    if (!world) return;
-    console.info("[WorldMap] Rendering from session world", {
-      campaignId,
-      worldMatchesSession: world === gameSession.unifiedState?.world,
-      locations: world.locations.size,
-    });
-  }, [campaignId, world, gameSession.unifiedState]);
+  const currentLocationId = travelState?.currentLocationId;
+  const discoveredLocations = travelState?.discoveredLocations ?? new Set();
 
   // Calculate map bounds
   const bounds = useMemo(() => {
@@ -113,12 +104,14 @@ export default function WorldMap() {
     );
   }
 
-  if (!world) {
+  if (!gameSession.isInitialized || !world || !travelState) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
         <div className="text-center">
           <Map className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-          <p className="text-muted-foreground">No map data available.</p>
+          <p className="text-muted-foreground">
+            {gameSession.error ?? "Map data is not ready yet."}
+          </p>
           <Link to={`/game/${campaignId}`} className="mt-4 inline-block">
             <Button>Return to Game</Button>
           </Link>
