@@ -38,7 +38,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { beginTravel, resumeTravelAfterCombat, type BeginTravelResult } from "@/engine/WorldTravelEngine";
 import { applyCombatOutcome, buildCombatOutcome } from "@/engine/CombatWorldBridge";
-import { type TravelWorldState, createTravelWorldState } from "@/engine/narrative/TravelPersistence";
+import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import type { GameEvent, Vec2, Entity } from "@/engine";
 import type { WorldEvent } from "@/engine/narrative/types";
 
@@ -392,6 +392,33 @@ const Game = () => {
         <div className="text-center">
           <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
           <p className="text-muted-foreground">Loading adventure...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!campaignId) {
+    return (
+      <div className="h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-muted-foreground">Campaign not found.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameSession.error || !gameSession.isInitialized || !gameSession.unifiedState || !gameSession.travelState) {
+    return (
+      <div className="h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <p className="text-muted-foreground">
+            {gameSession.error ?? "Failed to load the campaign session."}
+          </p>
+          <Link to="/dashboard">
+            <Button variant="outline" size="sm">
+              Back to Dashboard
+            </Button>
+          </Link>
         </div>
       </div>
     );
