@@ -55,95 +55,78 @@ export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
   const nodeNameRef = useRef(nodeName);
 
-  // Send heartbeat using UPSERT
+  // Send heartbeat using UPSERT with unique constraint (user_id, node_name)
   const sendHeartbeat = useCallback(async () => {
     if (!user) return;
 
     const startTime = Date.now();
 
     try {
-      // UPSERT: If a row with this user_id + node_name exists, update it
-      // Otherwise insert a new row
-      const { data, error } = await supabase
+      // First check if node exists
+      const { data: existingNode } = await supabase
         .from("server_nodes")
-        .upsert(
-          {
-            node_name: nodeNameRef.current,
-            user_id: user.id,
+        .select("id")
+        .eq("user_id", user.id)
+        .eq("node_name", nodeNameRef.current)
+        .maybeSingle();
+
+      const currentLatency = Date.now() - startTime;
+      
+      if (existingNode) {
+        // Update existing node
+        const { error: updateError } = await supabase
+          .from("server_nodes")
+          .update({
             campaign_id: campaignId ?? null,
             status: "online",
             last_heartbeat: new Date().toISOString(),
-            active_players: 1,
-            active_campaigns: campaignId ? 1 : 0,
-            realtime_connections: 1,
-            database_latency_ms: latency,
+            database_latency_ms: currentLatency,
             memory_usage: Math.random() * 50 + 30,
             cpu_usage: Math.random() * 30 + 10,
-          },
-          {
-            onConflict: "user_id,node_name",
-            ignoreDuplicates: false,
-          }
-        )
+            active_campaigns: campaignId ? 1 : 0,
+          })
+          .eq("id", existingNode.id);
+
+        if (!updateError) {
+          setNodeId(existingNode.id);
+          setLatency(currentLatency);
+          setIsConnected(true);
+          return;
+        }
+      }
+
+      // Insert new node if doesn't exist
+      const { data, error } = await supabase
+        .from("server_nodes")
+        .insert({
+          node_name: nodeNameRef.current,
+          user_id: user.id,
+          campaign_id: campaignId ?? null,
+          status: "online",
+          last_heartbeat: new Date().toISOString(),
+          active_players: 1,
+          active_campaigns: campaignId ? 1 : 0,
+          realtime_connections: 1,
+          database_latency_ms: currentLatency,
+          memory_usage: Math.random() * 50 + 30,
+          cpu_usage: Math.random() * 30 + 10,
+        })
         .select("id")
         .single();
 
       if (error) {
-        // If upsert fails (possibly no unique constraint), try update then insert
-        const { data: existingNode } = await supabase
-          .from("server_nodes")
-          .select("id")
-          .eq("user_id", user.id)
-          .eq("node_name", nodeNameRef.current)
-          .maybeSingle();
-        
-        if (existingNode) {
-          // Update existing
-          await supabase
-            .from("server_nodes")
-            .update({
-              campaign_id: campaignId ?? null,
-              status: "online",
-              last_heartbeat: new Date().toISOString(),
-              database_latency_ms: Date.now() - startTime,
-              memory_usage: Math.random() * 50 + 30,
-              cpu_usage: Math.random() * 30 + 10,
-            })
-            .eq("id", existingNode.id);
-          
-          setNodeId(existingNode.id);
-        } else {
-          // Insert new
-          const { data: newNode } = await supabase
-            .from("server_nodes")
-            .insert({
-              node_name: nodeNameRef.current,
-              user_id: user.id,
-              campaign_id: campaignId ?? null,
-              status: "online",
-              active_players: 1,
-              active_campaigns: campaignId ? 1 : 0,
-              realtime_connections: 1,
-              database_latency_ms: 0,
-            })
-            .select("id")
-            .single();
-          
-          if (newNode) setNodeId(newNode.id);
-        }
-        
-        setLatency(Date.now() - startTime);
-        setIsConnected(true);
+        console.error("Heartbeat insert failed:", error);
+        setIsConnected(false);
       } else if (data) {
         setNodeId(data.id);
-        setLatency(Date.now() - startTime);
+        setLatency(currentLatency);
         setIsConnected(true);
       }
     } catch (err) {
       console.error("Heartbeat failed:", err);
       setIsConnected(false);
     }
-  }, [user, campaignId, latency]);
+  }, [user, campaignId]);
 
   // Register/update node on mount
   useEffect(() => {

@@ -1,16 +1,18 @@
 /**
  * CombatArena - A standalone combat view driven purely by the engine.
  * This component wraps the engine provider and renders the grid.
+ * Includes automatic AI turn processing for enemy entities.
  */
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Swords, Play, Square, SkipForward } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EngineProvider, useEngine } from "@/contexts/EngineContext";
 import { EngineGrid } from "./EngineGrid";
 import { EngineTurnTracker } from "./EngineTurnTracker";
-import type { GameEvent, Entity, Vec2 } from "@/engine";
+import { processAITurns, generateAITurn, DEFAULT_AI_BEHAVIOR } from "@/engine/AI";
+import type { GameEvent, Entity, Vec2, GameState } from "@/engine";
 import { gridToWorld } from "@/engine";
 import { toast } from "sonner";
 
@@ -30,7 +32,11 @@ function CombatArenaInner({ myEntityId, onEvent }: CombatArenaInnerProps) {
     dispatch,
     getValidMoves,
     board,
+    ctx,
   } = useEngine();
+
+  const aiProcessingRef = useRef(false);
+  const aiDelayRef = useRef<NodeJS.Timeout | null>(null);
 
   // Handle cell click - dispatch move action
   const handleCellClick = useCallback((gridPos: { row: number; col: number }) => {
@@ -79,8 +85,68 @@ function CombatArenaInner({ myEntityId, onEvent }: CombatArenaInnerProps) {
     });
   }, [currentTurn, dispatch]);
 
+  // Automatic AI turn processing
+  useEffect(() => {
+    if (!isInCombat || !currentTurn || aiProcessingRef.current) return;
+    
+    // Check if it's an enemy turn (AI controlled)
+    if (currentTurn.faction === "enemy" && currentTurn.isAlive) {
+      aiProcessingRef.current = true;
+      
+      // Add a small delay for visual feedback
+      aiDelayRef.current = setTimeout(() => {
+        // Generate AI decision
+        const decision = generateAITurn(ctx.state, currentTurn, DEFAULT_AI_BEHAVIOR);
+        
+        // Show toast with AI reasoning
+        toast.info(decision.reasoning, { duration: 2000 });
+        
+        // Dispatch the AI action
+        dispatch(decision.action);
+        
+        // If the action was just a move, also end turn
+        if (decision.action.type === "move") {
+          setTimeout(() => {
+            dispatch({ type: "end_turn", entityId: currentTurn.id });
+            aiProcessingRef.current = false;
+          }, 500);
+        } else {
+          // End turn after attack
+          setTimeout(() => {
+            dispatch({ type: "end_turn", entityId: currentTurn.id });
+            aiProcessingRef.current = false;
+          }, 800);
+        }
+      }, 600);
+    }
+    
+    return () => {
+      if (aiDelayRef.current) {
+        clearTimeout(aiDelayRef.current);
+      }
+    };
+  }, [isInCombat, currentTurn, ctx.state, dispatch]);
+
+  // Reset AI processing flag when turn changes
+  useEffect(() => {
+    aiProcessingRef.current = false;
+  }, [currentTurn?.id]);
+
   const aliveAllies = entities.filter(e => e.faction === "player" && e.isAlive);
   const aliveEnemies = entities.filter(e => e.faction === "enemy" && e.isAlive);
+
+  // Check for combat end conditions
+  useEffect(() => {
+    if (!isInCombat) return;
+    
+    if (aliveAllies.length === 0) {
+      toast.error("Defeat! All allies have fallen.");
+      finishCombat();
+    } else if (aliveEnemies.length === 0 && entities.some(e => e.faction === "enemy")) {
+      toast.success("Victory! All enemies defeated.");
+      finishCombat();
+    }
+  }, [isInCombat, aliveAllies.length, aliveEnemies.length, entities, finishCombat]);
 
   return (
     <div className="flex flex-col gap-4 p-4 h-full">
@@ -109,7 +175,7 @@ function CombatArenaInner({ myEntityId, onEvent }: CombatArenaInnerProps) {
                 variant="outline" 
                 size="sm" 
                 className="gap-2"
-                disabled={myEntityId ? currentTurn?.id !== myEntityId : false}
+                disabled={myEntityId ? currentTurn?.id !== myEntityId : currentTurn?.faction === "enemy"}
               >
                 <SkipForward className="w-4 h-4" />
                 End Turn
