@@ -48,7 +48,7 @@ export function SaveLoadMenu({
   mode,
   playtimeSeconds = 0,
 }: SaveLoadMenuProps) {
-  const { unified } = useUnifiedEngineContext();
+  const { unified, travelState } = useUnifiedEngineContext();
   const persistence = useGamePersistence({ campaignId, userId });
   const [saveName, setSaveName] = useState("");
   const [selectedSave, setSelectedSave] = useState<GameSave | null>(null);
@@ -67,7 +67,7 @@ export function SaveLoadMenu({
       return;
     }
     
-    const saveId = await persistence.saveGame(unified, saveName.trim(), playtimeSeconds);
+    const saveId = await persistence.saveGame(unified, travelState, saveName.trim(), playtimeSeconds);
     if (saveId) {
       setSaveName("");
       onClose();
