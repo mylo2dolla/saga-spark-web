@@ -355,11 +355,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   // Initialize on mount
   useEffect(() => {
     if (!userId || !campaignId) {
-      setSessionState(prev => ({
-        ...prev,
-        isLoading: false,
-        isInitialized: false,
-      }));
       return;
     }
 
@@ -367,9 +362,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       return;
     }
 
-    if (!contentLoading) {
-      initializeSession();
-    }
+    initializeSession();
   }, [userId, campaignId, contentLoading, hasLoadedContent, initializeSession]);
 
   useEffect(() => {
