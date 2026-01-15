@@ -22,6 +22,13 @@ interface UseWorldContentOptions {
   campaignId: string;
 }
 
+const MOCK_NARRATIVE_PATTERN = /\b(test|demo|sample|placeholder)\b/i;
+const MOCK_NARRATIVE_PHRASES = [
+  "Test your new",
+  "Swap places with the Clone",
+  "Gelatinous Clone",
+];
+
 // Valid personality traits
 const VALID_TRAITS: PersonalityTrait[] = [
   "honest", "deceptive", "brave", "cowardly",
@@ -70,23 +77,48 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
 
       for (const item of data) {
         const raw = item.content as Record<string, unknown>;
+        if (isMockContent(item.content_type, raw)) {
+          continue;
+        }
         
         switch (item.content_type) {
           case "faction":
-            factions.push(convertToFaction(raw, item.content_id));
-            break;
+            {
+              const faction = convertToFaction(raw, item.content_id);
+              if (faction) {
+                factions.push(faction);
+              }
+              break;
+            }
           case "npc":
-            npcs.push(convertToNPC(raw, item.content_id));
-            break;
+            {
+              const npc = convertToNPC(raw, item.content_id);
+              if (npc) {
+                npcs.push(npc);
+              }
+              break;
+            }
           case "quest":
-            quests.push(convertToQuest(raw, item.content_id));
-            break;
+            {
+              const quest = convertToQuest(raw, item.content_id);
+              if (quest) {
+                quests.push(quest);
+              }
+              break;
+            }
           case "location":
-            locations.push(convertToLocation(raw, item.content_id));
-            break;
+            {
+              const location = convertToLocation(raw, item.content_id);
+              if (location) {
+                locations.push(location);
+              }
+              break;
+            }
           case "world_hooks":
             if (Array.isArray(raw)) {
-              worldHooks.push(...raw as string[]);
+              worldHooks.push(
+                ...(raw as string[]).filter((hook) => !containsMockNarrative(hook))
+              );
             }
             break;
         }
@@ -179,20 +211,23 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
 
 // ============= Converters =============
 
-function convertToFaction(raw: Record<string, unknown>, contentId: string): FactionInfo {
+function convertToFaction(raw: Record<string, unknown>, contentId: string): FactionInfo | null {
+  const name = getString(raw.name);
+  if (!name || containsMockNarrative(name)) return null;
+
   return {
-    id: (raw.id as string) ?? contentId,
-    name: (raw.name as string) ?? "Unknown Faction",
-    description: (raw.description as string) ?? "",
+    id: getString(raw.id) || contentId,
+    name,
+    description: getString(raw.description),
     alignment: (raw.alignment as Alignment) ?? "true_neutral",
-    goals: (raw.goals as string[]) ?? [],
-    enemies: (raw.enemies as string[]) ?? [],
-    allies: (raw.allies as string[]) ?? [],
+    goals: toStringArray(raw.goals),
+    enemies: toStringArray(raw.enemies),
+    allies: toStringArray(raw.allies),
   };
 }
 
 function parsePersonalityTraits(rawTraits: unknown): readonly PersonalityTrait[] {
-  if (!Array.isArray(rawTraits)) return ["neutral" as PersonalityTrait];
+  if (!Array.isArray(rawTraits)) return [];
   
   return rawTraits
     .filter((t): t is string => typeof t === "string")
@@ -201,7 +236,7 @@ function parsePersonalityTraits(rawTraits: unknown): readonly PersonalityTrait[]
     .slice(0, 4) as readonly PersonalityTrait[];
 }
 
-function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC {
+function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC | null {
   const npcId = (raw.id as string) ?? contentId;
   const entityId = `entity_${npcId}`;
   
@@ -213,38 +248,49 @@ function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC {
     ? (dialogue?.responses as Array<{ text?: string; nextNodeId?: string }>)
     : [];
   
+  const name = getString(raw.name);
+  if (!name || containsMockNarrative(name)) return null;
+
+  if (containsMockNarrative(getString(raw.title))) return null;
+  if (containsMockNarrative(getString(dialogue?.text))) return null;
+  if (dialogueResponses.some((response) => containsMockNarrative(getString(response.text)))) {
+    return null;
+  }
+
   const personality = parsePersonalityTraits(raw.personality);
   
   return {
     id: npcId,
     entityId,
-    name: (raw.name as string) ?? "Unknown NPC",
-    title: raw.title as string | undefined,
+    name,
+    title: getString(raw.title) || undefined,
     factionId: (raw.factionId as string) ?? "neutral",
-    personality: personality.length > 0 ? personality : ["honest" as PersonalityTrait],
-    goals: goals.map((g, i) => ({
-      id: g.id ?? `goal_${i}`,
-      description: g.description ?? "Unknown goal",
-      priority: g.priority ?? 1,
-      progress: 0,
-      completed: false,
-    })),
+    personality,
+    goals: goals
+      .map((g, i) => ({
+        id: g.id ?? `goal_${i}`,
+        description: getString(g.description),
+        priority: g.priority ?? 1,
+        progress: 0,
+        completed: false,
+      }))
+      .filter(goal => goal.description.length > 0),
     relationships: [],
     memories: [],
-    inventory: { slots: [], maxSlots: 20, gold: Math.floor(Math.random() * 100) + 10 },
+    inventory: { slots: [], maxSlots: 20, gold: 0 },
     equipment: {},
-    dialogue: dialogue ? [{
-      id: "greeting",
-      text: dialogue.text ?? "Hello, traveler.",
-      responses: dialogueResponses.map((r) => ({
-        text: r.text ?? "Hello.",
-        nextNodeId: r.nextNodeId,
-      })),
-    }] : [{
-      id: "greeting",
-      text: "Hello, traveler.",
-      responses: [{ text: "Hello." }],
-    }],
+    dialogue: dialogue?.text
+      ? [{
+          id: "greeting",
+          text: dialogue.text,
+          responses: dialogueResponses
+            .map((r) => ({
+              text: getString(r.text),
+              nextNodeId: r.nextNodeId,
+            }))
+            .filter((r) => r.text.length > 0),
+        }]
+      : [],
     questsOffered: [],
     canTrade: (raw.canTrade as boolean) ?? false,
     priceModifier: 1.0,
@@ -253,9 +299,15 @@ function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC {
   };
 }
 
-function convertToQuest(raw: Record<string, unknown>, contentId: string): Quest {
+function convertToQuest(raw: Record<string, unknown>, contentId: string): Quest | null {
   const questId = (raw.id as string) ?? contentId;
   const giverId = (raw.giverId as string) ?? (raw.giver_id as string) ?? (raw.giver as string);
+  const title = getString(raw.title);
+  const description = getString(raw.description);
+  if (!title || !description || containsMockNarrative(title) || containsMockNarrative(description)) {
+    return null;
+  }
+
   const objectives = Array.isArray(raw.objectives)
     ? (raw.objectives as Array<{
         type?: string;
@@ -277,26 +329,34 @@ function convertToQuest(raw: Record<string, unknown>, contentId: string): Quest 
   const rewardItems = toStringArray(rewards?.items);
   const rewardFlags = toStringArray(rewards?.storyFlags);
   
-  return {
-    id: questId,
-    title: (raw.title as string) ?? "Unknown Quest",
-    description: (raw.description as string) ?? "",
-    briefDescription: (raw.briefDescription as string) ?? (raw.description as string)?.slice(0, 100) ?? "",
-    giverId: giverId ?? "unknown",
-    state: "available",
-    objectives: objectives.map((obj, i) => ({
+  const normalizedObjectives = objectives
+    .map((obj, i) => ({
       id: `obj_${i}`,
       type: (obj.type as Quest["objectives"][0]["type"]) ?? "explore",
-      description: obj.description ?? "Unknown objective",
+      description: getString(obj.description),
       targetType: obj.targetType,
       current: 0,
       required: obj.required ?? 1,
       optional: false,
       hidden: false,
-    })),
+    }))
+    .filter(obj => obj.description.length > 0 && !containsMockNarrative(obj.description));
+
+  if (normalizedObjectives.length === 0) {
+    return null;
+  }
+
+  return {
+    id: questId,
+    title,
+    description,
+    briefDescription: getString(raw.briefDescription) || description.slice(0, 100),
+    giverId: giverId ?? "unknown",
+    state: "available",
+    objectives: normalizedObjectives,
     rewards: {
-      xp: rewards?.xp ?? 100,
-      gold: rewards?.gold ?? 50,
+      xp: rewards?.xp ?? 0,
+      gold: rewards?.gold ?? 0,
       items: rewardItems,
       storyFlags: rewardFlags,
     },
@@ -323,6 +383,60 @@ function toStringArray(raw: unknown): string[] {
   return raw.filter((item): item is string => typeof item === "string");
 }
 
+function getString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function containsMockNarrative(text?: string): boolean {
+  if (!text) return false;
+  if (MOCK_NARRATIVE_PATTERN.test(text)) return true;
+  return MOCK_NARRATIVE_PHRASES.some((phrase) => text.includes(phrase));
+}
+
+function isMockContent(contentType: string, raw: Record<string, unknown>): boolean {
+  switch (contentType) {
+    case "quest": {
+      const objectiveDescriptions = Array.isArray(raw.objectives)
+        ? (raw.objectives as Array<{ description?: string }>).map(obj => getString(obj.description))
+        : [];
+      return [
+        getString(raw.title),
+        getString(raw.description),
+        getString(raw.briefDescription),
+        ...objectiveDescriptions,
+      ].some(containsMockNarrative);
+    }
+    case "npc": {
+      const dialogue = raw.dialogue as { text?: string; responses?: Array<{ text?: string }> } | undefined;
+      const responseTexts = dialogue?.responses?.map(resp => getString(resp.text)) ?? [];
+      const goals = Array.isArray(raw.goals)
+        ? (raw.goals as Array<{ description?: string }>).map(goal => getString(goal.description))
+        : [];
+      return [
+        getString(raw.name),
+        getString(raw.title),
+        getString(dialogue?.text),
+        ...responseTexts,
+        ...goals,
+      ].some(containsMockNarrative);
+    }
+    case "location":
+      return [
+        getString(raw.name),
+        getString(raw.description),
+        getString(raw.ambientDescription),
+      ].some(containsMockNarrative);
+    case "faction":
+      return [getString(raw.name), getString(raw.description)].some(containsMockNarrative);
+    case "world_hooks":
+      return Array.isArray(raw)
+        ? (raw as string[]).some((hook) => containsMockNarrative(getString(hook)))
+        : false;
+    default:
+      return false;
+  }
+}
+
 function hashString(value: string): number {
   let hash = 0;
   for (let i = 0; i < value.length; i++) {
@@ -338,20 +452,23 @@ function createDeterministicPosition(seed: string): { x: number; y: number } {
   return { x, y };
 }
 
-function convertToLocation(raw: Record<string, unknown>, contentId: string): EnhancedLocation {
+function convertToLocation(raw: Record<string, unknown>, contentId: string): EnhancedLocation | null {
   const locationId = contentId === "starting_location"
     ? "starting_location"
     : ((raw.id as string) ?? contentId);
   const fallbackPosition = createDeterministicPosition(locationId);
   const rawPosition = raw.position as { x?: number; y?: number } | undefined;
   
+  const name = getString(raw.name);
+  if (!name || containsMockNarrative(name)) return null;
+
   const connectedTo = toStringArray(raw.connectedTo);
   const services = parseServices(raw.services);
   
   return {
     id: locationId,
-    name: (raw.name as string) ?? "Unknown Location",
-    description: (raw.description as string) ?? "",
+    name,
+    description: getString(raw.description),
     type: (raw.type as EnhancedLocation["type"]) ?? "town",
     connectedTo,
     position: typeof rawPosition?.x === "number" && typeof rawPosition?.y === "number"
@@ -366,7 +483,7 @@ function convertToLocation(raw: Record<string, unknown>, contentId: string): Enh
     factionControl: null,
     questHooks: [],
     services: services.length > 0 ? services : ["rest", "trade"] as readonly LocationService[],
-    ambientDescription: (raw.description as string) ?? "",
+    ambientDescription: getString(raw.ambientDescription) || getString(raw.description),
     shops: [],
     inn: true,
     travelTime: {},

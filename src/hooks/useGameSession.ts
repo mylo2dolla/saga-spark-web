@@ -21,8 +21,8 @@ import { toast } from "sonner";
 // Default fallback location with a self-referencing connection to prevent travel errors
 const DEFAULT_STARTING_LOCATION: EnhancedLocation = {
   id: "starting_location",
-  name: "Haven Village",
-  description: "A peaceful village at the crossroads of adventure. Travelers gather here before venturing into the unknown.",
+  name: "",
+  description: "",
   type: "town",
   connectedTo: ["starting_location"], // Self-reference prevents "no connected locations" issue
   position: { x: 100, y: 100 },
@@ -34,7 +34,7 @@ const DEFAULT_STARTING_LOCATION: EnhancedLocation = {
   factionControl: null,
   questHooks: [],
   services: ["rest", "trade", "heal"] as const,
-  ambientDescription: "The sounds of a bustling marketplace fill the air. Smoke rises from the inn's chimney.",
+  ambientDescription: "",
   shops: [],
   inn: true,
   travelTime: {},
@@ -303,6 +303,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     });
   }, []);
 
+  const setUnifiedState = useCallback((next: UnifiedState) => {
+    setSessionState(prev => ({
+      ...prev,
+      unifiedState: next,
+    }));
+  }, []);
+
   // Update travel state
   const updateTravelState = useCallback((updater: (state: TravelState) => TravelState) => {
     setSessionState(prev => {
@@ -332,6 +339,38 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         const saveId = await persistence.saveGame(
           sessionState.unifiedState,
           sessionState.travelState,
+          "Autosave",
+          playtimeRef.current
+        );
+        if (saveId) {
+          lastSaveIdRef.current = saveId;
+        }
+      }
+    } catch (error) {
+      console.error("Autosave failed:", error);
+    }
+  }, [sessionState.unifiedState, sessionState.travelState, userId, persistence]);
+
+  const autosaveNow = useCallback(async (
+    unifiedOverride?: UnifiedState,
+    travelOverride?: TravelState
+  ) => {
+    const unifiedState = unifiedOverride ?? sessionState.unifiedState;
+    const travelState = travelOverride ?? sessionState.travelState;
+    if (!unifiedState || !travelState || !userId) return;
+
+    try {
+      if (lastSaveIdRef.current) {
+        await persistence.updateSave(
+          lastSaveIdRef.current,
+          unifiedState,
+          playtimeRef.current,
+          travelState
+        );
+      } else {
+        const saveId = await persistence.saveGame(
+          unifiedState,
+          travelState,
           "Autosave",
           playtimeRef.current
         );
@@ -501,10 +540,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     saves: persistence.saves,
     isSaving: persistence.isSaving,
     updateUnifiedState,
+    setUnifiedState,
     updateTravelState,
     saveGame,
     loadSave,
     triggerAutosave,
+    autosaveNow,
     fetchSaves: persistence.fetchSaves,
     deleteSave: persistence.deleteSave,
   };
