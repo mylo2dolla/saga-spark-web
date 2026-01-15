@@ -354,23 +354,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
   // Initialize on mount
   useEffect(() => {
-    if (!userId || !campaignId) {
-      return;
-    }
-
-    if (!hasLoadedContent) {
-      return;
-      setSessionState(prev => ({
-        ...prev,
-        isLoading: false,
-        isInitialized: false,
-      }));
-      return;
-    }
-
-    if (!contentLoading) {
-      initializeSession();
-    }
+    if (!userId || !campaignId) return;
+    if (!hasLoadedContent) return;
 
     initializeSession();
   }, [userId, campaignId, hasLoadedContent, initializeSession]);
