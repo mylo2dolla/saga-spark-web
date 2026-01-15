@@ -223,7 +223,6 @@ const Game = () => {
 
   // Handle world events
   const handleWorldEvent = useCallback((event: WorldEvent) => {
-    console.log("World event:", event);
     appendFromEvent(event);
   }, [appendFromEvent]);
 
@@ -260,8 +259,6 @@ const Game = () => {
     
     // Apply combat outcome to world state
     if (travelWorldState && user?.id) {
-      const previousProgression = travelWorldState.playerProgression.get(user.id);
-      const previousItemsCount = travelWorldState.items.size;
       // Build and apply combat outcome using the actual final entity state
       const locationId = travelWorldState.travelState.isInTransit 
         ? travelWorldState.travelState.transitDestinationId ?? travelWorldState.travelState.currentLocationId
@@ -299,14 +296,6 @@ const Game = () => {
       };
       
       const combatResult = applyCombatOutcome(travelWorldState, outcome, user.id);
-      const nextProgression = combatResult.world.playerProgression.get(user.id);
-      const nextItemsCount = combatResult.world.items.size;
-      console.info("[Game] Combat rewards applied", {
-        xpBefore: previousProgression?.currentXp ?? 0,
-        xpAfter: nextProgression?.currentXp ?? 0,
-        itemsBefore: previousItemsCount,
-        itemsAfter: nextItemsCount,
-      });
       
       // Notify about XP and level up
       if (combatResult.playerXpGained > 0) {
