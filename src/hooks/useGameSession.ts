@@ -37,7 +37,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const { user } = useAuth();
   const userId = user?.id ?? "";
   
-  const { content: worldContent, isLoading: contentLoading, mergeIntoWorldState } = useWorldContent({ campaignId });
+  const { content: worldContent, hasLoadedContent, mergeIntoWorldState } = useWorldContent({ campaignId });
   const persistence = useGamePersistence({ campaignId, userId });
   
   const [sessionState, setSessionState] = useState<GameSessionState>({
@@ -123,56 +123,83 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         
         // Create base state
         unifiedState = createUnifiedState(campaignSeed, [], 10, 12);
-        
-        // Add a default starting location if none exists from world content
-        const defaultStartingLocation: EnhancedLocation = {
-          id: "starting_location",
-          name: "Haven Village",
-          description: "A peaceful village at the crossroads of adventure. Travelers gather here before venturing into the unknown.",
-          type: "town",
-          connectedTo: [],
-          position: { x: 100, y: 100 },
-          radius: 30,
-          discovered: true,
-          items: [],
-          dangerLevel: 1,
-          npcs: [],
-          factionControl: null,
-          questHooks: [],
-          services: ["rest", "trade", "heal"] as const,
-          ambientDescription: "The sounds of a bustling marketplace fill the air. Smoke rises from the inn's chimney.",
-          shops: [],
-          inn: true,
-          travelTime: {},
-          currentEvents: [],
-        };
-        
-        // Add starting location to world
-        unifiedState = {
-          ...unifiedState,
-          world: {
-            ...unifiedState.world,
-            locations: new Map([[defaultStartingLocation.id, defaultStartingLocation]]),
-          },
-        };
-        
-        // Merge in generated content if available (this will add more locations, NPCs, etc.)
+
+        // Merge in generated content if available (this will add locations, NPCs, etc.)
         if (worldContent) {
           unifiedState = {
             ...unifiedState,
             world: mergeIntoWorldState(unifiedState.world, worldContent),
           };
         }
-        
+
+        // Add a default starting location if none exists from AI content
+        if (unifiedState.world.locations.size === 0) {
+          const defaultStartingLocation: EnhancedLocation = {
+            id: "starting_location",
+            name: "Haven Village",
+            description: "A peaceful village at the crossroads of adventure. Travelers gather here before venturing into the unknown.",
+            type: "town",
+            connectedTo: [],
+            position: { x: 100, y: 100 },
+            radius: 30,
+            discovered: true,
+            items: [],
+            dangerLevel: 1,
+            npcs: [],
+            factionControl: null,
+            questHooks: [],
+            services: ["rest", "trade", "heal"] as const,
+            ambientDescription: "The sounds of a bustling marketplace fill the air. Smoke rises from the inn's chimney.",
+            shops: [],
+            inn: true,
+            travelTime: {},
+            currentEvents: [],
+          };
+
+          unifiedState = {
+            ...unifiedState,
+            world: {
+              ...unifiedState.world,
+              locations: new Map([[defaultStartingLocation.id, defaultStartingLocation]]),
+            },
+          };
+        }
+
+        const locationsArray = Array.from(unifiedState.world.locations.values());
+        const startingLocation =
+          locationsArray.find(location => location.id === "starting_location") ?? locationsArray[0];
+        const startingLocationId = startingLocation?.id ?? "starting_location";
+
+        if (
+          startingLocation &&
+          startingLocation.connectedTo.length === 0 &&
+          locationsArray.length > 1
+        ) {
+          const fallbackDestination = locationsArray.find(location => location.id !== startingLocationId);
+          if (fallbackDestination) {
+            const nextLocations = new Map(unifiedState.world.locations);
+            nextLocations.set(startingLocationId, {
+              ...startingLocation,
+              connectedTo: [fallbackDestination.id],
+            });
+            if (!fallbackDestination.connectedTo.includes(startingLocationId)) {
+              nextLocations.set(fallbackDestination.id, {
+                ...fallbackDestination,
+                connectedTo: [...fallbackDestination.connectedTo, startingLocationId],
+              });
+            }
+            unifiedState = {
+              ...unifiedState,
+              world: {
+                ...unifiedState.world,
+                locations: nextLocations,
+              },
+            };
+          }
+        }
+
         // Initialize travel state with starting location
-        const startingLocationId = "starting_location";
         travelState = createTravelState(startingLocationId);
-        
-        // Discover starting location
-        travelState = {
-          ...travelState,
-          discoveredLocations: new Set([startingLocationId]),
-        };
       }
       
       // Initialize player progression if needed
@@ -328,6 +355,11 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   // Initialize on mount
   useEffect(() => {
     if (!userId || !campaignId) {
+      return;
+    }
+
+    if (!hasLoadedContent) {
+      return;
       setSessionState(prev => ({
         ...prev,
         isLoading: false,
@@ -339,7 +371,23 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     if (!contentLoading) {
       initializeSession();
     }
-  }, [userId, campaignId, contentLoading, initializeSession]);
+
+    initializeSession();
+  }, [userId, campaignId, hasLoadedContent, initializeSession]);
+
+  useEffect(() => {
+    if (!sessionState.unifiedState || !worldContent) return;
+    setSessionState(prev => {
+      if (!prev.unifiedState) return prev;
+      return {
+        ...prev,
+        unifiedState: {
+          ...prev.unifiedState,
+          world: mergeIntoWorldState(prev.unifiedState.world, worldContent),
+        },
+      };
+    });
+  }, [worldContent, mergeIntoWorldState, sessionState.unifiedState]);
 
   useEffect(() => {
     if (!sessionState.unifiedState || !worldContent) return;
