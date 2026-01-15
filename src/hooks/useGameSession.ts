@@ -360,10 +360,34 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
     if (!hasLoadedContent) {
       return;
+      setSessionState(prev => ({
+        ...prev,
+        isLoading: false,
+        isInitialized: false,
+      }));
+      return;
+    }
+
+    if (!contentLoading) {
+      initializeSession();
     }
 
     initializeSession();
   }, [userId, campaignId, hasLoadedContent, initializeSession]);
+
+  useEffect(() => {
+    if (!sessionState.unifiedState || !worldContent) return;
+    setSessionState(prev => {
+      if (!prev.unifiedState) return prev;
+      return {
+        ...prev,
+        unifiedState: {
+          ...prev.unifiedState,
+          world: mergeIntoWorldState(prev.unifiedState.world, worldContent),
+        },
+      };
+    });
+  }, [worldContent, mergeIntoWorldState, sessionState.unifiedState]);
 
   useEffect(() => {
     if (!sessionState.unifiedState || !worldContent) return;
