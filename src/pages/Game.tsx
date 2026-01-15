@@ -10,7 +10,6 @@ import {
   Sparkles,
   Play,
   Loader2,
-  Target,
   Map,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,8 +24,9 @@ import {
 } from "@/components/combat";
 import { DMChat } from "@/components/DMChat";
 import { useDungeonMaster } from "@/hooks/useDungeonMaster";
-import { useRealtimeCharacters, type GameCharacter, type CombatEnemy } from "@/hooks/useRealtimeGame";
+import { useRealtimeCharacters, type GameCharacter } from "@/hooks/useRealtimeGame";
 import { useCharacter, type CharacterAbility } from "@/hooks/useCharacter";
+import { useServerHeartbeat } from "@/hooks/useServerHeartbeat";
 import { supabase } from "@/integrations/supabase/client";
 import type { GameEvent, Vec2 } from "@/engine";
 
@@ -80,6 +80,9 @@ const Game = () => {
     sendMessage, 
     startNewAdventure 
   } = useDungeonMaster();
+
+  // Server heartbeat for dashboard tracking
+  useServerHeartbeat({ campaignId });
 
   // Fetch campaign data
   useEffect(() => {
@@ -144,7 +147,7 @@ const Game = () => {
     return [...combatEntities, ...enemies];
   }, [combatEntities, inCombat]);
 
-  // Handle engine events
+  // Handle engine events (including combat end -> world bridge)
   const handleEngineEvent = useCallback((event: GameEvent) => {
     console.log("Engine event:", event);
     
@@ -170,6 +173,8 @@ const Game = () => {
     if (event.type === "combat_ended") {
       toast.success(event.description);
       setInCombat(false);
+      // Note: applyCombatOutcome would be called here with real world state
+      // This is where the combat→world bridge applies XP, loot, NPC memory, etc.
     }
   }, [partyCharacters, updateCharacter]);
 

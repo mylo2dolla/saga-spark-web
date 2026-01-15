@@ -78,7 +78,7 @@ const ServerDashboard = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   
-  // Fetch campaigns and stats from Supabase
+  // Fetch campaigns and stats from Supabase (including real server_nodes)
   const fetchStats = useCallback(async () => {
     setIsRefreshing(true);
     
@@ -125,38 +125,63 @@ const ServerDashboard = () => {
         
         setTotalPlayers(playersCount ?? 0);
         
-        // Create mock server nodes based on actual data
+        // Fetch real server nodes from database
+        const { data: nodesData, error: nodesError } = await supabase
+          .from("server_nodes")
+          .select("*")
+          .order("last_heartbeat", { ascending: false })
+          .limit(50);
+        
+        if (!nodesError && nodesData) {
+          const nodes: ServerNode[] = nodesData.map((n: any) => ({
+            id: n.id,
+            name: n.node_name,
+            status: n.status as "online" | "offline" | "degraded",
+            lastHeartbeat: new Date(n.last_heartbeat),
+            activePlayers: n.active_players,
+            activeCampaigns: n.active_campaigns,
+            realtimeConnections: n.realtime_connections,
+            databaseLatency: n.database_latency_ms,
+            memoryUsage: Number(n.memory_usage),
+            cpuUsage: Number(n.cpu_usage),
+          }));
+          
+          // Mark nodes as offline if no heartbeat in 60s
+          const now = Date.now();
+          nodes.forEach(node => {
+            if (now - node.lastHeartbeat.getTime() > 60000) {
+              node.status = "offline";
+            } else if (now - node.lastHeartbeat.getTime() > 30000) {
+              node.status = "degraded";
+            }
+          });
+          
+          setServerNodes(nodes);
+        } else {
+          // Fallback to mock nodes if no real data
+          const activeCampaigns = campaignStats.filter(c => c.isActive).length;
+          const totalCampaignPlayers = campaignStats.reduce((sum, c) => sum + c.playerCount, 0);
+          
+          setServerNodes([
+            {
+              id: "primary",
+              name: "Primary Node",
+              status: "online",
+              lastHeartbeat: new Date(),
+              activePlayers: totalCampaignPlayers,
+              activeCampaigns,
+              realtimeConnections: Math.floor(totalCampaignPlayers * 0.7),
+              databaseLatency: dbLatency,
+              memoryUsage: 45 + Math.random() * 20,
+              cpuUsage: 15 + Math.random() * 25,
+            },
+          ]);
+        }
+        
+        // Set realtime channels (approximated from node data)
         const activeCampaigns = campaignStats.filter(c => c.isActive).length;
         const totalCampaignPlayers = campaignStats.reduce((sum, c) => sum + c.playerCount, 0);
         
-        setServerNodes([
-          {
-            id: "primary",
-            name: "Primary Node",
-            status: "online",
-            lastHeartbeat: new Date(),
-            activePlayers: totalCampaignPlayers,
-            activeCampaigns,
-            realtimeConnections: Math.floor(totalCampaignPlayers * 0.7),
-            databaseLatency: dbLatency,
-            memoryUsage: 45 + Math.random() * 20,
-            cpuUsage: 15 + Math.random() * 25,
-          },
-          {
-            id: "realtime",
-            name: "Realtime Node",
-            status: realtimeStatus === "connected" ? "online" : "degraded",
-            lastHeartbeat: new Date(),
-            activePlayers: Math.floor(totalCampaignPlayers * 0.7),
-            activeCampaigns: Math.floor(activeCampaigns * 0.8),
-            realtimeConnections: Math.floor(totalCampaignPlayers * 0.7),
-            databaseLatency: dbLatency + 5,
-            memoryUsage: 35 + Math.random() * 15,
-            cpuUsage: 20 + Math.random() * 20,
-          },
-        ]);
-        
-        // Set realtime channels
         setRealtimeChannels([
           {
             id: "campaigns",
@@ -180,10 +205,10 @@ const ServerDashboard = () => {
             status: realtimeStatus === "connected" ? "active" : "idle",
           },
           {
-            id: "grid",
-            name: "Grid State",
-            subscribers: Math.floor(activeCampaigns * 0.5),
-            messagesPerMinute: Math.floor(activeCampaigns * 15),
+            id: "server_nodes",
+            name: "Server Heartbeats",
+            subscribers: serverNodes.length,
+            messagesPerMinute: serverNodes.length * 2,
             status: realtimeStatus === "connected" ? "active" : "idle",
           },
         ]);
@@ -196,9 +221,9 @@ const ServerDashboard = () => {
     } finally {
       setIsRefreshing(false);
     }
-  }, [realtimeStatus]);
+  }, [realtimeStatus, serverNodes.length]);
   
-  // Set up realtime subscription
+  // Set up realtime subscription for server_nodes
   useEffect(() => {
     setRealtimeStatus("connecting");
     
@@ -212,6 +237,42 @@ const ServerDashboard = () => {
         { event: "*", schema: "public", table: "campaigns" },
         () => {
           fetchStats();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "server_nodes" },
+        (payload) => {
+          // Real-time update of server nodes
+          if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+            const node = payload.new as any;
+            setServerNodes(prev => {
+              const existing = prev.findIndex(n => n.id === node.id);
+              const updatedNode: ServerNode = {
+                id: node.id,
+                name: node.node_name,
+                status: node.status as "online" | "offline" | "degraded",
+                lastHeartbeat: new Date(node.last_heartbeat),
+                activePlayers: node.active_players,
+                activeCampaigns: node.active_campaigns,
+                realtimeConnections: node.realtime_connections,
+                databaseLatency: node.database_latency_ms,
+                memoryUsage: Number(node.memory_usage),
+                cpuUsage: Number(node.cpu_usage),
+              };
+              
+              if (existing >= 0) {
+                const updated = [...prev];
+                updated[existing] = updatedNode;
+                return updated;
+              } else {
+                return [...prev, updatedNode];
+              }
+            });
+          } else if (payload.eventType === "DELETE") {
+            const deleted = payload.old as any;
+            setServerNodes(prev => prev.filter(n => n.id !== deleted.id));
+          }
         }
       )
       .subscribe((status) => {
