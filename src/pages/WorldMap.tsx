@@ -3,7 +3,7 @@
  * Shows locations, connections, and player position from engine state.
  */
 
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -23,7 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useUnifiedEngineOptional } from "@/contexts/UnifiedEngineContext";
+import { useGameSession } from "@/hooks/useGameSession";
 import type { EnhancedLocation, LocationType } from "@/engine/narrative/Travel";
 
 const LOCATION_ICONS: Record<LocationType, React.ReactNode> = {
@@ -45,17 +45,27 @@ const LOCATION_ICONS: Record<LocationType, React.ReactNode> = {
 export default function WorldMap() {
   const { campaignId } = useParams();
   const navigate = useNavigate();
-  const engine = useUnifiedEngineOptional();
+  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
+  const world = gameSession.unifiedState?.world;
 
   // Get all locations from engine
   const locations = useMemo(() => {
-    if (!engine) return [];
-    return Array.from(engine.unified.world.locations.values()) as EnhancedLocation[];
-  }, [engine]);
+    if (!world) return [];
+    return Array.from(world.locations.values()) as EnhancedLocation[];
+  }, [world]);
 
   // Get current location
-  const currentLocationId = engine?.travelState?.currentLocationId;
-  const discoveredLocations = engine?.travelState?.discoveredLocations ?? new Set();
+  const currentLocationId = gameSession.travelState?.currentLocationId;
+  const discoveredLocations = gameSession.travelState?.discoveredLocations ?? new Set();
+
+  useEffect(() => {
+    if (!world) return;
+    console.info("[WorldMap] Rendering from session world", {
+      campaignId,
+      worldMatchesSession: world === gameSession.unifiedState?.world,
+      locations: world.locations.size,
+    });
+  }, [campaignId, world, gameSession.unifiedState]);
 
   // Calculate map bounds
   const bounds = useMemo(() => {
@@ -92,19 +102,18 @@ export default function WorldMap() {
   }, [campaignId, navigate, discoveredLocations]);
 
   // Handle travel
-  const handleTravel = useCallback((destinationId: string) => {
-    if (!engine?.travelTo) return;
-    
-    const currentLoc = engine.unified.world.locations.get(currentLocationId ?? "");
-    if (!currentLoc) return;
-    
-    if (currentLoc.connectedTo.includes(destinationId)) {
-      engine.travelTo(destinationId);
-      navigate(`/game/${campaignId}/location/${destinationId}`);
-    }
-  }, [engine, currentLocationId, campaignId, navigate]);
+  if (gameSession.isLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <Map className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading map...</p>
+        </div>
+      </div>
+    );
+  }
 
-  if (!engine) {
+  if (!world) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
         <div className="text-center">

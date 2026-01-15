@@ -25,7 +25,9 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { useUnifiedEngineOptional } from "@/contexts/UnifiedEngineContext";
+import { useAuth } from "@/hooks/useAuth";
+import { useGameSession } from "@/hooks/useGameSession";
+import * as World from "@/engine/narrative/World";
 import type { Quest, QuestObjective, NPC } from "@/engine/narrative/types";
 
 const STATE_BADGES: Record<Quest["state"], { variant: "default" | "secondary" | "destructive" | "outline"; label: string }> = {
@@ -40,16 +42,19 @@ const STATE_BADGES: Record<Quest["state"], { variant: "default" | "secondary" | 
 export default function QuestView() {
   const { campaignId, questId } = useParams();
   const navigate = useNavigate();
-  const engine = useUnifiedEngineOptional();
+  const { user } = useAuth();
+  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
+  const world = gameSession.unifiedState?.world;
+  const playerId = user?.id ?? "";
 
   // Get quest from engine
-  const quest = engine?.getQuest(questId ?? "") as Quest | undefined;
+  const quest = world?.quests.get(questId ?? "") as Quest | undefined;
   
   // Get quest giver NPC
   const questGiver = useMemo(() => {
-    if (!quest || !engine) return undefined;
-    return engine.getNPC(quest.giverId);
-  }, [quest, engine]);
+    if (!quest || !world) return undefined;
+    return world.npcs.get(quest.giverId);
+  }, [quest, world]);
 
   // Calculate quest progress
   const progress = useMemo(() => {
@@ -63,19 +68,51 @@ export default function QuestView() {
 
   // Handle quest actions
   const handleAbandon = useCallback(() => {
-    if (!engine || !quest) return;
+    if (!world || !quest) return;
     // Would dispatch abandon action
     toast.info("Quest abandoned");
     navigate(-1);
-  }, [engine, quest, navigate]);
+  }, [world, quest, navigate]);
 
   const handleComplete = useCallback(() => {
-    if (!engine || !quest) return;
-    engine.completeQuest("player", quest.id);
-    toast.success("Quest completed!");
-  }, [engine, quest]);
+    if (!world || !quest || !playerId) return;
+    const previousProgression = world.playerProgression.get(playerId);
+    const previousItemsCount = world.items.size;
+    const result = World.processWorldAction(world, {
+      type: "complete_quest",
+      entityId: playerId,
+      questId: quest.id,
+    });
+    if (result.success) {
+      gameSession.updateUnifiedState(prev => ({
+        ...prev,
+        world: result.world,
+      }));
+      gameSession.triggerAutosave();
+      const nextProgression = result.world.playerProgression.get(playerId);
+      const nextItemsCount = result.world.items.size;
+      console.info("[QuestView] Quest rewards applied", {
+        questId: quest.id,
+        xpBefore: previousProgression?.currentXp ?? 0,
+        xpAfter: nextProgression?.currentXp ?? 0,
+        itemsBefore: previousItemsCount,
+        itemsAfter: nextItemsCount,
+      });
+      toast.success("Quest completed!");
+    } else {
+      toast.error(result.message);
+    }
+  }, [world, quest, playerId, gameSession]);
 
-  if (!engine || !quest) {
+  if (gameSession.isLoading) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-background">
+        <p className="text-muted-foreground">Loading quest...</p>
+      </div>
+    );
+  }
+
+  if (!world || !quest) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-background">
         <AlertTriangle className="w-12 h-12 text-destructive mb-4" />

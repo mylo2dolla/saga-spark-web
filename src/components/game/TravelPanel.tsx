@@ -31,12 +31,7 @@ import {
   getTravelInfo,
   type BeginTravelResult,
 } from "@/engine/WorldTravelEngine";
-import {
-  applyCombatOutcome,
-  buildCombatOutcome,
-  type CombatOutcome,
-} from "@/engine/CombatWorldBridge";
-import type { TravelWorldState } from "@/engine/narrative/TravelPersistence";
+import type { TravelWorldState, CombatEncounter } from "@/engine/narrative/TravelPersistence";
 import type { EnhancedLocation, TravelState } from "@/engine/narrative/Travel";
 import type { Entity, GameState } from "@/engine/types";
 import type { WorldEvent } from "@/engine/narrative/types";
@@ -47,7 +42,7 @@ interface TravelPanelProps {
   isInCombat: boolean;
   onWorldUpdate: (world: TravelWorldState) => void;
   onTravelStateUpdate: (travelState: TravelState) => void;
-  onCombatStart: (entities: readonly Entity[]) => void;
+  onCombatStart: (entities: readonly Entity[], encounter?: CombatEncounter | null) => void;
   onWorldEvent?: (event: WorldEvent) => void;
 }
 
@@ -101,7 +96,7 @@ export function TravelPanel({
     if (result.combatTriggered && result.combatEntities.length > 0) {
       // Combat interrupted travel
       toast.warning(result.message);
-      onCombatStart(result.combatEntities);
+      onCombatStart(result.combatEntities, result.combatEncounter);
     } else if (result.arrived) {
       // Arrived at destination
       toast.success(result.message);
