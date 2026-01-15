@@ -97,6 +97,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       const message = err instanceof Error ? err.message : "Failed to load world content";
       setError(message);
       console.error("Error loading world content:", err);
+      toast.error(message);
       return null;
     } finally {
       setIsLoading(false);
