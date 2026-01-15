@@ -79,6 +79,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const lastMergedContentRef = useRef<typeof worldContent>(null);
   const hasInitializedRef = useRef(false);
   const initializingRef = useRef(false); // Prevents concurrent initializations
+  const hasLoggedWorldInitRef = useRef(false);
 
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
@@ -464,6 +465,24 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       };
     });
   }, [worldContent, mergeIntoWorldState, sessionState.unifiedState]);
+
+  useEffect(() => {
+    if (!sessionState.isInitialized || !sessionState.unifiedState || hasLoggedWorldInitRef.current) return;
+    const locations = sessionState.unifiedState.world.locations;
+    const missingConnections: Array<{ from: string; to: string }> = [];
+    for (const [locationId, location] of locations) {
+      for (const targetId of location.connectedTo) {
+        if (!locations.has(targetId)) {
+          missingConnections.push({ from: locationId, to: targetId });
+        }
+      }
+    }
+    console.info("[GameSession] World initialized", {
+      locations: locations.size,
+      missingConnections,
+    });
+    hasLoggedWorldInitRef.current = true;
+  }, [sessionState.isInitialized, sessionState.unifiedState]);
 
   // Cleanup
   useEffect(() => {

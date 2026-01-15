@@ -202,7 +202,7 @@ function parsePersonalityTraits(rawTraits: unknown): readonly PersonalityTrait[]
 }
 
 function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC {
-  const npcId = `npc_${contentId}_${Date.now().toString(36).slice(-4)}`;
+  const npcId = (raw.id as string) ?? contentId;
   const entityId = `entity_${npcId}`;
   
   const goals = Array.isArray(raw.goals)
@@ -254,7 +254,8 @@ function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC {
 }
 
 function convertToQuest(raw: Record<string, unknown>, contentId: string): Quest {
-  const questId = `quest_${contentId}_${Date.now().toString(36).slice(-4)}`;
+  const questId = (raw.id as string) ?? contentId;
+  const giverId = (raw.giverId as string) ?? (raw.giver_id as string) ?? (raw.giver as string);
   const objectives = Array.isArray(raw.objectives)
     ? (raw.objectives as Array<{
         type?: string;
@@ -281,7 +282,7 @@ function convertToQuest(raw: Record<string, unknown>, contentId: string): Quest 
     title: (raw.title as string) ?? "Unknown Quest",
     description: (raw.description as string) ?? "",
     briefDescription: (raw.briefDescription as string) ?? (raw.description as string)?.slice(0, 100) ?? "",
-    giverId: "unknown",
+    giverId: giverId ?? "unknown",
     state: "available",
     objectives: objectives.map((obj, i) => ({
       id: `obj_${i}`,
@@ -322,10 +323,27 @@ function toStringArray(raw: unknown): string[] {
   return raw.filter((item): item is string => typeof item === "string");
 }
 
+function hashString(value: string): number {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function createDeterministicPosition(seed: string): { x: number; y: number } {
+  const hashed = hashString(seed);
+  const x = 100 + (hashed % 400);
+  const y = 100 + ((hashed >>> 16) % 400);
+  return { x, y };
+}
+
 function convertToLocation(raw: Record<string, unknown>, contentId: string): EnhancedLocation {
-  const locationId = contentId === "starting_location" 
-    ? "starting_location" 
-    : `loc_${contentId}_${Date.now().toString(36).slice(-4)}`;
+  const locationId = contentId === "starting_location"
+    ? "starting_location"
+    : ((raw.id as string) ?? contentId);
+  const fallbackPosition = createDeterministicPosition(locationId);
+  const rawPosition = raw.position as { x?: number; y?: number } | undefined;
   
   const connectedTo = toStringArray(raw.connectedTo);
   const services = parseServices(raw.services);
@@ -336,7 +354,9 @@ function convertToLocation(raw: Record<string, unknown>, contentId: string): Enh
     description: (raw.description as string) ?? "",
     type: (raw.type as EnhancedLocation["type"]) ?? "town",
     connectedTo,
-    position: { x: Math.floor(Math.random() * 200) + 100, y: Math.floor(Math.random() * 200) + 100 },
+    position: typeof rawPosition?.x === "number" && typeof rawPosition?.y === "number"
+      ? { x: rawPosition.x, y: rawPosition.y }
+      : fallbackPosition,
     radius: 30,
     discovered: locationId === "starting_location",
     items: [],
