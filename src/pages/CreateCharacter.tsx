@@ -64,6 +64,8 @@ const CreateCharacter = () => {
         xp: 0,
         xp_to_next: 300,
         position: JSON.parse(JSON.stringify({ x: 2, y: 2 })),
+        status_effects: JSON.parse(JSON.stringify([])),
+        is_active: true,
         equipment: JSON.parse(JSON.stringify({ weapon: null, armor: null, shield: null, helmet: null, boots: null, gloves: null, ring1: null, ring2: null, trinket1: null, trinket2: null, trinket3: null })),
         backpack: JSON.parse(JSON.stringify([])),
       }]);
