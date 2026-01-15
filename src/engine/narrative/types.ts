@@ -347,6 +347,8 @@ export interface CharacterProgression {
   readonly baseStats: StatModifiers;
   readonly abilitySlots: number;
   readonly unlockedAbilities: readonly string[];
+  readonly inventory?: Inventory;
+  readonly equipment?: Equipment;
 }
 
 // ============= World State =============
