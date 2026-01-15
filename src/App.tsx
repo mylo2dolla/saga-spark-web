@@ -15,6 +15,7 @@ import WorldMap from "./pages/WorldMap";
 import NPCView from "./pages/NPCView";
 import QuestView from "./pages/QuestView";
 import CombatView from "./pages/CombatView";
+import ServerDashboard from "./pages/ServerDashboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,8 @@ const App = () => (
           <Route path="/game/:campaignId/npc/:npcId" element={<NPCView />} />
           <Route path="/game/:campaignId/quest/:questId" element={<QuestView />} />
           <Route path="/game/:campaignId/combat" element={<CombatView />} />
+          <Route path="/admin" element={<ServerDashboard />} />
+          <Route path="/servers" element={<ServerDashboard />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>

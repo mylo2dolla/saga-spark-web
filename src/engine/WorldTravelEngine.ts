@@ -14,6 +14,18 @@ import * as Travel from "./narrative/Travel";
 import { rollDangerousEncounter, spawnEncounterEntities } from "./TravelCombatBridge";
 import { encounterToCombat } from "./narrative/TravelPersistence";
 
+// ============= Helper to preserve travelState =============
+
+function updateWorldPreservingTravel(
+  travelWorld: TravelWorldState, 
+  worldStateResult: WorldState
+): TravelWorldState {
+  return {
+    ...worldStateResult,
+    travelState: travelWorld.travelState,
+  };
+}
+
 // ============= Travel Engine Types =============
 
 export interface TravelStep {
@@ -156,7 +168,7 @@ export function beginTravel(
     
     // Tick quests
     const questResult = World.tickAllQuests(currentWorld);
-    currentWorld = questResult.world;
+    currentWorld = updateWorldPreservingTravel(currentWorld, questResult.world);
     events.push(...questResult.events);
     
     // Collect updated quest IDs
@@ -398,7 +410,13 @@ export function resumeTravelAfterCombat(
 
 function calculateTravelTime(from: EnhancedLocation, to: EnhancedLocation): number {
   // Base travel time is 1-5 based on connection
-  const isConnected = from.connectedLocations?.includes(to.id) ?? false;
+  // Use travelTime map if available, otherwise check connectedTo
+  const travelTimeToTarget = from.travelTime?.[to.id];
+  if (travelTimeToTarget !== undefined) {
+    return travelTimeToTarget;
+  }
+  
+  const isConnected = from.connectedTo?.includes(to.id) ?? false;
   
   if (!isConnected) {
     return 5; // Unconnected locations take max time
@@ -455,7 +473,8 @@ export function getReachableLocations(world: TravelWorldState): EnhancedLocation
     return [];
   }
   
-  const connectedIds = currentLocation.connectedLocations || currentLocation.connectedTo || [];
+  // Use connectedTo from base Location type
+  const connectedIds = currentLocation.connectedTo || [];
   
   return connectedIds
     .map(id => world.locations.get(id) as EnhancedLocation | undefined)
