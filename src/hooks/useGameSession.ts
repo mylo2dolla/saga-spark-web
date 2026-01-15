@@ -71,13 +71,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       if (campaignError) throw campaignError;
       
       // Fetch saves directly to ensure we have latest data
-      const { data: savesData } = await supabase
+      const { data: savesData, error: savesError } = await supabase
         .from("game_saves")
         .select("*")
         .eq("campaign_id", campaignId)
         .eq("user_id", userId)
         .order("updated_at", { ascending: false })
         .limit(10);
+
+      if (savesError) throw savesError;
       
       const existingSaves = savesData ?? [];
       const latestSave = existingSaves[0]; // Most recent
@@ -325,10 +327,33 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
   // Initialize on mount
   useEffect(() => {
-    if (userId && campaignId && !contentLoading) {
+    if (!userId || !campaignId) {
+      setSessionState(prev => ({
+        ...prev,
+        isLoading: false,
+        isInitialized: false,
+      }));
+      return;
+    }
+
+    if (!contentLoading) {
       initializeSession();
     }
   }, [userId, campaignId, contentLoading, initializeSession]);
+
+  useEffect(() => {
+    if (!sessionState.unifiedState || !worldContent) return;
+    setSessionState(prev => {
+      if (!prev.unifiedState) return prev;
+      return {
+        ...prev,
+        unifiedState: {
+          ...prev.unifiedState,
+          world: mergeIntoWorldState(prev.unifiedState.world, worldContent),
+        },
+      };
+    });
+  }, [worldContent, mergeIntoWorldState, sessionState.unifiedState]);
 
   // Cleanup
   useEffect(() => {
