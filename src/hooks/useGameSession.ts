@@ -7,7 +7,6 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorldContent } from "@/hooks/useWorldContent";
@@ -15,9 +14,31 @@ import { useGamePersistence } from "@/hooks/useGamePersistence";
 import { createUnifiedState, type UnifiedState } from "@/engine/UnifiedState";
 import * as World from "@/engine/narrative/World";
 import { createTravelState, type TravelState, type EnhancedLocation } from "@/engine/narrative/Travel";
-import { type TravelWorldState, deserializeTravelWorldState, createTravelWorldState } from "@/engine/narrative/TravelPersistence";
-import type { CampaignSeed, WorldState } from "@/engine/narrative/types";
+import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
+import type { CampaignSeed } from "@/engine/narrative/types";
 import { toast } from "sonner";
+
+const DEFAULT_STARTING_LOCATION: EnhancedLocation = {
+  id: "starting_location",
+  name: "Haven Village",
+  description: "A peaceful village at the crossroads of adventure. Travelers gather here before venturing into the unknown.",
+  type: "town",
+  connectedTo: [],
+  position: { x: 100, y: 100 },
+  radius: 30,
+  discovered: true,
+  items: [],
+  dangerLevel: 1,
+  npcs: [],
+  factionControl: null,
+  questHooks: [],
+  services: ["rest", "trade", "heal"] as const,
+  ambientDescription: "The sounds of a bustling marketplace fill the air. Smoke rises from the inn's chimney.",
+  shops: [],
+  inn: true,
+  travelTime: {},
+  currentEvents: [],
+};
 
 export interface GameSessionState {
   unifiedState: UnifiedState | null;
@@ -25,6 +46,7 @@ export interface GameSessionState {
   campaignSeed: CampaignSeed | null;
   isInitialized: boolean;
   isLoading: boolean;
+  error: string | null;
   playtimeSeconds: number;
 }
 
@@ -33,7 +55,6 @@ interface UseGameSessionOptions {
 }
 
 export function useGameSession({ campaignId }: UseGameSessionOptions) {
-  const navigate = useNavigate();
   const { user } = useAuth();
   const userId = user?.id ?? "";
   
@@ -46,6 +67,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     campaignSeed: null,
     isInitialized: false,
     isLoading: true,
+    error: null,
     playtimeSeconds: 0,
   });
   
@@ -53,12 +75,88 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const playtimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const autosaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveIdRef = useRef<string | null>(null);
+  const lastMergedContentRef = useRef<typeof worldContent>(null);
+
+  const ensureWorldInvariants = useCallback((
+    unified: UnifiedState,
+    travel: TravelState | null
+  ): { unified: UnifiedState; travel: TravelState } => {
+    let nextWorld = unified.world;
+    let locations = new Map(nextWorld.locations);
+    let nextTravel = travel ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
+
+    if (locations.size === 0) {
+      locations.set(DEFAULT_STARTING_LOCATION.id, DEFAULT_STARTING_LOCATION);
+    }
+
+    const locationIds = Array.from(locations.keys());
+    let currentLocationId = nextTravel.currentLocationId;
+    if (!locations.has(currentLocationId)) {
+      currentLocationId = locationIds[0];
+    }
+
+    if (nextTravel.isInTransit && nextTravel.transitDestinationId) {
+      if (!locations.has(nextTravel.transitDestinationId)) {
+        nextTravel = {
+          ...nextTravel,
+          isInTransit: false,
+          transitProgress: 0,
+          transitDestinationId: null,
+        };
+      }
+    }
+
+    if (currentLocationId !== nextTravel.currentLocationId) {
+      nextTravel = {
+        ...nextTravel,
+        currentLocationId,
+        previousLocationId: nextTravel.previousLocationId ?? null,
+        discoveredLocations: new Set([
+          ...Array.from(nextTravel.discoveredLocations),
+          currentLocationId,
+        ]),
+      };
+    }
+
+    const currentLocation = locations.get(currentLocationId);
+    if (currentLocation && currentLocation.connectedTo.length === 0 && locations.size > 1) {
+      const fallbackDestination = locationIds.find(id => id !== currentLocationId);
+      if (fallbackDestination) {
+        locations.set(currentLocationId, {
+          ...currentLocation,
+          connectedTo: [fallbackDestination],
+        });
+        const fallbackLocation = locations.get(fallbackDestination);
+        if (fallbackLocation && !fallbackLocation.connectedTo.includes(currentLocationId)) {
+          locations.set(fallbackDestination, {
+            ...fallbackLocation,
+            connectedTo: [...fallbackLocation.connectedTo, currentLocationId],
+          });
+        }
+      }
+    }
+
+    if (locations !== nextWorld.locations) {
+      nextWorld = {
+        ...nextWorld,
+        locations,
+      };
+    }
+
+    return {
+      unified: {
+        ...unified,
+        world: nextWorld,
+      },
+      travel: nextTravel,
+    };
+  }, []);
 
   // Initialize session from saved state or fresh
   const initializeSession = useCallback(async () => {
     if (!campaignId || !userId) return;
     
-    setSessionState(prev => ({ ...prev, isLoading: true }));
+    setSessionState(prev => ({ ...prev, isLoading: true, error: null }));
     
     try {
       // Fetch campaign info
@@ -96,7 +194,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           
           // Extract travel state from world state if available
           const worldWithTravel = loaded.world as unknown as TravelWorldState;
-          travelState = worldWithTravel.travelState ?? createTravelState("starting_location");
+          travelState = worldWithTravel.travelState ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
           initialPlaytime = latestSave.playtime_seconds;
           lastSaveIdRef.current = latestSave.id;
           
@@ -132,75 +230,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           };
         }
 
-        // Add a default starting location if none exists from AI content
-        if (unifiedState.world.locations.size === 0) {
-          const defaultStartingLocation: EnhancedLocation = {
-            id: "starting_location",
-            name: "Haven Village",
-            description: "A peaceful village at the crossroads of adventure. Travelers gather here before venturing into the unknown.",
-            type: "town",
-            connectedTo: [],
-            position: { x: 100, y: 100 },
-            radius: 30,
-            discovered: true,
-            items: [],
-            dangerLevel: 1,
-            npcs: [],
-            factionControl: null,
-            questHooks: [],
-            services: ["rest", "trade", "heal"] as const,
-            ambientDescription: "The sounds of a bustling marketplace fill the air. Smoke rises from the inn's chimney.",
-            shops: [],
-            inn: true,
-            travelTime: {},
-            currentEvents: [],
-          };
-
-          unifiedState = {
-            ...unifiedState,
-            world: {
-              ...unifiedState.world,
-              locations: new Map([[defaultStartingLocation.id, defaultStartingLocation]]),
-            },
-          };
-        }
-
-        const locationsArray = Array.from(unifiedState.world.locations.values());
-        const startingLocation =
-          locationsArray.find(location => location.id === "starting_location") ?? locationsArray[0];
-        const startingLocationId = startingLocation?.id ?? "starting_location";
-
-        if (
-          startingLocation &&
-          startingLocation.connectedTo.length === 0 &&
-          locationsArray.length > 1
-        ) {
-          const fallbackDestination = locationsArray.find(location => location.id !== startingLocationId);
-          if (fallbackDestination) {
-            const nextLocations = new Map(unifiedState.world.locations);
-            nextLocations.set(startingLocationId, {
-              ...startingLocation,
-              connectedTo: [fallbackDestination.id],
-            });
-            if (!fallbackDestination.connectedTo.includes(startingLocationId)) {
-              nextLocations.set(fallbackDestination.id, {
-                ...fallbackDestination,
-                connectedTo: [...fallbackDestination.connectedTo, startingLocationId],
-              });
-            }
-            unifiedState = {
-              ...unifiedState,
-              world: {
-                ...unifiedState.world,
-                locations: nextLocations,
-              },
-            };
-          }
-        }
-
         // Initialize travel state with starting location
-        travelState = createTravelState(startingLocationId);
+        travelState = createTravelState(DEFAULT_STARTING_LOCATION.id);
       }
+
+      const invariantResult = ensureWorldInvariants(unifiedState, travelState);
+      unifiedState = invariantResult.unified;
+      travelState = invariantResult.travel;
       
       // Initialize player progression if needed
       if (userId && !unifiedState.world.playerProgression.has(userId)) {
@@ -211,6 +247,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       }
       
       playtimeRef.current = initialPlaytime;
+      if (worldContent) {
+        lastMergedContentRef.current = worldContent;
+      }
       
       setSessionState({
         unifiedState,
@@ -218,15 +257,29 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         campaignSeed: unifiedState.world.campaignSeed,
         isInitialized: true,
         isLoading: false,
+        error: null,
         playtimeSeconds: initialPlaytime,
       });
       
     } catch (error) {
       console.error("Failed to initialize game session:", error);
-      toast.error("Failed to load game");
-      setSessionState(prev => ({ ...prev, isLoading: false }));
+      const message = error instanceof Error ? error.message : "Failed to load game";
+      toast.error(message);
+      setSessionState(prev => ({
+        ...prev,
+        isInitialized: false,
+        isLoading: false,
+        error: message,
+      }));
     }
-  }, [campaignId, userId, worldContent, mergeIntoWorldState, persistence]);
+  }, [
+    campaignId,
+    userId,
+    worldContent,
+    mergeIntoWorldState,
+    persistence,
+    ensureWorldInvariants,
+  ]);
 
   // Update unified state
   const updateUnifiedState = useCallback((updater: (state: UnifiedState) => UnifiedState) => {
@@ -308,21 +361,22 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     const loaded = await persistence.loadGame(saveId);
     if (loaded) {
       const worldWithTravel = loaded.world as unknown as TravelWorldState;
-      const travelState = worldWithTravel.travelState ?? createTravelState("starting_location");
+      const travelState = worldWithTravel.travelState ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
+      const invariantResult = ensureWorldInvariants(loaded, travelState);
       
       lastSaveIdRef.current = saveId;
       
       setSessionState(prev => ({
         ...prev,
-        unifiedState: loaded,
-        travelState,
+        unifiedState: invariantResult.unified,
+        travelState: invariantResult.travel,
         isInitialized: true,
       }));
       
       return true;
     }
     return false;
-  }, [persistence]);
+  }, [persistence, ensureWorldInvariants]);
 
   // Start playtime tracking
   useEffect(() => {
@@ -354,7 +408,16 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
   // Initialize on mount
   useEffect(() => {
-    if (!userId || !campaignId) return;
+    if (!campaignId) {
+      setSessionState(prev => ({
+        ...prev,
+        isInitialized: false,
+        isLoading: false,
+        error: "Campaign not found.",
+      }));
+      return;
+    }
+    if (!userId) return;
     if (!hasLoadedContent) return;
 
     initializeSession();
@@ -362,20 +425,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
   useEffect(() => {
     if (!sessionState.unifiedState || !worldContent) return;
-    setSessionState(prev => {
-      if (!prev.unifiedState) return prev;
-      return {
-        ...prev,
-        unifiedState: {
-          ...prev.unifiedState,
-          world: mergeIntoWorldState(prev.unifiedState.world, worldContent),
-        },
-      };
-    });
-  }, [worldContent, mergeIntoWorldState, sessionState.unifiedState]);
-
-  useEffect(() => {
-    if (!sessionState.unifiedState || !worldContent) return;
+    if (lastMergedContentRef.current === worldContent) return;
+    lastMergedContentRef.current = worldContent;
     setSessionState(prev => {
       if (!prev.unifiedState) return prev;
       return {
