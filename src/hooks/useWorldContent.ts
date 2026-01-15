@@ -161,7 +161,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     if (!campaignId) {
       setContent(null);
       setIsLoading(false);
-      setHasLoadedContent(false);
+      setHasLoadedContent(true); // Must be true so session can initialize
       return;
     }
     fetchContent();
