@@ -23,11 +23,13 @@ import * as ItemModule from "./narrative/Item";
 // ============= Helper to preserve travelState =============
 
 function updateWorldPreservingTravel(
-  travelWorld: TravelWorldState, 
+  travelWorld: TravelWorldState,
   worldStateResult: WorldState
 ): TravelWorldState {
+  // Many narrative helpers return the base WorldState (without travelState).
+  // Re-attach the current travelState so we never drop travel persistence.
   return {
-    ...worldStateResult,
+    ...(worldStateResult as unknown as TravelWorldState),
     travelState: travelWorld.travelState,
   };
 }
