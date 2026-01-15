@@ -1,0 +1,309 @@
+/**
+ * Unified game session hook that manages the complete game lifecycle:
+ * - Loading AI-generated content
+ * - Initializing engine state
+ * - Persistence with autosave
+ * - Per-player travel authority
+ */
+
+import { useState, useCallback, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { useWorldContent } from "@/hooks/useWorldContent";
+import { useGamePersistence } from "@/hooks/useGamePersistence";
+import { createUnifiedState, type UnifiedState } from "@/engine/UnifiedState";
+import * as World from "@/engine/narrative/World";
+import { createTravelState, type TravelState, type EnhancedLocation } from "@/engine/narrative/Travel";
+import { type TravelWorldState, deserializeTravelWorldState, createTravelWorldState } from "@/engine/narrative/TravelPersistence";
+import type { CampaignSeed, WorldState } from "@/engine/narrative/types";
+import { toast } from "sonner";
+
+export interface GameSessionState {
+  unifiedState: UnifiedState | null;
+  travelState: TravelState | null;
+  campaignSeed: CampaignSeed | null;
+  isInitialized: boolean;
+  isLoading: boolean;
+  playtimeSeconds: number;
+}
+
+interface UseGameSessionOptions {
+  campaignId: string;
+}
+
+export function useGameSession({ campaignId }: UseGameSessionOptions) {
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const userId = user?.id ?? "";
+  
+  const { content: worldContent, isLoading: contentLoading, mergeIntoWorldState } = useWorldContent({ campaignId });
+  const persistence = useGamePersistence({ campaignId, userId });
+  
+  const [sessionState, setSessionState] = useState<GameSessionState>({
+    unifiedState: null,
+    travelState: null,
+    campaignSeed: null,
+    isInitialized: false,
+    isLoading: true,
+    playtimeSeconds: 0,
+  });
+  
+  const playtimeRef = useRef(0);
+  const playtimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const autosaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSaveIdRef = useRef<string | null>(null);
+
+  // Initialize session from saved state or fresh
+  const initializeSession = useCallback(async () => {
+    if (!campaignId || !userId) return;
+    
+    setSessionState(prev => ({ ...prev, isLoading: true }));
+    
+    try {
+      // Fetch campaign info
+      const { data: campaign, error: campaignError } = await supabase
+        .from("campaigns")
+        .select("name, description")
+        .eq("id", campaignId)
+        .single();
+      
+      if (campaignError) throw campaignError;
+      
+      // Check for existing save
+      await persistence.fetchSaves();
+      const existingSaves = persistence.saves;
+      const latestSave = existingSaves[0]; // Most recent
+      
+      let unifiedState: UnifiedState;
+      let travelState: TravelState;
+      let initialPlaytime = 0;
+      
+      if (latestSave) {
+        // Load from save
+        const loaded = await persistence.loadGame(latestSave.id);
+        if (loaded) {
+          unifiedState = loaded;
+          
+          // Extract travel state from world state if available
+          const worldWithTravel = loaded.world as unknown as TravelWorldState;
+          travelState = worldWithTravel.travelState ?? createTravelState("starting_location");
+          initialPlaytime = latestSave.playtime_seconds;
+          lastSaveIdRef.current = latestSave.id;
+        } else {
+          throw new Error("Failed to load save");
+        }
+      } else {
+        // Create fresh state
+        const campaignSeed: CampaignSeed = {
+          id: campaignId,
+          title: campaign.name,
+          description: campaign.description ?? "",
+          themes: [],
+          factions: [],
+          createdAt: Date.now(),
+        };
+        
+        // Create base state
+        unifiedState = createUnifiedState(campaignSeed, [], 10, 12);
+        
+        // Merge in generated content if available
+        if (worldContent) {
+          unifiedState = {
+            ...unifiedState,
+            world: mergeIntoWorldState(unifiedState.world, worldContent),
+          };
+        }
+        
+        // Initialize travel state with starting location
+        const startingLocationId = "starting_location";
+        travelState = createTravelState(startingLocationId);
+        
+        // Discover starting location
+        travelState = {
+          ...travelState,
+          discoveredLocations: new Set([startingLocationId]),
+        };
+      }
+      
+      // Initialize player progression if needed
+      if (userId && !unifiedState.world.playerProgression.has(userId)) {
+        unifiedState = {
+          ...unifiedState,
+          world: World.initPlayerProgression(unifiedState.world, userId),
+        };
+      }
+      
+      playtimeRef.current = initialPlaytime;
+      
+      setSessionState({
+        unifiedState,
+        travelState,
+        campaignSeed: unifiedState.world.campaignSeed,
+        isInitialized: true,
+        isLoading: false,
+        playtimeSeconds: initialPlaytime,
+      });
+      
+    } catch (error) {
+      console.error("Failed to initialize game session:", error);
+      toast.error("Failed to load game");
+      setSessionState(prev => ({ ...prev, isLoading: false }));
+    }
+  }, [campaignId, userId, worldContent, mergeIntoWorldState, persistence]);
+
+  // Update unified state
+  const updateUnifiedState = useCallback((updater: (state: UnifiedState) => UnifiedState) => {
+    setSessionState(prev => {
+      if (!prev.unifiedState) return prev;
+      return {
+        ...prev,
+        unifiedState: updater(prev.unifiedState),
+      };
+    });
+  }, []);
+
+  // Update travel state
+  const updateTravelState = useCallback((updater: (state: TravelState) => TravelState) => {
+    setSessionState(prev => {
+      if (!prev.travelState) return prev;
+      return {
+        ...prev,
+        travelState: updater(prev.travelState),
+      };
+    });
+  }, []);
+
+  // Autosave function
+  const autosave = useCallback(async () => {
+    if (!sessionState.unifiedState || !sessionState.travelState || !userId) return;
+    
+    try {
+      if (lastSaveIdRef.current) {
+        // Update existing save
+        await persistence.updateSave(
+          lastSaveIdRef.current,
+          sessionState.unifiedState,
+          playtimeRef.current
+        );
+      } else {
+        // Create new autosave
+        const saveId = await persistence.saveGame(
+          sessionState.unifiedState,
+          sessionState.travelState,
+          "Autosave",
+          playtimeRef.current
+        );
+        if (saveId) {
+          lastSaveIdRef.current = saveId;
+        }
+      }
+    } catch (error) {
+      console.error("Autosave failed:", error);
+    }
+  }, [sessionState.unifiedState, sessionState.travelState, userId, persistence]);
+
+  // Trigger autosave with debounce
+  const triggerAutosave = useCallback(() => {
+    if (autosaveTimeoutRef.current) {
+      clearTimeout(autosaveTimeoutRef.current);
+    }
+    autosaveTimeoutRef.current = setTimeout(autosave, 2000);
+  }, [autosave]);
+
+  // Manual save
+  const saveGame = useCallback(async (saveName: string) => {
+    if (!sessionState.unifiedState || !sessionState.travelState) {
+      toast.error("No game state to save");
+      return null;
+    }
+    
+    return persistence.saveGame(
+      sessionState.unifiedState,
+      sessionState.travelState,
+      saveName,
+      playtimeRef.current
+    );
+  }, [sessionState.unifiedState, sessionState.travelState, persistence]);
+
+  // Load specific save
+  const loadSave = useCallback(async (saveId: string) => {
+    const loaded = await persistence.loadGame(saveId);
+    if (loaded) {
+      const worldWithTravel = loaded.world as unknown as TravelWorldState;
+      const travelState = worldWithTravel.travelState ?? createTravelState("starting_location");
+      
+      lastSaveIdRef.current = saveId;
+      
+      setSessionState(prev => ({
+        ...prev,
+        unifiedState: loaded,
+        travelState,
+        isInitialized: true,
+      }));
+      
+      return true;
+    }
+    return false;
+  }, [persistence]);
+
+  // Start playtime tracking
+  useEffect(() => {
+    if (!sessionState.isInitialized) return;
+    
+    playtimeIntervalRef.current = setInterval(() => {
+      playtimeRef.current += 1;
+      setSessionState(prev => ({ ...prev, playtimeSeconds: playtimeRef.current }));
+    }, 1000);
+    
+    return () => {
+      if (playtimeIntervalRef.current) {
+        clearInterval(playtimeIntervalRef.current);
+      }
+    };
+  }, [sessionState.isInitialized]);
+
+  // Autosave on unload
+  useEffect(() => {
+    const handleUnload = () => {
+      autosave();
+    };
+    
+    window.addEventListener("beforeunload", handleUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleUnload);
+    };
+  }, [autosave]);
+
+  // Initialize on mount
+  useEffect(() => {
+    if (userId && campaignId && !contentLoading) {
+      initializeSession();
+    }
+  }, [userId, campaignId, contentLoading, initializeSession]);
+
+  // Cleanup
+  useEffect(() => {
+    return () => {
+      if (autosaveTimeoutRef.current) {
+        clearTimeout(autosaveTimeoutRef.current);
+      }
+      if (playtimeIntervalRef.current) {
+        clearInterval(playtimeIntervalRef.current);
+      }
+    };
+  }, []);
+
+  return {
+    ...sessionState,
+    saves: persistence.saves,
+    isSaving: persistence.isSaving,
+    updateUnifiedState,
+    updateTravelState,
+    saveGame,
+    loadSave,
+    triggerAutosave,
+    fetchSaves: persistence.fetchSaves,
+    deleteSave: persistence.deleteSave,
+  };
+}
