@@ -196,8 +196,13 @@ function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC {
   const npcId = `npc_${contentId}_${Date.now().toString(36).slice(-4)}`;
   const entityId = `entity_${npcId}`;
   
-  const goals = (raw.goals as Array<{ id?: string; description: string; priority: number }>) ?? [];
-  const dialogue = raw.dialogue as { text?: string; responses?: Array<{ text: string; nextNodeId?: string }> } | undefined;
+  const goals = Array.isArray(raw.goals)
+    ? (raw.goals as Array<{ id?: string; description?: string; priority?: number }>)
+    : [];
+  const dialogue = raw.dialogue as { text?: string; responses?: unknown } | undefined;
+  const dialogueResponses = Array.isArray(dialogue?.responses)
+    ? (dialogue?.responses as Array<{ text?: string; nextNodeId?: string }>)
+    : [];
   
   const personality = parsePersonalityTraits(raw.personality);
   
@@ -210,8 +215,8 @@ function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC {
     personality: personality.length > 0 ? personality : ["honest" as PersonalityTrait],
     goals: goals.map((g, i) => ({
       id: g.id ?? `goal_${i}`,
-      description: g.description,
-      priority: g.priority,
+      description: g.description ?? "Unknown goal",
+      priority: g.priority ?? 1,
       progress: 0,
       completed: false,
     })),
@@ -222,8 +227,8 @@ function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC {
     dialogue: dialogue ? [{
       id: "greeting",
       text: dialogue.text ?? "Hello, traveler.",
-      responses: (dialogue.responses ?? []).map((r) => ({
-        text: r.text,
+      responses: dialogueResponses.map((r) => ({
+        text: r.text ?? "Hello.",
         nextNodeId: r.nextNodeId,
       })),
     }] : [{
@@ -234,26 +239,33 @@ function convertToNPC(raw: Record<string, unknown>, contentId: string): NPC {
     questsOffered: [],
     canTrade: (raw.canTrade as boolean) ?? false,
     priceModifier: 1.0,
-    knownSecrets: (raw.secrets as string[]) ?? [],
+    knownSecrets: toStringArray(raw.secrets),
     isEssential: false,
   };
 }
 
 function convertToQuest(raw: Record<string, unknown>, contentId: string): Quest {
   const questId = `quest_${contentId}_${Date.now().toString(36).slice(-4)}`;
-  const objectives = (raw.objectives as Array<{
-    type: string;
-    description: string;
-    targetType?: string;
-    required: number;
-  }>) ?? [];
+  const objectives = Array.isArray(raw.objectives)
+    ? (raw.objectives as Array<{
+        type?: string;
+        description?: string;
+        targetType?: string;
+        required?: number;
+      }>)
+    : [];
   
-  const rewards = raw.rewards as {
-    xp?: number;
-    gold?: number;
-    items?: string[];
-    storyFlags?: string[];
-  } | undefined;
+  const rewards = typeof raw.rewards === "object" && raw.rewards !== null
+    ? (raw.rewards as {
+        xp?: number;
+        gold?: number;
+        items?: unknown;
+        storyFlags?: unknown;
+      })
+    : undefined;
+  
+  const rewardItems = toStringArray(rewards?.items);
+  const rewardFlags = toStringArray(rewards?.storyFlags);
   
   return {
     id: questId,
@@ -264,19 +276,19 @@ function convertToQuest(raw: Record<string, unknown>, contentId: string): Quest 
     state: "available",
     objectives: objectives.map((obj, i) => ({
       id: `obj_${i}`,
-      type: obj.type as Quest["objectives"][0]["type"],
-      description: obj.description,
+      type: (obj.type as Quest["objectives"][0]["type"]) ?? "explore",
+      description: obj.description ?? "Unknown objective",
       targetType: obj.targetType,
       current: 0,
-      required: obj.required,
+      required: obj.required ?? 1,
       optional: false,
       hidden: false,
     })),
     rewards: {
       xp: rewards?.xp ?? 100,
       gold: rewards?.gold ?? 50,
-      items: rewards?.items ?? [],
-      storyFlags: rewards?.storyFlags ?? [],
+      items: rewardItems,
+      storyFlags: rewardFlags,
     },
     timeLimit: raw.timeLimit as number | undefined,
     turnsElapsed: 0,
@@ -296,11 +308,17 @@ function parseServices(rawServices: unknown): readonly LocationService[] {
     .filter(s => VALID_SERVICES.includes(s)) as readonly LocationService[];
 }
 
+function toStringArray(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((item): item is string => typeof item === "string");
+}
+
 function convertToLocation(raw: Record<string, unknown>, contentId: string): EnhancedLocation {
   const locationId = contentId === "starting_location" 
     ? "starting_location" 
     : `loc_${contentId}_${Date.now().toString(36).slice(-4)}`;
   
+  const connectedTo = toStringArray(raw.connectedTo);
   const services = parseServices(raw.services);
   
   return {
@@ -308,14 +326,14 @@ function convertToLocation(raw: Record<string, unknown>, contentId: string): Enh
     name: (raw.name as string) ?? "Unknown Location",
     description: (raw.description as string) ?? "",
     type: (raw.type as EnhancedLocation["type"]) ?? "town",
-    connectedTo: (raw.connectedTo as string[]) ?? [],
+    connectedTo,
     position: { x: Math.floor(Math.random() * 200) + 100, y: Math.floor(Math.random() * 200) + 100 },
     radius: 30,
     discovered: locationId === "starting_location",
     items: [],
     // Enhanced fields
-    dangerLevel: (raw.dangerLevel as number) ?? 1,
-    npcs: (raw.inhabitants as string[]) ?? [],
+    dangerLevel: typeof raw.dangerLevel === "number" ? raw.dangerLevel : 1,
+    npcs: toStringArray(raw.inhabitants),
     factionControl: null,
     questHooks: [],
     services: services.length > 0 ? services : ["rest", "trade"] as readonly LocationService[],
