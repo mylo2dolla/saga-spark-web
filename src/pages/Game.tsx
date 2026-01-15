@@ -10,7 +10,7 @@ import {
   Sparkles,
   Play,
   Loader2,
-  Map,
+  Map as MapIcon,
   Navigation,
   Save,
 } from "lucide-react";
@@ -236,27 +236,86 @@ const Game = () => {
       toast.error(event.description);
     }
     
+    // Handle combat end with proper world state updates
     if (event.type === "combat_ended") {
       toast.success(event.description);
       setInCombat(false);
       
       // Apply combat outcome to world state
       if (travelWorldState && user?.id) {
-        // TODO: Build proper combat outcome from game state
-        const victory = true; // Determine from game state
-        const result = resumeTravelAfterCombat(travelWorldState, user.id, victory);
+        // Determine victory from combat state
+        const playerSurvivors = combatEntitiesForArena.filter(
+          e => e.faction === "player" && e.hp > 0
+        );
+        const enemySurvivors = combatEntitiesForArena.filter(
+          e => e.faction === "enemy" && e.hp > 0
+        );
+        const victory = playerSurvivors.length > 0 && enemySurvivors.length === 0;
         
-        handleWorldUpdate(result.world);
-        handleTravelStateUpdate(result.travelState);
+        // Build and apply combat outcome
+        const locationId = travelWorldState.travelState.isInTransit 
+          ? travelWorldState.travelState.transitDestinationId ?? travelWorldState.travelState.currentLocationId
+          : travelWorldState.travelState.currentLocationId;
         
-        if (result.arrived) {
-          toast.success(`Arrived at destination!`);
+        const outcome = buildCombatOutcome(
+          { 
+            tick: Date.now(), 
+            entities: new Map(combatEntitiesForArena.map(e => [e.id ?? e.name, {
+              id: e.id ?? e.name,
+              name: e.name,
+              faction: e.faction,
+              position: e.position,
+              velocity: { x: 0, y: 0 },
+              radius: 0.4,
+              mass: 1,
+              hp: e.hp,
+              maxHp: e.maxHp ?? e.hp,
+              ac: e.ac ?? 10,
+              initiative: e.initiative ?? 10,
+              isAlive: e.hp > 0,
+              statusEffects: [],
+            }] as [string, Entity])),
+            board: { rows: 10, cols: 12, cellSize: 1, tiles: [] },
+            isInCombat: false,
+            turnOrder: { order: [], currentIndex: 0, roundNumber: 1 },
+            pendingEvents: [],
+          },
+          locationId,
+          0,
+          false,
+          []
+        );
+        
+        const combatResult = applyCombatOutcome(travelWorldState, outcome, user.id);
+        
+        // Notify about XP and level up
+        if (combatResult.playerXpGained > 0) {
+          toast.success(`Gained ${combatResult.playerXpGained} XP!`);
         }
+        if (combatResult.playerLeveledUp) {
+          toast.success(`Level up! Now level ${combatResult.newLevel}!`);
+        }
+        
+        // Resume travel after combat
+        const travelResult = resumeTravelAfterCombat(combatResult.world, user.id, victory);
+        
+        handleWorldUpdate(travelResult.world);
+        handleTravelStateUpdate(travelResult.travelState);
+        
+        if (travelResult.arrived) {
+          toast.success(`Arrived at destination!`);
+        } else if (!victory) {
+          toast.warning(`Retreated to safety.`);
+        }
+        
+        // Trigger autosave after combat
+        gameSession.triggerAutosave();
       }
       
-      gameSession.triggerAutosave();
+      // Clear combat entities
+      setCombatEntitiesForArena([]);
     }
-  }, [partyCharacters, updateCharacter, travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession]);
+  }, [partyCharacters, updateCharacter, travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession, combatEntitiesForArena]);
 
   const handleSendMessage = (message: string) => {
     const context = {
@@ -352,7 +411,7 @@ const Game = () => {
             </Button>
             <Link to={`/game/${campaignId}/map`}>
               <Button variant="ghost" size="sm" className="gap-1">
-                <Map className="w-4 h-4" />
+                <MapIcon className="w-4 h-4" />
                 <span className="hidden sm:inline">Map</span>
               </Button>
             </Link>
