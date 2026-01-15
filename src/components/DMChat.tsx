@@ -94,6 +94,26 @@ const MessageContent = ({ message }: { message: DMMessage }) => {
         {parsed.narration}
       </p>
 
+      {/* Scene details */}
+      {parsed.scene && (
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 font-display text-primary">
+            Scene: {parsed.scene.type}
+          </span>
+          <span className="rounded-full border border-muted/40 bg-muted/40 px-3 py-1 text-muted-foreground">
+            Mood: {parsed.scene.mood}
+          </span>
+          <span className="rounded-full border border-muted/40 bg-muted/40 px-3 py-1 text-muted-foreground">
+            Location: {parsed.scene.location}
+          </span>
+          {parsed.scene.environment && (
+            <span className="rounded-full border border-muted/40 bg-muted/40 px-3 py-1 text-muted-foreground">
+              Environment: {parsed.scene.environment}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* NPC Dialogue */}
       {parsed.npcs && parsed.npcs.length > 0 && (
         <div className="space-y-2">
