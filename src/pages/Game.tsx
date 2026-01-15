@@ -186,7 +186,22 @@ const Game = () => {
 
   // Handle combat start from travel encounter
   const handleCombatStart = useCallback((entities: readonly Entity[]) => {
-    setCombatEntitiesForArena([...combatEntities, ...entities]);
+    // Filter out neutral entities and map to arena format
+    const combatReadyEntities = entities
+      .filter((e): e is Entity & { faction: "player" | "enemy" } => 
+        e.faction === "player" || e.faction === "enemy"
+      )
+      .map(e => ({
+        id: e.id,
+        name: e.name,
+        faction: e.faction,
+        position: e.position,
+        hp: e.hp,
+        maxHp: e.maxHp,
+        ac: e.ac,
+        initiative: e.initiative,
+      }));
+    setCombatEntitiesForArena([...combatEntities, ...combatReadyEntities]);
     setInCombat(true);
     setShowTravelPanel(false);
     toast.warning("Enemies appear! Prepare for battle!");
