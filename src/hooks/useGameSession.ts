@@ -221,17 +221,18 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     });
   }, []);
 
-  // Autosave function
+  // Autosave function - includes travel state in updates
   const autosave = useCallback(async () => {
     if (!sessionState.unifiedState || !sessionState.travelState || !userId) return;
     
     try {
       if (lastSaveIdRef.current) {
-        // Update existing save
+        // Update existing save with travel state
         await persistence.updateSave(
           lastSaveIdRef.current,
           sessionState.unifiedState,
-          playtimeRef.current
+          playtimeRef.current,
+          sessionState.travelState
         );
       } else {
         // Create new autosave

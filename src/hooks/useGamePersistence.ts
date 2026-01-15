@@ -123,16 +123,24 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       setIsSaving(false);
     }
   }, [campaignId, userId, fetchSaves]);
+  // Update an existing save - includes travel state
   const updateSave = useCallback(async (
     saveId: string,
     state: UnifiedState,
-    playtimeSeconds: number = 0
+    playtimeSeconds: number = 0,
+    travelState?: TravelState
   ): Promise<boolean> => {
     setIsSaving(true);
     try {
       const serialized = serializeUnifiedState(state);
       const parsedSerialized = JSON.parse(serialized);
-      const worldSerialized = World.serializeWorld(state.world);
+      
+      // Create world state with travel data included (same as saveGame)
+      const worldWithTravel: TravelPersistence.TravelWorldState = {
+        ...state.world,
+        travelState: travelState ?? createTravelState("starting_location"),
+      };
+      const worldSerialized = TravelPersistence.serializeTravelWorldState(worldWithTravel);
       
       const playerProgression = Array.from(state.world.playerProgression.values())[0];
       const playerLevel = playerProgression?.level ?? 1;
