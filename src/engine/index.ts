@@ -141,3 +141,27 @@ export {
   removeEntityFromGame,
   type EngineContext,
 } from "./Engine";
+
+// Combat → World Bridge
+export {
+  buildCombatOutcome,
+  applyCombatOutcome,
+  applyCombatResult,
+  type CombatOutcome,
+  type CombatantOutcome,
+  type LootItem,
+  type ApplyCombatResult,
+  type CombatLogEntry,
+} from "./CombatWorldBridge";
+
+// World Travel Engine
+export {
+  beginTravel,
+  resumeTravelAfterCombat,
+  canBeginTravel,
+  getReachableLocations,
+  getTravelInfo,
+  type BeginTravelResult,
+  type TravelStep,
+  type StatusTick,
+} from "./WorldTravelEngine";
