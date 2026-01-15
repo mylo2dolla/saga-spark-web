@@ -76,7 +76,7 @@ function toAbility(ability: CharacterAbility): Ability {
 const Game = () => {
   const { campaignId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const [showDice, setShowDice] = useState(false);
   const [showTravelPanel, setShowTravelPanel] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -113,6 +113,12 @@ const Game = () => {
 
   // Server heartbeat for dashboard tracking
   useServerHeartbeat({ campaignId });
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/login");
+    }
+  }, [authLoading, user, navigate]);
 
   // Fetch campaign data
   useEffect(() => {
@@ -380,7 +386,7 @@ const Game = () => {
   };
 
   // Loading state
-  if (charLoading || partyLoading || gameSession.isLoading) {
+  if (authLoading || charLoading || partyLoading || gameSession.isLoading) {
     return (
       <div className="h-screen bg-background flex items-center justify-center">
         <div className="text-center">
