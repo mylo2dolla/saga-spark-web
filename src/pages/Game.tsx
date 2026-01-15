@@ -319,8 +319,18 @@ const Game = () => {
       // Resume travel after combat
       const travelResult = resumeTravelAfterCombat(combatResult.world, user.id, victory);
       
-      handleWorldUpdate(travelResult.world);
-      handleTravelStateUpdate(travelResult.travelState);
+      const nextUnifiedState = gameSession.unifiedState
+        ? {
+            ...gameSession.unifiedState,
+            world: travelResult.world,
+          }
+        : null;
+
+      if (nextUnifiedState) {
+        gameSession.setUnifiedState(nextUnifiedState);
+      }
+
+      gameSession.updateTravelState(() => travelResult.travelState);
       
       if (travelResult.arrived) {
         toast.success(`Arrived at destination!`);
@@ -329,13 +339,17 @@ const Game = () => {
       }
       
       // Trigger autosave after combat
-      gameSession.triggerAutosave();
+      if (nextUnifiedState) {
+        void gameSession.autosaveNow(nextUnifiedState, travelResult.travelState);
+      } else {
+        gameSession.triggerAutosave();
+      }
     }
     
     // Clear combat entities
     setCombatEntitiesForArena([]);
     setActiveCombatEncounter(null);
-  }, [travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession, activeCombatEncounter]);
+  }, [travelWorldState, user?.id, gameSession, activeCombatEncounter]);
 
   const handleSendMessage = (message: string) => {
     const context = {

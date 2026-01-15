@@ -249,6 +249,7 @@ export function applyCombatOutcome(
   let newWorld = world;
   let playerLeveledUp = false;
   let newLevel = 0;
+  let updatedProgression = newWorld.playerProgression.get(playerId);
   
   // 1. Remove defeated entities from world factions
   for (const defeated of outcome.defeated) {
@@ -267,16 +268,15 @@ export function applyCombatOutcome(
   }
   
   // 2. Award XP to player survivors
-  const playerProgression = newWorld.playerProgression.get(playerId);
-  if (playerProgression && outcome.xpEarned > 0) {
+  if (updatedProgression && outcome.xpEarned > 0) {
     const xpResult = Progression.gainXp(
-      playerProgression,
+      updatedProgression,
       outcome.xpEarned,
       "combat",
       `Combat victory at ${outcome.locationId}`
     );
     
-    newWorld = updateWorldPreservingTravel(newWorld, World.updatePlayerProgression(newWorld, xpResult.progression));
+    updatedProgression = xpResult.progression;
     playerLeveledUp = xpResult.leveledUp;
     newLevel = xpResult.newLevel;
     
@@ -300,6 +300,7 @@ export function applyCombatOutcome(
   }
   
   // 3. Add loot to player inventory (stored as items in world)
+  let updatedInventory = updatedProgression?.inventory ?? ItemModule.createInventory();
   for (const item of outcome.loot) {
     const worldItem: Item = {
       id: item.itemId,
@@ -315,6 +316,20 @@ export function applyCombatOutcome(
       storyTags: [],
     };
     newWorld = updateWorldPreservingTravel(newWorld, World.addItem(newWorld, worldItem));
+
+    if (updatedProgression) {
+      if (item.type === "currency") {
+        updatedInventory = ItemModule.modifyGold(updatedInventory, item.value);
+      } else {
+        const addResult = ItemModule.addItemToInventory(
+          updatedInventory,
+          item.itemId,
+          1,
+          newWorld.items
+        );
+        updatedInventory = addResult.inventory;
+      }
+    }
     
     events.push({
       type: "item_acquired",
@@ -323,6 +338,14 @@ export function applyCombatOutcome(
       description: `Acquired ${item.name}`,
       timestamp: Date.now(),
     });
+  }
+
+  if (updatedProgression) {
+    updatedProgression = {
+      ...updatedProgression,
+      inventory: updatedInventory,
+    };
+    newWorld = updateWorldPreservingTravel(newWorld, World.updatePlayerProgression(newWorld, updatedProgression));
   }
   
   // 4. Update NPC memory (who killed whom, who helped whom)
