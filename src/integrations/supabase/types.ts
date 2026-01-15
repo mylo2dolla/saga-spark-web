@@ -513,6 +513,65 @@ export type Database = {
         }
         Relationships: []
       }
+      server_nodes: {
+        Row: {
+          active_campaigns: number
+          active_players: number
+          campaign_id: string | null
+          cpu_usage: number
+          created_at: string
+          database_latency_ms: number
+          id: string
+          last_heartbeat: string
+          memory_usage: number
+          node_name: string
+          realtime_connections: number
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          active_campaigns?: number
+          active_players?: number
+          campaign_id?: string | null
+          cpu_usage?: number
+          created_at?: string
+          database_latency_ms?: number
+          id?: string
+          last_heartbeat?: string
+          memory_usage?: number
+          node_name: string
+          realtime_connections?: number
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          active_campaigns?: number
+          active_players?: number
+          campaign_id?: string | null
+          cpu_usage?: number
+          created_at?: string
+          database_latency_ms?: number
+          id?: string
+          last_heartbeat?: string
+          memory_usage?: number
+          node_name?: string
+          realtime_connections?: number
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "server_nodes_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string
