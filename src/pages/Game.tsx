@@ -11,6 +11,8 @@ import {
   Play,
   Loader2,
   Map,
+  Navigation,
+  Save,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -22,13 +24,20 @@ import {
   type Character,
   type Ability
 } from "@/components/combat";
+import { TravelPanel } from "@/components/game/TravelPanel";
 import { DMChat } from "@/components/DMChat";
 import { useDungeonMaster } from "@/hooks/useDungeonMaster";
 import { useRealtimeCharacters, type GameCharacter } from "@/hooks/useRealtimeGame";
 import { useCharacter, type CharacterAbility } from "@/hooks/useCharacter";
 import { useServerHeartbeat } from "@/hooks/useServerHeartbeat";
+import { useGameSession } from "@/hooks/useGameSession";
 import { supabase } from "@/integrations/supabase/client";
-import type { GameEvent, Vec2 } from "@/engine";
+import { useAuth } from "@/hooks/useAuth";
+import { beginTravel, resumeTravelAfterCombat, type BeginTravelResult } from "@/engine/WorldTravelEngine";
+import { applyCombatOutcome, buildCombatOutcome } from "@/engine/CombatWorldBridge";
+import { type TravelWorldState, createTravelWorldState } from "@/engine/narrative/TravelPersistence";
+import type { GameEvent, Vec2, Entity } from "@/engine";
+import type { WorldEvent } from "@/engine/narrative/types";
 
 // Convert GameCharacter to Character format (for character sheet compatibility)
 function toGridCharacter(char: GameCharacter, initiative: number = 10): Character {
@@ -64,14 +73,29 @@ function toAbility(ability: CharacterAbility): Ability {
 const Game = () => {
   const { campaignId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [showDice, setShowDice] = useState(false);
+  const [showTravelPanel, setShowTravelPanel] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [campaign, setCampaign] = useState<{ name: string; current_scene: string | null } | null>(null);
   const [inCombat, setInCombat] = useState(false);
+  const [combatEntitiesForArena, setCombatEntitiesForArena] = useState<Array<{
+    id?: string;
+    name: string;
+    faction: "enemy" | "player";
+    position: Vec2;
+    hp: number;
+    maxHp?: number;
+    ac?: number;
+    initiative?: number;
+  }>>([]);
   
   // Real data hooks
   const { character: myCharacter, isLoading: charLoading } = useCharacter(campaignId);
   const { characters: partyCharacters, isLoading: partyLoading, updateCharacter } = useRealtimeCharacters(campaignId);
+
+  // Game session with persistence
+  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
 
   const { 
     messages, 
@@ -135,17 +159,43 @@ const Game = () => {
     }));
   }, [partyCharacters]);
 
-  // Add some test enemies when combat starts
-  const allCombatEntities = useMemo(() => {
-    if (!inCombat) return combatEntities;
-    
-    // Add some enemies for testing
-    const enemies = [
-      { id: "enemy-1", name: "Goblin", faction: "enemy" as const, position: { x: 8, y: 2 } as Vec2, hp: 12, maxHp: 12, ac: 13, initiative: 15 },
-      { id: "enemy-2", name: "Orc", faction: "enemy" as const, position: { x: 9, y: 3 } as Vec2, hp: 20, maxHp: 20, ac: 14, initiative: 12 },
-    ];
-    return [...combatEntities, ...enemies];
-  }, [combatEntities, inCombat]);
+  // Get travel world state from session
+  const travelWorldState = useMemo((): TravelWorldState | null => {
+    if (!gameSession.unifiedState || !gameSession.travelState) return null;
+    return {
+      ...gameSession.unifiedState.world,
+      travelState: gameSession.travelState,
+    };
+  }, [gameSession.unifiedState, gameSession.travelState]);
+
+  // Handle travel panel world update
+  const handleWorldUpdate = useCallback((world: TravelWorldState) => {
+    gameSession.updateUnifiedState(prev => ({
+      ...prev,
+      world: {
+        ...world,
+      },
+    }));
+  }, [gameSession]);
+
+  // Handle travel state update
+  const handleTravelStateUpdate = useCallback((travelState: any) => {
+    gameSession.updateTravelState(() => travelState);
+    gameSession.triggerAutosave();
+  }, [gameSession]);
+
+  // Handle combat start from travel encounter
+  const handleCombatStart = useCallback((entities: readonly Entity[]) => {
+    setCombatEntitiesForArena([...combatEntities, ...entities]);
+    setInCombat(true);
+    setShowTravelPanel(false);
+    toast.warning("Enemies appear! Prepare for battle!");
+  }, [combatEntities]);
+
+  // Handle world events
+  const handleWorldEvent = useCallback((event: WorldEvent) => {
+    console.log("World event:", event);
+  }, []);
 
   // Handle engine events (including combat end -> world bridge)
   const handleEngineEvent = useCallback((event: GameEvent) => {
@@ -170,13 +220,28 @@ const Game = () => {
     if (event.type === "entity_died") {
       toast.error(event.description);
     }
+    
     if (event.type === "combat_ended") {
       toast.success(event.description);
       setInCombat(false);
-      // Note: applyCombatOutcome would be called here with real world state
-      // This is where the combat→world bridge applies XP, loot, NPC memory, etc.
+      
+      // Apply combat outcome to world state
+      if (travelWorldState && user?.id) {
+        // TODO: Build proper combat outcome from game state
+        const victory = true; // Determine from game state
+        const result = resumeTravelAfterCombat(travelWorldState, user.id, victory);
+        
+        handleWorldUpdate(result.world);
+        handleTravelStateUpdate(result.travelState);
+        
+        if (result.arrived) {
+          toast.success(`Arrived at destination!`);
+        }
+      }
+      
+      gameSession.triggerAutosave();
     }
-  }, [partyCharacters, updateCharacter]);
+  }, [partyCharacters, updateCharacter, travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession]);
 
   const handleSendMessage = (message: string) => {
     const context = {
@@ -210,11 +275,30 @@ const Game = () => {
   };
 
   const handleToggleCombat = () => {
-    setInCombat(!inCombat);
+    if (inCombat) {
+      setInCombat(false);
+      gameSession.triggerAutosave();
+    } else {
+      // Start combat with party + test enemies
+      const enemies = [
+        { id: "enemy-1", name: "Goblin", faction: "enemy" as const, position: { x: 8, y: 2 } as Vec2, hp: 12, maxHp: 12, ac: 13, initiative: 15, isAlive: true },
+        { id: "enemy-2", name: "Orc", faction: "enemy" as const, position: { x: 9, y: 3 } as Vec2, hp: 20, maxHp: 20, ac: 14, initiative: 12, isAlive: true },
+      ];
+      setCombatEntitiesForArena([...combatEntities.map(e => ({ ...e, isAlive: true })), ...enemies]);
+      setInCombat(true);
+    }
+  };
+
+  const handleManualSave = async () => {
+    const saveName = `Manual Save - ${new Date().toLocaleString()}`;
+    const result = await gameSession.saveGame(saveName);
+    if (result) {
+      toast.success("Game saved!");
+    }
   };
 
   // Loading state
-  if (charLoading || partyLoading) {
+  if (charLoading || partyLoading || gameSession.isLoading) {
     return (
       <div className="h-screen bg-background flex items-center justify-center">
         <div className="text-center">
@@ -242,12 +326,30 @@ const Game = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button 
+              variant={showTravelPanel ? "default" : "ghost"} 
+              size="sm" 
+              onClick={() => setShowTravelPanel(!showTravelPanel)}
+              className="gap-1"
+            >
+              <Navigation className="w-4 h-4" />
+              <span className="hidden sm:inline">Travel</span>
+            </Button>
             <Link to={`/game/${campaignId}/map`}>
               <Button variant="ghost" size="sm" className="gap-1">
                 <Map className="w-4 h-4" />
-                <span className="hidden sm:inline">Travel</span>
+                <span className="hidden sm:inline">Map</span>
               </Button>
             </Link>
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={handleManualSave}
+              disabled={gameSession.isSaving}
+              className="gap-1"
+            >
+              <Save className="w-4 h-4" />
+            </Button>
             <Button variant={showDice ? "default" : "ghost"} size="sm" onClick={() => setShowDice(!showDice)}>
               <Sparkles className="w-4 h-4" />
             </Button>
@@ -258,6 +360,28 @@ const Game = () => {
 
       {/* Main Game Area */}
       <div className="flex-1 flex overflow-hidden">
+        {/* Travel Panel Sidebar */}
+        <AnimatePresence>
+          {showTravelPanel && travelWorldState && user?.id && (
+            <motion.aside
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 320, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              className="border-r border-border bg-card/30 overflow-hidden flex-shrink-0"
+            >
+              <TravelPanel
+                world={travelWorldState}
+                playerId={user.id}
+                isInCombat={inCombat}
+                onWorldUpdate={handleWorldUpdate}
+                onTravelStateUpdate={handleTravelStateUpdate}
+                onCombatStart={handleCombatStart}
+                onWorldEvent={handleWorldEvent}
+              />
+            </motion.aside>
+          )}
+        </AnimatePresence>
+
         {/* Left: AI DM Chat Panel */}
         <div className={`${inCombat ? "w-1/3 hidden lg:flex" : "flex-1"} flex-col min-w-0 flex`}>
           {messages.length === 0 ? (
@@ -275,10 +399,23 @@ const Game = () => {
                   The AI Dungeon Master awaits to guide you through perilous dungeons, 
                   ancient mysteries, and epic battles. Your story begins now.
                 </p>
-                <Button onClick={handleStartAdventure} size="lg" className="gap-2" disabled={dmLoading}>
-                  <Play className="w-5 h-5" />
-                  Begin Your Adventure
-                </Button>
+                <div className="space-y-3">
+                  <Button onClick={handleStartAdventure} size="lg" className="gap-2 w-full" disabled={dmLoading}>
+                    <Play className="w-5 h-5" />
+                    Begin Your Adventure
+                  </Button>
+                  {!showTravelPanel && (
+                    <Button 
+                      variant="outline" 
+                      size="lg" 
+                      className="gap-2 w-full"
+                      onClick={() => setShowTravelPanel(true)}
+                    >
+                      <Navigation className="w-5 h-5" />
+                      Open Travel Panel
+                    </Button>
+                  )}
+                </div>
               </motion.div>
             </div>
           ) : (
@@ -303,7 +440,7 @@ const Game = () => {
         {inCombat && (
           <div className="flex-1 flex flex-col">
             <CombatArena
-              initialEntities={allCombatEntities}
+              initialEntities={combatEntitiesForArena.length > 0 ? combatEntitiesForArena : combatEntities}
               myEntityId={myCharacter?.id}
               rows={10}
               cols={12}

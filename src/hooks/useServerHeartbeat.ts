@@ -1,6 +1,7 @@
 /**
  * Hook to manage server node heartbeats for the server dashboard.
- * Creates a node entry on mount and keeps it alive with periodic heartbeats.
+ * Creates/updates a node entry using UPSERT by (user_id, node_name).
+ * Status is computed from last_heartbeat staleness, not stored manually.
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -30,11 +31,21 @@ interface UseServerHeartbeatOptions {
   heartbeatInterval?: number;
 }
 
+// Generate a stable client node name based on session
+function generateNodeName(): string {
+  const stored = sessionStorage.getItem("server_node_name");
+  if (stored) return stored;
+  
+  const name = `Client-${Math.random().toString(36).slice(2, 8)}`;
+  sessionStorage.setItem("server_node_name", name);
+  return name;
+}
+
 export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
   const { user } = useAuth();
   const {
     campaignId,
-    nodeName = `Client-${Math.random().toString(36).slice(2, 8)}`,
+    nodeName = generateNodeName(),
     heartbeatInterval = 30000,
   } = options;
 
@@ -42,29 +53,89 @@ export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
   const [isConnected, setIsConnected] = useState(false);
   const [latency, setLatency] = useState(0);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
+  const nodeNameRef = useRef(nodeName);
 
-  // Send heartbeat
+  // Send heartbeat using UPSERT
   const sendHeartbeat = useCallback(async () => {
-    if (!user || !nodeId) return;
+    if (!user) return;
 
     const startTime = Date.now();
 
     try {
-      const { error } = await supabase
+      // UPSERT: If a row with this user_id + node_name exists, update it
+      // Otherwise insert a new row
+      const { data, error } = await supabase
         .from("server_nodes")
-        .update({
-          status: "online",
-          last_heartbeat: new Date().toISOString(),
-          database_latency_ms: latency,
-          memory_usage: Math.random() * 50 + 30,
-          cpu_usage: Math.random() * 30 + 10,
-        })
-        .eq("id", nodeId);
+        .upsert(
+          {
+            node_name: nodeNameRef.current,
+            user_id: user.id,
+            campaign_id: campaignId ?? null,
+            status: "online",
+            last_heartbeat: new Date().toISOString(),
+            active_players: 1,
+            active_campaigns: campaignId ? 1 : 0,
+            realtime_connections: 1,
+            database_latency_ms: latency,
+            memory_usage: Math.random() * 50 + 30,
+            cpu_usage: Math.random() * 30 + 10,
+          },
+          {
+            onConflict: "user_id,node_name",
+            ignoreDuplicates: false,
+          }
+        )
+        .select("id")
+        .single();
 
       if (error) {
-        console.error("Heartbeat error:", error);
-        setIsConnected(false);
-      } else {
+        // If upsert fails (possibly no unique constraint), try update then insert
+        const { data: existingNode } = await supabase
+          .from("server_nodes")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("node_name", nodeNameRef.current)
+          .maybeSingle();
+        
+        if (existingNode) {
+          // Update existing
+          await supabase
+            .from("server_nodes")
+            .update({
+              campaign_id: campaignId ?? null,
+              status: "online",
+              last_heartbeat: new Date().toISOString(),
+              database_latency_ms: Date.now() - startTime,
+              memory_usage: Math.random() * 50 + 30,
+              cpu_usage: Math.random() * 30 + 10,
+            })
+            .eq("id", existingNode.id);
+          
+          setNodeId(existingNode.id);
+        } else {
+          // Insert new
+          const { data: newNode } = await supabase
+            .from("server_nodes")
+            .insert({
+              node_name: nodeNameRef.current,
+              user_id: user.id,
+              campaign_id: campaignId ?? null,
+              status: "online",
+              active_players: 1,
+              active_campaigns: campaignId ? 1 : 0,
+              realtime_connections: 1,
+              database_latency_ms: 0,
+            })
+            .select("id")
+            .single();
+          
+          if (newNode) setNodeId(newNode.id);
+        }
+        
+        setLatency(Date.now() - startTime);
+        setIsConnected(true);
+      } else if (data) {
+        setNodeId(data.id);
         setLatency(Date.now() - startTime);
         setIsConnected(true);
       }
@@ -72,50 +143,19 @@ export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
       console.error("Heartbeat failed:", err);
       setIsConnected(false);
     }
-  }, [user, nodeId, latency]);
+  }, [user, campaignId, latency]);
 
-  // Register node on mount
+  // Register/update node on mount
   useEffect(() => {
     if (!user) return;
 
-    const registerNode = async () => {
-      const startTime = Date.now();
-
-      try {
-        const { data, error } = await supabase
-          .from("server_nodes")
-          .insert({
-            node_name: nodeName,
-            user_id: user.id,
-            campaign_id: campaignId ?? null,
-            status: "online",
-            active_players: 1,
-            active_campaigns: campaignId ? 1 : 0,
-            realtime_connections: 1,
-            database_latency_ms: 0,
-          })
-          .select()
-          .single();
-
-        if (error) {
-          console.error("Failed to register node:", error);
-          return;
-        }
-
-        setNodeId(data.id);
-        setLatency(Date.now() - startTime);
-        setIsConnected(true);
-      } catch (err) {
-        console.error("Node registration failed:", err);
-      }
-    };
-
-    registerNode();
-  }, [user, campaignId, nodeName]);
+    // Initial heartbeat
+    sendHeartbeat();
+  }, [user, sendHeartbeat]);
 
   // Start heartbeat interval
   useEffect(() => {
-    if (!nodeId) return;
+    if (!user) return;
 
     heartbeatRef.current = setInterval(sendHeartbeat, heartbeatInterval);
 
@@ -124,20 +164,19 @@ export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
         clearInterval(heartbeatRef.current);
       }
     };
-  }, [nodeId, heartbeatInterval, sendHeartbeat]);
+  }, [user, heartbeatInterval, sendHeartbeat]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount - mark offline
   useEffect(() => {
     return () => {
       if (nodeId && user) {
-        // Mark node as offline when leaving
+        // Mark node as offline when leaving (fire and forget)
         supabase
           .from("server_nodes")
           .update({ status: "offline" })
           .eq("id", nodeId)
           .then(() => {
-            // Optionally delete the node
-            supabase.from("server_nodes").delete().eq("id", nodeId);
+            // Node will be cleaned up by staleness check in dashboard
           });
       }
     };
@@ -145,10 +184,8 @@ export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
 
   // Force reconnect
   const reconnect = useCallback(async () => {
-    if (nodeId) {
-      await sendHeartbeat();
-    }
-  }, [nodeId, sendHeartbeat]);
+    await sendHeartbeat();
+  }, [sendHeartbeat]);
 
   return {
     nodeId,
