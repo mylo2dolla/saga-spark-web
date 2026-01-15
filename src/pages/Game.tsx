@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Swords,
   Users,
   Settings,
   ChevronLeft,
@@ -37,10 +36,11 @@ import { useSettings } from "@/hooks/useSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { resumeTravelAfterCombat } from "@/engine/WorldTravelEngine";
-import { applyCombatOutcome, buildCombatOutcome } from "@/engine/CombatWorldBridge";
+import { applyCombatOutcome, buildCombatOutcome, type LootItem } from "@/engine/CombatWorldBridge";
 import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import type { GameEvent, Vec2, Entity } from "@/engine";
 import type { WorldEvent } from "@/engine/narrative/types";
+import type { CombatEncounter } from "@/engine/narrative/TravelPersistence";
 
 // Convert GameCharacter to Character format (for character sheet compatibility)
 function toGridCharacter(char: GameCharacter, initiative: number = 10): Character {
@@ -93,6 +93,7 @@ const Game = () => {
     ac?: number;
     initiative?: number;
   }>>([]);
+  const [activeCombatEncounter, setActiveCombatEncounter] = useState<CombatEncounter | null>(null);
   
   // Real data hooks
   const { character: myCharacter, isLoading: charLoading } = useCharacter(campaignId);
@@ -197,7 +198,7 @@ const Game = () => {
   }, [gameSession]);
 
   // Handle combat start from travel encounter
-  const handleCombatStart = useCallback((entities: readonly Entity[]) => {
+  const handleCombatStart = useCallback((entities: readonly Entity[], encounter?: CombatEncounter | null) => {
     // Filter out neutral entities and map to arena format
     const combatReadyEntities = entities
       .filter((e): e is Entity & { faction: "player" | "enemy" } => 
@@ -214,6 +215,7 @@ const Game = () => {
         initiative: e.initiative,
       }));
     setCombatEntitiesForArena([...combatEntities, ...combatReadyEntities]);
+    setActiveCombatEncounter(encounter ?? null);
     setInCombat(true);
     setShowTravelPanel(false);
     toast.warning("Enemies appear! Prepare for battle!");
@@ -258,12 +260,14 @@ const Game = () => {
     
     // Apply combat outcome to world state
     if (travelWorldState && user?.id) {
+      const previousProgression = travelWorldState.playerProgression.get(user.id);
+      const previousItemsCount = travelWorldState.items.size;
       // Build and apply combat outcome using the actual final entity state
       const locationId = travelWorldState.travelState.isInTransit 
         ? travelWorldState.travelState.transitDestinationId ?? travelWorldState.travelState.currentLocationId
         : travelWorldState.travelState.currentLocationId;
       
-      const outcome = buildCombatOutcome(
+      const baseOutcome = buildCombatOutcome(
         { 
           tick: Date.now(), 
           entities: new Map(finalEntities.map(e => [e.id, e])),
@@ -274,11 +278,35 @@ const Game = () => {
         },
         locationId,
         0,
-        false,
+        activeCombatEncounter?.type === "ambush",
         []
       );
+
+      const encounterLoot: LootItem[] | null = activeCombatEncounter?.lootTable
+        ? activeCombatEncounter.lootTable.map((lootId, index) => ({
+            itemId: `${lootId}_${Date.now()}_${index}`,
+            name: lootId.replace(/_/g, " "),
+            type: lootId.includes("potion") ? "consumable" : lootId.includes("gold") ? "currency" : "misc",
+            rarity: "common",
+            value: lootId.includes("gold") ? 25 : 10,
+          }))
+        : null;
+
+      const outcome = {
+        ...baseOutcome,
+        xpEarned: activeCombatEncounter?.xpReward ?? baseOutcome.xpEarned,
+        loot: encounterLoot ?? baseOutcome.loot,
+      };
       
       const combatResult = applyCombatOutcome(travelWorldState, outcome, user.id);
+      const nextProgression = combatResult.world.playerProgression.get(user.id);
+      const nextItemsCount = combatResult.world.items.size;
+      console.info("[Game] Combat rewards applied", {
+        xpBefore: previousProgression?.currentXp ?? 0,
+        xpAfter: nextProgression?.currentXp ?? 0,
+        itemsBefore: previousItemsCount,
+        itemsAfter: nextItemsCount,
+      });
       
       // Notify about XP and level up
       if (combatResult.playerXpGained > 0) {
@@ -306,7 +334,8 @@ const Game = () => {
     
     // Clear combat entities
     setCombatEntitiesForArena([]);
-  }, [travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession]);
+    setActiveCombatEncounter(null);
+  }, [travelWorldState, user?.id, handleWorldUpdate, handleTravelStateUpdate, gameSession, activeCombatEncounter]);
 
   const handleSendMessage = (message: string) => {
     const context = {
@@ -337,21 +366,6 @@ const Game = () => {
       campaignName: campaign?.name || "New Adventure",
     };
     startNewAdventure(context);
-  };
-
-  const handleToggleCombat = () => {
-    if (inCombat) {
-      setInCombat(false);
-      gameSession.triggerAutosave();
-    } else {
-      // Start combat with party + test enemies
-      const enemies = [
-        { id: "enemy-1", name: "Goblin", faction: "enemy" as const, position: { x: 8, y: 2 } as Vec2, hp: 12, maxHp: 12, ac: 13, initiative: 15, isAlive: true },
-        { id: "enemy-2", name: "Orc", faction: "enemy" as const, position: { x: 9, y: 3 } as Vec2, hp: 20, maxHp: 20, ac: 14, initiative: 12, isAlive: true },
-      ];
-      setCombatEntitiesForArena([...combatEntities.map(e => ({ ...e, isAlive: true })), ...enemies]);
-      setInCombat(true);
-    }
   };
 
   const handleManualSave = async () => {
@@ -593,16 +607,6 @@ const Game = () => {
               })}
             </div>
           </ScrollArea>
-          <div className="p-4 border-t border-border space-y-2">
-            <Button 
-              variant={inCombat ? "destructive" : "default"} 
-              className="w-full" 
-              onClick={handleToggleCombat}
-            >
-              <Swords className="w-4 h-4 mr-2" />
-              {inCombat ? "Exit Combat" : "Enter Combat"}
-            </Button>
-          </div>
         </aside>
 
         {/* Character Sheet Modal */}

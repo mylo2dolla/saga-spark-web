@@ -23,23 +23,30 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { useUnifiedEngineOptional } from "@/contexts/UnifiedEngineContext";
+import { useAuth } from "@/hooks/useAuth";
+import { useGameSession } from "@/hooks/useGameSession";
+import { beginTravel } from "@/engine/WorldTravelEngine";
+import type { TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import type { EnhancedLocation } from "@/engine/narrative/Travel";
 import type { NPC, Quest } from "@/engine/narrative/types";
 
 export default function LocationView() {
   const { campaignId, locationId } = useParams();
   const navigate = useNavigate();
-  const engine = useUnifiedEngineOptional();
+  const { user } = useAuth();
+  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
+  const world = gameSession.unifiedState?.world;
+  const travelState = gameSession.travelState;
+  const playerId = user?.id ?? "";
 
   // If no engine context, redirect to campaign page
   useEffect(() => {
-    if (!engine && campaignId) {
+    if (!world && campaignId && !gameSession.isLoading) {
       navigate(`/game/${campaignId}`);
     }
-  }, [engine, campaignId, navigate]);
+  }, [world, campaignId, navigate, gameSession.isLoading]);
 
-  if (!engine) {
+  if (gameSession.isLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
         <p className="text-muted-foreground">Loading location...</p>
@@ -48,49 +55,67 @@ export default function LocationView() {
   }
 
   // Get location from engine
-  const location = engine.unified.world.locations.get(locationId ?? "") as EnhancedLocation | undefined;
-  const currentLocationId = engine.travelState?.currentLocationId;
+  const location = world?.locations.get(locationId ?? "") as EnhancedLocation | undefined;
+  const currentLocationId = travelState?.currentLocationId;
   const isCurrentLocation = locationId === currentLocationId;
 
   // Get NPCs at this location
   const npcsAtLocation = useMemo(() => {
     if (!location) return [];
     return location.npcs
-      .map(npcId => engine.getNPC(npcId))
+      .map(npcId => world?.npcs.get(npcId))
       .filter((npc): npc is NPC => npc !== undefined);
-  }, [location, engine]);
+  }, [location, world]);
 
   // Get quests available at this location
   const questsAtLocation = useMemo(() => {
     if (!location) return [];
     const enhancedLocation = location as EnhancedLocation;
     return (enhancedLocation.questHooks ?? [])
-      .map(questId => engine.getQuest(questId))
+      .map(questId => world?.quests.get(questId))
       .filter((quest): quest is Quest => quest !== undefined && quest.state === "available");
-  }, [location, engine]);
+  }, [location, world]);
 
   // Get connected locations
   const connectedLocations = useMemo(() => {
     if (!location) return [];
     return location.connectedTo
-      .map(id => engine.unified.world.locations.get(id) as EnhancedLocation)
+      .map(id => world?.locations.get(id) as EnhancedLocation)
       .filter((loc): loc is EnhancedLocation => loc !== undefined);
-  }, [location, engine]);
+  }, [location, world]);
 
   // Handle travel
   const handleTravel = useCallback((destinationId: string) => {
-    if (!engine.travelTo) {
+    if (!world || !travelState || !playerId) {
       toast.error("Travel not available");
       return;
     }
-    
-    const destination = engine.unified.world.locations.get(destinationId);
-    if (destination) {
-      engine.travelTo(destinationId);
-      toast.success(`Traveling to ${destination.name}...`);
+
+    const travelWorld: TravelWorldState = {
+      ...world,
+      travelState,
+    };
+    const result = beginTravel(travelWorld, destinationId, playerId, false);
+    if (!result.success) {
+      toast.error(result.message);
+      return;
+    }
+
+    gameSession.updateUnifiedState(prev => ({ ...prev, world: result.world }));
+    gameSession.updateTravelState(() => result.travelState);
+    gameSession.triggerAutosave();
+
+    if (result.combatTriggered) {
+      toast.warning(result.message);
+      navigate(`/game/${campaignId}`);
+      return;
+    }
+
+    if (result.arrived) {
+      toast.success(result.message);
       navigate(`/game/${campaignId}/location/${destinationId}`);
     }
-  }, [engine, campaignId, navigate]);
+  }, [world, travelState, playerId, gameSession, campaignId, navigate]);
 
   // Handle NPC interaction
   const handleTalkToNPC = useCallback((npcId: string) => {
@@ -99,11 +124,11 @@ export default function LocationView() {
 
   // Handle enter combat
   const handleEnterCombat = useCallback(() => {
-    engine.beginCombat();
-    navigate(`/game/${campaignId}/combat`);
-  }, [engine, campaignId, navigate]);
+    toast.info("Combat encounters start during travel.");
+    navigate(`/game/${campaignId}`);
+  }, [campaignId, navigate]);
 
-  if (!location) {
+  if (!location || !world || !travelState) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-background">
         <AlertTriangle className="w-12 h-12 text-destructive mb-4" />
@@ -323,7 +348,7 @@ export default function LocationView() {
           <ScrollArea className="h-[calc(100vh-200px)]">
             <div className="space-y-3">
               {connectedLocations.map(dest => {
-                const isDiscovered = engine.travelState?.discoveredLocations?.has(dest.id);
+                const isDiscovered = travelState?.discoveredLocations?.has(dest.id);
                 const destEnhanced = dest as EnhancedLocation;
                 
                 return (
