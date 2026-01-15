@@ -358,12 +358,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       return;
     }
 
-    if (!hasLoadedContent || contentLoading) {
+    if (!hasLoadedContent) {
       return;
     }
 
     initializeSession();
-  }, [userId, campaignId, contentLoading, hasLoadedContent, initializeSession]);
+  }, [userId, campaignId, hasLoadedContent, initializeSession]);
 
   useEffect(() => {
     if (!sessionState.unifiedState || !worldContent) return;
