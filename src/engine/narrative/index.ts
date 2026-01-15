@@ -240,3 +240,19 @@ export {
   type EncounterResult,
   type EncounterEnemy,
 } from "./Travel";
+
+// ============= Travel Persistence Module =============
+export {
+  serializeTravelWorldState,
+  deserializeTravelWorldState,
+  createTravelWorldState,
+  updateTravelState,
+  encounterToCombat,
+  processCombatResult,
+  processLocationArrival,
+  type TravelWorldState,
+  type CombatEncounter,
+  type CombatSpawnData,
+  type CombatResult,
+  type LocationArrivalEvents,
+} from "./TravelPersistence";
