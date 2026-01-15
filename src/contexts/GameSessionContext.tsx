@@ -1,0 +1,30 @@
+import { createContext, useContext, type ReactNode } from "react";
+import { useGameSession } from "@/hooks/useGameSession";
+
+type GameSessionContextValue = ReturnType<typeof useGameSession>;
+
+const GameSessionContext = createContext<GameSessionContextValue | null>(null);
+
+export function GameSessionProvider({
+  campaignId,
+  children,
+}: {
+  campaignId: string;
+  children: ReactNode;
+}) {
+  const session = useGameSession({ campaignId });
+
+  return (
+    <GameSessionContext.Provider value={session}>
+      {children}
+    </GameSessionContext.Provider>
+  );
+}
+
+export function useGameSessionContext(): GameSessionContextValue {
+  const context = useContext(GameSessionContext);
+  if (!context) {
+    throw new Error("useGameSessionContext must be used within a GameSessionProvider");
+  }
+  return context;
+}

@@ -25,7 +25,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { useGameSession } from "@/hooks/useGameSession";
+import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import { NPCTradePanel } from "@/components/game/NPCTradePanel";
 import * as World from "@/engine/narrative/World";
 import * as NPCModule from "@/engine/narrative/NPC";
@@ -44,7 +44,7 @@ export default function NPCView() {
   const { campaignId, npcId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
+  const gameSession = useGameSessionContext();
   const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
   const [showTrade, setShowTrade] = useState(false);
 
