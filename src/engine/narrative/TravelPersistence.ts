@@ -54,6 +54,7 @@ export function serializeTravelWorldState(world: TravelWorldState): string {
 
 export function deserializeTravelWorldState(json: string): TravelWorldState {
   const data = JSON.parse(json);
+  const locations = normalizeLocationEntries(data.locations);
   
   // Handle legacy data without travel state
   const travelState: TravelState = data.travelState 
@@ -73,7 +74,7 @@ export function deserializeTravelWorldState(json: string): TravelWorldState {
     npcs: new Map(data.npcs),
     quests: new Map(data.quests),
     items: new Map(data.items),
-    locations: new Map(data.locations),
+    locations: new Map(locations),
     storyFlags: new Map(data.storyFlags),
     globalTime: data.globalTime,
     playerProgression: new Map(data.playerProgression),
@@ -82,11 +83,25 @@ export function deserializeTravelWorldState(json: string): TravelWorldState {
 }
 
 function getFirstLocationId(data: any): string {
-  if (data.locations && data.locations.length > 0) {
+  const entries = normalizeLocationEntries(data.locations);
+  if (entries.length > 0) {
     // locations is array of [id, location] tuples
-    return data.locations[0][0];
+    return entries[0][0];
   }
   return "starting_location";
+}
+
+function normalizeLocationEntries(locations: unknown): Array<[string, Location]> {
+  if (!locations) {
+    return [];
+  }
+  if (Array.isArray(locations)) {
+    return locations as Array<[string, Location]>;
+  }
+  if (typeof locations === "object") {
+    return Object.entries(locations as Record<string, Location>);
+  }
+  return [];
 }
 
 // ============= Travel State Helpers =============
