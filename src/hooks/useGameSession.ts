@@ -37,7 +37,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const { user } = useAuth();
   const userId = user?.id ?? "";
   
-  const { content: worldContent, isLoading: contentLoading, hasLoadedContent, mergeIntoWorldState } = useWorldContent({ campaignId });
+  const { content: worldContent, hasLoadedContent, mergeIntoWorldState } = useWorldContent({ campaignId });
   const persistence = useGamePersistence({ campaignId, userId });
   
   const [sessionState, setSessionState] = useState<GameSessionState>({
