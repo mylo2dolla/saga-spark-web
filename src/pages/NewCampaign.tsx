@@ -165,11 +165,12 @@ export default function NewCampaign() {
       if (campaignError) throw campaignError;
 
       // Add owner as campaign member
-      await supabase.from("campaign_members").insert({
+      const { error: memberError } = await supabase.from("campaign_members").insert({
         campaign_id: campaign.id,
         user_id: user.id,
         is_dm: true,
       });
+      if (memberError) throw memberError;
 
       // Generate the initial world using AI
       const generatedWorld = await generateInitialWorld({
@@ -211,13 +212,17 @@ export default function NewCampaign() {
           },
         ];
 
-        await supabase.from("ai_generated_content").insert(contentToStore);
+        const { error: contentError } = await supabase
+          .from("ai_generated_content")
+          .insert(contentToStore);
+        if (contentError) throw contentError;
 
         // Update campaign with current scene
-        await supabase
+        const { error: sceneError } = await supabase
           .from("campaigns")
           .update({ current_scene: generatedWorld.startingLocation.name })
           .eq("id", campaign.id);
+        if (sceneError) throw sceneError;
       }
 
       toast.success("Campaign created! Your world awaits...");

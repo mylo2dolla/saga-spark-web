@@ -37,14 +37,16 @@ const VALID_SERVICES: LocationService[] = [
 
 export function useWorldContent({ campaignId }: UseWorldContentOptions) {
   const [content, setContent] = useState<WorldContent | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasLoadedContent, setHasLoadedContent] = useState(false);
 
   // Fetch all generated content for this campaign
   const fetchContent = useCallback(async (): Promise<WorldContent | null> => {
     if (!campaignId) return null;
     
     setIsLoading(true);
+    setHasLoadedContent(false);
     setError(null);
     
     try {
@@ -97,9 +99,11 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       const message = err instanceof Error ? err.message : "Failed to load world content";
       setError(message);
       console.error("Error loading world content:", err);
+      toast.error(message);
       return null;
     } finally {
       setIsLoading(false);
+      setHasLoadedContent(true);
     }
   }, [campaignId]);
 
@@ -154,15 +158,20 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
 
   // Load on mount
   useEffect(() => {
-    if (campaignId) {
-      fetchContent();
+    if (!campaignId) {
+      setContent(null);
+      setIsLoading(false);
+      setHasLoadedContent(false);
+      return;
     }
+    fetchContent();
   }, [campaignId, fetchContent]);
 
   return {
     content,
     isLoading,
     error,
+    hasLoadedContent,
     fetchContent,
     mergeIntoWorldState,
   };
