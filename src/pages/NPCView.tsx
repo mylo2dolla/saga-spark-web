@@ -24,7 +24,12 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { useUnifiedEngineOptional } from "@/contexts/UnifiedEngineContext";
+import { useAuth } from "@/hooks/useAuth";
+import { useGameSession } from "@/hooks/useGameSession";
+import { NPCTradePanel } from "@/components/game/NPCTradePanel";
+import * as World from "@/engine/narrative/World";
+import * as NPCModule from "@/engine/narrative/NPC";
+import { createInventory } from "@/engine/narrative/Item";
 import type { NPC, Quest, Disposition } from "@/engine/narrative/types";
 
 const DISPOSITION_COLORS: Record<Disposition, string> = {
@@ -38,12 +43,16 @@ const DISPOSITION_COLORS: Record<Disposition, string> = {
 export default function NPCView() {
   const { campaignId, npcId } = useParams();
   const navigate = useNavigate();
-  const engine = useUnifiedEngineOptional();
+  const { user } = useAuth();
+  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
   const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
   const [showTrade, setShowTrade] = useState(false);
 
-  // Get NPC from engine
-  const npc = engine?.getNPC(npcId ?? "") as NPC | undefined;
+  const world = gameSession.unifiedState?.world;
+  const playerId = user?.id ?? "";
+
+  // Get NPC from world state
+  const npc = world?.npcs.get(npcId ?? "") as NPC | undefined;
   
   // Get player relationship with this NPC
   const playerRelationship = useMemo(() => {
@@ -54,40 +63,62 @@ export default function NPCView() {
 
   // Get quests offered by this NPC
   const offeredQuests = useMemo(() => {
-    if (!npc || !engine) return [];
+    if (!npc || !world) return [];
     return npc.questsOffered
-      .map(questId => engine.getQuest(questId))
+      .map(questId => world.quests.get(questId))
       .filter((q): q is Quest => q !== undefined && q.state === "available");
-  }, [npc, engine]);
+  }, [npc, world]);
 
   // Get active quests from this NPC
   const activeQuests = useMemo(() => {
-    if (!npc || !engine) return [];
+    if (!npc || !world) return [];
     return npc.questsOffered
-      .map(questId => engine.getQuest(questId))
+      .map(questId => world.quests.get(questId))
       .filter((q): q is Quest => q !== undefined && q.state === "active");
-  }, [npc, engine]);
+  }, [npc, world]);
 
   // Handle talking to NPC
   const handleTalk = useCallback(() => {
-    if (!npc || !engine) return;
+    if (!npc || !world || !playerId) return;
     
     // Start dialog
     if (npc.dialogue.length > 0) {
       setDialogNodeId(npc.dialogue[0].id);
     }
     
-    // Update engine
-    engine.talkToNPC("player", npc.id);
+    const updatedNPC = NPCModule.addMemory(
+      npc,
+      `Spoke with ${playerId}`,
+      [playerId, "conversation"],
+      1
+    );
+    gameSession.updateUnifiedState(prev => ({
+      ...prev,
+      world: World.updateNPC(prev.world, updatedNPC),
+    }));
+    gameSession.triggerAutosave();
     toast.info(`Speaking with ${npc.name}...`);
-  }, [npc, engine]);
+  }, [npc, world, playerId, gameSession]);
 
   // Handle accepting a quest
   const handleAcceptQuest = useCallback((questId: string) => {
-    if (!engine) return;
-    engine.acceptQuest("player", questId);
-    toast.success("Quest accepted!");
-  }, [engine]);
+    if (!world || !playerId) return;
+    const result = World.processWorldAction(world, {
+      type: "accept_quest",
+      entityId: playerId,
+      questId,
+    });
+    if (result.success) {
+      gameSession.updateUnifiedState(prev => ({
+        ...prev,
+        world: result.world,
+      }));
+      gameSession.triggerAutosave();
+      toast.success("Quest accepted!");
+    } else {
+      toast.error(result.message);
+    }
+  }, [world, playerId, gameSession]);
 
   // Handle dialog response
   const handleDialogResponse = useCallback((nextNodeId?: string) => {
@@ -104,7 +135,15 @@ export default function NPCView() {
     return npc.dialogue.find(d => d.id === dialogNodeId);
   }, [npc, dialogNodeId]);
 
-  if (!engine || !npc) {
+  if (gameSession.isLoading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <p className="text-muted-foreground">Loading NPC...</p>
+      </div>
+    );
+  }
+
+  if (!world || !npc) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-background">
         <AlertTriangle className="w-12 h-12 text-destructive mb-4" />
@@ -415,6 +454,51 @@ export default function NPCView() {
           )}
         </aside>
       </div>
+
+      <AnimatePresence>
+        {showTrade && world && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 p-4"
+            onClick={() => setShowTrade(false)}
+          >
+            <motion.div onClick={(event) => event.stopPropagation()}>
+              <NPCTradePanel
+                npc={npc}
+                playerInventory={
+                  world.playerProgression.get(playerId)?.inventory ?? createInventory()
+                }
+                items={world.items}
+                onTrade={(updatedNpc, updatedPlayerInventory) => {
+                  gameSession.updateUnifiedState(prev => {
+                    let updatedWorld = World.updateNPC(prev.world, updatedNpc);
+                    if (playerId) {
+                      if (!updatedWorld.playerProgression.has(playerId)) {
+                        updatedWorld = World.initPlayerProgression(updatedWorld, playerId);
+                      }
+                      const progression = updatedWorld.playerProgression.get(playerId);
+                      if (progression) {
+                        updatedWorld = World.updatePlayerProgression(updatedWorld, {
+                          ...progression,
+                          inventory: updatedPlayerInventory,
+                        });
+                      }
+                    }
+                    return {
+                      ...prev,
+                      world: updatedWorld,
+                    };
+                  });
+                  gameSession.triggerAutosave();
+                }}
+                onClose={() => setShowTrade(false)}
+              />
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
