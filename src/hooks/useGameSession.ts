@@ -76,6 +76,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const autosaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveIdRef = useRef<string | null>(null);
   const lastMergedContentRef = useRef<typeof worldContent>(null);
+  const hasInitializedRef = useRef(false);
 
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
@@ -408,19 +409,34 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
   // Initialize on mount
   useEffect(() => {
-    if (!campaignId) {
+    hasInitializedRef.current = false;
+  }, [userId, campaignId]);
+
+  useEffect(() => {
+    if (!campaignId || !userId) {
       setSessionState(prev => ({
         ...prev,
         isInitialized: false,
         isLoading: false,
-        error: "Campaign not found.",
+        error: null,
       }));
+      hasInitializedRef.current = false;
       return;
     }
-    if (!userId) return;
     if (!hasLoadedContent) return;
+    if (hasInitializedRef.current) return;
 
-    initializeSession();
+    hasInitializedRef.current = true;
+    void initializeSession().catch(error => {
+      console.error("Failed to initialize game session:", error);
+      const message = error instanceof Error ? error.message : "Failed to load game";
+      setSessionState(prev => ({
+        ...prev,
+        isInitialized: false,
+        isLoading: false,
+        error: message,
+      }));
+    });
   }, [userId, campaignId, hasLoadedContent, initializeSession]);
 
   useEffect(() => {
