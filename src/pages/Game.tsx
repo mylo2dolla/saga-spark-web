@@ -11,6 +11,7 @@ import {
   Play,
   Loader2,
   Target,
+  Map,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -236,6 +237,12 @@ const Game = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Link to={`/game/${campaignId}/map`}>
+              <Button variant="ghost" size="sm" className="gap-1">
+                <Map className="w-4 h-4" />
+                <span className="hidden sm:inline">Travel</span>
+              </Button>
+            </Link>
             <Button variant={showDice ? "default" : "ghost"} size="sm" onClick={() => setShowDice(!showDice)}>
               <Sparkles className="w-4 h-4" />
             </Button>

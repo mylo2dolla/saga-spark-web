@@ -20,6 +20,18 @@ import * as World from "./narrative/World";
 import * as Progression from "./narrative/Progression";
 import * as ItemModule from "./narrative/Item";
 
+// ============= Helper to preserve travelState =============
+
+function updateWorldPreservingTravel(
+  travelWorld: TravelWorldState, 
+  worldStateResult: WorldState
+): TravelWorldState {
+  return {
+    ...worldStateResult,
+    travelState: travelWorld.travelState,
+  };
+}
+
 // ============= Combat Outcome Types =============
 
 export interface CombatOutcome {
@@ -241,7 +253,7 @@ export function applyCombatOutcome(
     if (defeated.faction === "enemy") {
       // Update kill count flag
       const currentKills = Number(World.getFlagValue(newWorld, "kill_count", 0));
-      newWorld = World.setFlag(newWorld, "kill_count", currentKills + 1, playerId);
+      newWorld = updateWorldPreservingTravel(newWorld, World.setFlag(newWorld, "kill_count", currentKills + 1, playerId));
       
       events.push({
         type: "flag_set",
@@ -262,7 +274,7 @@ export function applyCombatOutcome(
       `Combat victory at ${outcome.locationId}`
     );
     
-    newWorld = World.updatePlayerProgression(newWorld, xpResult.progression);
+    newWorld = updateWorldPreservingTravel(newWorld, World.updatePlayerProgression(newWorld, xpResult.progression));
     playerLeveledUp = xpResult.leveledUp;
     newLevel = xpResult.newLevel;
     
@@ -300,7 +312,7 @@ export function applyCombatOutcome(
       statModifiers: {},
       storyTags: [],
     };
-    newWorld = { ...newWorld, ...World.addItem(newWorld, worldItem) } as TravelWorldState;
+    newWorld = updateWorldPreservingTravel(newWorld, World.addItem(newWorld, worldItem));
     
     events.push({
       type: "item_acquired",
@@ -350,7 +362,7 @@ export function applyCombatOutcome(
         ...npc.memories,
       ].slice(0, 50),
     };
-    newWorld = World.updateNPC(newWorld, updatedNPC);
+    newWorld = updateWorldPreservingTravel(newWorld, World.updateNPC(newWorld, updatedNPC));
   }
   
   // 5. Update quest progress
@@ -383,7 +395,7 @@ export function applyCombatOutcome(
     
     if (questUpdated) {
       const updatedQuest: Quest = { ...quest, objectives: updatedObjectives };
-      newWorld = World.updateQuest(newWorld, updatedQuest);
+      newWorld = updateWorldPreservingTravel(newWorld, World.updateQuest(newWorld, updatedQuest));
       
       // Check if quest is now complete
       const allComplete = updatedObjectives.every(obj => obj.current >= obj.required);
@@ -400,13 +412,13 @@ export function applyCombatOutcome(
   
   // 6. Update story flags
   if (outcome.victory) {
-    newWorld = World.setFlag(newWorld, `combat_won_${outcome.locationId}`, true, playerId);
+    newWorld = updateWorldPreservingTravel(newWorld, World.setFlag(newWorld, `combat_won_${outcome.locationId}`, true, playerId));
     
     if (outcome.wasAmbush) {
-      newWorld = World.setFlag(newWorld, `survived_ambush_${outcome.locationId}`, true, playerId);
+      newWorld = updateWorldPreservingTravel(newWorld, World.setFlag(newWorld, `survived_ambush_${outcome.locationId}`, true, playerId));
     }
   } else {
-    newWorld = World.setFlag(newWorld, `combat_lost_${outcome.locationId}`, true, playerId);
+    newWorld = updateWorldPreservingTravel(newWorld, World.setFlag(newWorld, `combat_lost_${outcome.locationId}`, true, playerId));
   }
   
   // 7. Update travel state (resume or retreat)
