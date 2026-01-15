@@ -475,14 +475,28 @@ export function serializeWorld(world: WorldState): string {
 
 export function deserializeWorld(json: string): WorldState {
   const data = JSON.parse(json);
+  const locations = normalizeLocationEntries(data.locations);
   return {
     campaignSeed: data.campaignSeed,
     npcs: new Map(data.npcs),
     quests: new Map(data.quests),
     items: new Map(data.items),
-    locations: new Map(data.locations),
+    locations: new Map(locations),
     storyFlags: new Map(data.storyFlags),
     globalTime: data.globalTime,
     playerProgression: new Map(data.playerProgression),
   };
+}
+
+function normalizeLocationEntries(locations: unknown): Array<[string, Location]> {
+  if (!locations) {
+    return [];
+  }
+  if (Array.isArray(locations)) {
+    return locations as Array<[string, Location]>;
+  }
+  if (typeof locations === "object") {
+    return Object.entries(locations as Record<string, Location>);
+  }
+  return [];
 }

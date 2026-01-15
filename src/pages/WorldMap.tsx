@@ -23,7 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { useGameSession } from "@/hooks/useGameSession";
+import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import type { EnhancedLocation, LocationType } from "@/engine/narrative/Travel";
 
 const LOCATION_ICONS: Record<LocationType, React.ReactNode> = {
@@ -45,7 +45,7 @@ const LOCATION_ICONS: Record<LocationType, React.ReactNode> = {
 export default function WorldMap() {
   const { campaignId } = useParams();
   const navigate = useNavigate();
-  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
+  const gameSession = useGameSessionContext();
   const world = gameSession.unifiedState?.world;
 
   // Get all locations from engine

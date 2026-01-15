@@ -17,6 +17,7 @@ import QuestView from "./pages/QuestView";
 import CombatView from "./pages/CombatView";
 import ServerDashboard from "./pages/ServerDashboard";
 import NotFound from "./pages/NotFound";
+import GameSessionRoute from "./routes/GameSessionRoute";
 
 const queryClient = new QueryClient();
 
@@ -32,13 +33,15 @@ const App = () => (
           <Route path="/signup" element={<Signup />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/new-campaign" element={<NewCampaign />} />
-          <Route path="/game/:campaignId" element={<Game />} />
-          <Route path="/game/:campaignId/create-character" element={<CreateCharacter />} />
-          <Route path="/game/:campaignId/map" element={<WorldMap />} />
-          <Route path="/game/:campaignId/location/:locationId" element={<LocationView />} />
-          <Route path="/game/:campaignId/npc/:npcId" element={<NPCView />} />
-          <Route path="/game/:campaignId/quest/:questId" element={<QuestView />} />
-          <Route path="/game/:campaignId/combat" element={<CombatView />} />
+          <Route path="/game/:campaignId" element={<GameSessionRoute />}>
+            <Route index element={<Game />} />
+            <Route path="create-character" element={<CreateCharacter />} />
+            <Route path="map" element={<WorldMap />} />
+            <Route path="location/:locationId" element={<LocationView />} />
+            <Route path="npc/:npcId" element={<NPCView />} />
+            <Route path="quest/:questId" element={<QuestView />} />
+            <Route path="combat" element={<CombatView />} />
+          </Route>
           <Route path="/admin" element={<ServerDashboard />} />
           <Route path="/servers" element={<ServerDashboard />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

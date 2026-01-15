@@ -30,7 +30,7 @@ import { useDungeonMaster } from "@/hooks/useDungeonMaster";
 import { useRealtimeCharacters, type GameCharacter } from "@/hooks/useRealtimeGame";
 import { useCharacter, type CharacterAbility } from "@/hooks/useCharacter";
 import { useServerHeartbeat } from "@/hooks/useServerHeartbeat";
-import { useGameSession } from "@/hooks/useGameSession";
+import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import { useNarrator } from "@/hooks/useNarrator";
 import { useSettings } from "@/hooks/useSettings";
 import { supabase } from "@/integrations/supabase/client";
@@ -100,7 +100,7 @@ const Game = () => {
   const { characters: partyCharacters, isLoading: partyLoading, updateCharacter } = useRealtimeCharacters(campaignId);
 
   // Game session with persistence
-  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
+  const gameSession = useGameSessionContext();
   const { settings, updateSettings } = useSettings();
   const { entries: narrationEntries, appendFromEvent, clearNarration } = useNarrator({ settings });
 

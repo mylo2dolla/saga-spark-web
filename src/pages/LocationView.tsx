@@ -24,7 +24,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
-import { useGameSession } from "@/hooks/useGameSession";
+import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import { beginTravel } from "@/engine/WorldTravelEngine";
 import type { TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import type { EnhancedLocation } from "@/engine/narrative/Travel";
@@ -34,7 +34,7 @@ export default function LocationView() {
   const { campaignId, locationId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
-  const gameSession = useGameSession({ campaignId: campaignId ?? "" });
+  const gameSession = useGameSessionContext();
   const world = gameSession.unifiedState?.world;
   const travelState = gameSession.travelState;
   const playerId = user?.id ?? "";
