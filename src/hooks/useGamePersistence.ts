@@ -1,5 +1,6 @@
 /**
  * Hook for saving and loading game state from the database.
+ * Includes full travel state persistence.
  */
 
 import { useState, useCallback } from "react";
@@ -10,6 +11,8 @@ import {
   type UnifiedState 
 } from "@/engine/UnifiedState";
 import * as World from "@/engine/narrative/World";
+import * as TravelPersistence from "@/engine/narrative/TravelPersistence";
+import { type TravelState, createTravelState } from "@/engine/narrative/Travel";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
 import type { GameState, Entity } from "@/engine/types";
@@ -21,8 +24,13 @@ export interface GameSave {
   player_level: number;
   total_xp: number;
   playtime_seconds: number;
+  current_location_id?: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface ExtendedUnifiedState extends UnifiedState {
+  travelState?: TravelState;
 }
 
 export interface UseGamePersistenceOptions {
@@ -56,9 +64,10 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     }
   }, [campaignId, userId]);
 
-  // Save current game state
+  // Save current game state with travel state
   const saveGame = useCallback(async (
     state: UnifiedState,
+    travelState: TravelState | undefined,
     saveName: string = "Quicksave",
     playtimeSeconds: number = 0
   ): Promise<string | null> => {
@@ -67,7 +76,13 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       // Serialize the state
       const serialized = serializeUnifiedState(state);
       const parsedSerialized = JSON.parse(serialized);
-      const worldSerialized = World.serializeWorld(state.world);
+      
+      // Create world state with travel data included
+      const worldWithTravel: TravelPersistence.TravelWorldState = {
+        ...state.world,
+        travelState: travelState ?? createTravelState("starting_location"),
+      };
+      const worldSerialized = TravelPersistence.serializeTravelWorldState(worldWithTravel);
       
       // Get player progression for quick access fields
       const playerProgression = Array.from(state.world.playerProgression.values())[0];
@@ -108,8 +123,6 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       setIsSaving(false);
     }
   }, [campaignId, userId, fetchSaves]);
-
-  // Update existing save (for autosave)
   const updateSave = useCallback(async (
     saveId: string,
     state: UnifiedState,

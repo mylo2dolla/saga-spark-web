@@ -70,7 +70,7 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
       if (autosaveRef.current) {
         await persistence.updateSave(autosaveRef.current, engine.unified, playtimeSeconds);
       } else {
-        const saveId = await persistence.saveGame(engine.unified, "Autosave", playtimeSeconds);
+        const saveId = await persistence.saveGame(engine.unified, engine.travelState, "Autosave", playtimeSeconds);
         if (saveId) autosaveRef.current = saveId;
       }
     }, 120000);
@@ -172,8 +172,8 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
 
   // Quick save
   const handleQuickSave = useCallback(async () => {
-    await persistence.saveGame(engine.unified, "Quicksave", playtimeSeconds);
-  }, [engine.unified, persistence, playtimeSeconds]);
+    await persistence.saveGame(engine.unified, engine.travelState, "Quicksave", playtimeSeconds);
+  }, [engine.unified, engine.travelState, persistence, playtimeSeconds]);
 
   // Get player progression and data
   const playerProgression = engine.getProgression(playerId);
