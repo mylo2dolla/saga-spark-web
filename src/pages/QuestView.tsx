@@ -84,11 +84,22 @@ export default function QuestView() {
       questId: quest.id,
     });
     if (result.success) {
-      gameSession.updateUnifiedState(prev => ({
-        ...prev,
-        world: result.world,
-      }));
-      gameSession.triggerAutosave();
+      const nextUnifiedState = gameSession.unifiedState
+        ? {
+            ...gameSession.unifiedState,
+            world: result.world,
+          }
+        : null;
+      if (nextUnifiedState) {
+        gameSession.setUnifiedState(nextUnifiedState);
+        void gameSession.autosaveNow(nextUnifiedState, gameSession.travelState ?? undefined);
+      } else {
+        gameSession.updateUnifiedState(prev => ({
+          ...prev,
+          world: result.world,
+        }));
+        gameSession.triggerAutosave();
+      }
       const nextProgression = result.world.playerProgression.get(playerId);
       const nextItemsCount = result.world.items.size;
       console.info("[QuestView] Quest rewards applied", {
