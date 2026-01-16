@@ -80,6 +80,44 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const initializedKeyRef = useRef<string | null>(null);
   const initializingRef = useRef(false); // Prevents concurrent initializations
 
+  const getErrorMessage = (error: unknown) => {
+    if (!error) return "";
+    if (typeof error === "string") return error;
+    if (error instanceof Error) return error.message;
+    if (typeof error === "object" && "message" in error) {
+      return String((error as { message?: string }).message ?? "");
+    }
+    return "";
+  };
+
+  const stringifyError = (error: unknown) => {
+    try {
+      return JSON.stringify(error);
+    } catch (stringifyError) {
+      return String(error ?? stringifyError);
+    }
+  };
+
+  const logSupabaseError = (label: string, error: unknown) => {
+    const message = getErrorMessage(error);
+    const status =
+      typeof (error as { status?: number })?.status === "number"
+        ? (error as { status?: number }).status
+        : undefined;
+    console.error(`${label} failed`, {
+      campaignId,
+      userId,
+      error,
+      status,
+      message,
+    });
+    return {
+      message,
+      status,
+      toastMessage: message || stringifyError(error),
+    };
+  };
+
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
     travel: TravelState | null
@@ -192,7 +230,17 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         .eq("id", campaignId)
         .single();
       
-      if (campaignError) throw campaignError;
+      if (campaignError || !campaign) {
+        const error = campaignError ?? new Error("Campaign not found");
+        const { message, status, toastMessage } = logSupabaseError("Campaign fetch", error);
+        const isNotFound =
+          status === 404 ||
+          status === 406 ||
+          message.toLowerCase().includes("row not found");
+        const displayMessage = isNotFound ? "Campaign not found or access denied" : toastMessage;
+        toast.error(displayMessage);
+        throw new Error(displayMessage);
+      }
       
       // Fetch saves directly to ensure we have latest data
       const { data: savesData, error: savesError } = await supabase
@@ -203,9 +251,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         .order("updated_at", { ascending: false })
         .limit(10);
 
-      if (savesError) throw savesError;
-      
-      const existingSaves = savesData ?? [];
+      let existingSaves = savesData ?? [];
+      if (savesError) {
+        const { toastMessage } = logSupabaseError("Game saves fetch", savesError);
+        toast.error(toastMessage);
+        existingSaves = [];
+      }
       const latestSave = existingSaves[0]; // Most recent
       
       let unifiedState: UnifiedState;
@@ -297,16 +348,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       initializingRef.current = false;
       
     } catch (error) {
-      console.error("Failed to initialize game session:", error);
-      const message = error instanceof Error ? error.message : "Failed to load game";
-      toast.error(message);
+      const { toastMessage } = logSupabaseError("Game session initialization", error);
+      toast.error(toastMessage);
       initializingRef.current = false;
       initializedKeyRef.current = null;
       setSessionState(prev => ({
         ...prev,
         isInitialized: false,
         isLoading: false,
-        error: message,
+        error: toastMessage,
       }));
     }
   }, [
