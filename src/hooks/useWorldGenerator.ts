@@ -20,6 +20,8 @@ import type {
 } from "@/engine/narrative/types";
 import { toast } from "sonner";
 
+const DEV_DEBUG = import.meta.env.DEV;
+
 export interface GeneratedNPC {
   name: string;
   title?: string;
@@ -103,9 +105,21 @@ export function useWorldGenerator() {
     setError(null);
 
     try {
-      const { data, error: fnError } = await supabase.functions.invoke("world-generator", {
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG worldGenerator invoke start", {
+          type,
+          campaignTitle: campaignSeed.title,
+        });
+      }
+
+      const invokePromise = supabase.functions.invoke("world-generator", {
         body: { type, campaignSeed, context },
       });
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("World generation timed out")), 90000);
+      });
+
+      const { data, error: fnError } = await Promise.race([invokePromise, timeoutPromise]);
 
       if (fnError) {
         throw new Error(fnError.message || "Generation failed");
@@ -115,10 +129,23 @@ export function useWorldGenerator() {
         throw new Error(data.error);
       }
 
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG worldGenerator invoke success", {
+          type,
+          hasContent: Boolean(data.content),
+        });
+      }
+
       return data.content as T;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
+      if (DEV_DEBUG) {
+        console.error("DEV_DEBUG worldGenerator invoke error", {
+          type,
+          message,
+        });
+      }
       
       if (message.includes("Rate limit")) {
         toast.error("Rate limit exceeded. Please wait a moment.");
