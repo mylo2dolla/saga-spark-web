@@ -34,7 +34,7 @@ const DEFAULT_STARTING_LOCATION: EnhancedLocation = {
   factionControl: null,
   questHooks: [],
   services: ["rest", "trade", "heal"] as const,
-  ambientDescription: "Warm lantern light spills onto cobblestone paths, and the scent of hearth fires lingers in the air.",
+  ambientDescription: "Warm lantern light spills onto cobblestone paths, and the scent of hearth fires lingers in the air as locals trade stories.",
   shops: [],
   inn: true,
   travelTime: {},
