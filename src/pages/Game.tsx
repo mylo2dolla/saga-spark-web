@@ -394,8 +394,13 @@ const Game = () => {
   if (!campaignId) {
     return (
       <div className="h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-muted-foreground">Campaign not found.</p>
+        <div className="text-center space-y-4">
+          <p className="text-muted-foreground">Missing campaign ID in the route.</p>
+          <Link to="/dashboard">
+            <Button variant="outline" size="sm">
+              Back to Dashboard
+            </Button>
+          </Link>
         </div>
       </div>
     );
