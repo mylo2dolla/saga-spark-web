@@ -90,13 +90,21 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
     if (locations.size === 0) {
       locations.set(DEFAULT_STARTING_LOCATION.id, DEFAULT_STARTING_LOCATION);
-    } else if (!locations.has(DEFAULT_STARTING_LOCATION.id)) {
-      locations.set(DEFAULT_STARTING_LOCATION.id, DEFAULT_STARTING_LOCATION);
     }
 
     const locationIds = Array.from(locations.keys());
+    const hasOnlyDefaultLocation =
+      locations.size === 1 && locations.has(DEFAULT_STARTING_LOCATION.id);
+    const realLocationsExist = locations.size > 0 && !hasOnlyDefaultLocation;
     let currentLocationId = nextTravel.currentLocationId;
-    if (!locations.has(currentLocationId)) {
+    const preferredRealLocationId =
+      locationIds.find(id => id !== DEFAULT_STARTING_LOCATION.id) ?? locationIds[0];
+
+    if (realLocationsExist) {
+      if (!locations.has(currentLocationId) || currentLocationId === DEFAULT_STARTING_LOCATION.id) {
+        currentLocationId = preferredRealLocationId;
+      }
+    } else if (!locations.has(currentLocationId)) {
       currentLocationId = locations.has(DEFAULT_STARTING_LOCATION.id)
         ? DEFAULT_STARTING_LOCATION.id
         : locationIds[0];
@@ -248,8 +256,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           };
         }
 
+        const locationIds = Array.from(unifiedState.world.locations.keys());
+        const startingId =
+          locationIds.find(id => id !== DEFAULT_STARTING_LOCATION.id)
+          ?? locationIds[0]
+          ?? DEFAULT_STARTING_LOCATION.id;
+
         // Initialize travel state with starting location
-        travelState = createTravelState(DEFAULT_STARTING_LOCATION.id);
+        travelState = createTravelState(startingId);
       }
 
       const invariantResult = ensureWorldInvariants(unifiedState, travelState);
