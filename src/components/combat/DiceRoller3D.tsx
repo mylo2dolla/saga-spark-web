@@ -79,6 +79,7 @@ const DiceRoller3D = forwardRef<DiceRoller3DRef, DiceRoller3DProps>(({
     const iterations = rollDuration / updateInterval;
     let iteration = 0;
 
+    let resolvedRolls: DiceRoll[] = [];
     await new Promise<void>((resolve) => {
       const interval = setInterval(() => {
         iteration++;
@@ -106,6 +107,7 @@ const DiceRoller3D = forwardRef<DiceRoller3DRef, DiceRoller3DProps>(({
           setIsRolling(false);
           setShowResults(true);
           onRollComplete?.(finalRolls);
+          resolvedRolls = finalRolls;
           
           // Clear after delay
           setTimeout(() => {
@@ -118,7 +120,7 @@ const DiceRoller3D = forwardRef<DiceRoller3DRef, DiceRoller3DProps>(({
       }, updateInterval);
     });
 
-    return activeRolls;
+    return resolvedRolls;
   }, [generateRoll, onRollComplete]);
 
   useImperativeHandle(ref, () => ({

@@ -4,7 +4,7 @@
  * current location, destination, and combat interrupts.
  */
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MapPin,
@@ -51,7 +51,7 @@ export function TravelPanel({
   onCombatStart,
   onWorldEvent,
 }: TravelPanelProps) {
-  const DEBUG = false;
+  const DEV_DEBUG = import.meta.env.DEV;
   const [isTraveling, setIsTraveling] = useState(false);
   const [selectedDestination, setSelectedDestination] = useState<string | null>(null);
   const [travelResult, setTravelResult] = useState<BeginTravelResult | null>(null);
@@ -75,38 +75,16 @@ export function TravelPanel({
       .filter((loc): loc is EnhancedLocation => loc !== undefined);
   }, [currentLocation, world.locations]);
 
-  if (DEBUG) {
-    console.info("TravelPanel render", {
+  if (DEV_DEBUG) {
+    console.info("DEV_DEBUG travelPanel render", {
       locationsSize: world.locations.size,
       currentLocationId: travelState.currentLocationId,
       currentLocationName: currentLocation?.name,
       connectedTo: currentLocation?.connectedTo ?? [],
+      connectedToCount: currentLocation?.connectedTo?.length ?? 0,
+      availableDestinationsCount: reachableLocations.length,
     });
   }
-
-  useEffect(() => {
-    if (!currentLocation) return;
-    if (currentLocation.connectedTo.length > 0 || world.locations.size <= 1) return;
-    const fallbackDestinationId = Array.from(world.locations.keys())
-      .find(id => id !== currentLocation.id);
-    if (!fallbackDestinationId) return;
-    const fallbackDestination = world.locations.get(fallbackDestinationId);
-    if (!fallbackDestination) return;
-    const updatedCurrent = {
-      ...currentLocation,
-      connectedTo: [fallbackDestinationId],
-    };
-    const updatedDestination = fallbackDestination.connectedTo.includes(currentLocation.id)
-      ? fallbackDestination
-      : {
-          ...fallbackDestination,
-          connectedTo: [...fallbackDestination.connectedTo, currentLocation.id],
-        };
-    const nextLocations = new Map(world.locations);
-    nextLocations.set(currentLocation.id, updatedCurrent);
-    nextLocations.set(fallbackDestinationId, updatedDestination);
-    onWorldUpdate({ ...world, locations: nextLocations });
-  }, [currentLocation, world, onWorldUpdate]);
 
   // Check if can travel to selected destination
   const canTravelToSelected = useMemo(() => {

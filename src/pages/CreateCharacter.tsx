@@ -34,6 +34,8 @@ const CreateCharacter = () => {
   }
 
   const getModifier = (stat: number) => Math.floor((stat - 10) / 2);
+  const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : "Unknown error";
 
   const handleComplete = async (data: AICharacterData) => {
     setIsCreating(true);
@@ -77,10 +79,10 @@ const CreateCharacter = () => {
         description: `${data.name} the ${data.class} is ready for adventure!`,
       });
       navigate(`/game/${campaignId}`);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Failed to create character",
-        description: error.message,
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     } finally {
