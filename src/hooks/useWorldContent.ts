@@ -147,6 +147,10 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     const newNPCs = new Map(baseWorld.npcs);
     const newQuests = new Map(baseWorld.quests);
     const newLocations = new Map(baseWorld.locations);
+    const contentLocationIds = new Set(worldContent.locations.map(location => location.id));
+    if (worldContent.locations.length > 0 && !contentLocationIds.has("starting_location")) {
+      newLocations.delete("starting_location");
+    }
 
     // Merge NPCs (avoid duplicates by ID)
     for (const npc of worldContent.npcs) {
@@ -164,9 +168,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
 
     // Merge Locations
     for (const location of worldContent.locations) {
-      if (!newLocations.has(location.id)) {
-        newLocations.set(location.id, location);
-      }
+      newLocations.set(location.id, location);
     }
 
     // Update campaign seed with factions if not already present

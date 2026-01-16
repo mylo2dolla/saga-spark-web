@@ -83,8 +83,6 @@ const ServerDashboard = () => {
     setIsRefreshing(true);
     
     try {
-      // Test database connection
-      const startTime = Date.now();
       const { data: campaignsData, error: campaignsError } = await supabase
         .from("campaigns")
         .select(`
@@ -97,8 +95,6 @@ const ServerDashboard = () => {
         `)
         .order("updated_at", { ascending: false })
         .limit(50);
-      
-      const dbLatency = Date.now() - startTime;
       
       if (campaignsError) {
         console.error("Error fetching campaigns:", campaignsError);
@@ -158,24 +154,7 @@ const ServerDashboard = () => {
           
           setServerNodes(nodes);
         } else {
-          // Fallback to mock nodes if no real data
-          const activeCampaigns = campaignStats.filter(c => c.isActive).length;
-          const totalCampaignPlayers = campaignStats.reduce((sum, c) => sum + c.playerCount, 0);
-          
-          setServerNodes([
-            {
-              id: "primary",
-              name: "Primary Node",
-              status: "online",
-              lastHeartbeat: new Date(),
-              activePlayers: totalCampaignPlayers,
-              activeCampaigns,
-              realtimeConnections: Math.floor(totalCampaignPlayers * 0.7),
-              databaseLatency: dbLatency,
-              memoryUsage: 45 + Math.random() * 20,
-              cpuUsage: 15 + Math.random() * 25,
-            },
-          ]);
+          setServerNodes([]);
         }
         
         // Set realtime channels (approximated from node data)
@@ -518,6 +497,11 @@ const ServerDashboard = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
+                {serverNodes.length === 0 && (
+                  <div className="text-sm text-muted-foreground">
+                    No server nodes available.
+                  </div>
+                )}
                 {serverNodes.map((node) => (
                   <motion.div
                     key={node.id}

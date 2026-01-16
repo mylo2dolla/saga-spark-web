@@ -4,7 +4,7 @@
  * current location, destination, and combat interrupts.
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MapPin,
@@ -14,8 +14,6 @@ import {
   ChevronRight,
   AlertTriangle,
   Loader2,
-  Shield,
-  CheckCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,8 +25,6 @@ import {
   beginTravel,
   resumeTravelAfterCombat,
   canBeginTravel,
-  getReachableLocations,
-  getTravelInfo,
   type BeginTravelResult,
 } from "@/engine/WorldTravelEngine";
 import type { TravelWorldState, CombatEncounter } from "@/engine/narrative/TravelPersistence";
@@ -55,15 +51,62 @@ export function TravelPanel({
   onCombatStart,
   onWorldEvent,
 }: TravelPanelProps) {
+  const DEBUG = false;
   const [isTraveling, setIsTraveling] = useState(false);
   const [selectedDestination, setSelectedDestination] = useState<string | null>(null);
   const [travelResult, setTravelResult] = useState<BeginTravelResult | null>(null);
 
-  // Get travel info from world state
-  const travelInfo = useMemo(() => getTravelInfo(world), [world]);
+  const travelState = world.travelState;
+  const currentLocation = useMemo(
+    () => world.locations.get(travelState.currentLocationId) as EnhancedLocation | undefined,
+    [world.locations, travelState.currentLocationId]
+  );
+  const destination = useMemo(
+    () => (travelState.transitDestinationId
+      ? world.locations.get(travelState.transitDestinationId) as EnhancedLocation | undefined
+      : undefined),
+    [world.locations, travelState.transitDestinationId]
+  );
+  const reachableLocations = useMemo(() => {
+    if (!currentLocation) return [];
+    const connectedIds = currentLocation.connectedTo || [];
+    return connectedIds
+      .map(id => world.locations.get(id) as EnhancedLocation | undefined)
+      .filter((loc): loc is EnhancedLocation => loc !== undefined);
+  }, [currentLocation, world.locations]);
 
-  // Get reachable locations
-  const reachableLocations = useMemo(() => getReachableLocations(world), [world]);
+  if (DEBUG) {
+    console.info("TravelPanel render", {
+      locationsSize: world.locations.size,
+      currentLocationId: travelState.currentLocationId,
+      currentLocationName: currentLocation?.name,
+      connectedTo: currentLocation?.connectedTo ?? [],
+    });
+  }
+
+  useEffect(() => {
+    if (!currentLocation) return;
+    if (currentLocation.connectedTo.length > 0 || world.locations.size <= 1) return;
+    const fallbackDestinationId = Array.from(world.locations.keys())
+      .find(id => id !== currentLocation.id);
+    if (!fallbackDestinationId) return;
+    const fallbackDestination = world.locations.get(fallbackDestinationId);
+    if (!fallbackDestination) return;
+    const updatedCurrent = {
+      ...currentLocation,
+      connectedTo: [fallbackDestinationId],
+    };
+    const updatedDestination = fallbackDestination.connectedTo.includes(currentLocation.id)
+      ? fallbackDestination
+      : {
+          ...fallbackDestination,
+          connectedTo: [...fallbackDestination.connectedTo, currentLocation.id],
+        };
+    const nextLocations = new Map(world.locations);
+    nextLocations.set(currentLocation.id, updatedCurrent);
+    nextLocations.set(fallbackDestinationId, updatedDestination);
+    onWorldUpdate({ ...world, locations: nextLocations });
+  }, [currentLocation, world, onWorldUpdate]);
 
   // Check if can travel to selected destination
   const canTravelToSelected = useMemo(() => {
@@ -149,31 +192,31 @@ export function TravelPanel({
           Travel
         </CardTitle>
         <CardDescription>
-          {travelInfo.isInTransit
-            ? `Traveling... ${Math.round(travelInfo.transitProgress)}%`
-            : `Current: ${travelInfo.currentLocation?.name ?? "Unknown"}`}
+          {travelState.isInTransit
+            ? `Traveling... ${Math.round(travelState.transitProgress)}%`
+            : `Current: ${currentLocation?.name ?? "Unknown"}`}
         </CardDescription>
       </CardHeader>
 
       <CardContent className="flex-1 flex flex-col gap-4 overflow-hidden">
         {/* Current Location Info */}
-        {travelInfo.currentLocation && !travelInfo.isInTransit && (
+        {currentLocation && !travelState.isInTransit && (
           <div className="p-3 rounded-lg bg-muted/50 border border-border">
             <div className="flex items-center gap-2 mb-1">
               <MapPin className="w-4 h-4 text-primary" />
-              <span className="font-medium">{travelInfo.currentLocation.name}</span>
-              <Badge className={getDangerColor(travelInfo.currentLocation.dangerLevel ?? 1)}>
-                Danger: {travelInfo.currentLocation.dangerLevel ?? 1}
+              <span className="font-medium">{currentLocation.name}</span>
+              <Badge className={getDangerColor(currentLocation.dangerLevel ?? 1)}>
+                Danger: {currentLocation.dangerLevel ?? 1}
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground line-clamp-2">
-              {travelInfo.currentLocation.ambientDescription ?? travelInfo.currentLocation.description}
+              {currentLocation.ambientDescription ?? currentLocation.description}
             </p>
           </div>
         )}
 
         {/* Travel Progress */}
-        {travelInfo.isInTransit && (
+        {travelState.isInTransit && (
           <div className="p-4 rounded-lg bg-primary/10 border border-primary/30">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2">
@@ -181,20 +224,20 @@ export function TravelPanel({
                 <span className="font-medium">Traveling...</span>
               </div>
               <span className="text-sm text-muted-foreground">
-                {Math.round(travelInfo.transitProgress)}%
+                {Math.round(travelState.transitProgress)}%
               </span>
             </div>
-            <Progress value={travelInfo.transitProgress} className="h-2" />
-            {travelInfo.destination && (
+            <Progress value={travelState.transitProgress} className="h-2" />
+            {destination && (
               <p className="text-sm text-muted-foreground mt-2">
-                → {travelInfo.destination.name}
+                → {destination.name}
               </p>
             )}
           </div>
         )}
 
         {/* Combat Interrupt Notice */}
-        {isInCombat && travelInfo.isInTransit && (
+        {isInCombat && travelState.isInTransit && (
           <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30">
             <div className="flex items-center gap-2 text-destructive">
               <Swords className="w-5 h-5" />
@@ -207,7 +250,7 @@ export function TravelPanel({
         )}
 
         {/* Reachable Destinations */}
-        {!travelInfo.isInTransit && !isInCombat && (
+        {!travelState.isInTransit && !isInCombat && (
           <>
             <div className="text-sm font-medium text-muted-foreground">
               Available Destinations ({reachableLocations.length})
@@ -258,7 +301,7 @@ export function TravelPanel({
                   </motion.div>
                 ))}
 
-                {reachableLocations.length === 0 && (
+                {reachableLocations.length === 0 && world.locations.size === 1 && (
                   <div className="text-center py-8 text-muted-foreground">
                     <AlertTriangle className="w-8 h-8 mx-auto mb-2 opacity-50" />
                     <p>No connected locations.</p>
