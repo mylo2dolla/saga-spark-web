@@ -58,7 +58,10 @@ export default function DevDebugOverlay() {
   if (!DEV_DEBUG) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-[9999] max-h-[70vh] w-[360px] overflow-auto rounded-lg border border-border bg-card/95 p-3 text-xs shadow-xl">
+    <div
+      id="dev-debug-overlay"
+      className="fixed bottom-4 right-4 z-[9999] max-h-[70vh] w-[360px] overflow-auto rounded-lg border border-border bg-card/95 p-3 text-xs shadow-xl"
+    >
       <div className="mb-2 font-semibold text-foreground">DEV_DEBUG Overlay</div>
       <pre className="whitespace-pre-wrap text-muted-foreground">
         {JSON.stringify(overlayPayload, null, 2)}
