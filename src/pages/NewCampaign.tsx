@@ -31,6 +31,9 @@ import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
 
+const DEV_DEBUG = import.meta.env.DEV;
+const REQUEST_TIMEOUT_MS = 30000;
+
 // Preset campaign themes
 const CAMPAIGN_PRESETS = [
   {
@@ -146,31 +149,68 @@ export default function NewCampaign() {
     setIsCreating(true);
     setStep("generating");
 
+    if (DEV_DEBUG) {
+      console.info("DEV_DEBUG newCampaign create start", {
+        userId: user.id,
+        title,
+        descriptionLength: description.length,
+        themes: selectedThemes,
+      });
+    }
+
     try {
+      const withTimeout = async <T,>(promise: Promise<T>, label: string): Promise<T> => {
+        const timeout = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error(`${label} timed out`)), REQUEST_TIMEOUT_MS);
+        });
+        return Promise.race([promise, timeout]);
+      };
+
       // Create the campaign in the database
       const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG newCampaign inserting campaign");
+      }
       
-      const { data: campaign, error: campaignError } = await supabase
-        .from("campaigns")
-        .insert({
-          name: title,
-          description: description,
-          owner_id: user.id,
-          invite_code: inviteCode,
-          is_active: true,
-        })
-        .select()
-        .single();
+      const { data: campaign, error: campaignError } = await withTimeout(
+        supabase
+          .from("campaigns")
+          .insert({
+            name: title,
+            description: description,
+            owner_id: user.id,
+            invite_code: inviteCode,
+            is_active: true,
+          })
+          .select()
+          .single(),
+        "Campaign creation"
+      );
 
       if (campaignError) throw campaignError;
 
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG newCampaign campaign created", {
+          campaignId: campaign.id,
+        });
+      }
+
       // Add owner as campaign member
-      const { error: memberError } = await supabase.from("campaign_members").insert({
-        campaign_id: campaign.id,
-        user_id: user.id,
-        is_dm: true,
-      });
+      const { error: memberError } = await withTimeout(
+        supabase.from("campaign_members").insert({
+          campaign_id: campaign.id,
+          user_id: user.id,
+          is_dm: true,
+        }),
+        "Campaign membership creation"
+      );
       if (memberError) throw memberError;
+
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG newCampaign member created");
+        console.info("DEV_DEBUG newCampaign generating world");
+      }
 
       // Generate the initial world using AI
       const generatedWorld = await generateInitialWorld({
@@ -180,6 +220,12 @@ export default function NewCampaign() {
       });
 
       if (generatedWorld) {
+        if (DEV_DEBUG) {
+          console.info("DEV_DEBUG newCampaign world generated", {
+            locationsCount: generatedWorld.locations?.length ?? 0,
+            startingLocationId: generatedWorld.startingLocationId,
+          });
+        }
         const generatedLocations = Array.isArray(generatedWorld.locations)
           ? generatedWorld.locations
           : [];
@@ -227,10 +273,17 @@ export default function NewCampaign() {
           })),
         ];
 
-        const { error: contentError } = await supabase
-          .from("ai_generated_content")
-          .insert(contentToStore);
+        const { error: contentError } = await withTimeout(
+          supabase
+            .from("ai_generated_content")
+            .insert(contentToStore),
+          "Content storage"
+        );
         if (contentError) throw contentError;
+
+        if (DEV_DEBUG) {
+          console.info("DEV_DEBUG newCampaign content stored");
+        }
 
         // Update campaign with current scene
         const currentSceneName =
@@ -238,10 +291,13 @@ export default function NewCampaign() {
           ?? orderedLocations[0]?.name
           ?? (legacyStartingLocation as { name?: string })?.name
           ?? campaign.name;
-        const { error: sceneError } = await supabase
-          .from("campaigns")
-          .update({ current_scene: currentSceneName })
-          .eq("id", campaign.id);
+        const { error: sceneError } = await withTimeout(
+          supabase
+            .from("campaigns")
+            .update({ current_scene: currentSceneName })
+            .eq("id", campaign.id),
+          "Campaign scene update"
+        );
         if (sceneError) throw sceneError;
       }
 
@@ -249,6 +305,9 @@ export default function NewCampaign() {
       navigate(`/game/${campaign.id}/create-character`);
     } catch (error) {
       console.error("Failed to create campaign:", error);
+      if (DEV_DEBUG) {
+        console.error("DEV_DEBUG newCampaign create error", error);
+      }
       toast.error("Failed to create campaign");
       setStep("customize");
     } finally {
