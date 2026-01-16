@@ -42,6 +42,11 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+  const getFallbackTravelState = useCallback((state: UnifiedState) => {
+    const firstLocationId = Array.from(state.world.locations.keys())[0];
+    return createTravelState(firstLocationId ?? "starting_location");
+  }, []);
+
   // Fetch all saves for this campaign
   const fetchSaves = useCallback(async () => {
     setIsLoading(true);
@@ -79,7 +84,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       // Create world state with travel data included
       const worldWithTravel: TravelPersistence.TravelWorldState = {
         ...state.world,
-        travelState: travelState ?? createTravelState("starting_location"),
+        travelState: travelState ?? getFallbackTravelState(state),
       };
       const worldSerialized = TravelPersistence.serializeTravelWorldState(worldWithTravel);
       
@@ -121,7 +126,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     } finally {
       setIsSaving(false);
     }
-  }, [campaignId, userId, fetchSaves]);
+  }, [campaignId, userId, fetchSaves, getFallbackTravelState]);
   // Update an existing save - includes travel state
   const updateSave = useCallback(async (
     saveId: string,
@@ -137,7 +142,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       // Create world state with travel data included (same as saveGame)
       const worldWithTravel: TravelPersistence.TravelWorldState = {
         ...state.world,
-        travelState: travelState ?? createTravelState("starting_location"),
+        travelState: travelState ?? getFallbackTravelState(state),
       };
       const worldSerialized = TravelPersistence.serializeTravelWorldState(worldWithTravel);
       
@@ -171,7 +176,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     } finally {
       setIsSaving(false);
     }
-  }, [userId]);
+  }, [userId, getFallbackTravelState]);
 
   // Load a saved game
   const loadGame = useCallback(async (saveId: string): Promise<UnifiedState | null> => {

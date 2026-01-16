@@ -41,6 +41,8 @@ const DEFAULT_STARTING_LOCATION: EnhancedLocation = {
   currentEvents: [],
 };
 
+const DEBUG = false;
+
 export interface GameSessionState {
   unifiedState: UnifiedState | null;
   travelState: TravelState | null;
@@ -124,16 +126,21 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   ): { unified: UnifiedState; travel: TravelState } => {
     let nextWorld = unified.world;
     let locations = new Map(nextWorld.locations);
-    let nextTravel = travel ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
+    let locationIds = Array.from(locations.keys());
+    const firstLocationId = locationIds[0];
+    let nextTravel = travel ?? createTravelState(firstLocationId ?? DEFAULT_STARTING_LOCATION.id);
 
     if (locations.size === 0) {
       locations.set(DEFAULT_STARTING_LOCATION.id, DEFAULT_STARTING_LOCATION);
     }
 
-    const locationIds = Array.from(locations.keys());
     const hasOnlyDefaultLocation =
       locations.size === 1 && locations.has(DEFAULT_STARTING_LOCATION.id);
     const realLocationsExist = locations.size > 0 && !hasOnlyDefaultLocation;
+    if (realLocationsExist && locations.has(DEFAULT_STARTING_LOCATION.id)) {
+      locations.delete(DEFAULT_STARTING_LOCATION.id);
+    }
+    locationIds = Array.from(locations.keys());
     let currentLocationId = nextTravel.currentLocationId;
     const preferredRealLocationId =
       locationIds.find(id => id !== DEFAULT_STARTING_LOCATION.id) ?? locationIds[0];
@@ -271,7 +278,10 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           
           // Extract travel state from world state if available
           const worldWithTravel = loaded.world as unknown as TravelWorldState;
-          travelState = worldWithTravel.travelState ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
+          const savedLocationId = worldWithTravel.travelState?.currentLocationId;
+          const firstLocationId = Array.from(worldWithTravel.locations.keys())[0];
+          const fallbackLocationId = savedLocationId ?? firstLocationId ?? DEFAULT_STARTING_LOCATION.id;
+          travelState = worldWithTravel.travelState ?? createTravelState(fallbackLocationId);
           initialPlaytime = latestSave.playtime_seconds;
           lastSaveIdRef.current = latestSave.id;
           
@@ -346,6 +356,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       
       initializedKeyRef.current = initKey;
       initializingRef.current = false;
+      if (DEBUG && unifiedState && travelState) {
+        const currentLocation = unifiedState.world.locations.get(travelState.currentLocationId);
+        console.info("Game session initialized", {
+          locationsSize: unifiedState.world.locations.size,
+          currentLocationId: travelState.currentLocationId,
+          currentLocationName: currentLocation?.name,
+          connectedTo: currentLocation?.connectedTo ?? [],
+        });
+      }
       
     } catch (error) {
       const { toastMessage } = logSupabaseError("Game session initialization", error);
@@ -487,7 +506,10 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     const loaded = await persistence.loadGame(saveId);
     if (loaded) {
       const worldWithTravel = loaded.world as unknown as TravelWorldState;
-      const travelState = worldWithTravel.travelState ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
+      const firstLocationId = Array.from(worldWithTravel.locations.keys())[0];
+      const fallbackLocationId =
+        worldWithTravel.travelState?.currentLocationId ?? firstLocationId ?? DEFAULT_STARTING_LOCATION.id;
+      const travelState = worldWithTravel.travelState ?? createTravelState(fallbackLocationId);
       const mergedWorld = worldContent
         ? mergeIntoWorldState(loaded.world, worldContent)
         : loaded.world;
