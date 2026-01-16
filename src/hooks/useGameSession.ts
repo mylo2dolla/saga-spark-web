@@ -18,13 +18,13 @@ import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import type { CampaignSeed } from "@/engine/narrative/types";
 import { toast } from "sonner";
 
-// Default fallback location with a self-referencing connection to prevent travel errors
+// Default fallback location anchored to Haven Village for stable initialization
 const DEFAULT_STARTING_LOCATION: EnhancedLocation = {
   id: "starting_location",
-  name: "",
-  description: "",
+  name: "Haven Village",
+  description: "A quiet frontier village that serves as a safe haven for weary travelers.",
   type: "town",
-  connectedTo: ["starting_location"], // Self-reference prevents "no connected locations" issue
+  connectedTo: [],
   position: { x: 100, y: 100 },
   radius: 30,
   discovered: true,
@@ -34,7 +34,7 @@ const DEFAULT_STARTING_LOCATION: EnhancedLocation = {
   factionControl: null,
   questHooks: [],
   services: ["rest", "trade", "heal"] as const,
-  ambientDescription: "",
+  ambientDescription: "Warm lantern light spills onto cobblestone paths, and the scent of hearth fires lingers in the air.",
   shops: [],
   inn: true,
   travelTime: {},
