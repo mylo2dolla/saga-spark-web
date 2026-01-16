@@ -160,18 +160,24 @@ Generate a complete starting world with:
 
 1. factions: array of 3-4 factions (see faction schema above)
 
-2. startingLocation: the town/area where the adventure begins with:
+2. locations: array of 4-6 locations, each with:
+   - id: stable unique id (kebab_case, e.g. "ashen_outpost")
    - name, description, type
+   - dangerLevel: 1-10
+   - position: { x: number, y: number } in a 0-500 range
+   - connectedTo: array of location ids (not names)
+
+3. startingLocationId: id of the starting location (must match one of the locations above)
    
-3. npcs: array of 3-5 starting NPCs with:
+4. npcs: array of 3-5 starting NPCs with:
    - name, title, personality traits, factionId
    - canTrade, greeting dialogue
    - a questHook each might offer
 
-4. initialQuest: the first quest to hook the player with:
+5. initialQuest: the first quest to hook the player with:
    - title, description, objectives, rewards
    
-5. worldHooks: 3-4 story seeds that can develop into future quests
+6. worldHooks: 3-4 story seeds that can develop into future quests
 
 This should feel like a rich, living world ready for adventure.
 Respond with JSON only.`;
@@ -271,6 +277,90 @@ serve(async (req) => {
     } catch (parseError) {
       console.error("Failed to parse AI response:", content);
       throw new Error("Invalid JSON response from AI");
+    }
+
+    const toKebab = (value: string): string =>
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+
+    const createDeterministicPosition = (seed: string) => {
+      let hash = 0;
+      for (let i = 0; i < seed.length; i++) {
+        hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+      }
+      return {
+        x: 50 + (hash % 400),
+        y: 50 + ((hash >>> 16) % 400),
+      };
+    };
+
+    if (type === "initial_world" && Array.isArray(parsed.locations)) {
+      const seenIds = new Set<string>();
+      const nameToId = new Map<string, string>();
+      parsed.locations = parsed.locations.map((location: { id?: string; name?: string; position?: { x?: number; y?: number } }) => {
+        const baseName = typeof location.name === "string" ? location.name : "location";
+        let id = typeof location.id === "string" && location.id.trim().length > 0
+          ? location.id
+          : toKebab(baseName);
+
+        if (!id) {
+          id = `location-${seenIds.size + 1}`;
+        }
+
+        let uniqueId = id;
+        let suffix = 1;
+        while (seenIds.has(uniqueId)) {
+          uniqueId = `${id}-${suffix}`;
+          suffix += 1;
+        }
+        seenIds.add(uniqueId);
+        nameToId.set(baseName.toLowerCase(), uniqueId);
+
+        const pos = location.position;
+        const position =
+          typeof pos?.x === "number" && typeof pos?.y === "number"
+            ? { x: pos.x, y: pos.y }
+            : createDeterministicPosition(uniqueId);
+
+        return {
+          ...location,
+          id: uniqueId,
+          position,
+        };
+      });
+
+      parsed.locations = parsed.locations.map((location: { id: string; name?: string; connectedTo?: string[] }) => {
+        const connectedTo = Array.isArray(location.connectedTo)
+          ? location.connectedTo
+              .map((entry) => {
+                if (typeof entry !== "string") return null;
+                if (seenIds.has(entry)) return entry;
+                return nameToId.get(entry.toLowerCase()) ?? null;
+              })
+              .filter((entry): entry is string => Boolean(entry))
+          : [];
+
+        return {
+          ...location,
+          connectedTo,
+        };
+      });
+
+      if (typeof parsed.startingLocationId !== "string" || !seenIds.has(parsed.startingLocationId)) {
+        parsed.startingLocationId = parsed.locations[0]?.id ?? null;
+      }
+    }
+
+    if (type === "initial_world") {
+      const locations = Array.isArray(parsed.locations) ? parsed.locations : [];
+      const locationIds = locations.map((loc: { id?: string }) => loc?.id).filter(Boolean);
+      console.log("Initial world payload", {
+        locationsCount: locations.length,
+        locationIds,
+        startingLocationId: parsed.startingLocationId ?? null,
+      });
     }
 
     console.log(`Successfully generated ${type}`);
