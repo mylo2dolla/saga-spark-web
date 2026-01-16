@@ -96,7 +96,7 @@ export function useAbilityTargeting({ gridSize, entities, isPositionBlocked }: U
         }
         break;
         
-      case "cone":
+      case "cone": {
         // Cone from caster toward target
         const dx = Math.sign(targetPosition.x - casterPosition.x);
         const dy = Math.sign(targetPosition.y - casterPosition.y);
@@ -116,8 +116,9 @@ export function useAbilityTargeting({ gridSize, entities, isPositionBlocked }: U
           }
         }
         break;
+      }
         
-      case "line":
+      case "line": {
         // Line from caster to target (and beyond)
         const lineDir = {
           x: Math.sign(targetPosition.x - casterPosition.x),
@@ -134,6 +135,7 @@ export function useAbilityTargeting({ gridSize, entities, isPositionBlocked }: U
           }
         }
         break;
+      }
     }
     
     return affectedPositions;

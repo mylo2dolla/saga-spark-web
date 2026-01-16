@@ -10,6 +10,8 @@ import type { WorldState, NPC, Quest, Location, FactionInfo, Alignment, Personal
 import type { EnhancedLocation, LocationService } from "@/engine/narrative/Travel";
 import { toast } from "sonner";
 
+const DEV_DEBUG = import.meta.env.DEV;
+
 interface WorldContent {
   factions: FactionInfo[];
   npcs: NPC[];
@@ -125,6 +127,15 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       }
 
       const result: WorldContent = { factions, npcs, quests, locations, worldHooks };
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG worldContent loaded", {
+          locationsCount: result.locations.length,
+          npcsCount: result.npcs.length,
+          questsCount: result.quests.length,
+          itemsCount: 0,
+          locationIds: result.locations.map(location => location.id),
+        });
+      }
       setContent(result);
       return result;
     } catch (err) {
@@ -171,6 +182,8 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       newLocations.set(location.id, location);
     }
 
+    const resolvedLocations = resolveLocationConnections(newLocations);
+
     // Update campaign seed with factions if not already present
     const existingFactionIds = new Set(baseWorld.campaignSeed.factions?.map(f => f.id) ?? []);
     const newFactions = [
@@ -182,7 +195,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       ...baseWorld,
       npcs: newNPCs,
       quests: newQuests,
-      locations: newLocations,
+      locations: resolvedLocations,
       campaignSeed: {
         ...baseWorld.campaignSeed,
         factions: newFactions,
@@ -452,6 +465,136 @@ function createDeterministicPosition(seed: string): { x: number; y: number } {
   const x = 100 + (hashed % 400);
   const y = 100 + ((hashed >>> 16) % 400);
   return { x, y };
+}
+
+function normalizeKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function resolveLocationConnections(
+  locations: Map<string, EnhancedLocation>
+): Map<string, EnhancedLocation> {
+  if (locations.size === 0) return locations;
+
+  const idSet = new Set(locations.keys());
+  const nameToIds = new Map<string, string[]>();
+  const typeToIds = new Map<string, string[]>();
+
+  for (const location of locations.values()) {
+    const nameKey = normalizeKey(location.name);
+    if (!nameToIds.has(nameKey)) {
+      nameToIds.set(nameKey, []);
+    }
+    nameToIds.get(nameKey)?.push(location.id);
+
+    const typeKey = location.type.toLowerCase();
+    if (!typeToIds.has(typeKey)) {
+      typeToIds.set(typeKey, []);
+    }
+    typeToIds.get(typeKey)?.push(location.id);
+  }
+
+  let didChange = false;
+  const nextLocations = new Map(locations);
+  let hasAnyConnections = false;
+
+  for (const location of locations.values()) {
+    if (location.connectedTo.length === 0) continue;
+    hasAnyConnections = true;
+
+    const resolved = new Set<string>();
+    for (const raw of location.connectedTo) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      if (idSet.has(trimmed)) {
+        resolved.add(trimmed);
+        continue;
+      }
+
+      const nameMatches = nameToIds.get(normalizeKey(trimmed));
+      if (nameMatches && nameMatches.length > 0) {
+        nameMatches.forEach(id => resolved.add(id));
+        continue;
+      }
+
+      const typeMatches = typeToIds.get(trimmed.toLowerCase());
+      if (typeMatches && typeMatches.length > 0) {
+        typeMatches.forEach(id => resolved.add(id));
+      }
+    }
+
+    resolved.delete(location.id);
+    const resolvedIds = Array.from(resolved);
+    const normalizedCurrent = location.connectedTo.filter(id => idSet.has(id));
+
+    const sameConnections =
+      normalizedCurrent.length === resolvedIds.length &&
+      normalizedCurrent.every(id => resolved.has(id));
+
+    if (!sameConnections) {
+      didChange = true;
+      const nextTravelTime = { ...location.travelTime };
+      for (const id of resolvedIds) {
+        if (typeof nextTravelTime[id] !== "number") {
+          nextTravelTime[id] = 1;
+        }
+      }
+      nextLocations.set(location.id, {
+        ...location,
+        connectedTo: resolvedIds,
+        travelTime: nextTravelTime,
+      });
+    }
+  }
+
+  if (!hasAnyConnections && locations.size > 1) {
+    const locationList = Array.from(nextLocations.values());
+    const getDistance = (a: EnhancedLocation, b: EnhancedLocation) => {
+      const dx = a.position.x - b.position.x;
+      const dy = a.position.y - b.position.y;
+      return Math.hypot(dx, dy);
+    };
+
+    for (const location of locationList) {
+      const nearest = locationList
+        .filter(candidate => candidate.id !== location.id)
+        .sort((a, b) => getDistance(location, a) - getDistance(location, b))[0];
+      if (!nearest) continue;
+
+      const currentConnections = new Set(location.connectedTo);
+      currentConnections.add(nearest.id);
+      const nextTravelTime = { ...location.travelTime };
+      if (typeof nextTravelTime[nearest.id] !== "number") {
+        nextTravelTime[nearest.id] = 1;
+      }
+      nextLocations.set(location.id, {
+        ...location,
+        connectedTo: Array.from(currentConnections),
+        travelTime: nextTravelTime,
+      });
+
+      const nearestConnections = new Set(nextLocations.get(nearest.id)?.connectedTo ?? []);
+      if (!nearestConnections.has(location.id)) {
+        const nearestTravelTime = { ...nearest.travelTime };
+        if (typeof nearestTravelTime[location.id] !== "number") {
+          nearestTravelTime[location.id] = 1;
+        }
+        nextLocations.set(nearest.id, {
+          ...nearest,
+          connectedTo: Array.from(nearestConnections).concat(location.id),
+          travelTime: nearestTravelTime,
+        });
+      }
+
+      didChange = true;
+    }
+  }
+
+  return didChange ? nextLocations : locations;
 }
 
 function convertToLocation(raw: Record<string, unknown>, contentId: string): EnhancedLocation | null {

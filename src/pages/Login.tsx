@@ -16,6 +16,8 @@ const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : "Unknown error";
 
   // Redirect if already logged in
   useEffect(() => {
@@ -37,10 +39,10 @@ const Login = () => {
       });
       
       navigate("/dashboard");
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Login failed",
-        description: error.message || "Please check your credentials",
+        description: getErrorMessage(error) || "Please check your credentials",
         variant: "destructive",
       });
     } finally {

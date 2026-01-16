@@ -63,7 +63,7 @@ export function processAction(
   }
   
   let state = ctx.state;
-  let events: GameEvent[] = [];
+  const events: GameEvent[] = [];
   
   switch (action.type) {
     case "move": {

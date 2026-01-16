@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 import { createContext, useContext, type ReactNode } from "react";
 import { useGameSession } from "@/hooks/useGameSession";
 

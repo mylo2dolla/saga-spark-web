@@ -17,6 +17,8 @@ const Signup = () => {
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
   const [loading, setLoading] = useState(false);
+  const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : "Unknown error";
 
   // Redirect if already logged in
   useEffect(() => {
@@ -38,10 +40,10 @@ const Signup = () => {
       });
       
       navigate("/dashboard");
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Signup failed",
-        description: error.message || "Something went wrong",
+        description: getErrorMessage(error) || "Something went wrong",
         variant: "destructive",
       });
     } finally {

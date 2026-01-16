@@ -38,6 +38,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { resumeTravelAfterCombat } from "@/engine/WorldTravelEngine";
 import { applyCombatOutcome, buildCombatOutcome, type LootItem } from "@/engine/CombatWorldBridge";
 import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
+import type { TravelState } from "@/engine/narrative/Travel";
 import type { GameEvent, Vec2, Entity } from "@/engine";
 import type { WorldEvent } from "@/engine/narrative/types";
 import type { CombatEncounter } from "@/engine/narrative/TravelPersistence";
@@ -192,7 +193,7 @@ const Game = () => {
   }, [gameSession]);
 
   // Handle travel state update
-  const handleTravelStateUpdate = useCallback((travelState: any) => {
+  const handleTravelStateUpdate = useCallback((travelState: TravelState) => {
     gameSession.updateTravelState(() => travelState);
     gameSession.triggerAutosave();
   }, [gameSession]);

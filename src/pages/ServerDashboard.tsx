@@ -64,6 +64,28 @@ interface CampaignStats {
   lastActivity: Date;
 }
 
+interface CampaignRow {
+  id: string;
+  name: string;
+  owner_id: string;
+  is_active: boolean;
+  updated_at: string;
+  campaign_members?: Array<{ count?: number }> | null;
+}
+
+interface ServerNodeRow {
+  id: string;
+  node_name: string;
+  status: "online" | "offline" | "degraded";
+  last_heartbeat: string;
+  active_players: number;
+  active_campaigns: number;
+  realtime_connections: number;
+  database_latency_ms: number;
+  memory_usage: number | string | null;
+  cpu_usage: number | string | null;
+}
+
 const ServerDashboard = () => {
   const navigate = useNavigate();
   const { user, isLoading: authLoading } = useAuth();
@@ -103,7 +125,8 @@ const ServerDashboard = () => {
         setDatabaseStatus("connected");
         
         // Transform campaigns data
-        const campaignStats: CampaignStats[] = (campaignsData ?? []).map((c: any) => ({
+        const campaignRows = (campaignsData ?? []) as CampaignRow[];
+        const campaignStats: CampaignStats[] = campaignRows.map((c) => ({
           id: c.id,
           name: c.name,
           owner_id: c.owner_id,
@@ -129,7 +152,8 @@ const ServerDashboard = () => {
           .limit(50);
         
         if (!nodesError && nodesData) {
-          const nodes: ServerNode[] = nodesData.map((n: any) => ({
+          const nodeRows = nodesData as ServerNodeRow[];
+          const nodes: ServerNode[] = nodeRows.map((n) => ({
             id: n.id,
             name: n.node_name,
             status: n.status as "online" | "offline" | "degraded",
@@ -224,7 +248,7 @@ const ServerDashboard = () => {
         (payload) => {
           // Real-time update of server nodes
           if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
-            const node = payload.new as any;
+            const node = payload.new as ServerNodeRow;
             setServerNodes(prev => {
               const existing = prev.findIndex(n => n.id === node.id);
               const updatedNode: ServerNode = {
@@ -249,7 +273,7 @@ const ServerDashboard = () => {
               }
             });
           } else if (payload.eventType === "DELETE") {
-            const deleted = payload.old as any;
+            const deleted = payload.old as ServerNodeRow;
             setServerNodes(prev => prev.filter(n => n.id !== deleted.id));
           }
         }

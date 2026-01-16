@@ -41,6 +41,8 @@ const LOCATION_ICONS: Record<LocationType, React.ReactNode> = {
   swamp: <Trees className="w-5 h-5" />,
 };
 
+const DEV_DEBUG = import.meta.env.DEV;
+
 export default function WorldMap() {
   const { campaignId } = useParams();
   const navigate = useNavigate();
@@ -56,7 +58,22 @@ export default function WorldMap() {
 
   // Get current location
   const currentLocationId = travelState?.currentLocationId;
-  const discoveredLocations = travelState?.discoveredLocations ?? new Set();
+  const discoveredLocations = useMemo(
+    () => travelState?.discoveredLocations ?? new Set<string>(),
+    [travelState?.discoveredLocations]
+  );
+  const fallbackLocationPresent = useMemo(
+    () => locations.some(location => location.id === "starting_location"),
+    [locations]
+  );
+
+  if (DEV_DEBUG) {
+    console.info("DEV_DEBUG worldMap render", {
+      markersCount: locations.length,
+      locationIds: locations.map(location => location.id),
+      fallbackStartingLocationPresent: fallbackLocationPresent,
+    });
+  }
 
   // Calculate map bounds
   const bounds = useMemo(() => {

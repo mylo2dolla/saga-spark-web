@@ -44,6 +44,8 @@ const Dashboard = () => {
   const [joinDialogOpen, setJoinDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const getErrorMessage = (error: unknown) =>
+    error instanceof Error ? error.message : "Unknown error";
 
   // Redirect if not logged in
   useEffect(() => {
@@ -56,10 +58,10 @@ const Dashboard = () => {
     try {
       await signOut();
       navigate("/login");
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Logout failed",
-        description: error.message,
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     }
@@ -78,10 +80,10 @@ const Dashboard = () => {
       setNewCampaignName("");
       setNewCampaignDescription("");
       setCreateDialogOpen(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Failed to create campaign",
-        description: error.message,
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     } finally {
@@ -101,10 +103,10 @@ const Dashboard = () => {
       });
       setJoinCode("");
       setJoinDialogOpen(false);
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Failed to join campaign",
-        description: error.message,
+        description: getErrorMessage(error),
         variant: "destructive",
       });
     } finally {
