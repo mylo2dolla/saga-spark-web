@@ -180,6 +180,21 @@ export default function NewCampaign() {
       });
 
       if (generatedWorld) {
+        const generatedLocations = Array.isArray(generatedWorld.locations)
+          ? generatedWorld.locations
+          : [];
+        const startingLocationId = generatedWorld.startingLocationId;
+        const orderedLocations = startingLocationId
+          ? [
+              ...generatedLocations.filter(loc => loc.id === startingLocationId),
+              ...generatedLocations.filter(loc => loc.id !== startingLocationId),
+            ]
+          : generatedLocations;
+        const legacyStartingLocation = (generatedWorld as { startingLocation?: unknown }).startingLocation;
+        const locationsToStore = orderedLocations.length > 0
+          ? orderedLocations
+          : (legacyStartingLocation ? [legacyStartingLocation] : []);
+
         // Store the generated content - cast to Json for Supabase
         const contentToStore = [
           ...generatedWorld.factions.map(f => ({
@@ -203,13 +218,13 @@ export default function NewCampaign() {
             content: JSON.parse(JSON.stringify(generatedWorld.initialQuest)) as Json,
             generation_context: { title, description, themes: selectedThemes } as Json,
           },
-          {
+          ...locationsToStore.map((location, index) => ({
             campaign_id: campaign.id,
             content_type: "location",
-            content_id: "starting_location",
-            content: JSON.parse(JSON.stringify(generatedWorld.startingLocation)) as Json,
+            content_id: (location as { id?: string })?.id ?? (index === 0 ? "starting_location" : `location_${index}`),
+            content: JSON.parse(JSON.stringify(location)) as Json,
             generation_context: { title, description, themes: selectedThemes } as Json,
-          },
+          })),
         ];
 
         const { error: contentError } = await supabase
@@ -218,9 +233,14 @@ export default function NewCampaign() {
         if (contentError) throw contentError;
 
         // Update campaign with current scene
+        const currentSceneName =
+          orderedLocations.find(loc => loc.id === startingLocationId)?.name
+          ?? orderedLocations[0]?.name
+          ?? (legacyStartingLocation as { name?: string })?.name
+          ?? campaign.name;
         const { error: sceneError } = await supabase
           .from("campaigns")
-          .update({ current_scene: generatedWorld.startingLocation.name })
+          .update({ current_scene: currentSceneName })
           .eq("id", campaign.id);
         if (sceneError) throw sceneError;
       }

@@ -63,11 +63,16 @@ export interface GeneratedWorld {
     enemies: string[];
     allies: string[];
   }[];
-  startingLocation: {
+  locations: {
+    id: string;
     name: string;
     description: string;
     type: string;
-  };
+    dangerLevel?: number;
+    position?: { x: number; y: number };
+    connectedTo?: string[];
+  }[];
+  startingLocationId: string;
   npcs: GeneratedNPC[];
   initialQuest: GeneratedQuest;
   worldHooks: string[];

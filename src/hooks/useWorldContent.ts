@@ -76,6 +76,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       const quests: Quest[] = [];
       const locations: EnhancedLocation[] = [];
       const worldHooks: string[] = [];
+      const rawLocationSamples: Array<{ contentId: string; rawId?: string; rawName?: string }> = [];
 
       for (const item of data) {
         const raw = item.content as Record<string, unknown>;
@@ -110,6 +111,11 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
             }
           case "location":
             {
+              rawLocationSamples.push({
+                contentId: item.content_id,
+                rawId: getString(raw.id) || undefined,
+                rawName: getString(raw.name) || undefined,
+              });
               const location = convertToLocation(raw, item.content_id);
               if (location) {
                 locations.push(location);
@@ -126,6 +132,13 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
         }
       }
 
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG worldContent raw locations", {
+          rawLocationsCount: rawLocationSamples.length,
+          sample: rawLocationSamples.slice(0, 3),
+        });
+      }
+
       const result: WorldContent = { factions, npcs, quests, locations, worldHooks };
       if (DEV_DEBUG) {
         console.info("DEV_DEBUG worldContent loaded", {
@@ -135,6 +148,9 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
           itemsCount: 0,
           locationIds: result.locations.map(location => location.id),
         });
+        if (result.locations.length === 1) {
+          toast.error("World generation returned 1 location");
+        }
       }
       setContent(result);
       return result;
@@ -598,9 +614,7 @@ function resolveLocationConnections(
 }
 
 function convertToLocation(raw: Record<string, unknown>, contentId: string): EnhancedLocation | null {
-  const locationId = contentId === "starting_location"
-    ? "starting_location"
-    : ((raw.id as string) ?? contentId);
+  const locationId = (raw.id as string) ?? contentId;
   const fallbackPosition = createDeterministicPosition(locationId);
   const rawPosition = raw.position as { x?: number; y?: number } | undefined;
   
@@ -620,7 +634,7 @@ function convertToLocation(raw: Record<string, unknown>, contentId: string): Enh
       ? { x: rawPosition.x, y: rawPosition.y }
       : fallbackPosition,
     radius: 30,
-    discovered: locationId === "starting_location",
+    discovered: raw.isStartingLocation === true || raw.isStarting === true || contentId === "starting_location",
     items: [],
     // Enhanced fields
     dangerLevel: typeof raw.dangerLevel === "number" ? raw.dangerLevel : 1,
