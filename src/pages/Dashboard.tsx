@@ -35,6 +35,7 @@ const Dashboard = () => {
   const { toast } = useToast();
   const { user, profile, isLoading: authLoading, signOut } = useAuth();
   const { campaigns, isLoading: campaignsLoading, createCampaign, joinCampaign } = useCampaigns();
+  const buildSha = import.meta.env.VITE_GIT_SHA ?? "unknown";
   
   const [newCampaignName, setNewCampaignName] = useState("");
   const [newCampaignDescription, setNewCampaignDescription] = useState("");
@@ -145,6 +146,9 @@ const Dashboard = () => {
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted-foreground hidden sm:block">
               {displayName}
+            </span>
+            <span className="hidden text-xs text-muted-foreground sm:block">
+              Build: {buildSha}
             </span>
             <Button variant="ghost" size="sm" onClick={handleLogout}>
               <LogOut className="w-4 h-4 mr-2" />
