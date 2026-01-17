@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
 
+const DEV_DEBUG = import.meta.env.DEV;
+
 export interface Profile {
   id: string;
   user_id: string;
@@ -66,6 +68,13 @@ export function useAuth() {
         data: { display_name: displayName || email.split("@")[0] },
       },
     });
+    if (DEV_DEBUG) {
+      console.info("DEV_DEBUG auth signUp", {
+        email,
+        userId: data.user?.id ?? null,
+        error: error?.message ?? null,
+      });
+    }
     if (error) throw error;
     return data;
   };
@@ -75,6 +84,13 @@ export function useAuth() {
       email,
       password,
     });
+    if (DEV_DEBUG) {
+      console.info("DEV_DEBUG auth signIn", {
+        email,
+        userId: data.user?.id ?? null,
+        error: error?.message ?? null,
+      });
+    }
     if (error) throw error;
     return data;
   };
