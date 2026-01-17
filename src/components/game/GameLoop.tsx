@@ -49,7 +49,6 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
   const [selectedNPC, setSelectedNPC] = useState<NPC | null>(null);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [playtimeSeconds, setPlaytimeSeconds] = useState(0);
-  const autosaveRef = useRef<string | null>(null);
   const playtimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Track playtime
@@ -68,12 +67,7 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
   // Autosave every 2 minutes
   useEffect(() => {
     const autosaveInterval = setInterval(async () => {
-      if (autosaveRef.current) {
-        await persistence.updateSave(autosaveRef.current, engine.unified, playtimeSeconds);
-      } else {
-        const saveId = await persistence.saveGame(engine.unified, engine.travelState, "Autosave", playtimeSeconds);
-        if (saveId) autosaveRef.current = saveId;
-      }
+      await persistence.saveGame(engine.unified, engine.travelState, "Autosave", playtimeSeconds);
     }, 120000);
 
     return () => clearInterval(autosaveInterval);
