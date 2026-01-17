@@ -186,7 +186,10 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     const newQuests = new Map(baseWorld.quests);
     const newLocations = new Map(baseWorld.locations);
     const contentLocationIds = new Set(worldContent.locations.map(location => location.id));
-    if (worldContent.locations.length > 0 && !contentLocationIds.has("starting_location")) {
+    const hasRealContentLocations = worldContent.locations.some(
+      location => location.id !== "starting_location"
+    );
+    if (worldContent.locations.length > 0 && hasRealContentLocations) {
       newLocations.delete("starting_location");
     }
 
@@ -206,6 +209,9 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
 
     // Merge Locations
     for (const location of worldContent.locations) {
+      if (hasRealContentLocations && location.id === "starting_location") {
+        continue;
+      }
       newLocations.set(location.id, location);
     }
 

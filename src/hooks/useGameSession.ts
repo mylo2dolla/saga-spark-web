@@ -584,7 +584,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         : loaded.world;
       const invariantResult = ensureWorldInvariants(
         { ...loaded, world: mergedWorld },
-        travelState
+        travelState,
+        worldContent?.locations.length ?? 0
       );
       
       lastSaveIdRef.current = saveId;
