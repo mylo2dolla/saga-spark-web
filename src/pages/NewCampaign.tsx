@@ -335,6 +335,11 @@ export default function NewCampaign() {
           })),
         ];
 
+        if (DEV_DEBUG) {
+          console.info("DEV_DEBUG newCampaign storing content via world-content-writer", {
+            contentCount: contentToStore.length,
+          });
+        }
         const { data: contentResult, error: contentError } = await withTimeout(
           supabase.functions.invoke("world-content-writer", {
             body: {
@@ -348,8 +353,12 @@ export default function NewCampaign() {
         if (contentResult?.error) throw new Error(contentResult.error);
 
         if (DEV_DEBUG) {
-          console.info("DEV_DEBUG newCampaign content stored");
+          console.info("DEV_DEBUG newCampaign content stored", {
+            inserted: contentResult?.inserted ?? null,
+          });
         }
+
+        
 
         // Update campaign with current scene
         const currentSceneName =

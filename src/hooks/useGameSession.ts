@@ -60,6 +60,9 @@ export interface GameSessionState {
   isLoading: boolean;
   error: string | null;
   playtimeSeconds: number;
+  loadedFromSupabase: boolean;
+  lastSavedAt: number | null;
+  lastLoadedAt: number | null;
 }
 
 interface UseGameSessionOptions {
@@ -81,6 +84,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     isLoading: true,
     error: null,
     playtimeSeconds: 0,
+    loadedFromSupabase: false,
+    lastSavedAt: null,
+    lastLoadedAt: null,
   });
   
   const playtimeRef = useRef(0);
@@ -321,6 +327,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       let initialPlaytime = 0;
       let loadedFromSupabase = false;
       let preMergeLocationsSize = 0;
+      let lastLoadedAt: number | null = null;
       
       if (latestSave) {
         loadedFromSupabase = true;
@@ -329,6 +336,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         if (loaded) {
           unifiedState = loaded;
           preMergeLocationsSize = unifiedState.world.locations.size;
+          lastLoadedAt = Date.now();
           
           // Extract travel state from world state if available
           const worldWithTravel = loaded.world as unknown as TravelWorldState;
@@ -407,7 +415,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         lastMergedContentRef.current = worldContent;
       }
       
-      setSessionState({
+      setSessionState(prev => ({
+        ...prev,
         unifiedState,
         travelState,
         campaignSeed: unifiedState.world.campaignSeed,
@@ -415,7 +424,10 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         isLoading: false,
         error: null,
         playtimeSeconds: initialPlaytime,
-      });
+        loadedFromSupabase,
+        lastSavedAt: prev.lastSavedAt,
+        lastLoadedAt,
+      }));
       
       initializedKeyRef.current = initKey;
       initializingRef.current = false;
@@ -489,12 +501,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     try {
       if (lastSaveIdRef.current) {
         // Update existing save with travel state
-        await persistence.updateSave(
+        const updated = await persistence.updateSave(
           lastSaveIdRef.current,
           sessionState.unifiedState,
           playtimeRef.current,
           sessionState.travelState
         );
+        if (updated) {
+          setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
+        }
       } else {
         // Create new autosave
         const saveId = await persistence.saveGame(
@@ -505,6 +520,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         );
         if (saveId) {
           lastSaveIdRef.current = saveId;
+          setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
         }
       }
     } catch (error) {
@@ -522,12 +538,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
     try {
       if (lastSaveIdRef.current) {
-        await persistence.updateSave(
+        const updated = await persistence.updateSave(
           lastSaveIdRef.current,
           unifiedState,
           playtimeRef.current,
           travelState
         );
+        if (updated) {
+          setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
+        }
       } else {
         const saveId = await persistence.saveGame(
           unifiedState,
@@ -537,6 +556,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         );
         if (saveId) {
           lastSaveIdRef.current = saveId;
+          setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
         }
       }
     } catch (error) {
@@ -571,12 +591,16 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       return null;
     }
     
-    return persistence.saveGame(
+    const saveId = await persistence.saveGame(
       sessionState.unifiedState,
       sessionState.travelState,
       saveName,
       playtimeRef.current
     );
+    if (saveId) {
+      setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
+    }
+    return saveId;
   }, [sessionState.unifiedState, sessionState.travelState, persistence]);
 
   // Load specific save
@@ -604,6 +628,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         unifiedState: invariantResult.unified,
         travelState: invariantResult.travel,
         isInitialized: true,
+        lastLoadedAt: Date.now(),
       }));
       
       return true;
