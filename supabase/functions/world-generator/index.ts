@@ -296,6 +296,34 @@ serve(async (req) => {
       };
     };
 
+    if (type === "initial_world") {
+      if (!Array.isArray(parsed.locations) || parsed.locations.length === 0) {
+        const fallbackName =
+          typeof parsed.startingLocation?.name === "string"
+            ? parsed.startingLocation.name
+            : campaignSeed.title || "Starting Location";
+        const fallbackDescription =
+          typeof parsed.startingLocation?.description === "string"
+            ? parsed.startingLocation.description
+            : campaignSeed.description || "A place to begin the journey.";
+        const fallbackType =
+          typeof parsed.startingLocation?.type === "string"
+            ? parsed.startingLocation.type.toLowerCase()
+            : "town";
+        parsed.locations = [
+          {
+            id: toKebab(fallbackName) || "starting-location",
+            name: fallbackName,
+            description: fallbackDescription,
+            type: fallbackType,
+            dangerLevel: 1,
+            position: createDeterministicPosition(fallbackName),
+            connectedTo: [],
+          },
+        ];
+      }
+    }
+
     if (type === "initial_world" && Array.isArray(parsed.locations)) {
       const seenIds = new Set<string>();
       const nameToId = new Map<string, string>();
@@ -327,10 +355,16 @@ serve(async (req) => {
             ? { x: pos.x, y: pos.y }
             : createDeterministicPosition(uniqueId);
 
+        const normalizedType =
+          typeof (location as { type?: string }).type === "string"
+            ? (location as { type?: string }).type?.toLowerCase()
+            : "town";
+
         return {
           ...location,
           id: uniqueId,
           position,
+          type: normalizedType,
         };
       });
 

@@ -93,6 +93,12 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
   ): Promise<string | null> => {
     setIsSaving(true);
     try {
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG persistence backend", {
+          backend: "supabase",
+          usesLocalStorage: false,
+        });
+      }
       // Serialize the state
       logPersistenceSnapshot("DEV_DEBUG persistence save start", state, travelState);
       const serialized = serializeUnifiedState(state);
@@ -154,6 +160,12 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
   ): Promise<boolean> => {
     setIsSaving(true);
     try {
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG persistence backend", {
+          backend: "supabase",
+          usesLocalStorage: false,
+        });
+      }
       logPersistenceSnapshot("DEV_DEBUG persistence update start", state, travelState);
       const serialized = serializeUnifiedState(state);
       const parsedSerialized = JSON.parse(serialized);
@@ -202,6 +214,12 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
   const loadGame = useCallback(async (saveId: string): Promise<UnifiedState | null> => {
     setIsLoading(true);
     try {
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG persistence backend", {
+          backend: "supabase",
+          usesLocalStorage: false,
+        });
+      }
       const { data, error } = await supabase
         .from("game_saves")
         .select("*")
