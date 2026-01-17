@@ -1,10 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useGameSessionContext } from "@/contexts/GameSessionContext";
+import { supabase } from "@/integrations/supabase/client";
 import type { EnhancedLocation } from "@/engine/narrative/Travel";
 
 const DEV_DEBUG = import.meta.env.DEV;
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 const getProjectRef = (url?: string) => {
   if (!url) return null;
@@ -36,6 +38,7 @@ export default function DevDebugOverlay() {
   }, [currentLocation, world]);
 
   const [persistenceReport, setPersistenceReport] = useState<string | null>(null);
+  const [connectivityReport, setConnectivityReport] = useState<string | null>(null);
 
   const buildSnapshot = useCallback((label: string) => {
     if (!world) {
@@ -69,6 +72,55 @@ export default function DevDebugOverlay() {
     console.info("DEV_DEBUG persistence harness", report);
     setPersistenceReport(JSON.stringify(report, null, 2));
   }, [session, buildSnapshot]);
+
+  const handleConnectivityTest = useCallback(async () => {
+    const report: {
+      action: string;
+      supabaseUrl: string | null;
+      hasAnonKey: boolean;
+      authSession?: { hasSession: boolean; error: string | null };
+      authHealth?: { ok: boolean; status: number | null; body?: string | null; error?: string | null };
+      error?: string;
+    } = {
+      action: "supabase-self-test",
+      supabaseUrl: SUPABASE_URL ?? null,
+      hasAnonKey: Boolean(SUPABASE_ANON_KEY),
+    };
+
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      report.authSession = {
+        hasSession: Boolean(data.session),
+        error: error?.message ?? null,
+      };
+    } catch (error) {
+      report.authSession = {
+        hasSession: false,
+        error: error instanceof Error ? error.message : "unknown error",
+      };
+    }
+
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      report.authHealth = { ok: false, status: null, body: null, error: "missing env" };
+    } else {
+      try {
+        const response = await fetch(`${SUPABASE_URL}/auth/v1/health`, {
+          headers: { apikey: SUPABASE_ANON_KEY },
+        });
+        const body = await response.text();
+        report.authHealth = { ok: response.ok, status: response.status, body };
+      } catch (error) {
+        report.authHealth = {
+          ok: false,
+          status: null,
+          error: error instanceof Error ? error.message : "unknown error",
+        };
+      }
+    }
+
+    console.info("DEV_DEBUG supabase connectivity", report);
+    setConnectivityReport(JSON.stringify(report, null, 2));
+  }, []);
 
   const overlayPayload = useMemo(() => {
     if (!world || !travelState) {
@@ -142,12 +194,24 @@ export default function DevDebugOverlay() {
           Force Reload From DB
         </button>
       </div>
+      <button
+        type="button"
+        onClick={handleConnectivityTest}
+        className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground hover:bg-accent"
+      >
+        Supabase Connectivity Self-Test
+      </button>
       <pre className="whitespace-pre-wrap text-muted-foreground">
         {JSON.stringify(overlayPayload, null, 2)}
       </pre>
       {persistenceReport ? (
         <pre className="mt-2 whitespace-pre-wrap text-muted-foreground">
           {persistenceReport}
+        </pre>
+      ) : null}
+      {connectivityReport ? (
+        <pre className="mt-2 whitespace-pre-wrap text-muted-foreground">
+          {connectivityReport}
         </pre>
       ) : null}
     </div>
