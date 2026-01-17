@@ -74,6 +74,9 @@ export function useCampaigns() {
 
       setCampaigns(uniqueCampaigns);
     } catch (error) {
+      if ((error as { name?: string })?.name === "AbortError") {
+        return;
+      }
       console.error("Error fetching campaigns:", error);
       toast.error("Failed to load campaigns");
     } finally {
