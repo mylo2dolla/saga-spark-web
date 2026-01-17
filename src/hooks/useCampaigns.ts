@@ -33,36 +33,66 @@ export function useCampaigns() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  const logSupabaseError = (
+    context: string,
+    error: { message?: string; code?: string; details?: string; hint?: string; status?: number } | null,
+  ) => {
+    if (!error) return;
+    console.error(context, {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      status: error.status,
+    });
+  };
+
   const fetchCampaigns = useCallback(async () => {
     try {
       setIsLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        logSupabaseError("[auth] supabase error", userError);
+        throw userError;
+      }
       if (!user) {
         setIsLoading(false);
         return;
       }
 
       // Get campaigns where user is a member
-      const { data: memberData } = await supabase
+      const { data: memberData, error: memberError } = await supabase
         .from("campaign_members")
         .select("campaign_id")
         .eq("user_id", user.id);
+      if (memberError) {
+        logSupabaseError("[campaigns] supabase error", memberError);
+        throw memberError;
+      }
 
       const memberCampaignIds = memberData?.map(m => m.campaign_id) || [];
 
       // Get owned campaigns
-      const { data: ownedData } = await supabase
+      const { data: ownedData, error: ownedError } = await supabase
         .from("campaigns")
         .select("*")
         .eq("owner_id", user.id);
+      if (ownedError) {
+        logSupabaseError("[campaigns] supabase error", ownedError);
+        throw ownedError;
+      }
 
       // Get member campaigns
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
-        const { data } = await supabase
+        const { data, error: memberCampaignsError } = await supabase
           .from("campaigns")
           .select("*")
           .in("id", memberCampaignIds);
+        if (memberCampaignsError) {
+          logSupabaseError("[campaigns] supabase error", memberCampaignsError);
+          throw memberCampaignsError;
+        }
         memberCampaigns = (data || []) as unknown as Campaign[];
       }
 
@@ -86,7 +116,11 @@ export function useCampaigns() {
 
   const createCampaign = useCallback(async (name: string, description?: string) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        logSupabaseError("[auth] supabase error", userError);
+        throw userError;
+      }
       if (!user) throw new Error("Not authenticated");
 
       if (DEV_DEBUG) {
@@ -100,17 +134,28 @@ export function useCampaigns() {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        logSupabaseError("[createCampaign] supabase error", error);
+        throw error;
+      }
 
       // Add owner as DM member
-      await supabase
+      const { error: memberError } = await supabase
         .from("campaign_members")
         .insert({ campaign_id: data.id, user_id: user.id, is_dm: true });
+      if (memberError) {
+        logSupabaseError("[createCampaign] supabase error", memberError);
+        throw memberError;
+      }
 
       // Create combat state for campaign
-      await supabase
+      const { error: combatError } = await supabase
         .from("combat_state")
         .insert({ campaign_id: data.id });
+      if (combatError) {
+        logSupabaseError("[createCampaign] supabase error", combatError);
+        throw combatError;
+      }
 
       const campaign = data as unknown as Campaign;
       setCampaigns(prev => [...prev, campaign]);
@@ -121,7 +166,7 @@ export function useCampaigns() {
       return campaign;
     } catch (error) {
       console.error("Error creating campaign:", error);
-      toast.error("Failed to create campaign");
+      toast.error(error instanceof Error ? error.message : "Failed to create campaign");
       throw error;
     }
   }, []);
