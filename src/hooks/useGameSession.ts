@@ -319,12 +319,16 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       let unifiedState: UnifiedState;
       let travelState: TravelState;
       let initialPlaytime = 0;
+      let loadedFromSupabase = false;
+      let preMergeLocationsSize = 0;
       
       if (latestSave) {
+        loadedFromSupabase = true;
         // Load from save
         const loaded = await persistence.loadGame(latestSave.id);
         if (loaded) {
           unifiedState = loaded;
+          preMergeLocationsSize = unifiedState.world.locations.size;
           
           // Extract travel state from world state if available
           const worldWithTravel = loaded.world as unknown as TravelWorldState;
@@ -359,6 +363,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         
         // Create base state
         unifiedState = createUnifiedState(campaignSeed, [], 10, 12);
+        preMergeLocationsSize = unifiedState.world.locations.size;
 
         // Merge in generated content if available (this will add locations, NPCs, etc.)
         if (worldContent) {
@@ -417,6 +422,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       if (DEV_DEBUG && unifiedState && travelState) {
         const currentLocation = unifiedState.world.locations.get(travelState.currentLocationId);
         console.info("DEV_DEBUG gameSession initialized", {
+          loadedFromSupabase,
+          preMergeLocationsSize,
+          postMergeLocationsSize: unifiedState.world.locations.size,
           locationsSize: unifiedState.world.locations.size,
           currentLocationId: travelState.currentLocationId,
           currentLocationName: currentLocation?.name ?? null,
@@ -472,17 +480,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       ...prev,
       unifiedState: next,
     }));
-  }, []);
-
-  // Update travel state
-  const updateTravelState = useCallback((updater: (state: TravelState) => TravelState) => {
-    setSessionState(prev => {
-      if (!prev.travelState) return prev;
-      return {
-        ...prev,
-        travelState: updater(prev.travelState),
-      };
-    });
   }, []);
 
   // Autosave function - includes travel state in updates
@@ -555,6 +552,18 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     autosaveTimeoutRef.current = setTimeout(autosave, 2000);
   }, [autosave]);
 
+  // Update travel state
+  const updateTravelState = useCallback((updater: (state: TravelState) => TravelState) => {
+    setSessionState(prev => {
+      if (!prev.travelState) return prev;
+      return {
+        ...prev,
+        travelState: updater(prev.travelState),
+      };
+    });
+    triggerAutosave();
+  }, [triggerAutosave]);
+
   // Manual save
   const saveGame = useCallback(async (saveName: string) => {
     if (!sessionState.unifiedState || !sessionState.travelState) {
@@ -601,6 +610,19 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     }
     return false;
   }, [persistence, ensureWorldInvariants, worldContent, mergeIntoWorldState]);
+
+  const reloadLatestFromDb = useCallback(async () => {
+    const autosaveId = await persistence.getOrCreateAutosave();
+    if (autosaveId) {
+      return loadSave(autosaveId);
+    }
+    await persistence.fetchSaves();
+    const latestId = persistence.saves[0]?.id;
+    if (latestId) {
+      return loadSave(latestId);
+    }
+    return false;
+  }, [persistence, loadSave]);
 
   // Start playtime tracking
   useEffect(() => {
@@ -689,7 +711,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         travelState: invariantResult.travel,
       };
     });
-  }, [worldContent, mergeIntoWorldState, sessionState.unifiedState, ensureWorldInvariants]);
+    triggerAutosave();
+  }, [worldContent, mergeIntoWorldState, sessionState.unifiedState, ensureWorldInvariants, triggerAutosave]);
 
   // Cleanup
   useEffect(() => {
@@ -712,6 +735,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     updateTravelState,
     saveGame,
     loadSave,
+    reloadLatestFromDb,
     triggerAutosave,
     autosaveNow,
     fetchSaves: persistence.fetchSaves,

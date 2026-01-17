@@ -458,6 +458,7 @@ serve(async (req) => {
     }
 
     if (type === "initial_world") {
+      parsed.schemaVersion = "v2";
       const locations = Array.isArray(parsed.locations) ? parsed.locations : [];
       const locationIds = locations.map((loc: { id?: string }) => loc?.id).filter(Boolean);
       console.log("Initial world payload", {
