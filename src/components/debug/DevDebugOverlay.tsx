@@ -1,13 +1,21 @@
 import { useCallback, useMemo, useState } from "react";
+import { useParams } from "react-router-dom";
 import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import type { EnhancedLocation } from "@/engine/narrative/Travel";
 
 const DEV_DEBUG = import.meta.env.DEV;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+
+const getProjectRef = (url?: string) => {
+  if (!url) return null;
+  return url.replace("https://", "").split(".")[0] ?? null;
+};
 
 export default function DevDebugOverlay() {
   const session = useGameSessionContext();
   const world = session.unifiedState?.world;
   const travelState = session.travelState;
+  const { campaignId } = useParams();
 
   const locations = useMemo(() => {
     if (!world) return [] as EnhancedLocation[];
@@ -65,6 +73,11 @@ export default function DevDebugOverlay() {
   const overlayPayload = useMemo(() => {
     if (!world || !travelState) {
       return {
+        supabaseProjectRef: getProjectRef(SUPABASE_URL),
+        campaignId: campaignId ?? null,
+        loadedFromSupabase: session.loadedFromSupabase ?? false,
+        lastSavedAt: session.lastSavedAt ?? null,
+        lastLoadedAt: session.lastLoadedAt ?? null,
         locationsSize: 0,
         locationIds: [],
         locationNames: [],
@@ -76,6 +89,11 @@ export default function DevDebugOverlay() {
     }
 
     return {
+      supabaseProjectRef: getProjectRef(SUPABASE_URL),
+      campaignId: campaignId ?? null,
+      loadedFromSupabase: session.loadedFromSupabase ?? false,
+      lastSavedAt: session.lastSavedAt ?? null,
+      lastLoadedAt: session.lastLoadedAt ?? null,
       locationsSize: world.locations.size,
       locationIds: locations.map(location => location.id),
       locationNames: locations.map(location => location.name),
@@ -88,7 +106,17 @@ export default function DevDebugOverlay() {
         y: location.position.y,
       })),
     };
-  }, [world, travelState, locations, currentLocation, availableDestinationIds]);
+  }, [
+    world,
+    travelState,
+    locations,
+    currentLocation,
+    availableDestinationIds,
+    campaignId,
+    session.loadedFromSupabase,
+    session.lastSavedAt,
+    session.lastLoadedAt,
+  ]);
 
   if (!DEV_DEBUG) return null;
 
