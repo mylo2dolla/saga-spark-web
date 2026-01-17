@@ -19,6 +19,10 @@ const Signup = () => {
   const [loading, setLoading] = useState(false);
   const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "Unknown error";
+  const isEmailNotConfirmed = (message: string) =>
+    message.toLowerCase().includes("email not confirmed");
+  const isEmailInvalid = (message: string) =>
+    message.toLowerCase().includes("email address") && message.toLowerCase().includes("invalid");
 
   // Redirect if already logged in
   useEffect(() => {
@@ -41,9 +45,14 @@ const Signup = () => {
       
       navigate("/dashboard");
     } catch (error: unknown) {
+      const message = getErrorMessage(error);
       toast({
         title: "Signup failed",
-        description: getErrorMessage(error) || "Something went wrong",
+        description: isEmailInvalid(message)
+          ? "Email rejected by Supabase Auth. Check Authentication → Providers → Email → Allowed email domains and disable strict validation for dev."
+          : isEmailNotConfirmed(message)
+            ? "Email not confirmed. In Supabase Dashboard: Authentication → Providers → Email → Confirm email = OFF for local dev."
+            : message || "Something went wrong",
         variant: "destructive",
       });
     } finally {

@@ -18,6 +18,8 @@ const Login = () => {
   const [loading, setLoading] = useState(false);
   const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "Unknown error";
+  const isEmailNotConfirmed = (message: string) =>
+    message.toLowerCase().includes("email not confirmed");
 
   // Redirect if already logged in
   useEffect(() => {
@@ -40,9 +42,12 @@ const Login = () => {
       
       navigate("/dashboard");
     } catch (error: unknown) {
+      const message = getErrorMessage(error);
       toast({
         title: "Login failed",
-        description: getErrorMessage(error) || "Please check your credentials",
+        description: isEmailNotConfirmed(message)
+          ? "Email not confirmed. In Supabase Dashboard: Authentication → Providers → Email → Confirm email = OFF for local dev."
+          : message || "Please check your credentials",
         variant: "destructive",
       });
     } finally {
