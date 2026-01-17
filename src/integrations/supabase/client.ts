@@ -4,14 +4,51 @@ import type { Database } from './types';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const DEV_DEBUG = import.meta.env.DEV;
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
+
+if (DEV_DEBUG) {
+  console.info("DEV_DEBUG supabase config", {
+    hasUrl: Boolean(SUPABASE_URL),
+    hasKey: Boolean(SUPABASE_PUBLISHABLE_KEY),
+  });
+}
+
+const baseFetch = globalThis.fetch.bind(globalThis);
+const debugFetch: typeof fetch = async (input, init) => {
+  const url = typeof input === "string" ? input : input.url;
+  const method = init?.method ?? "GET";
+  if (DEV_DEBUG) {
+    console.info("DEV_DEBUG supabase fetch start", { method, url });
+  }
+
+  try {
+    const response = await baseFetch(input, init);
+    if (DEV_DEBUG) {
+      console.info("DEV_DEBUG supabase fetch response", {
+        method,
+        url,
+        status: response.status,
+      });
+    }
+    return response;
+  } catch (error) {
+    if (DEV_DEBUG) {
+      console.error("DEV_DEBUG supabase fetch error", { method, url, error });
+    }
+    throw error;
+  }
+};
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
     storage: localStorage,
     persistSession: true,
     autoRefreshToken: true,
-  }
+  },
+  global: {
+    fetch: DEV_DEBUG ? debugFetch : baseFetch,
+  },
 });
