@@ -222,6 +222,9 @@ const ServerDashboard = () => {
       
       setLastRefresh(new Date());
     } catch (error) {
+      if ((error as { name?: string })?.name === "AbortError") {
+        return;
+      }
       console.error("Error fetching stats:", error);
       setDatabaseStatus("error");
     } finally {
