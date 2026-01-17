@@ -42,28 +42,21 @@ export default function DevDebugOverlay() {
     };
   }, [world, travelState]);
 
-  const runPersistenceCheck = useCallback(async () => {
-    if (!DEV_DEBUG || !session.saveGame || !session.loadSave) return;
-    if (!session.unifiedState || !session.travelState) {
-      setPersistenceReport("No unified/travel state available.");
-      return;
-    }
+  const handleForceSave = useCallback(async () => {
+    if (!session.autosaveNow) return;
+    await session.autosaveNow();
+    const report = { action: "force-save", snapshot: buildSnapshot("after-save") };
+    console.info("DEV_DEBUG persistence harness", report);
+    setPersistenceReport(JSON.stringify(report, null, 2));
+  }, [session, buildSnapshot]);
 
-    const before = buildSnapshot("before");
-    const saveId = await session.saveGame("DEV_DEBUG Repro");
-    if (!saveId) {
-      setPersistenceReport("Save failed.");
-      return;
-    }
-    const loaded = await session.loadSave(saveId);
-    await new Promise(resolve => setTimeout(resolve, 0));
-    const after = buildSnapshot("after");
-
+  const handleForceReload = useCallback(async () => {
+    if (!session.reloadLatestFromDb) return;
+    const loaded = await session.reloadLatestFromDb();
     const report = {
-      saveId,
+      action: "force-reload",
       loaded,
-      before,
-      after,
+      snapshot: buildSnapshot("after-reload"),
     };
     console.info("DEV_DEBUG persistence harness", report);
     setPersistenceReport(JSON.stringify(report, null, 2));
@@ -105,13 +98,22 @@ export default function DevDebugOverlay() {
       className="fixed bottom-4 right-4 z-[9999] max-h-[70vh] w-[360px] overflow-auto rounded-lg border border-border bg-card/95 p-3 text-xs shadow-xl"
     >
       <div className="mb-2 font-semibold text-foreground">DEV_DEBUG Overlay</div>
-      <button
-        type="button"
-        onClick={runPersistenceCheck}
-        className="mb-2 w-full rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground hover:bg-accent"
-      >
-        Run Persistence Check
-      </button>
+      <div className="mb-2 flex gap-2">
+        <button
+          type="button"
+          onClick={handleForceSave}
+          className="w-1/2 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground hover:bg-accent"
+        >
+          Force Save Now
+        </button>
+        <button
+          type="button"
+          onClick={handleForceReload}
+          className="w-1/2 rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground hover:bg-accent"
+        >
+          Force Reload From DB
+        </button>
+      </div>
       <pre className="whitespace-pre-wrap text-muted-foreground">
         {JSON.stringify(overlayPayload, null, 2)}
       </pre>

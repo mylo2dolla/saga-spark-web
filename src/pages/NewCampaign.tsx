@@ -335,13 +335,17 @@ export default function NewCampaign() {
           })),
         ];
 
-        const { error: contentError } = await withTimeout(
-          supabase
-            .from("ai_generated_content")
-            .insert(contentToStore),
+        const { data: contentResult, error: contentError } = await withTimeout(
+          supabase.functions.invoke("world-content-writer", {
+            body: {
+              campaignId: campaign.id,
+              content: contentToStore,
+            },
+          }),
           "Content storage"
         );
         if (contentError) throw contentError;
+        if (contentResult?.error) throw new Error(contentResult.error);
 
         if (DEV_DEBUG) {
           console.info("DEV_DEBUG newCampaign content stored");
