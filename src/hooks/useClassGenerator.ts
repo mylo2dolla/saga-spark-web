@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { createAbortController, isAbortError } from "@/ui/data/async";
 import type { GeneratedClass } from "@/types/game";
 
 const GENERATE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-class`;
@@ -45,6 +46,7 @@ export function useClassGenerator() {
         timestamp: new Date().toISOString(),
       });
 
+      const { controller, cleanup } = createAbortController(25000);
       const response = await fetch(GENERATE_URL, {
         method: "POST",
         headers: {
@@ -52,7 +54,8 @@ export function useClassGenerator() {
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ classDescription: description }),
-      });
+        signal: controller.signal,
+      }).finally(cleanup);
 
       if (!response.ok) {
         const bodyText = await response.text();
@@ -81,7 +84,7 @@ export function useClassGenerator() {
       });
       return data;
     } catch (err) {
-      if ((err as { name?: string })?.name === "AbortError") {
+      if (isAbortError(err)) {
         return null;
       }
       const message = err instanceof Error ? err.message : "Failed to generate class";
