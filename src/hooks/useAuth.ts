@@ -16,9 +16,23 @@ export function useAuth() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
+  const logSupabaseError = (context: string, error: { message?: string; code?: string; details?: string; hint?: string; status?: number } | null) => {
+    if (!error) return;
+    console.error(context, {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      status: error.status,
+    });
+  };
+
   useEffect(() => {
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error) {
+        logSupabaseError("[auth] supabase error", error);
+      }
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchProfile(session.user.id);
@@ -52,7 +66,10 @@ export function useAuth() {
         .maybeSingle();
 
       if (error) {
-        console.error("Error fetching profile:", error);
+        if ((error as { name?: string })?.name === "AbortError") {
+          return;
+        }
+        logSupabaseError("[auth] supabase error", error);
       }
       setProfile(data);
     } finally {
