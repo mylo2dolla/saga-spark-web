@@ -33,6 +33,29 @@ import type { Json } from "@/integrations/supabase/types";
 
 const DEV_DEBUG = import.meta.env.DEV;
 const REQUEST_TIMEOUT_MS = 30000;
+const MAX_INITIAL_LOCATIONS = 6;
+
+const toKebab = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const hashString = (value: string): number => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+};
+
+const createDeterministicPosition = (seed: string): { x: number; y: number } => {
+  const hashed = hashString(seed);
+  return {
+    x: 50 + (hashed % 400),
+    y: 50 + ((hashed >>> 16) % 400),
+  };
+};
 
 // Preset campaign themes
 const CAMPAIGN_PRESETS = [
@@ -240,6 +263,45 @@ export default function NewCampaign() {
         const locationsToStore = orderedLocations.length > 0
           ? orderedLocations
           : (legacyStartingLocation ? [legacyStartingLocation] : []);
+        const usedLocationIds = new Set<string>();
+        const normalizedLocations = locationsToStore
+          .slice(0, MAX_INITIAL_LOCATIONS)
+          .map((location, index) => {
+            const raw = location as {
+              id?: string;
+              name?: string;
+              position?: { x?: number; y?: number };
+            };
+            const baseName = typeof raw.name === "string" && raw.name.trim().length > 0
+              ? raw.name
+              : `Location ${index + 1}`;
+            let id = typeof raw.id === "string" ? raw.id.trim() : "";
+            if (!id) {
+              id = toKebab(baseName) || `location-${index + 1}`;
+            }
+            if (id === "starting_location") {
+              id = `location-${index + 1}`;
+            }
+            let uniqueId = id;
+            let suffix = 1;
+            while (usedLocationIds.has(uniqueId)) {
+              uniqueId = `${id}-${suffix}`;
+              suffix += 1;
+            }
+            usedLocationIds.add(uniqueId);
+
+            const rawPosition = raw.position;
+            const position =
+              typeof rawPosition?.x === "number" && typeof rawPosition?.y === "number"
+                ? { x: rawPosition.x, y: rawPosition.y }
+                : createDeterministicPosition(uniqueId);
+
+            return { ...location, id: uniqueId, position };
+          });
+        const normalizedStartingLocationId =
+          normalizedLocations.find(loc => loc.id === startingLocationId)?.id
+          ?? normalizedLocations[0]?.id
+          ?? null;
 
         // Store the generated content - cast to Json for Supabase
         const contentToStore = [
@@ -264,10 +326,10 @@ export default function NewCampaign() {
             content: JSON.parse(JSON.stringify(generatedWorld.initialQuest)) as Json,
             generation_context: { title, description, themes: selectedThemes } as Json,
           },
-          ...locationsToStore.map((location, index) => ({
+          ...normalizedLocations.map((location) => ({
             campaign_id: campaign.id,
             content_type: "location",
-            content_id: (location as { id?: string })?.id ?? (index === 0 ? "starting_location" : `location_${index}`),
+            content_id: (location as { id?: string })?.id ?? `location-${Math.random().toString(36).slice(2, 8)}`,
             content: JSON.parse(JSON.stringify(location)) as Json,
             generation_context: { title, description, themes: selectedThemes } as Json,
           })),
@@ -287,8 +349,8 @@ export default function NewCampaign() {
 
         // Update campaign with current scene
         const currentSceneName =
-          orderedLocations.find(loc => loc.id === startingLocationId)?.name
-          ?? orderedLocations[0]?.name
+          normalizedLocations.find(loc => loc.id === normalizedStartingLocationId)?.name
+          ?? normalizedLocations[0]?.name
           ?? (legacyStartingLocation as { name?: string })?.name
           ?? campaign.name;
         const { error: sceneError } = await withTimeout(

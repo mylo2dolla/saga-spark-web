@@ -141,12 +141,23 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
 
       const result: WorldContent = { factions, npcs, quests, locations, worldHooks };
       if (DEV_DEBUG) {
+        const locationPositions = result.locations.slice(0, 3).map(location => ({
+          id: location.id,
+          x: location.position.x,
+          y: location.position.y,
+        }));
+        const connectedToLengths = result.locations.slice(0, 3).map(location => ({
+          id: location.id,
+          connectedToCount: location.connectedTo.length,
+        }));
         console.info("DEV_DEBUG worldContent loaded", {
           locationsCount: result.locations.length,
           npcsCount: result.npcs.length,
           questsCount: result.quests.length,
           itemsCount: 0,
-          locationIds: result.locations.map(location => location.id),
+          locationIds: result.locations.slice(0, 10).map(location => location.id),
+          locationPositions,
+          connectedToLengths,
         });
         if (result.locations.length === 1) {
           toast.error("World generation returned 1 location");
@@ -634,7 +645,7 @@ function convertToLocation(raw: Record<string, unknown>, contentId: string): Enh
       ? { x: rawPosition.x, y: rawPosition.y }
       : fallbackPosition,
     radius: 30,
-    discovered: raw.isStartingLocation === true || raw.isStarting === true || contentId === "starting_location",
+    discovered: raw.isStartingLocation === true || raw.isStarting === true,
     items: [],
     // Enhanced fields
     dangerLevel: typeof raw.dangerLevel === "number" ? raw.dangerLevel : 1,
