@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROJECT_REF="othlyxwtigxzczeffzee"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIGRATIONS_DIR="$ROOT_DIR/supabase/migrations"
+BOOTSTRAP_SQL="$ROOT_DIR/supabase/bootstrap.sql"
 
 echo "Bootstrapping Supabase project: ${PROJECT_REF}"
 
@@ -12,7 +12,7 @@ if ! command -v supabase >/dev/null 2>&1; then
   echo "Option A (recommended): install via 'brew install supabase/tap/supabase' and rerun."
   echo "Option B: paste migrations into the Supabase SQL editor."
   echo "---- SQL BEGIN ----"
-  cat "${MIGRATIONS_DIR}"/*.sql
+  cat "${BOOTSTRAP_SQL}"
   echo "---- SQL END ----"
   exit 1
 fi
