@@ -308,6 +308,9 @@ serve(async (req) => {
         if (!id) {
           id = `location-${seenIds.size + 1}`;
         }
+        if (id === "starting_location") {
+          id = toKebab(baseName) || `location-${seenIds.size + 1}`;
+        }
 
         let uniqueId = id;
         let suffix = 1;
@@ -347,6 +350,73 @@ serve(async (req) => {
           connectedTo,
         };
       });
+
+      const locations = parsed.locations as Array<{
+        id: string;
+        name?: string;
+        description?: string;
+        type?: string;
+        dangerLevel?: number;
+        position?: { x: number; y: number };
+        connectedTo?: string[];
+      }>;
+      const locationTypes = ["town", "wilderness", "ruins", "temple", "cave", "castle"];
+      const minimumLocations = 5;
+
+      if (locations.length < minimumLocations) {
+        for (let i = locations.length; i < minimumLocations; i++) {
+          const suffix = i % locationTypes.length;
+          const name = `${campaignSeed.title} ${locationTypes[suffix]}`;
+          let id = toKebab(name) || `location-${i + 1}`;
+          if (id === "starting_location") {
+            id = `location-${i + 1}`;
+          }
+          let uniqueId = id;
+          let counter = 1;
+          while (seenIds.has(uniqueId)) {
+            uniqueId = `${id}-${counter}`;
+            counter += 1;
+          }
+          seenIds.add(uniqueId);
+          nameToId.set(name.toLowerCase(), uniqueId);
+
+          locations.push({
+            id: uniqueId,
+            name,
+            description: `${name} stands as a notable waypoint within ${campaignSeed.description || "the campaign"}.`,
+            type: locationTypes[suffix],
+            dangerLevel: 1 + (i % 5),
+            position: createDeterministicPosition(uniqueId),
+            connectedTo: [],
+          });
+        }
+      }
+
+      if (locations.length > 1) {
+        const byId = new Map(locations.map(location => [location.id, location]));
+        for (const location of locations) {
+          if (!Array.isArray(location.connectedTo) || location.connectedTo.length === 0) {
+            const target = locations.find(candidate => candidate.id !== location.id);
+            if (target) {
+              location.connectedTo = [target.id];
+            }
+          }
+        }
+        for (const location of locations) {
+          const connections = new Set(location.connectedTo ?? []);
+          for (const targetId of connections) {
+            const target = byId.get(targetId);
+            if (target && target.id !== location.id) {
+              const targetConnections = new Set(target.connectedTo ?? []);
+              if (!targetConnections.has(location.id)) {
+                targetConnections.add(location.id);
+                target.connectedTo = Array.from(targetConnections);
+              }
+            }
+          }
+          location.connectedTo = Array.from(connections);
+        }
+      }
 
       if (typeof parsed.startingLocationId !== "string" || !seenIds.has(parsed.startingLocationId)) {
         parsed.startingLocationId = parsed.locations[0]?.id ?? null;

@@ -130,9 +130,32 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     };
   }, [campaignId, userId, getErrorMessage, stringifyError]);
 
+  const logWorldSnapshot = useCallback((
+    label: string,
+    world: UnifiedState["world"],
+    travel: TravelState | null
+  ) => {
+    if (!DEV_DEBUG) return;
+    const locations = Array.from(world.locations.values()) as EnhancedLocation[];
+    const currentLocationId = travel?.currentLocationId ?? null;
+    const currentLocation = currentLocationId ? world.locations.get(currentLocationId) : undefined;
+    console.info(label, {
+      locationsSize: world.locations.size,
+      locationIds: locations.slice(0, 10).map(location => location.id),
+      locationPositions: locations.slice(0, 3).map(location => ({
+        id: location.id,
+        x: location.position.x,
+        y: location.position.y,
+      })),
+      currentLocationId,
+      currentLocationName: currentLocation?.name ?? null,
+    });
+  }, []);
+
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
-    travel: TravelState | null
+    travel: TravelState | null,
+    worldContentLocationsCount: number
   ): { unified: UnifiedState; travel: TravelState } => {
     let nextWorld = unified.world;
     const locations = new Map(nextWorld.locations);
@@ -142,6 +165,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     let nextTravel = travel ?? createTravelState(firstLocationId ?? fallbackLocation.id);
     const shouldInjectFallbackLocation =
       locations.size === 0 &&
+      worldContentLocationsCount === 0 &&
       nextWorld.npcs.size === 0 &&
       nextWorld.quests.size === 0 &&
       nextWorld.items.size === 0;
@@ -155,6 +179,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     const hasOnlyDefaultLocation =
       locations.size === 1 && locations.has(fallbackLocation.id);
     const realLocationsExist = locations.size > 0 && !hasOnlyDefaultLocation;
+    if (worldContentLocationsCount > 0 && locations.has(fallbackLocation.id) && !realLocationsExist) {
+      locations.delete(fallbackLocation.id);
+    }
     if (realLocationsExist && locations.has(fallbackLocation.id)) {
       locations.delete(fallbackLocation.id);
     }
@@ -213,6 +240,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     if (DEV_DEBUG) {
       console.info("DEV_DEBUG gameSession invariants", {
         locationsSize: locations.size,
+        locationIds: locationIds.slice(0, 10),
+        locationPositions: Array.from(locations.values()).slice(0, 3).map(location => ({
+          id: location.id,
+          x: location.position.x,
+          y: location.position.y,
+        })),
         currentLocationId,
         currentLocationName: currentLocation?.name ?? null,
         connectedToCount: currentLocation?.connectedTo?.length ?? 0,
@@ -308,6 +341,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
               ...unifiedState,
               world: mergeIntoWorldState(unifiedState.world, worldContent),
             };
+            logWorldSnapshot("DEV_DEBUG gameSession post-merge", unifiedState.world, travelState);
           }
         } else {
           throw new Error("Failed to load save");
@@ -342,9 +376,16 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
         // Initialize travel state with starting location
         travelState = createTravelState(startingId);
+        if (worldContent) {
+          logWorldSnapshot("DEV_DEBUG gameSession post-merge", unifiedState.world, travelState);
+        }
       }
 
-      const invariantResult = ensureWorldInvariants(unifiedState, travelState);
+      const invariantResult = ensureWorldInvariants(
+        unifiedState,
+        travelState,
+        worldContent?.locations.length ?? 0
+      );
       unifiedState = invariantResult.unified;
       travelState = invariantResult.travel;
       
@@ -383,7 +424,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           npcsCount: unifiedState.world.npcs.size,
           questsCount: unifiedState.world.quests.size,
           itemsCount: unifiedState.world.items.size,
-          locationIds: Array.from(unifiedState.world.locations.keys()),
+          locationIds: Array.from(unifiedState.world.locations.keys()).slice(0, 10),
+          locationPositions: Array.from(unifiedState.world.locations.values()).slice(0, 3).map(location => ({
+            id: location.id,
+            x: location.position.x,
+            y: location.position.y,
+          })),
         });
       }
       
@@ -407,6 +453,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     persistence,
     ensureWorldInvariants,
     logSupabaseError,
+    logWorldSnapshot,
   ]);
 
   // Update unified state
@@ -632,7 +679,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       const mergedWorld = mergeIntoWorldState(prev.unifiedState.world, worldContent);
       const invariantResult = ensureWorldInvariants(
         { ...prev.unifiedState, world: mergedWorld },
-        prev.travelState
+        prev.travelState,
+        worldContent?.locations.length ?? 0
       );
       return {
         ...prev,
