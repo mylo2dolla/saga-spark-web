@@ -36,11 +36,21 @@ SET row_security = off;
 -- Name: app_role; Type: TYPE; Schema: public; Owner: -
 --
 
-CREATE TYPE IF NOT EXISTS public.app_role AS ENUM (
-    'admin',
-    'moderator',
-    'user'
-);
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_type
+    WHERE typname = 'app_role'
+      AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE public.app_role AS ENUM (
+      'admin',
+      'moderator',
+      'user'
+    );
+  END IF;
+END $$;
 
 
 --
@@ -114,7 +124,8 @@ $$;
 -- Name: is_campaign_member(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE OR REPLACE FUNCTION public.is_campaign_member(_user_id uuid, _campaign_id uuid) RETURNS boolean
+DROP FUNCTION IF EXISTS public.is_campaign_member(uuid, uuid);
+CREATE FUNCTION public.is_campaign_member(_user_id uuid, _campaign_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -131,7 +142,8 @@ $$;
 -- Name: is_campaign_owner(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE OR REPLACE FUNCTION public.is_campaign_owner(_user_id uuid, _campaign_id uuid) RETURNS boolean
+DROP FUNCTION IF EXISTS public.is_campaign_owner(uuid, uuid);
+CREATE FUNCTION public.is_campaign_owner(_user_id uuid, _campaign_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -142,25 +154,6 @@ CREATE OR REPLACE FUNCTION public.is_campaign_owner(_user_id uuid, _campaign_id 
       AND owner_id = _user_id
   )
 $$;
-
---
--- Overloads for argument order used in policies
---
-
-CREATE OR REPLACE FUNCTION public.is_campaign_member(_campaign_id uuid, _user_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-  SELECT public.is_campaign_member(_user_id, _campaign_id)
-$$;
-
-CREATE OR REPLACE FUNCTION public.is_campaign_owner(_campaign_id uuid, _user_id uuid) RETURNS boolean
-    LANGUAGE sql STABLE SECURITY DEFINER
-    SET search_path TO 'public'
-    AS $$
-  SELECT public.is_campaign_owner(_user_id, _campaign_id)
-$$;
-
 
 SET default_table_access_method = heap;
 
@@ -1243,12 +1236,12 @@ ALTER TABLE public.ai_generated_content ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Campaign members can view AI content" ON public.ai_generated_content;
 CREATE POLICY "Campaign members can view AI content"
 ON public.ai_generated_content FOR SELECT
-USING (is_campaign_member(campaign_id, auth.uid()));
+USING (is_campaign_member(auth.uid(), campaign_id));
 
 DROP POLICY IF EXISTS "Campaign members can create AI content" ON public.ai_generated_content;
 CREATE POLICY "Campaign members can create AI content"
 ON public.ai_generated_content FOR INSERT
-WITH CHECK (is_campaign_member(campaign_id, auth.uid()));
+WITH CHECK (is_campaign_member(auth.uid(), campaign_id));
 
 -- Create updated_at trigger
 DROP TRIGGER IF EXISTS update_game_saves_updated_at ON public.game_saves;
@@ -1346,11 +1339,3 @@ BEGIN
     ADD CONSTRAINT server_nodes_user_id_node_name_key UNIQUE (user_id, node_name);
   END IF;
 END $$;
-
--- Create updated_at trigger for server_nodes (drop if exists first, then recreate)
-DROP TRIGGER IF EXISTS update_server_nodes_updated_at ON public.server_nodes;
-DROP TRIGGER IF EXISTS update_server_nodes_updated_at ON public.server_nodes;
-CREATE TRIGGER update_server_nodes_updated_at
-BEFORE UPDATE ON public.server_nodes
-FOR EACH ROW
-EXECUTE FUNCTION public.handle_updated_at();
