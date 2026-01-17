@@ -24,6 +24,16 @@ const CreateCharacter = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [isCreating, setIsCreating] = useState(false);
+  const logSupabaseError = (context: string, error: { message?: string; code?: string; details?: string; hint?: string; status?: number } | null) => {
+    if (!error) return;
+    console.error(context, {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      status: error.status,
+    });
+  };
 
   if (!campaignId) {
     return (
@@ -40,7 +50,11 @@ const CreateCharacter = () => {
   const handleComplete = async (data: AICharacterData) => {
     setIsCreating(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        logSupabaseError("[auth] supabase error", userError);
+        throw userError;
+      }
       if (!user) throw new Error("Not authenticated");
 
       const hitDie = parseInt(data.hitDice.replace("d", ""));
@@ -72,7 +86,10 @@ const CreateCharacter = () => {
         backpack: JSON.parse(JSON.stringify([])),
       }]);
 
-      if (error) throw error;
+      if (error) {
+        logSupabaseError("[createCharacter] supabase error", error);
+        throw error;
+      }
 
       toast({
         title: "Character created!",
@@ -80,6 +97,9 @@ const CreateCharacter = () => {
       });
       navigate(`/game/${campaignId}`);
     } catch (error: unknown) {
+      if ((error as { name?: string })?.name === "AbortError") {
+        return;
+      }
       toast({
         title: "Failed to create character",
         description: getErrorMessage(error),

@@ -10,6 +10,10 @@ export function useClassGenerator() {
   const [generatedClass, setGeneratedClass] = useState<GeneratedClass | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const logFetchError = (context: string, payload: Record<string, unknown>) => {
+    console.error(context, payload);
+  };
+
   const generateClass = useCallback(async (description: string): Promise<GeneratedClass | null> => {
     if (!description.trim()) {
       toast.error("Please enter a class description");
@@ -20,10 +24,26 @@ export function useClassGenerator() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const startedAt = Date.now();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        console.error("[auth] supabase error", {
+          message: sessionError.message,
+          code: sessionError.code,
+          details: sessionError.details,
+          hint: sessionError.hint,
+          status: sessionError.status,
+        });
+      }
       if (!session?.access_token) {
         throw new Error("You must be logged in to generate a class");
       }
+
+      console.info("[generateClass] start", {
+        url: GENERATE_URL,
+        userId: session.user?.id ?? null,
+        timestamp: new Date().toISOString(),
+      });
 
       const response = await fetch(GENERATE_URL, {
         method: "POST",
@@ -35,18 +55,42 @@ export function useClassGenerator() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Request failed: ${response.status}`);
+        const bodyText = await response.text();
+        logFetchError("[generateClass] fetch error", {
+          url: GENERATE_URL,
+          status: response.status,
+          statusText: response.statusText,
+          bodyText,
+        });
+        let message = `Request failed: ${response.status}`;
+        try {
+          const parsed = JSON.parse(bodyText) as { error?: string; message?: string };
+          message = parsed.error || parsed.message || message;
+        } catch {
+          // ignore JSON parse failure
+        }
+        throw new Error(message);
       }
 
       const data: GeneratedClass = await response.json();
       setGeneratedClass(data);
       toast.success(`Generated: ${data.className}`);
+      console.info("[generateClass] success", {
+        url: GENERATE_URL,
+        durationMs: Date.now() - startedAt,
+      });
       return data;
     } catch (err) {
+      if ((err as { name?: string })?.name === "AbortError") {
+        return null;
+      }
       const message = err instanceof Error ? err.message : "Failed to generate class";
       setError(message);
-      toast.error(message);
+      toast.error(`Failed to generate class — ${message}`);
+      logFetchError("[generateClass] failure", {
+        url: GENERATE_URL,
+        message,
+      });
       return null;
     } finally {
       setIsGenerating(false);
