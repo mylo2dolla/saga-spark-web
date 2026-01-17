@@ -123,7 +123,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
 
       const { data, error } = await supabase
         .from("game_saves")
-        .insert({
+        .upsert({
           campaign_id: campaignId,
           user_id: userId,
           save_name: saveName,
@@ -133,6 +133,8 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
           player_level: playerLevel,
           total_xp: totalXp,
           playtime_seconds: playtimeSeconds,
+        }, {
+          onConflict: "campaign_id,user_id,save_name",
         })
         .select("id")
         .single();

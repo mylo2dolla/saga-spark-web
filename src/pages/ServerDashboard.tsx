@@ -76,6 +76,7 @@ interface CampaignRow {
 interface ServerNodeRow {
   id: string;
   node_name: string;
+  user_id: string;
   status: "online" | "offline" | "degraded";
   last_heartbeat: string;
   active_players: number;
@@ -99,11 +100,33 @@ const ServerDashboard = () => {
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
+
+  const mapServerNodeRow = useCallback((row: ServerNodeRow): ServerNode => {
+    const lastHeartbeat = new Date(row.last_heartbeat);
+    const isStale = Date.now() - lastHeartbeat.getTime() > 30000;
+    return {
+      id: row.id,
+      name: row.node_name,
+      status: isStale ? "offline" : (row.status as "online" | "offline" | "degraded"),
+      lastHeartbeat,
+      activePlayers: row.active_players,
+      activeCampaigns: row.active_campaigns,
+      realtimeConnections: row.realtime_connections,
+      databaseLatency: row.database_latency_ms,
+      memoryUsage: Number(row.memory_usage),
+      cpuUsage: Number(row.cpu_usage),
+    };
+  }, []);
   
   // Fetch campaigns and stats from Supabase (including real server_nodes)
   const fetchStats = useCallback(async () => {
     setIsRefreshing(true);
-    
+
+    if (!user) {
+      setIsRefreshing(false);
+      return;
+    }
+
     try {
       const { data: campaignsData, error: campaignsError } = await supabase
         .from("campaigns")
@@ -148,33 +171,13 @@ const ServerDashboard = () => {
         const { data: nodesData, error: nodesError } = await supabase
           .from("server_nodes")
           .select("*")
+          .eq("user_id", user.id)
           .order("last_heartbeat", { ascending: false })
           .limit(50);
         
         if (!nodesError && nodesData) {
           const nodeRows = nodesData as ServerNodeRow[];
-          const nodes: ServerNode[] = nodeRows.map((n) => ({
-            id: n.id,
-            name: n.node_name,
-            status: n.status as "online" | "offline" | "degraded",
-            lastHeartbeat: new Date(n.last_heartbeat),
-            activePlayers: n.active_players,
-            activeCampaigns: n.active_campaigns,
-            realtimeConnections: n.realtime_connections,
-            databaseLatency: n.database_latency_ms,
-            memoryUsage: Number(n.memory_usage),
-            cpuUsage: Number(n.cpu_usage),
-          }));
-          
-          // Mark nodes as offline if no heartbeat in 60s
-          const now = Date.now();
-          nodes.forEach(node => {
-            if (now - node.lastHeartbeat.getTime() > 60000) {
-              node.status = "offline";
-            } else if (now - node.lastHeartbeat.getTime() > 30000) {
-              node.status = "degraded";
-            }
-          });
+          const nodes: ServerNode[] = nodeRows.map(mapServerNodeRow);
           
           setServerNodes(nodes);
         } else {
@@ -210,8 +213,8 @@ const ServerDashboard = () => {
           {
             id: "server_nodes",
             name: "Server Heartbeats",
-            subscribers: serverNodes.length,
-            messagesPerMinute: serverNodes.length * 2,
+            subscribers: nodesData?.length ?? 0,
+            messagesPerMinute: (nodesData?.length ?? 0) * 2,
             status: realtimeStatus === "connected" ? "active" : "idle",
           },
         ]);
@@ -224,7 +227,7 @@ const ServerDashboard = () => {
     } finally {
       setIsRefreshing(false);
     }
-  }, [realtimeStatus, serverNodes.length]);
+  }, [mapServerNodeRow, realtimeStatus, user]);
   
   // Set up realtime subscription for server_nodes
   useEffect(() => {
@@ -249,20 +252,10 @@ const ServerDashboard = () => {
           // Real-time update of server nodes
           if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
             const node = payload.new as ServerNodeRow;
+            if (node.user_id !== user?.id) return;
             setServerNodes(prev => {
               const existing = prev.findIndex(n => n.id === node.id);
-              const updatedNode: ServerNode = {
-                id: node.id,
-                name: node.node_name,
-                status: node.status as "online" | "offline" | "degraded",
-                lastHeartbeat: new Date(node.last_heartbeat),
-                activePlayers: node.active_players,
-                activeCampaigns: node.active_campaigns,
-                realtimeConnections: node.realtime_connections,
-                databaseLatency: node.database_latency_ms,
-                memoryUsage: Number(node.memory_usage),
-                cpuUsage: Number(node.cpu_usage),
-              };
+              const updatedNode = mapServerNodeRow(node);
               
               if (existing >= 0) {
                 const updated = [...prev];
@@ -274,6 +267,7 @@ const ServerDashboard = () => {
             });
           } else if (payload.eventType === "DELETE") {
             const deleted = payload.old as ServerNodeRow;
+            if (deleted.user_id !== user?.id) return;
             setServerNodes(prev => prev.filter(n => n.id !== deleted.id));
           }
         }
@@ -289,7 +283,7 @@ const ServerDashboard = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchStats]);
+  }, [fetchStats, mapServerNodeRow, user?.id]);
   
   // Initial fetch and auto-refresh
   useEffect(() => {
