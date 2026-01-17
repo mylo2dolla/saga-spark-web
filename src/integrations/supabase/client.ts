@@ -3,16 +3,21 @@ import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_PUBLISHABLE_KEY =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+  ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
 const DEV_DEBUG = import.meta.env.DEV;
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
 if (DEV_DEBUG) {
+  const projectRef = SUPABASE_URL?.replace("https://", "").split(".")[0] ?? null;
   console.info("DEV_DEBUG supabase config", {
     hasUrl: Boolean(SUPABASE_URL),
     hasKey: Boolean(SUPABASE_PUBLISHABLE_KEY),
+    projectRef,
+    url: SUPABASE_URL ?? null,
   });
 }
 

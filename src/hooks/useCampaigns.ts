@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
+const DEV_DEBUG = import.meta.env.DEV;
+
 export interface Campaign {
   id: string;
   name: string;
@@ -84,9 +86,14 @@ export function useCampaigns() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
 
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG campaigns create start", { name });
+      }
+
+      const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
       const { data, error } = await supabase
         .from("campaigns")
-        .insert({ name, description, owner_id: user.id })
+        .insert({ name, description, owner_id: user.id, invite_code: inviteCode, is_active: true })
         .select()
         .single();
 
@@ -105,6 +112,9 @@ export function useCampaigns() {
       const campaign = data as unknown as Campaign;
       setCampaigns(prev => [...prev, campaign]);
       toast.success("Campaign created!");
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG campaigns create success", { campaignId: data.id });
+      }
       return campaign;
     } catch (error) {
       console.error("Error creating campaign:", error);
@@ -117,6 +127,10 @@ export function useCampaigns() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
+
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG campaigns join start", { inviteCode });
+      }
 
       // Find campaign by invite code
       const { data: campaignsData, error: findError } = await supabase
@@ -151,6 +165,9 @@ export function useCampaigns() {
 
       await fetchCampaigns();
       toast.success(`Joined "${campaign.name}"!`);
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG campaigns join success", { campaignId: campaign.id });
+      }
       return campaign;
     } catch (error) {
       console.error("Error joining campaign:", error);
