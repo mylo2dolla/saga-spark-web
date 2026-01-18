@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { recordProfilesRead } from "@/ui/data/networkHealth";
 
 export interface CharacterStats {
   strength: number;
@@ -131,6 +132,7 @@ export function useRealtimeCharacters(campaignId: string | undefined) {
             .select("user_id, display_name")
             .in("user_id", uniqueUserIds);
           profilesData = data || [];
+          recordProfilesRead();
         }
 
         const parsedChars = (charsData || []).map(char => 
@@ -169,6 +171,7 @@ export function useRealtimeCharacters(campaignId: string | undefined) {
               .select("display_name")
               .eq("user_id", (payload.new as { user_id: string }).user_id)
               .single();
+            recordProfilesRead();
 
             const parsedChar = parseCharacter(payload.new, profileData || undefined);
 
