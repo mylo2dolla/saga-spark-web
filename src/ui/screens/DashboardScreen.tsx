@@ -10,7 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
-import { recordCampaignMembersRead, recordCampaignsRead } from "@/ui/data/networkHealth";
+import { recordCampaignsRead } from "@/ui/data/networkHealth";
 import type { Json } from "@/integrations/supabase/types";
 import type { GeneratedWorld } from "@/hooks/useWorldGenerator";
 
@@ -36,11 +36,13 @@ export default function DashboardScreen() {
   const [error, setError] = useState<string | null>(null);
   const [newCampaignName, setNewCampaignName] = useState("");
   const [newCampaignDescription, setNewCampaignDescription] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
+  const [descriptionTouched, setDescriptionTouched] = useState(false);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const fetchInFlightRef = useRef(false);
-  const lastFetchAtRef = useRef<number | null>(null);
   const creatingRef = useRef(false);
 
   const toKebab = (value: string): string =>
@@ -106,7 +108,6 @@ export default function DashboardScreen() {
         .eq("owner_id", session.user.id);
 
       if (error) throw error;
-      lastFetchAtRef.current = Date.now();
       recordCampaignsRead();
       setCampaigns(data ?? []);
     } catch (err) {
@@ -159,9 +160,17 @@ export default function DashboardScreen() {
     };
   }, [session?.user?.id, user?.id, setLastError]);
 
+  const trimmedName = newCampaignName.trim();
+  const trimmedDescription = newCampaignDescription.trim();
+  const isNameValid = trimmedName.length > 0;
+  const isDescriptionValid = trimmedDescription.length > 0;
+  const showNameError = (nameTouched || submitAttempted) && !isNameValid;
+  const showDescriptionError = (descriptionTouched || submitAttempted) && !isDescriptionValid;
+  const isCreateValid = isNameValid && isDescriptionValid;
+
   const handleCreate = async () => {
-    if (!user || !newCampaignName.trim() || !newCampaignDescription.trim()) {
-      toast({ title: "Missing info", description: "Name and description are required", variant: "destructive" });
+    if (!user || !isCreateValid) {
+      setSubmitAttempted(true);
       return;
     }
     if (creatingRef.current) return;
@@ -175,8 +184,8 @@ export default function DashboardScreen() {
       const insertResult = await supabase
         .from("campaigns")
         .insert({
-          name: newCampaignName.trim(),
-          description: newCampaignDescription || null,
+          name: trimmedName,
+          description: trimmedDescription,
           owner_id: user.id,
           invite_code: inviteCodeValue,
           is_active: true,
@@ -205,8 +214,8 @@ export default function DashboardScreen() {
       createdCampaignId = insertResult.data.id;
 
       const generatedWorld = await generateInitialWorld({
-        title: newCampaignName.trim(),
-        description: newCampaignDescription.trim(),
+        title: trimmedName,
+        description: trimmedDescription,
         themes: [],
       });
       if (!generatedWorld) {
@@ -229,7 +238,7 @@ export default function DashboardScreen() {
           content_type: "faction",
           content_id: f.id,
           content: JSON.parse(JSON.stringify(f)) as Json,
-          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+          generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         })),
         ...generatedWorld.npcs.map((npc, i) => ({
           campaign_id: insertResult.data.id,
@@ -243,21 +252,21 @@ export default function DashboardScreen() {
           content_type: "quest",
           content_id: "initial_quest",
           content: JSON.parse(JSON.stringify(generatedWorld.initialQuest)) as Json,
-          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+          generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         },
         ...normalizedLocations.map((location) => ({
           campaign_id: insertResult.data.id,
           content_type: "location",
           content_id: location.id,
           content: JSON.parse(JSON.stringify(location)) as Json,
-          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+          generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         })),
         ...(generatedWorld.worldHooks ?? []).map((hook, index) => ({
           campaign_id: insertResult.data.id,
           content_type: "world_hooks",
           content_id: `world_hook_${index}`,
           content: JSON.parse(JSON.stringify([hook])) as Json,
-          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+          generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         })),
       ];
 
@@ -292,6 +301,9 @@ export default function DashboardScreen() {
 
       setNewCampaignName("");
       setNewCampaignDescription("");
+      setNameTouched(false);
+      setDescriptionTouched(false);
+      setSubmitAttempted(false);
       setCampaigns(prev => [insertResult.data as Campaign, ...prev]);
       navigate(`/game/${insertResult.data.id}/create-character`);
     } catch (err) {
@@ -408,13 +420,21 @@ export default function DashboardScreen() {
                 placeholder="Campaign name"
                 value={newCampaignName}
                 onChange={e => setNewCampaignName(e.target.value)}
+                onBlur={() => setNameTouched(true)}
               />
+              {showNameError ? (
+                <div className="text-xs text-destructive">Campaign name is required.</div>
+              ) : null}
               <Textarea
                 placeholder="Campaign description"
                 value={newCampaignDescription}
                 onChange={e => setNewCampaignDescription(e.target.value)}
+                onBlur={() => setDescriptionTouched(true)}
               />
-              <Button onClick={handleCreate} disabled={isCreating || isGenerating || !newCampaignName.trim() || !newCampaignDescription.trim()}>
+              {showDescriptionError ? (
+                <div className="text-xs text-destructive">Campaign description is required.</div>
+              ) : null}
+              <Button onClick={handleCreate} disabled={isCreating || isGenerating || !isCreateValid}>
                 {isCreating || isGenerating ? "Creating..." : "Create"}
               </Button>
             </CardContent>
