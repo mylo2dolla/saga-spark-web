@@ -25,11 +25,18 @@ interface Campaign {
 }
 
 export default function DashboardScreen() {
-  const { user, session, isLoading: authLoading } = useAuth();
+  const { user, session } = useAuth();
   const { generateInitialWorld, isGenerating } = useWorldGenerator();
   const { toast } = useToast();
   const navigate = useNavigate();
   const { setLastError } = useDiagnostics();
+
+  const [authSession, setAuthSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
+  const [authUser, setAuthUser] = useState<Awaited<ReturnType<typeof supabase.auth.getUser>>["data"]["user"] | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -44,6 +51,10 @@ export default function DashboardScreen() {
   const [isJoining, setIsJoining] = useState(false);
   const fetchInFlightRef = useRef(false);
   const creatingRef = useRef(false);
+
+  const activeSession = session ?? authSession;
+  const activeUser = user ?? authUser;
+  const activeUserId = session?.user?.id ?? user?.id ?? authUser?.id ?? null;
 
   const toKebab = (value: string): string =>
     value
@@ -94,7 +105,7 @@ export default function DashboardScreen() {
   };
 
   const fetchCampaigns = useCallback(async () => {
-    if (!session?.user?.id) return;
+    if (!activeUserId) return;
     if (fetchInFlightRef.current) return;
     fetchInFlightRef.current = true;
     setIsLoading(true);
@@ -105,7 +116,7 @@ export default function DashboardScreen() {
       const { data, error } = await supabase
         .from("campaigns")
         .select("*")
-        .eq("owner_id", session.user.id);
+        .eq("owner_id", activeUserId);
 
       if (error) throw error;
       recordCampaignsRead();
@@ -119,15 +130,50 @@ export default function DashboardScreen() {
       setIsLoading(false);
       fetchInFlightRef.current = false;
     }
-  }, [session?.user?.id, setLastError]);
+  }, [activeUserId, setLastError]);
 
   useEffect(() => {
-    if (!session?.user?.id) {
+    if (!activeUserId) {
       setIsLoading(false);
       return;
     }
     fetchCampaigns();
-  }, [session?.user?.id, fetchCampaigns]);
+  }, [activeUserId, fetchCampaigns]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          if (!cancelled) setAuthError(error.message);
+          return;
+        }
+        if (!cancelled) {
+          setAuthSession(data.session);
+          setAuthUser(data.session?.user ?? null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const message = formatError(err, "Failed to load session");
+          setAuthError(message);
+        }
+      }
+    };
+
+    loadSession();
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (cancelled) return;
+      setAuthSession(nextSession);
+      setAuthUser(nextSession?.user ?? null);
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
 
   const trimmedName = newCampaignName.trim();
   const trimmedDescription = newCampaignDescription.trim();
@@ -138,7 +184,7 @@ export default function DashboardScreen() {
   const isCreateValid = isNameValid && isDescriptionValid;
 
   const handleCreate = async () => {
-    if (!user || !isCreateValid) {
+    if (!activeUser || !isCreateValid) {
       setSubmitAttempted(true);
       return;
     }
@@ -155,7 +201,7 @@ export default function DashboardScreen() {
         .insert({
           name: trimmedName,
           description: trimmedDescription,
-          owner_id: user.id,
+          owner_id: activeUser.id,
           invite_code: inviteCodeValue,
           is_active: true,
         })
@@ -175,7 +221,7 @@ export default function DashboardScreen() {
 
       await supabase.from("campaign_members").insert({
         campaign_id: insertResult.data.id,
-        user_id: user.id,
+        user_id: activeUser.id,
         is_dm: true,
       });
 
@@ -289,8 +335,73 @@ export default function DashboardScreen() {
     }
   };
 
+  const handleSignIn = async () => {
+    if (!authEmail.trim() || !authPassword) {
+      setAuthError("Email and password are required.");
+      return;
+    }
+    if (authBusy) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: authEmail.trim(),
+        password: authPassword,
+      });
+      if (error) throw error;
+      setAuthSession(data.session);
+      setAuthUser(data.user ?? null);
+    } catch (err) {
+      const message = formatError(err, "Sign in failed");
+      setAuthError(message);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleSignUp = async () => {
+    if (!authEmail.trim() || !authPassword) {
+      setAuthError("Email and password are required.");
+      return;
+    }
+    if (authBusy) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: authEmail.trim(),
+        password: authPassword,
+      });
+      if (error) throw error;
+      setAuthSession(data.session);
+      setAuthUser(data.user ?? null);
+    } catch (err) {
+      const message = formatError(err, "Sign up failed");
+      setAuthError(message);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    if (authBusy) return;
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      setAuthSession(null);
+      setAuthUser(null);
+    } catch (err) {
+      const message = formatError(err, "Sign out failed");
+      setAuthError(message);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
   const handleJoin = async () => {
-    if (!user || !inviteCode.trim()) return;
+    if (!activeUser || !inviteCode.trim()) return;
     setIsJoining(true);
     setLastError(null);
 
@@ -316,7 +427,7 @@ export default function DashboardScreen() {
 
       await supabase.from("campaign_members").insert({
         campaign_id: campaign.id,
-        user_id: user.id,
+        user_id: activeUser.id,
         is_dm: false,
       });
 
@@ -365,11 +476,16 @@ export default function DashboardScreen() {
     );
   }, [campaigns, error, fetchCampaigns, isLoading, navigate]);
 
+  const dbStatus = isLoading ? "loading" : error ? "error" : "ok";
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">Your campaigns and access codes.</p>
+        <div className="mt-2 text-xs text-muted-foreground">
+          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatus}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
@@ -381,6 +497,52 @@ export default function DashboardScreen() {
         </Card>
 
         <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Auth</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {activeSession ? (
+                <div className="space-y-2 text-sm">
+                  <div className="text-muted-foreground">Signed in as</div>
+                  <div className="font-semibold">{activeSession.user.email}</div>
+                  <div className="text-xs text-muted-foreground">{activeSession.user.id}</div>
+                  <Button variant="outline" onClick={handleSignOut} disabled={authBusy}>
+                    {authBusy ? "Signing out..." : "Sign out"}
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <Input
+                    placeholder="Email"
+                    value={authEmail}
+                    onChange={e => setAuthEmail(e.target.value)}
+                  />
+                  <Input
+                    placeholder="Password"
+                    type="password"
+                    value={authPassword}
+                    onChange={e => setAuthPassword(e.target.value)}
+                  />
+                  {authError ? (
+                    <div className="text-xs text-destructive">{authError}</div>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={handleSignIn} disabled={authBusy || !authEmail.trim() || !authPassword}>
+                      {authBusy ? "Signing in..." : "Sign in"}
+                    </Button>
+                    <Button variant="outline" onClick={handleSignUp} disabled={authBusy || !authEmail.trim() || !authPassword}>
+                      Sign up
+                    </Button>
+                  </div>
+                </>
+              )}
+              {authError && activeSession ? (
+                <div className="text-xs text-destructive">{authError}</div>
+              ) : null}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Create campaign</CardTitle>
