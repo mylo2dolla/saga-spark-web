@@ -51,3 +51,22 @@ curl -i -X POST https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-c
   -H "Content-Type: application/json" \
   -d '{"classDescription":"Arcane duelist"}'
 ```
+
+## generate-class curl (local/dev)
+
+```bash
+curl -i -X OPTIONS http://127.0.0.1:54321/functions/v1/generate-class
+```
+
+```bash
+curl -i -X POST http://127.0.0.1:54321/functions/v1/generate-class \
+  -H "apikey: <anon-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"classDescription":"Arcane duelist"}'
+```
+
+```bash
+curl -i -X POST http://127.0.0.1:54321/functions/v1/generate-class \
+  -H "Content-Type: application/json" \
+  -d '{"classDescription":"Arcane duelist"}'
+```
