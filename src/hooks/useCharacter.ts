@@ -115,9 +115,13 @@ export function useCharacter(campaignId: string | undefined) {
         setError("Request canceled/timeout");
         return;
       }
-      const message = formatError(error, "Failed to fetch character");
+      const status = (error as { status?: number })?.status;
+      const baseMessage = formatError(error, "Failed to fetch character");
+      const message = status === 401 || status === 403
+        ? `Unauthorized (${status}): ${baseMessage}`
+        : baseMessage;
       setError(message);
-      console.error("[character] fetch error", { message });
+      console.error("[character] fetch error", { message, status });
     } finally {
       setIsLoading(false);
     }

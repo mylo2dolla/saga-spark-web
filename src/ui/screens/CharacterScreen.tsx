@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { AICharacterCreator } from "@/components/AICharacterCreator";
@@ -34,8 +34,13 @@ export default function CharacterScreen() {
   const [isCreating, setIsCreating] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [profileStatus, setProfileStatus] = useState<"unknown" | "loaded" | "missing" | "created" | "error">("unknown");
+  const [sessionFallback, setSessionFallback] = useState<{
+    checking: boolean;
+    hasSession: boolean | null;
+    error: string | null;
+  }>({ checking: false, hasSession: null, error: null });
   const gameSession = useGameSessionContext();
-  const { character, isLoading: characterLoading, error: characterError } = useCharacter(campaignId);
+  const { character, isLoading: characterLoading, error: characterError, refetch } = useCharacter(campaignId);
 
   console.info("[character]", {
     step: "enter_screen",
@@ -60,19 +65,61 @@ export default function CharacterScreen() {
     );
   }
 
-  if (authLoading) {
+  useEffect(() => {
+    if (authLoading || user) return;
+    let isMounted = true;
+    const run = async () => {
+      setSessionFallback({ checking: true, hasSession: null, error: null });
+      try {
+        const { data: { session }, error } = await withTimeout(supabase.auth.getSession(), 20000);
+        if (error) {
+          setSessionFallback({ checking: false, hasSession: false, error: error.message ?? "Session error" });
+        } else {
+          setSessionFallback({ checking: false, hasSession: Boolean(session), error: null });
+        }
+      } catch (error) {
+        if (!isMounted) return;
+        if (isAbortError(error)) {
+          setSessionFallback({ checking: false, hasSession: false, error: "Request canceled/timeout" });
+        } else {
+          setSessionFallback({ checking: false, hasSession: false, error: formatError(error, "Session check failed") });
+        }
+      }
+    };
+    run();
+    return () => {
+      isMounted = false;
+    };
+  }, [authLoading, user]);
+
+  if (authLoading || sessionFallback.checking) {
     console.info("[auth] log", {
       step: "auth_guard",
       path: `/game/${campaignId}/create-character`,
       hasSession: Boolean(user),
       userId: user?.id ?? null,
       isLoading: authLoading,
-      reason: "auth_loading",
+      reason: sessionFallback.checking ? "session_check" : "auth_loading",
     });
     return <div className="text-sm text-muted-foreground">Loading session...</div>;
   }
 
   if (!user) {
+    if (sessionFallback.hasSession) {
+      return (
+        <div className="space-y-2 text-sm text-muted-foreground">
+          <div>Session exists but user not resolved.</div>
+          <button
+            type="button"
+            className="text-primary underline"
+            onClick={() => window.location.reload()}
+          >
+            Reload session
+          </button>
+        </div>
+      );
+    }
+
     console.info("[auth] log", {
       step: "auth_guard",
       path: `/game/${campaignId}/create-character`,
@@ -255,6 +302,21 @@ export default function CharacterScreen() {
       <div className="flex flex-col items-center gap-2 py-12">
         <Loader2 className="h-6 w-6 animate-spin text-primary" />
         <div className="text-sm text-muted-foreground">Creating your hero...</div>
+      </div>
+    );
+  }
+
+  if (characterError) {
+    return (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <div className="text-destructive">{characterError}</div>
+        <button
+          type="button"
+          className="text-primary underline"
+          onClick={() => refetch()}
+        >
+          Retry
+        </button>
       </div>
     );
   }
