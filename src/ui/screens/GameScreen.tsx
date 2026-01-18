@@ -145,6 +145,28 @@ export default function GameScreen() {
     return roll < Math.min(90, danger * 10);
   }, [hashString]);
 
+  const connectLocations = useCallback((fromId: string, toId: string) => {
+    gameSession.updateUnifiedState(prev => {
+      const locations = new Map(prev.world.locations);
+      const from = locations.get(fromId) as EnhancedLocation | undefined;
+      const to = locations.get(toId) as EnhancedLocation | undefined;
+      if (!from || !to) return prev;
+      const fromConnections = new Set(from.connectedTo ?? []);
+      const toConnections = new Set(to.connectedTo ?? []);
+      fromConnections.add(toId);
+      toConnections.add(fromId);
+      locations.set(fromId, { ...from, connectedTo: Array.from(fromConnections) });
+      locations.set(toId, { ...to, connectedTo: Array.from(toConnections) });
+      return {
+        ...prev,
+        world: {
+          ...prev.world,
+          locations,
+        },
+      };
+    });
+  }, [gameSession]);
+
   const expandWorldAtLocation = useCallback(async (location: EnhancedLocation) => {
     if (!gameSession.unifiedState || !gameSession.campaignSeed || !campaignId) return;
     const existingIds = new Set(gameSession.unifiedState.world.locations.keys());
@@ -246,28 +268,6 @@ export default function GameScreen() {
       travelHistory: nextHistory,
       discoveredLocations: nextDiscovered,
     }));
-  }, [gameSession]);
-
-  const connectLocations = useCallback((fromId: string, toId: string) => {
-    gameSession.updateUnifiedState(prev => {
-      const locations = new Map(prev.world.locations);
-      const from = locations.get(fromId) as EnhancedLocation | undefined;
-      const to = locations.get(toId) as EnhancedLocation | undefined;
-      if (!from || !to) return prev;
-      const fromConnections = new Set(from.connectedTo ?? []);
-      const toConnections = new Set(to.connectedTo ?? []);
-      fromConnections.add(toId);
-      toConnections.add(fromId);
-      locations.set(fromId, { ...from, connectedTo: Array.from(fromConnections) });
-      locations.set(toId, { ...to, connectedTo: Array.from(toConnections) });
-      return {
-        ...prev,
-        world: {
-          ...prev.world,
-          locations,
-        },
-      };
-    });
   }, [gameSession]);
 
   const handleArrival = useCallback(async (locationId: string, location?: EnhancedLocation | null) => {
