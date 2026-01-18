@@ -57,28 +57,24 @@ serve(async (req) => {
   try {
     // Authentication check
     const authHeader = req.headers.get("Authorization");
-    const apiKeyHeader = req.headers.get("apikey");
+    const apiKeyHeader = req.headers.get("apikey") ?? "";
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
-    const hasBearer = authHeader?.startsWith("Bearer ");
-    const bearerToken = authHeader?.replace("Bearer ", "") ?? "";
-    const hasAnonKey = Boolean(apiKeyHeader) && apiKeyHeader === anonKey;
-    const bearerIsAnon = bearerToken === apiKeyHeader;
-    if (!hasBearer) {
-      return new Response(
-        JSON.stringify({ error: "Authentication required" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    const bearerToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.replace("Bearer ", "")
+      : "";
+    const isAnonBearer = bearerToken.startsWith("sb_publishable_") || bearerToken === anonKey;
+    const hasApiKey = Boolean(apiKeyHeader);
+
+    const isAnonMode = !bearerToken || isAnonBearer || hasApiKey;
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
+      isAnonMode ? serviceRoleKey || anonKey : anonKey,
       { global: { headers: authHeader ? { Authorization: authHeader } : {} } }
     );
 
-    if (bearerIsAnon && hasAnonKey) {
-      // anon/dev mode: skip user lookup
-    } else {
+    if (!isAnonMode) {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) {
         return new Response(
