@@ -10,6 +10,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorldContent } from "@/hooks/useWorldContent";
+import { useWorldGenerator, type GeneratedWorld } from "@/hooks/useWorldGenerator";
 import { useGamePersistence } from "@/hooks/useGamePersistence";
 import { createUnifiedState, serializeUnifiedState, type UnifiedState } from "@/engine/UnifiedState";
 import * as World from "@/engine/narrative/World";
@@ -28,6 +29,7 @@ export interface GameSessionState {
   isInitialized: boolean;
   isLoading: boolean;
   error: string | null;
+  bootstrapStatus: "idle" | "loading_from_db" | "needs_bootstrap" | "bootstrapping" | "ready" | "error";
   playtimeSeconds: number;
   loadedFromSupabase: boolean;
   lastSavedAt: number | null;
@@ -42,7 +44,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const { user } = useAuth();
   const userId = user?.id ?? "";
   
-  const { content: worldContent, hasLoadedContent, mergeIntoWorldState } = useWorldContent({ campaignId });
+  const { content: worldContent, hasLoadedContent, mergeIntoWorldState, fetchContent } = useWorldContent({ campaignId });
+  const { generateInitialWorld } = useWorldGenerator();
   const persistence = useGamePersistence({ campaignId, userId });
   
   const [sessionState, setSessionState] = useState<GameSessionState>({
@@ -52,6 +55,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     isInitialized: false,
     isLoading: true,
     error: null,
+    bootstrapStatus: "idle",
     playtimeSeconds: 0,
     loadedFromSupabase: false,
     lastSavedAt: null,
@@ -65,6 +69,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const lastMergedContentRef = useRef<typeof worldContent>(null);
   const initializedKeyRef = useRef<string | null>(null);
   const initializingRef = useRef(false); // Prevents concurrent initializations
+  const bootstrapInFlightRef = useRef(false);
+  const bootstrapKeyRef = useRef<string | null>(null);
   const didAutosaveAfterInitRef = useRef(false);
   const lastSavedFingerprintRef = useRef<string | null>(null);
   const queuedFingerprintRef = useRef<string | null>(null);
@@ -245,6 +251,235 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     };
   }, []);
 
+  const toKebab = useCallback((value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, ""), []);
+
+  const createDeterministicPosition = useCallback((seed: string): { x: number; y: number } => {
+    const hashed = hashString(seed);
+    return {
+      x: 50 + (hashed % 400),
+      y: 50 + ((hashed >>> 16) % 400),
+    };
+  }, [hashString]);
+
+  const normalizeLocations = useCallback((locations: GeneratedWorld["locations"]) => {
+    const seenIds = new Set<string>();
+    return locations.map((location, index) => {
+      const baseName = location.name?.trim() || `location-${index + 1}`;
+      let id = location.id?.trim() || toKebab(baseName);
+      if (!id || id === "starting_location") {
+        id = `location-${index + 1}`;
+      }
+      let uniqueId = id;
+      let suffix = 1;
+      while (seenIds.has(uniqueId)) {
+        uniqueId = `${id}-${suffix}`;
+        suffix += 1;
+      }
+      seenIds.add(uniqueId);
+      const position = location.position?.x !== undefined && location.position?.y !== undefined
+        ? { x: location.position.x, y: location.position.y }
+        : createDeterministicPosition(uniqueId);
+      return {
+        ...location,
+        id: uniqueId,
+        position,
+      };
+    });
+  }, [createDeterministicPosition, toKebab]);
+
+  const bootstrapWorld = useCallback(async (
+    campaignSeed: CampaignSeed,
+    reason: string
+  ): Promise<{ unified: UnifiedState; travel: TravelState } | null> => {
+    if (bootstrapInFlightRef.current) return null;
+    bootstrapInFlightRef.current = true;
+    setSessionState(prev => ({ ...prev, bootstrapStatus: "bootstrapping" }));
+    if (DEV_DEBUG) {
+      console.info("DEV_DEBUG world bootstrap start", { campaignId, userId, reason });
+    }
+
+    try {
+      let generated = await generateInitialWorld({
+        title: campaignSeed.title,
+        description: campaignSeed.description,
+        themes: campaignSeed.themes ?? [],
+      });
+
+      if (!generated || !Array.isArray(generated.locations) || generated.locations.length === 0) {
+        generated = await generateInitialWorld({
+          title: `${campaignSeed.title} (retry)`,
+          description: campaignSeed.description,
+          themes: campaignSeed.themes ?? [],
+        });
+      }
+
+      let normalizedLocations = generated?.locations?.length
+        ? normalizeLocations(generated.locations)
+        : [];
+
+      if (normalizedLocations.length === 0) {
+        const fallbackId = "starting_location";
+        const fallbackName = "The Outskirts";
+        normalizedLocations = [
+          {
+            id: fallbackId,
+            name: fallbackName,
+            description: campaignSeed.description || "A place to begin the journey.",
+            type: "town",
+            dangerLevel: 1,
+            position: createDeterministicPosition(`${campaignId}-${fallbackId}`),
+            connectedTo: [],
+          },
+        ];
+      }
+
+      const resolvedStartingId =
+        normalizedLocations.find(loc => loc.id === generated?.startingLocationId)?.id
+        ?? normalizedLocations[0]?.id
+        ?? null;
+
+      if (!resolvedStartingId) {
+        throw new Error("Bootstrap produced no starting location");
+      }
+
+      const contentToStore = [
+        ...(generated?.factions ?? []).map(f => ({
+          campaign_id: campaignId,
+          content_type: "faction",
+          content_id: f.id,
+          content: JSON.parse(JSON.stringify(f)),
+          generation_context: JSON.parse(JSON.stringify(campaignSeed)),
+        })),
+        ...(generated?.npcs ?? []).map((npc, i) => ({
+          campaign_id: campaignId,
+          content_type: "npc",
+          content_id: `npc_initial_${i}`,
+          content: JSON.parse(JSON.stringify(npc)),
+          generation_context: JSON.parse(JSON.stringify(campaignSeed)),
+        })),
+        ...(generated?.initialQuest
+          ? [{
+            campaign_id: campaignId,
+            content_type: "quest",
+            content_id: "initial_quest",
+            content: JSON.parse(JSON.stringify(generated.initialQuest)),
+            generation_context: JSON.parse(JSON.stringify(campaignSeed)),
+          }]
+          : []),
+        ...normalizedLocations.map((location) => ({
+          campaign_id: campaignId,
+          content_type: "location",
+          content_id: location.id,
+          content: JSON.parse(JSON.stringify(location)),
+          generation_context: JSON.parse(JSON.stringify(campaignSeed)),
+        })),
+        ...((generated?.worldHooks ?? []).map((hook, index) => ({
+          campaign_id: campaignId,
+          content_type: "world_hooks",
+          content_id: `world_hook_${index}`,
+          content: JSON.parse(JSON.stringify([hook])),
+          generation_context: JSON.parse(JSON.stringify(campaignSeed)),
+        }))),
+      ];
+
+      const writeResult = await supabase.functions.invoke("world-content-writer", {
+        body: {
+          campaignId,
+          content: contentToStore,
+        },
+      });
+      if (writeResult.error) {
+        throw writeResult.error;
+      }
+      if (writeResult.data?.error) {
+        throw new Error(writeResult.data.error);
+      }
+
+      await fetchContent();
+
+      let unifiedState = createUnifiedState(campaignSeed, [], 10, 12);
+      if (worldContent) {
+        unifiedState = {
+          ...unifiedState,
+          world: mergeIntoWorldState(unifiedState.world, worldContent),
+        };
+      }
+      unifiedState = {
+        ...unifiedState,
+        world: mergeIntoWorldState(unifiedState.world, {
+          factions: generated?.factions ?? [],
+          npcs: [],
+          quests: [],
+          locations: normalizedLocations as unknown as EnhancedLocation[],
+          worldHooks: generated?.worldHooks ?? [],
+        }),
+      };
+
+      const travelState = createTravelState(resolvedStartingId);
+
+      await persistence.saveGame(
+        unifiedState,
+        travelState,
+        "Autosave",
+        playtimeRef.current,
+        { refreshList: false, silent: true }
+      );
+
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG world bootstrap success", {
+          locationsCount: unifiedState.world.locations.size,
+          currentLocationId: travelState.currentLocationId,
+        });
+      }
+
+      setSessionState(prev => ({
+        ...prev,
+        unifiedState,
+        travelState,
+        campaignSeed,
+        isInitialized: true,
+        isLoading: false,
+        error: null,
+        bootstrapStatus: "ready",
+        lastSavedAt: Date.now(),
+      }));
+
+      return { unified: unifiedState, travel: travelState };
+    } catch (error) {
+      const message = getErrorMessage(error) || "Failed to bootstrap world";
+      setSessionState(prev => ({
+        ...prev,
+        error: message,
+        isLoading: false,
+        isInitialized: false,
+        bootstrapStatus: "error",
+      }));
+      toast.error(message);
+      return null;
+    } finally {
+      bootstrapInFlightRef.current = false;
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG world bootstrap end", { campaignId, userId });
+      }
+    }
+  }, [
+    campaignId,
+    userId,
+    createDeterministicPosition,
+    fetchContent,
+    generateInitialWorld,
+    getErrorMessage,
+    mergeIntoWorldState,
+    normalizeLocations,
+    persistence,
+    toKebab,
+    worldContent,
+  ]);
+
   // Initialize session from saved state or fresh
   const initializeSession = useCallback(async (initKey: string) => {
     if (!campaignId || !userId) {
@@ -260,7 +495,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     if (initializingRef.current) return; // Prevent concurrent init
     initializingRef.current = true;
     
-    setSessionState(prev => ({ ...prev, isLoading: true, error: null }));
+    setSessionState(prev => ({ ...prev, isLoading: true, error: null, bootstrapStatus: "loading_from_db" }));
+    initializedKeyRef.current = initKey;
     
     try {
       // Fetch campaign info
@@ -366,14 +602,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
         const locationIds = Array.from(unifiedState.world.locations.keys());
         if (locationIds.length === 0) {
-          throw new Error("World generation returned no locations");
-        }
-        const startingId = locationIds[0];
-
-        // Initialize travel state with starting location
-        travelState = createTravelState(startingId);
-        if (worldContent) {
-          logWorldSnapshot("DEV_DEBUG gameSession post-merge", unifiedState.world, travelState);
+          setSessionState(prev => ({ ...prev, bootstrapStatus: "needs_bootstrap" }));
+        } else {
+          const startingId = locationIds[0];
+          travelState = createTravelState(startingId);
+          if (worldContent) {
+            logWorldSnapshot("DEV_DEBUG gameSession post-merge", unifiedState.world, travelState);
+          }
         }
       }
 
@@ -382,8 +617,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         travelState,
         worldContent?.locations.length ?? 0
       );
-      if (!invariantResult.travel) {
-        throw new Error("World state missing travel location");
+      if (!invariantResult.travel || invariantResult.unified.world.locations.size === 0) {
+        await bootstrapWorld(unifiedState.world.campaignSeed, "empty_world");
+        return;
       }
       unifiedState = invariantResult.unified;
       travelState = invariantResult.travel;
@@ -416,13 +652,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         isInitialized: true,
         isLoading: false,
         error: null,
+        bootstrapStatus: "ready",
         playtimeSeconds: initialPlaytime,
         loadedFromSupabase,
         lastSavedAt: prev.lastSavedAt,
         lastLoadedAt,
       }));
       
-      initializedKeyRef.current = initKey;
       initializingRef.current = false;
       if (DEV_DEBUG && unifiedState && travelState) {
         const currentLocation = unifiedState.world.locations.get(travelState.currentLocationId);
@@ -451,12 +687,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       const { toastMessage } = logSupabaseError("Game session initialization", error);
       toast.error(toastMessage);
       initializingRef.current = false;
-      initializedKeyRef.current = null;
+      initializedKeyRef.current = initKey;
       setSessionState(prev => ({
         ...prev,
         isInitialized: false,
         isLoading: false,
         error: toastMessage,
+        bootstrapStatus: "error",
       }));
     }
   }, [
@@ -469,6 +706,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     logSupabaseError,
     logWorldSnapshot,
     computeFingerprint,
+    bootstrapWorld,
   ]);
 
   // Update unified state
@@ -713,6 +951,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         isInitialized: false,
         isLoading: false,
         error: "Missing campaign or user information.",
+        bootstrapStatus: "idle",
       }));
       initializedKeyRef.current = null;
       initializingRef.current = false;
@@ -724,6 +963,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
     const initKey = `${userId}:${campaignId}`;
     if (initializedKeyRef.current === initKey) return;
+    if (bootstrapInFlightRef.current) return;
 
     initializeSession(initKey);
   }, [userId, campaignId, hasLoadedContent, initializeSession]);

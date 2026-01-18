@@ -8,7 +8,7 @@ Date: 2026-01-18
 - `/signup` → `src/ui/screens/AuthScreen.tsx` → Supabase Auth (`supabase.auth.signUp`)
 - `/dashboard` → `src/ui/screens/DashboardScreen.tsx` → Supabase tables: `campaigns`, `campaign_members`, `combat_state` + edge functions `world-generator`, `world-content-writer`
 - `/servers` + `/admin` → `src/ui/screens/ServerAdminScreen.tsx` → Supabase table: `server_nodes` + `campaigns` (DB test) + edge function `generate-class` (DEV test)
-- `/game/:campaignId` → `src/routes/GameSessionRoute.tsx` → `src/ui/screens/GameScreen.tsx` → `useGameSession` (Supabase: `campaigns`, `game_saves`, `ai_generated_content`) + engine (`UnifiedState`, `WorldTravelEngine`)
+- `/game/:campaignId` → `src/routes/GameSessionRoute.tsx` → `src/ui/screens/GameScreen.tsx` → `useGameSession` (Supabase: `campaigns`, `game_saves`, `ai_generated_content`, bootstrap via `world-generator` + `world-content-writer`) + engine (`UnifiedState`, `WorldTravelEngine`)
 - `/game/:campaignId/create-character` → `src/ui/screens/CharacterScreen.tsx` → `AICharacterCreator` → `useClassGenerator` (edge: `generate-class`) + Supabase table `characters`
 - `*` → `src/pages/NotFound.tsx` (static)
 
@@ -132,6 +132,7 @@ Fixed in implementation commit(s) (see “Fixes Applied”):
 - Removed hardcoded name suggestions in `src/components/AICharacterCreator.tsx`.
 - Campaign creation now calls `world-generator`, normalizes locations, persists with `world-content-writer`, and updates `campaigns.current_scene` (`src/ui/screens/DashboardScreen.tsx`).
 - Removed fallback location injection in `useGameSession` and removed `starting_location` fallback usage in `useGamePersistence` (errors surfaced if world has zero locations).
+- Added deterministic world bootstrap in `useGameSession` for empty world_state and missing currentLocationId.
 - `/servers` dashboard now shows engine snapshot + last read/write/edge timestamps (`src/ui/screens/ServerAdminScreen.tsx` + `src/ui/screens/GameScreen.tsx`).
 - `/servers` dashboard includes reconnect + refresh flow for auth/session/DB checks.
 
