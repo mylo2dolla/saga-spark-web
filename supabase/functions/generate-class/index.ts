@@ -60,7 +60,9 @@ serve(async (req) => {
     const apiKeyHeader = req.headers.get("apikey");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     const hasBearer = authHeader?.startsWith("Bearer ");
+    const bearerToken = authHeader?.replace("Bearer ", "") ?? "";
     const hasAnonKey = Boolean(apiKeyHeader) && apiKeyHeader === anonKey;
+    const bearerIsAnon = bearerToken === anonKey;
     if (!hasBearer && !hasAnonKey) {
       return new Response(
         JSON.stringify({ error: "Authentication required" }),
@@ -74,7 +76,7 @@ serve(async (req) => {
       { global: { headers: authHeader ? { Authorization: authHeader } : {} } }
     );
 
-    if (hasBearer) {
+    if (hasBearer && !bearerIsAnon) {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) {
         return new Response(
