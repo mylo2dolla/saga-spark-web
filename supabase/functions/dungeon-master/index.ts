@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { groqChatCompletionsStream } from "../_shared/groq.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -189,16 +190,6 @@ serve(async (req) => {
     }
 
     const { messages, context } = parseResult.data;
-    const AI_GATEWAY_API_KEY = Deno.env.get("AI_GATEWAY_API_KEY");
-    const AI_GATEWAY_URL = Deno.env.get("AI_GATEWAY_URL");
-
-    if (!AI_GATEWAY_API_KEY) {
-      throw new Error("AI_GATEWAY_API_KEY is not configured");
-    }
-
-    if (!AI_GATEWAY_URL) {
-      throw new Error("AI_GATEWAY_URL is not configured");
-    }
 
     // Build context-aware system prompt
     let systemPrompt = DM_SYSTEM_PROMPT;
@@ -236,48 +227,22 @@ Use these EXACT values in your narration. Do not invent or alter any numbers.`;
       }
     }
 
-    const response = await fetch(`${AI_GATEWAY_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${AI_GATEWAY_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages,
-        ],
-        stream: true,
-      }),
+    const response = await groqChatCompletionsStream({
+      model: "llama-3.1-70b-versatile",
+      messages: [
+        { role: "system", content: systemPrompt },
+        ...messages,
+      ],
+      stream: true,
     });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(JSON.stringify({ error: "The Dungeon Master needs a moment to rest. Please try again shortly." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (response.status === 402) {
-        return new Response(JSON.stringify({ error: "The magical energies have been depleted. Please add credits to continue your adventure." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      console.error("AI gateway error:", response.status);
-      return new Response(JSON.stringify({ error: "The mystical connection has been disrupted. Please try again." }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
     return new Response(response.body, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
   } catch (e) {
-    console.error("Dungeon Master error:", e instanceof Error ? e.message : "Unknown error");
-    return new Response(JSON.stringify({ error: "An unexpected error occurred" }), {
+    const message = e instanceof Error ? e.message : "Unknown error";
+    console.error("Dungeon Master error:", message);
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
