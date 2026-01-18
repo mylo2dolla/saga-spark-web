@@ -66,6 +66,13 @@ serve(async (req) => {
     const isAnonBearer = bearerToken.startsWith("sb_publishable_") || bearerToken === anonKey;
     const hasApiKey = Boolean(apiKeyHeader);
 
+    if (!bearerToken && !hasApiKey) {
+      return new Response(
+        JSON.stringify({ error: "Missing Authorization or apikey header" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const isAnonMode = !bearerToken || isAnonBearer || hasApiKey;
 
     const supabase = createClient(
