@@ -152,7 +152,11 @@ export default function GameScreen() {
     return <div className="text-sm text-muted-foreground">Loading session...</div>;
   }
 
-  if (gameSession.bootstrapStatus === "error") {
+  const isWorldGenErrorCurrent =
+    Boolean(gameSession.lastWorldGenError) &&
+    (!gameSession.lastWorldGenSuccessAt || (gameSession.lastWorldGenErrorAt ?? 0) > (gameSession.lastWorldGenSuccessAt ?? 0));
+
+  if (gameSession.bootstrapStatus === "error" && isWorldGenErrorCurrent) {
     return (
       <div className="space-y-3">
         <div className="text-destructive">{gameSession.error ?? "World generation failed."}</div>
@@ -216,7 +220,7 @@ export default function GameScreen() {
           ) : null}
         </div>
       </div>
-      {DEV_DEBUG && gameSession.lastWorldGenError ? (
+      {DEV_DEBUG && gameSession.lastWorldGenError && (!gameSession.lastWorldGenSuccessAt || (gameSession.lastWorldGenErrorAt ?? 0) > (gameSession.lastWorldGenSuccessAt ?? 0)) ? (
         <div className="rounded-md border border-border bg-card/70 p-3 text-xs text-muted-foreground">
           <div className="mb-1 font-semibold text-foreground">Last world-generator error</div>
           <pre className="whitespace-pre-wrap">{JSON.stringify(gameSession.lastWorldGenError, null, 2)}</pre>
