@@ -33,8 +33,17 @@ export default function CharacterScreen() {
   const { user, isLoading: authLoading } = useAuth();
   const [isCreating, setIsCreating] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
+  const [profileStatus, setProfileStatus] = useState<"unknown" | "loaded" | "missing" | "created" | "error">("unknown");
   const gameSession = useGameSessionContext();
   const { character, isLoading: characterLoading, error: characterError } = useCharacter(campaignId);
+
+  console.info("[character]", {
+    step: "enter_screen",
+    route: location.pathname,
+    campaignId,
+    hasSession: Boolean(user),
+    userId: user?.id ?? null,
+  });
 
   if (!campaignId) {
     return (
@@ -72,8 +81,37 @@ export default function CharacterScreen() {
       isLoading: authLoading,
       reason: "no_user",
     });
+    console.info("[character]", {
+      step: "navigate_login",
+      reason: "no_user",
+      campaignId,
+      route: location.pathname,
+    });
     navigate("/login");
     return null;
+  }
+
+  console.info("[character]", {
+    step: "session_resolved",
+    campaignId,
+    userId: user.id,
+    hasSession: true,
+  });
+
+  if (characterLoading) {
+    console.info("[character]", {
+      step: "character_fetch_pending",
+      campaignId,
+      userId: user.id,
+    });
+  } else {
+    console.info("[character]", {
+      step: "character_fetch_result",
+      campaignId,
+      userId: user.id,
+      characterExists: Boolean(character),
+      error: characterError ?? null,
+    });
   }
 
   const getModifier = (stat: number) => Math.floor((stat - 10) / 2);
@@ -82,6 +120,17 @@ export default function CharacterScreen() {
     setIsCreating(true);
     setLastError(null);
     setLastAction("create_character_submit");
+    console.info("[character]", {
+      step: "create_character_start",
+      campaignId,
+      userId: user.id,
+      payload: {
+        name: data.name,
+        class: data.class,
+        hitDice: data.hitDice,
+        baseAC: data.baseAC,
+      },
+    });
 
     try {
       const userResult = await withTimeout(supabase.auth.getUser(), 20000);
@@ -139,16 +188,41 @@ export default function CharacterScreen() {
           hint: result.error.hint,
           status: result.error.status,
         });
+        console.info("[character]", {
+          step: "create_character_error",
+          campaignId,
+          userId: user.id,
+          status: result.error.status ?? null,
+          code: result.error.code ?? null,
+          message: result.error.message ?? null,
+          details: result.error.details ?? null,
+          hint: result.error.hint ?? null,
+        });
         throw result.error;
       }
 
+      console.info("[character]", {
+        step: "create_character_success",
+        campaignId,
+        userId: user.id,
+      });
       toast({
         title: "Character created",
         description: `${data.name} the ${data.class} is ready for adventure!`,
       });
+      console.info("[character]", {
+        step: "navigate_game",
+        campaignId,
+        reason: "character_created",
+      });
       navigate(`/game/${campaignId}`);
     } catch (error) {
       if (isAbortError(error)) {
+        console.info("[character]", {
+          step: "create_character_aborted",
+          campaignId,
+          userId: user.id,
+        });
         toast({
           title: "Request canceled/timeout",
           description: "Please retry.",
@@ -159,6 +233,12 @@ export default function CharacterScreen() {
       }
 
       const message = formatError(error, "Failed to create character");
+      console.info("[character]", {
+        step: "create_character_failed",
+        campaignId,
+        userId: user.id,
+        message,
+      });
       setLastError(message);
       toast({
         title: "Failed to create character",
@@ -202,6 +282,31 @@ export default function CharacterScreen() {
           <div>engineReady: {gameSession.isInitialized ? "yes" : "no"}</div>
           <div>lastError: {gameSession.error ?? "none"}</div>
           <div>lastAction: {lastAction ?? "none"}</div>
+          <button
+            type="button"
+            className="mt-2 text-primary underline"
+            onClick={() => {
+              console.info("[character]", {
+                step: "dump_state",
+                route: location.pathname,
+                params: { campaignId },
+                userId: user?.id ?? null,
+                hasSession: Boolean(user),
+                campaignId,
+                profileStatus,
+                characterStatus: {
+                  loading: characterLoading,
+                  exists: Boolean(character),
+                  error: characterError ?? null,
+                },
+                engineReady: gameSession.isInitialized,
+                lastError: gameSession.error ?? null,
+                lastAction,
+              });
+            }}
+          >
+            Dump State
+          </button>
         </div>
       ) : null}
     </>
