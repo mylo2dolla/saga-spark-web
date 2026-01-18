@@ -124,6 +124,12 @@ export default function GameScreen() {
     return World.getFlag(gameSession.unifiedState.world, flagId);
   }, [currentLocation, gameSession.unifiedState]);
 
+  const encounterOutcomeFlagForCurrent = useMemo(() => {
+    if (!gameSession.unifiedState || !currentLocation) return null;
+    const flagId = `encounter_outcome:${currentLocation.id}`;
+    return World.getFlag(gameSession.unifiedState.world, flagId);
+  }, [currentLocation, gameSession.unifiedState]);
+
   const hashString = useCallback((value: string) => {
     let hash = 0;
     for (let i = 0; i < value.length; i += 1) {
@@ -313,6 +319,57 @@ export default function GameScreen() {
     await gameSession.autosaveNow?.();
   }, [currentLocation, dmContext, dungeonMaster, gameSession]);
 
+  const resolveEncounterOutcome = useCallback(async () => {
+    if (!currentLocation || !gameSession.campaignSeed) return;
+    if (encounterChoiceFlagForCurrent?.value !== "investigate") return;
+    if (encounterOutcomeFlagForCurrent?.value) return;
+
+    const seedKey = `${gameSession.campaignSeed.id}:${currentLocation.id}:encounter`;
+    const roll = hashString(seedKey) % 100;
+    let outcome: "combat" | "npc" | "loot" | "nothing" = "nothing";
+    if (roll < 35) outcome = "combat";
+    else if (roll < 60) outcome = "npc";
+    else if (roll < 80) outcome = "loot";
+
+    const outcomeFlagId = `encounter_outcome:${currentLocation.id}`;
+    const payloadFlagId = `encounter_payload:${currentLocation.id}`;
+    const payload = outcome === "npc"
+      ? JSON.stringify({ hint: "A traveler emerges from the shadows." })
+      : outcome === "loot"
+        ? JSON.stringify({ hint: "Something glints nearby." })
+        : null;
+
+    gameSession.updateUnifiedState(prev => ({
+      ...prev,
+      world: World.setFlag(
+        payload
+          ? World.setFlag(prev.world, payloadFlagId, payload, "encounter_outcome")
+          : prev.world,
+        outcomeFlagId,
+        outcome,
+        "encounter_outcome"
+      ),
+    }));
+
+    const narrationPrompt = outcome === "combat"
+      ? `In 1-2 sentences, describe the party discovering signs of an imminent fight at ${currentLocation.name}.`
+      : outcome === "npc"
+        ? `In 1-2 sentences, narrate the party meeting a wary traveler at ${currentLocation.name}.`
+        : outcome === "loot"
+          ? `In 1-2 sentences, describe the party finding a curious object at ${currentLocation.name}.`
+          : `In 1-2 sentences, describe the party realizing the danger was a false alarm at ${currentLocation.name}.`;
+    await dungeonMaster.sendNarration?.(narrationPrompt, dmContext);
+    await gameSession.autosaveNow?.();
+  }, [
+    currentLocation,
+    dmContext,
+    dungeonMaster,
+    encounterChoiceFlagForCurrent?.value,
+    encounterOutcomeFlagForCurrent?.value,
+    gameSession,
+    hashString,
+  ]);
+
   useEffect(() => {
     const currentId = gameSession.travelState?.currentLocationId ?? null;
     if (!currentId) return;
@@ -320,6 +377,10 @@ export default function GameScreen() {
     lastLocationIdRef.current = currentId;
     void handleArrival(currentId, currentLocation ?? null);
   }, [currentLocation, gameSession.travelState?.currentLocationId, handleArrival]);
+
+  useEffect(() => {
+    void resolveEncounterOutcome();
+  }, [resolveEncounterOutcome]);
 
   const handleSendMessage = useCallback(async (message: string) => {
     const normalized = message.toLowerCase();
@@ -559,6 +620,18 @@ export default function GameScreen() {
                     Avoid
                   </Button>
                 </div>
+              ) : null}
+              {encounterOutcomeFlagForCurrent?.value === "combat" ? (
+                <div className="text-muted-foreground">Combat encounter pending.</div>
+              ) : null}
+              {encounterOutcomeFlagForCurrent?.value === "npc" ? (
+                <div className="text-muted-foreground">NPC encounter pending.</div>
+              ) : null}
+              {encounterOutcomeFlagForCurrent?.value === "loot" ? (
+                <div className="text-muted-foreground">You found something.</div>
+              ) : null}
+              {encounterOutcomeFlagForCurrent?.value === "nothing" ? (
+                <div className="text-muted-foreground">False alarm.</div>
               ) : null}
             </CardContent>
           </Card>
