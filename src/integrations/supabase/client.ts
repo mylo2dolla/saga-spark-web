@@ -59,20 +59,42 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, 
   },
 });
 
-if (DEV_DEBUG) {
+{
   const authAny = supabase.auth as typeof supabase.auth & {
     signInWithPassword?: (...args: Parameters<typeof supabase.auth.signInWithPassword>) => ReturnType<typeof supabase.auth.signInWithPassword>;
   };
   if (authAny.signInWithPassword) {
     const originalSignIn = authAny.signInWithPassword.bind(supabase.auth);
+    let inFlight: ReturnType<typeof supabase.auth.signInWithPassword> | null = null;
     authAny.signInWithPassword = async (...args) => {
       const allowed = (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress === true;
-      if (!allowed) {
+      if (DEV_DEBUG && !allowed) {
         console.warn("[auth] signIn called outside AuthScreen", {
           route: globalThis.location?.pathname ?? null,
         });
       }
-      return originalSignIn(...args);
+      if (inFlight) {
+        if (DEV_DEBUG) {
+          const count = ((globalThis as { __authTokenGrantCount?: number }).__authTokenGrantCount ?? 0);
+          console.info("[auth] log", { step: "sign_in_dedupe", count });
+        }
+        return inFlight;
+      }
+      if (DEV_DEBUG) {
+        const globalRef = (globalThis as { __authTokenGrantCount?: number });
+        globalRef.__authTokenGrantCount = (globalRef.__authTokenGrantCount ?? 0) + 1;
+        console.info("[auth] log", { step: "sign_in_start", count: globalRef.__authTokenGrantCount });
+      }
+      const promise = originalSignIn(...args);
+      inFlight = promise;
+      try {
+        return await promise;
+      } finally {
+        inFlight = null;
+        if (DEV_DEBUG) {
+          console.info("[auth] log", { step: "sign_in_end" });
+        }
+      }
     };
   }
 }

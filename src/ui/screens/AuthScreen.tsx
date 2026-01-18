@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
+import { isAbortError, formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 
 interface AuthScreenProps {
@@ -57,7 +57,8 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           },
         });
 
-      const result = await withTimeout(action(), 25000);
+      const result = await action();
+      console.info("[auth] log", { step: "login_signin_end" });
       if (result.error) throw result.error;
       const hasSession = Boolean(result.session);
       console.info("[auth] log", {
