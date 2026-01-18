@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useRef, useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Mail, Lock, LogIn } from "lucide-react";
@@ -7,15 +7,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Logo from "@/components/Logo";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
 const Login = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user, isLoading, signIn } = useAuth();
+  const { user, isLoading } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const submitLockRef = useRef(false);
   const getErrorMessage = (error: unknown) =>
     error instanceof Error ? error.message : "Unknown error";
   const isEmailNotConfirmed = (message: string) =>
@@ -30,10 +32,15 @@ const Login = () => {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
     setLoading(true);
 
     try {
-      await signIn(email, password);
+      const result = await supabase.auth.signInWithPassword({ email, password });
+      if (result.error) {
+        throw result.error;
+      }
 
       toast({
         title: "Welcome back, adventurer!",
@@ -52,6 +59,7 @@ const Login = () => {
       });
     } finally {
       setLoading(false);
+      submitLockRef.current = false;
     }
   };
 

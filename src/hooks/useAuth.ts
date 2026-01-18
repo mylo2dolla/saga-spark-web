@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { User } from "@supabase/supabase-js";
+import type { Session, User } from "@supabase/supabase-js";
 import { withTimeout, isAbortError } from "@/ui/data/async";
 import { recordProfilesRead } from "@/ui/data/networkHealth";
 
@@ -10,6 +10,7 @@ const profileCache = new Map<string, { data: Profile | null; fetchedAt: number }
 const profileInFlight = new Map<string, Promise<Profile | null>>();
 
 interface AuthState {
+  session: Session | null;
   user: User | null;
   profile: Profile | null;
   isLoading: boolean;
@@ -18,6 +19,7 @@ interface AuthState {
 }
 
 let authState: AuthState = {
+  session: null,
   user: null,
   profile: null,
   isLoading: true,
@@ -46,7 +48,7 @@ const ensureAuthSubscription = () => {
   if (authSubscription) return;
   const { data: { subscription } } = supabase.auth.onAuthStateChange(
     async (_event, session) => {
-      setAuthState({ user: session?.user ?? null });
+      setAuthState({ session: session ?? null, user: session?.user ?? null });
       if (session?.user) {
         await fetchProfileInternal(session.user.id);
       } else {
@@ -151,7 +153,7 @@ const initAuth = async () => {
       if (error) {
         notifyAuthError(error);
       }
-      setAuthState({ user: session?.user ?? null });
+      setAuthState({ session: session ?? null, user: session?.user ?? null });
       if (session?.user) {
         await fetchProfileInternal(session.user.id);
       } else {
@@ -216,41 +218,6 @@ export function useAuth() {
     };
   }, []);
 
-  const signUp = async (email: string, password: string, displayName?: string) => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { display_name: displayName || email.split("@")[0] },
-      },
-    });
-    if (DEV_DEBUG) {
-      console.info("DEV_DEBUG auth signUp", {
-        email,
-        userId: data.user?.id ?? null,
-        error: error?.message ?? null,
-      });
-    }
-    if (error) throw error;
-    return data;
-  };
-
-  const signIn = async (email: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (DEV_DEBUG) {
-      console.info("DEV_DEBUG auth signIn", {
-        email,
-        userId: data.user?.id ?? null,
-        error: error?.message ?? null,
-      });
-    }
-    if (error) throw error;
-    return data;
-  };
-
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
@@ -269,13 +236,12 @@ export function useAuth() {
   };
 
   return {
+    session: state.session,
     user: state.user,
     profile: state.profile,
     isLoading: state.isLoading,
     isProfileCreating: state.isProfileCreating,
     lastAuthError: state.lastAuthError,
-    signUp,
-    signIn,
     signOut,
     updateProfile,
   };

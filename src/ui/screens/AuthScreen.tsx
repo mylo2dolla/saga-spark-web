@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,11 +16,11 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { setLastError } = useDiagnostics();
-  const { signIn, signUp } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitLockRef = useRef(false);
 
   const handleSubmit = async () => {
     if (!email.trim() || !password.trim()) {
@@ -28,16 +28,25 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       return;
     }
 
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
     setIsSubmitting(true);
     setLastError(null);
     console.info("[auth] log", { step: "login_submit" });
 
     try {
       const action = mode === "login"
-        ? () => signIn(email, password)
-        : () => signUp(email, password, displayName || undefined);
+        ? () => supabase.auth.signInWithPassword({ email, password })
+        : () => supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { display_name: displayName || email.split("@")[0] },
+          },
+        });
 
       const result = await withTimeout(action(), 25000);
+      if (result.error) throw result.error;
       const hasSession = Boolean(result.session);
       console.info("[auth] log", {
         step: "login_result",
@@ -79,6 +88,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       });
     } finally {
       setIsSubmitting(false);
+      submitLockRef.current = false;
     }
   };
 
