@@ -25,7 +25,7 @@ interface Campaign {
 }
 
 export default function DashboardScreen() {
-  const { user, isLoading: authLoading } = useAuth();
+  const { user, session, isLoading: authLoading } = useAuth();
   const { generateInitialWorld, isGenerating } = useWorldGenerator();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -91,12 +91,8 @@ export default function DashboardScreen() {
     });
   };
 
-  const fetchCampaigns = useCallback(async (force = false) => {
-    if (!user) return;
-    const now = Date.now();
-    if (!force && lastFetchAtRef.current && now - lastFetchAtRef.current < 15000) {
-      return;
-    }
+  const fetchCampaigns = useCallback(async () => {
+    if (!session?.user?.id) return;
     if (fetchInFlightRef.current) return;
     fetchInFlightRef.current = true;
     setIsLoading(true);
@@ -104,118 +100,64 @@ export default function DashboardScreen() {
     setLastError(null);
 
     try {
-      const memberData = await supabase
-        .from("campaign_members")
-        .select("campaign_id")
-        .eq("user_id", user.id);
-
-      if (memberData.error) {
-        console.error("[campaigns] supabase error", {
-          message: memberData.error.message,
-          code: memberData.error.code,
-          details: memberData.error.details,
-          hint: memberData.error.hint,
-          status: memberData.error.status,
-        });
-        throw memberData.error;
-      }
-
-      recordCampaignMembersRead();
-      lastFetchAtRef.current = now;
-      const memberCampaignIds = memberData.data?.map(row => row.campaign_id) ?? [];
-
-      const ownedData = await supabase
+      const { data, error } = await supabase
         .from("campaigns")
-        .select("id, name, description, invite_code, owner_id, is_active, updated_at")
-        .eq("owner_id", user.id)
-        .order("updated_at", { ascending: false });
+        .select("*")
+        .eq("owner_id", session.user.id);
 
-      if (ownedData.error) {
-        console.error("[campaigns] supabase error", {
-          message: ownedData.error.message,
-          code: ownedData.error.code,
-          details: ownedData.error.details,
-          hint: ownedData.error.hint,
-          status: ownedData.error.status,
-        });
-        throw ownedData.error;
-      }
-
-      let memberCampaigns: Campaign[] = [];
-      if (memberCampaignIds.length) {
-        const memberCampaignsData = await supabase
-          .from("campaigns")
-          .select("id, name, description, invite_code, owner_id, is_active, updated_at")
-          .in("id", memberCampaignIds)
-          .order("updated_at", { ascending: false });
-
-        if (memberCampaignsData.error) {
-          console.error("[campaigns] supabase error", {
-            message: memberCampaignsData.error.message,
-            code: memberCampaignsData.error.code,
-            details: memberCampaignsData.error.details,
-            hint: memberCampaignsData.error.hint,
-            status: memberCampaignsData.error.status,
-          });
-          throw memberCampaignsData.error;
-        }
-
-        memberCampaigns = (memberCampaignsData.data ?? []) as Campaign[];
-      }
+      if (error) throw error;
+      lastFetchAtRef.current = Date.now();
       recordCampaignsRead();
-
-      const combined = [...(ownedData.data ?? []), ...memberCampaigns];
-      const unique = combined.filter(
-        (c, i, self) => self.findIndex(x => x.id === c.id) === i,
-      );
-
-      setCampaigns(unique);
+      setCampaigns(data ?? []);
     } catch (err) {
+      console.error("Failed to load campaigns", err);
       const message = formatError(err, "Failed to load campaigns");
       setError(message);
       setLastError(message);
-      toast({ title: "Failed to load campaigns", description: message, variant: "destructive" });
     } finally {
       setIsLoading(false);
       fetchInFlightRef.current = false;
     }
-  }, [user, toast, setLastError]);
+  }, [session?.user?.id, setLastError]);
 
   useEffect(() => {
-    const hasSession = Boolean(user);
-    if (authLoading) {
-      console.info("[auth] log", {
-        step: "auth_guard",
-        path: "/dashboard",
-        hasSession,
-        userId: user?.id ?? null,
-        isLoading: authLoading,
-        reason: "auth_loading",
-      });
-      return;
-    }
-    if (!user) {
-      console.info("[auth] log", {
-        step: "auth_guard",
-        path: "/dashboard",
-        hasSession: false,
-        userId: null,
-        isLoading: authLoading,
-        reason: "no_user",
-      });
-      navigate("/login");
-      return;
-    }
-    console.info("[auth] log", {
-      step: "auth_guard",
-      path: "/dashboard",
-      hasSession: true,
-      userId: user.id,
-      isLoading: authLoading,
-      reason: "ok",
-    });
-    fetchCampaigns();
-  }, [authLoading, user, navigate, fetchCampaigns]);
+    let cancelled = false;
+
+    const run = async () => {
+      const ownerId = session?.user?.id ?? user?.id ?? null;
+      if (!ownerId) {
+        if (!cancelled) setIsLoading(false);
+        return;
+      }
+      setIsLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("campaigns")
+          .select("*")
+          .eq("owner_id", ownerId);
+
+        if (error) throw error;
+        if (!cancelled) {
+          setCampaigns(data ?? []);
+          recordCampaignsRead();
+        }
+      } catch (err) {
+        console.error("Failed to load campaigns", err);
+        if (!cancelled) {
+          const message = formatError(err, "Failed to load campaigns");
+          setError(message);
+          setLastError(message);
+        }
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id, user?.id, setLastError]);
 
   const handleCreate = async () => {
     if (!user || !newCampaignName.trim() || !newCampaignDescription.trim()) {
