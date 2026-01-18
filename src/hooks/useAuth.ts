@@ -60,6 +60,9 @@ const ensureAuthSubscription = () => {
 };
 
 const fetchProfileInternal = async (userId: string) => {
+  if (DEV_DEBUG) {
+    console.info("[auth] log", { step: "profile_fetch_start", userId });
+  }
   try {
     const cached = profileCache.get(userId);
     const now = Date.now();
@@ -139,6 +142,9 @@ const fetchProfileInternal = async (userId: string) => {
       setAuthState({ profile: createResult.data });
     }
   } finally {
+    if (DEV_DEBUG) {
+      console.info("[auth] log", { step: "profile_fetch_end", userId });
+    }
     setAuthState({ isProfileCreating: false, isLoading: false });
   }
 };
