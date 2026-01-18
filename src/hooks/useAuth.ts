@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
-import { withTimeout, isAbortError } from "@/ui/data/async";
 import { recordProfilesRead } from "@/ui/data/networkHealth";
 
 const DEV_DEBUG = import.meta.env.DEV;
@@ -79,19 +78,13 @@ const fetchProfileInternal = async (userId: string) => {
     }
 
     const loadPromise = (async () => {
-      const { data, error } = await withTimeout(
-        supabase
-          .from("profiles")
-          .select("*")
-          .eq("user_id", userId)
-          .maybeSingle(),
-        20000,
-      );
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("user_id", userId)
+        .maybeSingle();
 
       if (error) {
-        if (isAbortError(error)) {
-          return null;
-        }
         notifyAuthError(error);
         return null;
       }
@@ -120,23 +113,18 @@ const fetchProfileInternal = async (userId: string) => {
       ?? currentUser?.email?.split("@")[0]
       ?? "Adventurer";
 
-    const createResult = await withTimeout(
-      supabase
-        .from("profiles")
-        .insert({
-          user_id: userId,
-          display_name: displayName,
-          avatar_url: null,
-        })
-        .select("*")
-        .single(),
-      20000,
-    );
+    const createResult = await supabase
+      .from("profiles")
+      .insert({
+        user_id: userId,
+        display_name: displayName,
+        avatar_url: null,
+      })
+      .select("*")
+      .single();
 
     if (createResult.error) {
-      if (!isAbortError(createResult.error)) {
-        notifyAuthError(createResult.error);
-      }
+      notifyAuthError(createResult.error);
     } else {
       profileCache.set(userId, { data: createResult.data, fetchedAt: Date.now() });
       setAuthState({ profile: createResult.data });
@@ -155,7 +143,7 @@ const initAuth = async () => {
   authInitPromise = (async () => {
     console.info("[auth] log", { step: "auth_bootstrap_start" });
     try {
-      const { data: { session }, error } = await withTimeout(supabase.auth.getSession(), 20000);
+      const { data: { session }, error } = await supabase.auth.getSession();
       if (error) {
         notifyAuthError(error);
       }
@@ -171,10 +159,6 @@ const initAuth = async () => {
         userId: session?.user?.id ?? null,
       });
     } catch (error) {
-      if (isAbortError(error)) {
-        setAuthState({ isLoading: false });
-        return;
-      }
       notifyAuthError(error as { message?: string; status?: number });
       setAuthState({ isLoading: false });
     } finally {

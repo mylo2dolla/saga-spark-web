@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
+import { formatError } from "@/ui/data/async";
 
 export interface CharacterStats {
   strength: number;
@@ -91,7 +91,7 @@ export function useCharacter(campaignId: string | undefined) {
     try {
       setIsLoading(true);
       setError(null);
-      const { data: { user }, error: userError } = await withTimeout(supabase.auth.getUser(), 20000);
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError) {
         console.error("[character] supabase error", {
           message: userError.message,
@@ -107,16 +107,13 @@ export function useCharacter(campaignId: string | undefined) {
         return;
       }
 
-      const { data, error } = await withTimeout(
-        supabase
-          .from("characters")
-          .select("*")
-          .eq("campaign_id", campaignId)
-          .eq("user_id", user.id)
-          .eq("is_active", true)
-          .maybeSingle(),
-        20000,
-      );
+      const { data, error } = await supabase
+        .from("characters")
+        .select("*")
+        .eq("campaign_id", campaignId)
+        .eq("user_id", user.id)
+        .eq("is_active", true)
+        .maybeSingle();
 
       if (error) {
         console.error("[character] supabase error", {
@@ -144,10 +141,6 @@ export function useCharacter(campaignId: string | undefined) {
         }
       }
     } catch (error) {
-      if (isAbortError(error)) {
-        setError("Request canceled/timeout");
-        return;
-      }
       const status = (error as { status?: number })?.status;
       const baseMessage = formatError(error, "Failed to fetch character");
       const message = status === 401 || status === 403

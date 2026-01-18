@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
-import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
+import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 import { useNetworkHealth } from "@/ui/data/networkHealth";
 
@@ -40,10 +40,11 @@ export default function ServerAdminScreen() {
     setLastError(null);
 
     try {
-      const response = await withTimeout(
-        supabase.from("server_nodes").select("*").eq("user_id", user.id).order("last_heartbeat", { ascending: false }),
-        20000,
-      );
+      const response = await supabase
+        .from("server_nodes")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("last_heartbeat", { ascending: false });
 
       if (response.error) {
         console.error("[server_nodes] supabase error", {
@@ -58,11 +59,6 @@ export default function ServerAdminScreen() {
 
       setNodes(response.data ?? []);
     } catch (err) {
-      if (isAbortError(err)) {
-        setError("Request canceled/timeout");
-        setLastError("Request canceled/timeout");
-        return;
-      }
       const message = formatError(err, "Failed to load server nodes");
       setError(message);
       setLastError(message);
@@ -79,21 +75,14 @@ export default function ServerAdminScreen() {
     setIsTesting(true);
     setDbTest(null);
     try {
-      const response = await withTimeout(
-        supabase.from("campaigns").select("id").limit(1),
-        20000,
-      );
+      const response = await supabase.from("campaigns").select("id").limit(1);
       if (response.error) {
         setDbTest({ ok: false, status: response.error.status, message: response.error.message });
         return;
       }
       setDbTest({ ok: true, status: 200, message: "ok" });
     } catch (err) {
-      if (isAbortError(err)) {
-        setDbTest({ ok: false, message: "Request canceled/timeout" });
-      } else {
-        setDbTest({ ok: false, message: formatError(err, "DB test failed") });
-      }
+      setDbTest({ ok: false, message: formatError(err, "DB test failed") });
     } finally {
       setIsTesting(false);
     }
@@ -117,22 +106,15 @@ export default function ServerAdminScreen() {
         headers.Authorization = `Bearer ${session.access_token}`;
       }
       const url = `${SUPABASE_URL}/functions/v1/generate-class`;
-      const response = await withTimeout(
-        fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ classDescription: "Quick test class" }),
-        }),
-        20000,
-      );
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ classDescription: "Quick test class" }),
+      });
       const body = await response.text();
       setEdgeTest({ ok: response.ok, status: response.status, body });
     } catch (err) {
-      if (isAbortError(err)) {
-        setEdgeTest({ ok: false, body: "Request canceled/timeout" });
-      } else {
-        setEdgeTest({ ok: false, body: formatError(err, "Edge test failed") });
-      }
+      setEdgeTest({ ok: false, body: formatError(err, "Edge test failed") });
     } finally {
       setIsTesting(false);
     }
@@ -141,7 +123,7 @@ export default function ServerAdminScreen() {
   const handleReconnectSession = useCallback(async () => {
     setIsTesting(true);
     try {
-      const { error } = await withTimeout(supabase.auth.refreshSession(), 20000);
+      const { error } = await supabase.auth.refreshSession();
       if (error) {
         setLastError(error.message);
       } else {
@@ -158,7 +140,7 @@ export default function ServerAdminScreen() {
   const handleReconnectAll = useCallback(async () => {
     setIsTesting(true);
     try {
-      const { error } = await withTimeout(supabase.auth.refreshSession(), 20000);
+      const { error } = await supabase.auth.refreshSession();
       if (error) {
         setLastError(error.message);
       } else {

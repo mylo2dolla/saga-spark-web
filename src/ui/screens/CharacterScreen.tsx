@@ -5,7 +5,7 @@ import { AICharacterCreator } from "@/components/AICharacterCreator";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import type { CharacterStats, CharacterResources, PassiveAbility, GameAbility } from "@/types/game";
-import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
+import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 import { useAuth } from "@/hooks/useAuth";
 import { useGameSessionContext } from "@/contexts/GameSessionContext";
@@ -74,7 +74,7 @@ export default function CharacterScreen() {
     const run = async () => {
       setSessionFallback({ checking: true, hasSession: null, error: null });
       try {
-        const { data: { session }, error } = await withTimeout(supabase.auth.getSession(), 20000);
+        const { data: { session }, error } = await supabase.auth.getSession();
         if (error) {
           setSessionFallback({ checking: false, hasSession: false, error: error.message ?? "Session error" });
         } else {
@@ -82,11 +82,7 @@ export default function CharacterScreen() {
         }
       } catch (error) {
         if (!isMounted) return;
-        if (isAbortError(error)) {
-          setSessionFallback({ checking: false, hasSession: false, error: "Request canceled/timeout" });
-        } else {
-          setSessionFallback({ checking: false, hasSession: false, error: formatError(error, "Session check failed") });
-        }
+        setSessionFallback({ checking: false, hasSession: false, error: formatError(error, "Session check failed") });
       }
     };
     run();
@@ -192,7 +188,7 @@ export default function CharacterScreen() {
     });
 
     try {
-      const userResult = await withTimeout(supabase.auth.getUser(), 20000);
+      const userResult = await supabase.auth.getUser();
       if (userResult.error) {
         console.error("[auth] supabase error", {
           message: userResult.error.message,
@@ -236,10 +232,7 @@ export default function CharacterScreen() {
         backpack: [],
       };
 
-      const saved = await withTimeout(
-        saveCharacter(payload, character?.id),
-        25000,
-      );
+      const saved = await saveCharacter(payload, character?.id);
 
       console.info("[character]", {
         step: character ? "update_character_success" : "create_character_success",
@@ -258,20 +251,6 @@ export default function CharacterScreen() {
       });
       navigate(`/game/${campaignId}`);
     } catch (error) {
-      if (isAbortError(error)) {
-        console.info("[character]", {
-          step: "create_character_aborted",
-          campaignId,
-          userId: user.id,
-        });
-        toast({
-          title: "Request canceled/timeout",
-          description: "Please retry.",
-          variant: "destructive",
-        });
-        setLastError("Request canceled/timeout");
-        return;
-      }
 
       const supaError = error as { message?: string; code?: string; details?: string; hint?: string; status?: number };
       if (supaError?.message) {

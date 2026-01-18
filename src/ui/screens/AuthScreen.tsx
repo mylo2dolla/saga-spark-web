@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { isAbortError, formatError } from "@/ui/data/async";
+import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 
 interface AuthScreenProps {
@@ -71,19 +71,10 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       console.info("[auth] log", { step: "login_navigate" });
       navigate("/dashboard");
     } catch (error) {
-      if (isAbortError(error)) {
-        toast({
-          title: "Request canceled/timeout",
-          description: "Please try again.",
-          variant: "destructive",
-        });
-        setLastError("Request canceled/timeout");
-        console.info("[auth] log", {
-          step: "login_result",
-          hasSession: false,
-          userId: null,
-          error: { message: "AbortError", status: null, name: "AbortError" },
-        });
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        console.info("[auth] log", { step: "login_result", hasSession: true, userId: session.user?.id ?? null, error: null });
+        navigate("/dashboard");
         return;
       }
 
