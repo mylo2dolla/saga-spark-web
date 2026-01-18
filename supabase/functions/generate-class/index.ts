@@ -57,7 +57,11 @@ serve(async (req) => {
   try {
     // Authentication check
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader?.startsWith("Bearer ")) {
+    const apiKeyHeader = req.headers.get("apikey");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+    const hasBearer = authHeader?.startsWith("Bearer ");
+    const hasAnonKey = Boolean(apiKeyHeader) && apiKeyHeader === anonKey;
+    if (!hasBearer && !hasAnonKey) {
       return new Response(
         JSON.stringify({ error: "Authentication required" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -67,15 +71,17 @@ serve(async (req) => {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-      { global: { headers: { Authorization: authHeader } } }
+      { global: { headers: authHeader ? { Authorization: authHeader } : {} } }
     );
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return new Response(
-        JSON.stringify({ error: "Invalid authentication token" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (hasBearer) {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        return new Response(
+          JSON.stringify({ error: "Invalid authentication token" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     const { classDescription } = await req.json();
