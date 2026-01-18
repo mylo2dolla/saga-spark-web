@@ -6,6 +6,8 @@ const DEV_DEBUG = import.meta.env.DEV;
 interface WorldBoardProps {
   model: WorldBoardModel;
   currentLocationId?: string | null;
+  selectedNodeId?: string | null;
+  onSelectNode?: (nodeId: string) => void;
 }
 
 const BOARD_WIDTH = 520;
@@ -65,7 +67,7 @@ const normalizePositions = (model: WorldBoardModel) => {
   });
 };
 
-export default function WorldBoard({ model, currentLocationId }: WorldBoardProps) {
+export default function WorldBoard({ model, currentLocationId, selectedNodeId, onSelectNode }: WorldBoardProps) {
   const lastUpdatedRef = useRef<number | null>(null);
   const normalizedNodes = useMemo(() => normalizePositions(model), [model]);
   lastUpdatedRef.current = Date.now();
@@ -144,6 +146,8 @@ export default function WorldBoard({ model, currentLocationId }: WorldBoardProps
                     r={isCurrent ? 8 : 6}
                     fill={fillColor}
                     opacity={isCurrent ? 0.95 : 0.75}
+                    className={onSelectNode ? "cursor-pointer" : undefined}
+                    onClick={onSelectNode ? () => onSelectNode(node.id) : undefined}
                   />
                 ) : null}
                 {faction && typeof node.x === "number" && typeof node.y === "number" ? (
@@ -167,12 +171,21 @@ export default function WorldBoard({ model, currentLocationId }: WorldBoardProps
           const isCurrent = node.id === currentLocationId;
           const isConnected = connectedToCurrent.has(node.id);
           const faction = node.factionId ? factionLookup.get(node.factionId) : undefined;
+          const isSelected = node.id === selectedNodeId;
           return (
           <div
             key={node.id}
             className={`rounded-md border border-border px-2 py-1 ${
-              isCurrent ? "bg-primary/10 text-primary" : isConnected ? "bg-primary/5" : "bg-background"
+              isSelected
+                ? "bg-primary/20 text-primary"
+                : isCurrent
+                  ? "bg-primary/10 text-primary"
+                  : isConnected
+                    ? "bg-primary/5"
+                    : "bg-background"
             }`}
+            role={onSelectNode ? "button" : undefined}
+            onClick={onSelectNode ? () => onSelectNode(node.id) : undefined}
           >
             <div className="text-[11px] font-semibold text-foreground">{node.name}</div>
             {faction ? (

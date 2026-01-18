@@ -71,6 +71,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const initializingRef = useRef(false); // Prevents concurrent initializations
   const bootstrapInFlightRef = useRef(false);
   const bootstrapKeyRef = useRef<string | null>(null);
+  const bootstrapSeedRef = useRef<CampaignSeed | null>(null);
   const didAutosaveAfterInitRef = useRef(false);
   const lastSavedFingerprintRef = useRef<string | null>(null);
   const queuedFingerprintRef = useRef<string | null>(null);
@@ -258,7 +259,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       .replace(/^-+|-+$/g, ""), []);
 
   const createDeterministicPosition = useCallback((seed: string): { x: number; y: number } => {
-    const hashed = hashString(seed);
+    const hashed = Number.parseInt(hashString(seed), 16) || 0;
     return {
       x: 50 + (hashed % 400),
       y: 50 + ((hashed >>> 16) % 400),
@@ -293,9 +294,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
   const bootstrapWorld = useCallback(async (
     campaignSeed: CampaignSeed,
-    reason: string
+    reason: string,
+    force: boolean = false
   ): Promise<{ unified: UnifiedState; travel: TravelState } | null> => {
     if (bootstrapInFlightRef.current) return null;
+    const bootstrapKey = `${userId}:${campaignId}`;
+    if (!force && bootstrapKeyRef.current === bootstrapKey) {
+      return null;
+    }
+    bootstrapKeyRef.current = bootstrapKey;
     bootstrapInFlightRef.current = true;
     setSessionState(prev => ({ ...prev, bootstrapStatus: "bootstrapping" }));
     if (DEV_DEBUG) {
@@ -480,6 +487,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     worldContent,
   ]);
 
+  const retryBootstrap = useCallback(async () => {
+    if (!bootstrapSeedRef.current) return false;
+    const result = await bootstrapWorld(bootstrapSeedRef.current, "manual_retry", true);
+    return Boolean(result);
+  }, [bootstrapWorld]);
+
   // Initialize session from saved state or fresh
   const initializeSession = useCallback(async (initKey: string) => {
     if (!campaignId || !userId) {
@@ -539,7 +552,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       const latestSave = existingSaves[0]; // Most recent
       
       let unifiedState: UnifiedState;
-      let travelState: TravelState;
+      let travelState: TravelState | null = null;
       let initialPlaytime = 0;
       let loadedFromSupabase = false;
       let preMergeLocationsSize = 0;
@@ -565,6 +578,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           travelState = worldWithTravel.travelState ?? createTravelState(resolvedLocationId);
           initialPlaytime = latestSave.playtime_seconds;
           lastSaveIdRef.current = latestSave.id;
+          bootstrapSeedRef.current = unifiedState.world.campaignSeed;
           
           // Re-merge world content to pick up any new generated content
           if (worldContent) {
@@ -587,6 +601,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           factions: [],
           createdAt: Date.now(),
         };
+        bootstrapSeedRef.current = campaignSeed;
         
         // Create base state
         unifiedState = createUnifiedState(campaignSeed, [], 10, 12);
@@ -619,6 +634,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       );
       if (!invariantResult.travel || invariantResult.unified.world.locations.size === 0) {
         await bootstrapWorld(unifiedState.world.campaignSeed, "empty_world");
+        initializingRef.current = false;
         return;
       }
       unifiedState = invariantResult.unified;
@@ -1044,6 +1060,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     reloadLatestFromDb,
     triggerAutosave,
     autosaveNow,
+    retryBootstrap,
     fetchSaves: persistence.fetchSaves,
     deleteSave: persistence.deleteSave,
   };
