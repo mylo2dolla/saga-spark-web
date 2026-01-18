@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 const requestTimestamps: number[] = [];
 let lastDbWriteAt: number | null = null;
+let lastDbReadAt: number | null = null;
 let lastDbLoadAt: number | null = null;
 let lastEdgeCallAt: number | null = null;
 let lastEdgeResponseAt: number | null = null;
@@ -21,6 +22,11 @@ export const recordNetworkRequest = () => {
 
 export const recordDbWrite = () => {
   lastDbWriteAt = Date.now();
+  recordNetworkRequest();
+};
+
+export const recordDbRead = () => {
+  lastDbReadAt = Date.now();
   recordNetworkRequest();
 };
 
@@ -45,6 +51,7 @@ export const getNetworkSnapshot = () => {
     requestsPerMinute: requestTimestamps.length,
     lastRequestAt: requestTimestamps.length > 0 ? requestTimestamps[requestTimestamps.length - 1] : null,
     lastDbWriteAt,
+    lastDbReadAt,
     lastDbLoadAt,
     lastEdgeCallAt,
     lastEdgeResponseAt,

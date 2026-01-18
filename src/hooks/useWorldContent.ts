@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { WorldState, NPC, Quest, Location, FactionInfo, Alignment, PersonalityTrait } from "@/engine/narrative/types";
 import type { EnhancedLocation, LocationService } from "@/engine/narrative/Travel";
 import { toast } from "sonner";
+import { recordDbRead } from "@/ui/data/networkHealth";
 
 const DEV_DEBUG = import.meta.env.DEV;
 
@@ -66,6 +67,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
         .order("created_at", { ascending: true });
 
       if (fetchError) throw fetchError;
+      recordDbRead();
       if (!data || data.length === 0) {
         return null;
       }

@@ -35,7 +35,7 @@ export function useDbHealth() {
     };
 
     check();
-    interval = setInterval(check, 60000);
+    interval = setInterval(check, 120000);
 
     return () => {
       isMounted = false;

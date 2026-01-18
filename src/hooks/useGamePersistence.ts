@@ -3,7 +3,7 @@
  * Includes full travel state persistence.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { 
   serializeUnifiedState, 
@@ -15,7 +15,7 @@ import { type TravelState, createTravelState } from "@/engine/narrative/Travel";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
 import type { GameState, Entity } from "@/engine/types";
-import { recordDbLoad, recordDbWrite } from "@/ui/data/networkHealth";
+import { recordDbLoad, recordDbRead, recordDbWrite } from "@/ui/data/networkHealth";
 
 const DEV_DEBUG = import.meta.env.DEV;
 
@@ -49,6 +49,8 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
   const [saves, setSaves] = useState<GameSave[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const lastFetchAtRef = useRef<number | null>(null);
+  const fetchInFlightRef = useRef(false);
 
   const logPersistenceSnapshot = useCallback((
     label: string,
@@ -70,7 +72,13 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
   }, []);
 
   // Fetch all saves for this campaign
-  const fetchSaves = useCallback(async () => {
+  const fetchSaves = useCallback(async (force = false) => {
+    if (fetchInFlightRef.current) return;
+    const now = Date.now();
+    if (!force && lastFetchAtRef.current && now - lastFetchAtRef.current < 15000) {
+      return;
+    }
+    fetchInFlightRef.current = true;
     setIsLoading(true);
     try {
       const { data, error } = await supabase
@@ -81,12 +89,15 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
         .order("updated_at", { ascending: false });
 
       if (error) throw error;
+      lastFetchAtRef.current = now;
+      recordDbRead();
       setSaves(data || []);
     } catch (error) {
       console.error("Failed to fetch saves:", error);
       toast.error("Failed to load saves");
     } finally {
       setIsLoading(false);
+      fetchInFlightRef.current = false;
     }
   }, [campaignId, userId]);
 
@@ -154,7 +165,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
         toast.success(`Game saved: ${saveName}`);
       }
       if (options?.refreshList !== false) {
-        await fetchSaves();
+        await fetchSaves(true);
       }
       return data.id;
     } catch (error) {
@@ -302,6 +313,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
 
       if (error) throw error;
       if (!data) throw new Error("Save not found");
+      recordDbRead();
 
       const unifiedState = buildUnifiedStateFromRow(data);
       recordDbLoad();

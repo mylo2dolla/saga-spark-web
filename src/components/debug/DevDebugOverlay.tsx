@@ -126,15 +126,15 @@ export default function DevDebugOverlay() {
 
   const overlayPayload = useMemo(() => {
     if (!world || !travelState) {
-    return {
-      supabaseProjectRef: getProjectRef(SUPABASE_URL),
-      campaignId: campaignId ?? null,
-      loadedFromSupabase: session.loadedFromSupabase ?? false,
-      lastSavedAt: session.lastSavedAt ?? null,
-      lastLoadedAt: session.lastLoadedAt ?? null,
-      networkHealth,
-      locationsSize: 0,
-      locationIds: [],
+      return {
+        supabaseProjectRef: getProjectRef(SUPABASE_URL),
+        campaignId: campaignId ?? null,
+        loadedFromSupabase: session.loadedFromSupabase ?? false,
+        lastSavedAt: session.lastSavedAt ?? null,
+        lastLoadedAt: session.lastLoadedAt ?? null,
+        networkHealth,
+        locationsSize: 0,
+        locationIds: [],
       locationNames: [],
       currentLocationId: travelState?.currentLocationId ?? null,
         connectedTo: [],
@@ -143,14 +143,14 @@ export default function DevDebugOverlay() {
       };
     }
 
-    return {
-      supabaseProjectRef: getProjectRef(SUPABASE_URL),
-      campaignId: campaignId ?? null,
-      loadedFromSupabase: session.loadedFromSupabase ?? false,
-      lastSavedAt: session.lastSavedAt ?? null,
-      lastLoadedAt: session.lastLoadedAt ?? null,
-      networkHealth,
-      locationsSize: world.locations.size,
+      return {
+        supabaseProjectRef: getProjectRef(SUPABASE_URL),
+        campaignId: campaignId ?? null,
+        loadedFromSupabase: session.loadedFromSupabase ?? false,
+        lastSavedAt: session.lastSavedAt ?? null,
+        lastLoadedAt: session.lastLoadedAt ?? null,
+        networkHealth,
+        locationsSize: world.locations.size,
       locationIds: locations.map(location => location.id),
       locationNames: locations.map(location => location.name),
       currentLocationId: travelState.currentLocationId,
