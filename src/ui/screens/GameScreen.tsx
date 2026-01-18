@@ -204,6 +204,16 @@ export default function GameScreen() {
               Tick
             </Button>
           ) : null}
+          {DEV_DEBUG ? (
+            <Button
+              variant="outline"
+              onClick={() => {
+                void gameSession.expandWorld?.(3);
+              }}
+            >
+              Expand World
+            </Button>
+          ) : null}
         </div>
       </div>
 
