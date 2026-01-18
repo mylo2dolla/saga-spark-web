@@ -118,6 +118,12 @@ export default function GameScreen() {
     return World.getFlag(gameSession.unifiedState.world, flagId);
   }, [currentLocation, gameSession.unifiedState]);
 
+  const encounterChoiceForCurrent = useMemo(() => {
+    if (!gameSession.unifiedState || !currentLocation) return null;
+    const flagId = `encounter_choice:${currentLocation.id}`;
+    return World.getFlag(gameSession.unifiedState.world, flagId);
+  }, [currentLocation, gameSession.unifiedState]);
+
   const hashString = useCallback((value: string) => {
     let hash = 0;
     for (let i = 0; i < value.length; i += 1) {
@@ -286,6 +292,26 @@ export default function GameScreen() {
       arrivalInFlightRef.current = false;
     }
   }, [dmContext, dungeonMaster, expandWorldAtLocation, gameSession, shouldFlagEncounter]);
+
+  const handleEncounterChoice = useCallback(async (choice: "investigate" | "avoid") => {
+    if (!currentLocation) return;
+    const possibleFlagId = `encounter_possible:${currentLocation.id}`;
+    const choiceFlagId = `encounter_choice:${currentLocation.id}`;
+    gameSession.updateUnifiedState(prev => ({
+      ...prev,
+      world: World.setFlag(
+        World.setFlag(prev.world, possibleFlagId, false, "encounter_choice"),
+        choiceFlagId,
+        choice,
+        "encounter_choice"
+      ),
+    }));
+    const prompt = choice === "investigate"
+      ? `In 1-2 sentences, narrate the party deciding to investigate the nearby threat at ${currentLocation.name}.`
+      : `In 1-2 sentences, narrate the party choosing to avoid trouble and move cautiously through ${currentLocation.name}.`;
+    await dungeonMaster.sendNarration?.(prompt, dmContext);
+    await gameSession.autosaveNow?.();
+  }, [currentLocation, dmContext, dungeonMaster, gameSession]);
 
   useEffect(() => {
     const currentId = gameSession.travelState?.currentLocationId ?? null;
@@ -523,6 +549,16 @@ export default function GameScreen() {
               <div>Current: {currentLocation?.name ?? "Unknown"}</div>
               {encounterFlagForCurrent?.value === true ? (
                 <div className="text-muted-foreground">You sense something nearby.</div>
+              ) : null}
+              {encounterFlagForCurrent?.value === true && !encounterChoiceForCurrent ? (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button size="sm" variant="outline" onClick={() => handleEncounterChoice("investigate")}>
+                    Investigate
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => handleEncounterChoice("avoid")}>
+                    Avoid
+                  </Button>
+                </div>
               ) : null}
             </CardContent>
           </Card>
