@@ -58,3 +58,21 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, 
     fetch: DEV_DEBUG ? debugFetch : baseFetch,
   },
 });
+
+if (DEV_DEBUG) {
+  const authAny = supabase.auth as typeof supabase.auth & {
+    signInWithPassword?: (...args: Parameters<typeof supabase.auth.signInWithPassword>) => ReturnType<typeof supabase.auth.signInWithPassword>;
+  };
+  if (authAny.signInWithPassword) {
+    const originalSignIn = authAny.signInWithPassword.bind(supabase.auth);
+    authAny.signInWithPassword = async (...args) => {
+      const allowed = (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress === true;
+      if (!allowed) {
+        console.warn("[auth] signIn called outside AuthScreen", {
+          route: globalThis.location?.pathname ?? null,
+        });
+      }
+      return originalSignIn(...args);
+    };
+  }
+}
