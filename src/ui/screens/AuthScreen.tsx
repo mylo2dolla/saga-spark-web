@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
+import SupabaseStatusIndicator from "@/ui/components/SupabaseStatusIndicator";
 
 interface AuthScreenProps {
   mode: "login" | "signup";
@@ -21,6 +22,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const [displayName, setDisplayName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitLockRef = useRef(false);
+  const DEV_DEBUG = import.meta.env.DEV;
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -75,6 +77,20 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       if (session) {
         console.info("[auth] log", { step: "login_result", hasSession: true, userId: session.user?.id ?? null, error: null });
         navigate("/dashboard");
+        return;
+      }
+
+      if (error instanceof TypeError) {
+        const message = error.message || "Failed to fetch";
+        const description = DEV_DEBUG ? `Network/CORS failure — ${message}` : "Network error. Please try again.";
+        setLastError(description);
+        toast({ title: "Authentication failed", description, variant: "destructive" });
+        console.info("[auth] log", {
+          step: "login_result",
+          hasSession: false,
+          userId: null,
+          error: { message, status: null, name: "TypeError" },
+        });
         return;
       }
 
@@ -156,6 +172,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           </span>
         )}
       </div>
+      {DEV_DEBUG ? <SupabaseStatusIndicator /> : null}
     </div>
   );
 }

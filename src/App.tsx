@@ -13,6 +13,7 @@ import DashboardScreen from "@/ui/screens/DashboardScreen";
 import CharacterScreen from "@/ui/screens/CharacterScreen";
 import GameScreen from "@/ui/screens/GameScreen";
 import ServerAdminScreen from "@/ui/screens/ServerAdminScreen";
+import SupabaseDebugScreen from "@/ui/screens/SupabaseDebugScreen";
 import GameSessionRoute from "./routes/GameSessionRoute";
 import NotFound from "./pages/NotFound";
 
@@ -36,6 +37,7 @@ const App = () => (
                   <Route path="/dashboard" element={<DashboardScreen />} />
                   <Route path="/servers" element={<ServerAdminScreen />} />
                   <Route path="/admin" element={<ServerAdminScreen />} />
+                  <Route path="/debug/supabase" element={<SupabaseDebugScreen />} />
                   <Route path="/game/:campaignId" element={<GameSessionRoute />}>
                     <Route index element={<GameScreen />} />
                     <Route path="create-character" element={<CharacterScreen />} />
