@@ -46,7 +46,7 @@ export function useDbHealth(enabled = true) {
       isMounted = false;
       if (interval) clearInterval(interval);
     };
-  }, []);
+  }, [enabled]);
 
   return { status, lastError };
 }
