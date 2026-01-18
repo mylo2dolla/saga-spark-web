@@ -17,10 +17,12 @@ export function useAuth() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isProfileCreating, setIsProfileCreating] = useState(false);
+  const [lastAuthError, setLastAuthError] = useState<{ message: string; status: number | null } | null>(null);
   const isMountedRef = useRef(true);
 
   const logAuthError = (error: { message?: string; code?: string; details?: string; hint?: string; status?: number } | null) => {
     if (!error) return;
+    setLastAuthError({ message: error.message ?? "Unknown error", status: error.status ?? null });
     console.error("[auth] supabase error", {
       message: error.message,
       code: error.code,
@@ -31,6 +33,7 @@ export function useAuth() {
   };
 
   useEffect(() => {
+    console.info("[auth] log", { step: "auth_bootstrap_start" });
     const loadSession = async () => {
       try {
         // Get initial session
@@ -38,6 +41,11 @@ export function useAuth() {
         if (error) logAuthError(error);
         if (!isMountedRef.current) return;
         setUser(session?.user ?? null);
+        console.info("[auth] log", {
+          step: "auth_bootstrap_end",
+          hasSession: Boolean(session),
+          userId: session?.user?.id ?? null,
+        });
         if (session?.user) {
           fetchProfile(session.user.id);
         } else {
@@ -198,6 +206,7 @@ export function useAuth() {
     profile,
     isLoading,
     isProfileCreating,
+    lastAuthError,
     signUp,
     signIn,
     signOut,

@@ -30,13 +30,21 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
 
     setIsSubmitting(true);
     setLastError(null);
+    console.info("[auth] log", { step: "login_submit" });
 
     try {
       const action = mode === "login"
         ? () => signIn(email, password)
         : () => signUp(email, password, displayName || undefined);
 
-      await withTimeout(action(), 25000);
+      const result = await withTimeout(action(), 25000);
+      const hasSession = Boolean(result.session);
+      console.info("[auth] log", {
+        step: "login_result",
+        hasSession,
+        userId: result.user?.id ?? null,
+        error: null,
+      });
       navigate("/dashboard");
     } catch (error) {
       if (isAbortError(error)) {
@@ -46,12 +54,28 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           variant: "destructive",
         });
         setLastError("Request canceled/timeout");
+        console.info("[auth] log", {
+          step: "login_result",
+          hasSession: false,
+          userId: null,
+          error: { message: "AbortError", status: null, name: "AbortError" },
+        });
         return;
       }
 
       const message = formatError(error, "Failed to authenticate");
       setLastError(message);
       toast({ title: "Authentication failed", description: message, variant: "destructive" });
+      console.info("[auth] log", {
+        step: "login_result",
+        hasSession: false,
+        userId: null,
+        error: {
+          message,
+          status: (error as { status?: number })?.status ?? null,
+          name: (error as { name?: string })?.name ?? null,
+        },
+      });
     } finally {
       setIsSubmitting(false);
     }

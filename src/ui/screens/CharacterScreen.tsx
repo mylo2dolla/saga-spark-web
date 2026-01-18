@@ -7,6 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 import type { CharacterStats, CharacterResources, PassiveAbility, GameAbility } from "@/types/game";
 import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useAuth } from "@/hooks/useAuth";
 
 interface AICharacterData {
   name: string;
@@ -26,10 +27,36 @@ export default function CharacterScreen() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { setLastError } = useDiagnostics();
+  const { user, isLoading: authLoading } = useAuth();
   const [isCreating, setIsCreating] = useState(false);
 
   if (!campaignId) {
     return <div className="text-sm text-muted-foreground">Campaign not found.</div>;
+  }
+
+  if (authLoading) {
+    console.info("[auth] log", {
+      step: "auth_guard",
+      path: `/game/${campaignId}/create-character`,
+      hasSession: Boolean(user),
+      userId: user?.id ?? null,
+      isLoading: authLoading,
+      reason: "auth_loading",
+    });
+    return <div className="text-sm text-muted-foreground">Loading session...</div>;
+  }
+
+  if (!user) {
+    console.info("[auth] log", {
+      step: "auth_guard",
+      path: `/game/${campaignId}/create-character`,
+      hasSession: false,
+      userId: null,
+      isLoading: authLoading,
+      reason: "no_user",
+    });
+    navigate("/login");
+    return null;
   }
 
   const getModifier = (stat: number) => Math.floor((stat - 10) / 2);

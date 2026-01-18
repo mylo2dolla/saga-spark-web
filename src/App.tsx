@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import AppShell from "@/ui/app-shell/AppShell";
 import { ErrorBoundary } from "@/ui/components/ErrorBoundary";
 import EnvGuard from "@/ui/components/EnvGuard";
+import AuthDebugPanel from "@/ui/components/AuthDebugPanel";
 import { DiagnosticsProvider } from "@/ui/data/diagnostics";
 import AuthScreen from "@/ui/screens/AuthScreen";
 import DashboardScreen from "@/ui/screens/DashboardScreen";
@@ -25,8 +26,8 @@ const App = () => (
       <EnvGuard>
         <BrowserRouter>
           <DiagnosticsProvider>
-            <ErrorBoundary>
-              <Routes>
+          <ErrorBoundary>
+            <Routes>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/game" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/login" element={<AuthScreen mode="login" />} />
@@ -42,8 +43,9 @@ const App = () => (
                 </Route>
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
-              </Routes>
-            </ErrorBoundary>
+            </Routes>
+            <AuthDebugPanel />
+          </ErrorBoundary>
           </DiagnosticsProvider>
         </BrowserRouter>
       </EnvGuard>

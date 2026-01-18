@@ -130,13 +130,39 @@ export default function DashboardScreen() {
   }, [user, toast, setLastError]);
 
   useEffect(() => {
-    if (!authLoading && !user) {
+    const hasSession = Boolean(user);
+    if (authLoading) {
+      console.info("[auth] log", {
+        step: "auth_guard",
+        path: "/dashboard",
+        hasSession,
+        userId: user?.id ?? null,
+        isLoading: authLoading,
+        reason: "auth_loading",
+      });
+      return;
+    }
+    if (!user) {
+      console.info("[auth] log", {
+        step: "auth_guard",
+        path: "/dashboard",
+        hasSession: false,
+        userId: null,
+        isLoading: authLoading,
+        reason: "no_user",
+      });
       navigate("/login");
       return;
     }
-    if (user) {
-      fetchCampaigns();
-    }
+    console.info("[auth] log", {
+      step: "auth_guard",
+      path: "/dashboard",
+      hasSession: true,
+      userId: user.id,
+      isLoading: authLoading,
+      reason: "ok",
+    });
+    fetchCampaigns();
   }, [authLoading, user, navigate, fetchCampaigns]);
 
   const handleCreate = async () => {
