@@ -208,6 +208,12 @@ export default function DevDebugOverlay() {
       <pre className="whitespace-pre-wrap text-muted-foreground">
         {JSON.stringify(overlayPayload, null, 2)}
       </pre>
+      <div className="mt-2 text-[10px] text-muted-foreground">
+        <div>profilesReads: {networkHealth.profilesReads}</div>
+        <div>campaignMembersReads: {networkHealth.campaignMembersReads}</div>
+        <div>campaignsReads: {networkHealth.campaignsReads}</div>
+        <div>savesReads: {networkHealth.savesReads}</div>
+      </div>
       {persistenceReport ? (
         <pre className="mt-2 whitespace-pre-wrap text-muted-foreground">
           {persistenceReport}

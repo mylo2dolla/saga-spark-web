@@ -8,6 +8,8 @@ let lastEdgeCallAt: number | null = null;
 let lastEdgeResponseAt: number | null = null;
 let profilesReads = 0;
 let campaignMembersReads = 0;
+let campaignsReads = 0;
+let savesReads = 0;
 
 const trimOld = (now: number) => {
   const cutoff = now - 60_000;
@@ -54,6 +56,14 @@ export const recordCampaignMembersRead = () => {
   campaignMembersReads += 1;
 };
 
+export const recordCampaignsRead = () => {
+  campaignsReads += 1;
+};
+
+export const recordSavesRead = () => {
+  savesReads += 1;
+};
+
 export const getNetworkSnapshot = () => {
   const now = Date.now();
   trimOld(now);
@@ -67,6 +77,8 @@ export const getNetworkSnapshot = () => {
     lastEdgeResponseAt,
     profilesReads,
     campaignMembersReads,
+    campaignsReads,
+    savesReads,
   };
 };
 

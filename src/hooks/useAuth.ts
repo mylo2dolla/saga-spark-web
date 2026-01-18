@@ -9,6 +9,173 @@ const PROFILE_TTL_MS = 60000;
 const profileCache = new Map<string, { data: Profile | null; fetchedAt: number }>();
 const profileInFlight = new Map<string, Promise<Profile | null>>();
 
+interface AuthState {
+  user: User | null;
+  profile: Profile | null;
+  isLoading: boolean;
+  isProfileCreating: boolean;
+  lastAuthError: { message: string; status: number | null } | null;
+}
+
+let authState: AuthState = {
+  user: null,
+  profile: null,
+  isLoading: true,
+  isProfileCreating: false,
+  lastAuthError: null,
+};
+
+const listeners = new Set<(state: AuthState) => void>();
+let authInitialized = false;
+let authInitPromise: Promise<void> | null = null;
+let authSubscription: { unsubscribe: () => void } | null = null;
+
+const setAuthState = (partial: Partial<AuthState>) => {
+  authState = { ...authState, ...partial };
+  listeners.forEach(listener => listener(authState));
+};
+
+const notifyAuthError = (error: { message?: string; status?: number }) => {
+  if (!error) return;
+  setAuthState({
+    lastAuthError: { message: error.message ?? "Unknown error", status: error.status ?? null },
+  });
+};
+
+const ensureAuthSubscription = () => {
+  if (authSubscription) return;
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(
+    async (_event, session) => {
+      setAuthState({ user: session?.user ?? null });
+      if (session?.user) {
+        await fetchProfileInternal(session.user.id);
+      } else {
+        setAuthState({ profile: null, isLoading: false, isProfileCreating: false });
+      }
+    }
+  );
+  authSubscription = subscription;
+};
+
+const fetchProfileInternal = async (userId: string) => {
+  try {
+    const cached = profileCache.get(userId);
+    const now = Date.now();
+    if (cached && now - cached.fetchedAt < PROFILE_TTL_MS) {
+      setAuthState({ profile: cached.data, isLoading: false });
+      return;
+    }
+
+    const inFlight = profileInFlight.get(userId);
+    if (inFlight) {
+      const data = await inFlight;
+      setAuthState({ profile: data, isLoading: false });
+      return;
+    }
+
+    const loadPromise = (async () => {
+      const { data, error } = await withTimeout(
+        supabase
+          .from("profiles")
+          .select("*")
+          .eq("user_id", userId)
+          .maybeSingle(),
+        20000,
+      );
+
+      if (error) {
+        if (isAbortError(error)) {
+          return null;
+        }
+        notifyAuthError(error);
+        return null;
+      }
+      recordProfilesRead();
+      if (data) {
+        profileCache.set(userId, { data, fetchedAt: Date.now() });
+      }
+      return data ?? null;
+    })();
+
+    profileInFlight.set(userId, loadPromise);
+    const profileData = await loadPromise;
+    profileInFlight.delete(userId);
+
+    if (profileData) {
+      setAuthState({ profile: profileData, isLoading: false });
+      return;
+    }
+
+    setAuthState({ isProfileCreating: true });
+
+    const { data: userData } = await supabase.auth.getUser();
+    const currentUser = userData.user;
+    const displayName =
+      currentUser?.user_metadata?.display_name
+      ?? currentUser?.email?.split("@")[0]
+      ?? "Adventurer";
+
+    const createResult = await withTimeout(
+      supabase
+        .from("profiles")
+        .insert({
+          user_id: userId,
+          display_name: displayName,
+          avatar_url: null,
+        })
+        .select("*")
+        .single(),
+      20000,
+    );
+
+    if (createResult.error) {
+      if (!isAbortError(createResult.error)) {
+        notifyAuthError(createResult.error);
+      }
+    } else {
+      profileCache.set(userId, { data: createResult.data, fetchedAt: Date.now() });
+      setAuthState({ profile: createResult.data });
+    }
+  } finally {
+    setAuthState({ isProfileCreating: false, isLoading: false });
+  }
+};
+
+const initAuth = async () => {
+  if (authInitialized) return;
+  if (authInitPromise) return authInitPromise;
+  authInitPromise = (async () => {
+    console.info("[auth] log", { step: "auth_bootstrap_start" });
+    try {
+      const { data: { session }, error } = await withTimeout(supabase.auth.getSession(), 20000);
+      if (error) {
+        notifyAuthError(error);
+      }
+      setAuthState({ user: session?.user ?? null });
+      if (session?.user) {
+        await fetchProfileInternal(session.user.id);
+      } else {
+        setAuthState({ isLoading: false });
+      }
+      console.info("[auth] log", {
+        step: "auth_bootstrap_end",
+        hasSession: Boolean(session),
+        userId: session?.user?.id ?? null,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        setAuthState({ isLoading: false });
+        return;
+      }
+      notifyAuthError(error as { message?: string; status?: number });
+      setAuthState({ isLoading: false });
+    } finally {
+      authInitialized = true;
+    }
+  })();
+  return authInitPromise;
+};
+
 export interface Profile {
   id: string;
   user_id: string;
@@ -17,16 +184,12 @@ export interface Profile {
 }
 
 export function useAuth() {
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isProfileCreating, setIsProfileCreating] = useState(false);
-  const [lastAuthError, setLastAuthError] = useState<{ message: string; status: number | null } | null>(null);
+  const [state, setState] = useState<AuthState>(authState);
   const isMountedRef = useRef(true);
 
   const logAuthError = (error: { message?: string; code?: string; details?: string; hint?: string; status?: number } | null) => {
     if (!error) return;
-    setLastAuthError({ message: error.message ?? "Unknown error", status: error.status ?? null });
+    notifyAuthError(error);
     console.error("[auth] supabase error", {
       message: error.message,
       code: error.code,
@@ -37,158 +200,21 @@ export function useAuth() {
   };
 
   useEffect(() => {
-    console.info("[auth] log", { step: "auth_bootstrap_start" });
-    const loadSession = async () => {
-      try {
-        // Get initial session
-        const { data: { session }, error } = await withTimeout(supabase.auth.getSession(), 20000);
-        if (error) logAuthError(error);
-        if (!isMountedRef.current) return;
-        setUser(session?.user ?? null);
-        console.info("[auth] log", {
-          step: "auth_bootstrap_end",
-          hasSession: Boolean(session),
-          userId: session?.user?.id ?? null,
-        });
-        if (session?.user) {
-          fetchProfile(session.user.id);
-        } else {
-          setIsLoading(false);
-        }
-      } catch (error) {
-        if (isAbortError(error)) {
-          if (isMountedRef.current) {
-            setIsLoading(false);
-          }
-          return;
-        }
-        logAuthError(error as { message?: string; code?: string; details?: string; hint?: string; status?: number });
-        if (isMountedRef.current) {
-          setIsLoading(false);
-        }
-      }
+    const handleUpdate = (next: AuthState) => {
+    if (isMountedRef.current) {
+      setState(next);
+    }
     };
 
-    loadSession();
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        setUser(session?.user ?? null);
-        if (session?.user) {
-          await fetchProfile(session.user.id);
-        } else {
-          setProfile(null);
-          setIsLoading(false);
-        }
-      }
-    );
+    listeners.add(handleUpdate);
+    ensureAuthSubscription();
+    void initAuth();
 
     return () => {
       isMountedRef.current = false;
-      subscription.unsubscribe();
+      listeners.delete(handleUpdate);
     };
   }, []);
-
-  const fetchProfile = async (userId: string) => {
-    try {
-      const cached = profileCache.get(userId);
-      const now = Date.now();
-      if (cached && now - cached.fetchedAt < PROFILE_TTL_MS) {
-        if (isMountedRef.current) {
-          setProfile(cached.data);
-          setIsLoading(false);
-        }
-        return;
-      }
-
-      const inFlight = profileInFlight.get(userId);
-      if (inFlight) {
-        const data = await inFlight;
-        if (isMountedRef.current) {
-          setProfile(data);
-          setIsLoading(false);
-        }
-        return;
-      }
-
-      const loadPromise = (async () => {
-        const { data, error } = await withTimeout(
-          supabase
-            .from("profiles")
-            .select("*")
-            .eq("user_id", userId)
-            .maybeSingle(),
-          20000,
-        );
-
-        if (error) {
-          if (isAbortError(error)) {
-            return null;
-          }
-          logAuthError(error);
-          return null;
-        }
-        recordProfilesRead();
-        if (data) {
-          profileCache.set(userId, { data, fetchedAt: Date.now() });
-        }
-        return data ?? null;
-      })();
-
-      profileInFlight.set(userId, loadPromise);
-      const profileData = await loadPromise;
-      profileInFlight.delete(userId);
-
-      if (profileData) {
-        if (isMountedRef.current) {
-          setProfile(profileData);
-        }
-        return;
-      }
-
-      if (isMountedRef.current) {
-        setIsProfileCreating(true);
-      }
-
-      const { data: userData } = await supabase.auth.getUser();
-      const currentUser = userData.user;
-      const displayName =
-        currentUser?.user_metadata?.display_name
-        ?? currentUser?.email?.split("@")[0]
-        ?? "Adventurer";
-
-      const createResult = await withTimeout(
-        supabase
-          .from("profiles")
-          .insert({
-            user_id: userId,
-            display_name: displayName,
-            avatar_url: null,
-          })
-          .select("*")
-          .single(),
-        20000,
-      );
-
-      if (createResult.error) {
-        if (!isAbortError(createResult.error)) {
-          logAuthError(createResult.error);
-        }
-      } else {
-        profileCache.set(userId, { data: createResult.data, fetchedAt: Date.now() });
-        if (isMountedRef.current) {
-          setProfile(createResult.data);
-        }
-      }
-      return;
-    } finally {
-      if (isMountedRef.current) {
-        setIsProfileCreating(false);
-        setIsLoading(false);
-      }
-    }
-  };
 
   const signUp = async (email: string, password: string, displayName?: string) => {
     const { data, error } = await supabase.auth.signUp({
@@ -231,23 +257,23 @@ export function useAuth() {
   };
 
   const updateProfile = async (updates: Partial<Profile>) => {
-    if (!user) throw new Error("Not authenticated");
+    if (!state.user) throw new Error("Not authenticated");
 
     const { error } = await supabase
       .from("profiles")
       .update(updates)
-      .eq("user_id", user.id);
+      .eq("user_id", state.user.id);
 
     if (error) throw error;
-    await fetchProfile(user.id);
+    await fetchProfileInternal(state.user.id);
   };
 
   return {
-    user,
-    profile,
-    isLoading,
-    isProfileCreating,
-    lastAuthError,
+    user: state.user,
+    profile: state.profile,
+    isLoading: state.isLoading,
+    isProfileCreating: state.isProfileCreating,
+    lastAuthError: state.lastAuthError,
     signUp,
     signIn,
     signOut,

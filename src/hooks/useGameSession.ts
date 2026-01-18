@@ -17,6 +17,7 @@ import { createTravelState, type TravelState, type EnhancedLocation } from "@/en
 import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import type { CampaignSeed } from "@/engine/narrative/types";
 import { toast } from "sonner";
+import { recordCampaignsRead, recordSavesRead } from "@/ui/data/networkHealth";
 
 const FALLBACK_LOCATION_ID = "starting_location";
 
@@ -322,7 +323,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         .select("name, description")
         .eq("id", campaignId)
         .single();
-      
+
       if (campaignError || !campaign) {
         const error = campaignError ?? new Error("Campaign not found");
         const { message, status, toastMessage } = logSupabaseError("Campaign fetch", error);
@@ -334,6 +335,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         toast.error(displayMessage);
         throw new Error(displayMessage);
       }
+      recordCampaignsRead();
       
       // Fetch saves directly to ensure we have latest data
       const { data: savesData, error: savesError } = await supabase
@@ -349,6 +351,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         const { toastMessage } = logSupabaseError("Game saves fetch", savesError);
         toast.error(toastMessage);
         existingSaves = [];
+      } else if (existingSaves.length > 0) {
+        recordSavesRead();
       }
       const latestSave = existingSaves[0]; // Most recent
       
