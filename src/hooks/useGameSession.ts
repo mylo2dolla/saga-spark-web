@@ -30,6 +30,7 @@ export interface GameSessionState {
   isLoading: boolean;
   error: string | null;
   bootstrapStatus: "idle" | "loading_from_db" | "needs_bootstrap" | "bootstrapping" | "ready" | "error";
+  lastWorldGenError: unknown | null;
   playtimeSeconds: number;
   loadedFromSupabase: boolean;
   lastSavedAt: number | null;
@@ -45,7 +46,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const userId = user?.id ?? "";
   
   const { content: worldContent, hasLoadedContent, mergeIntoWorldState, fetchContent } = useWorldContent({ campaignId });
-  const { generateInitialWorld } = useWorldGenerator();
+  const { generateInitialWorld, lastEdgeError } = useWorldGenerator();
   const persistence = useGamePersistence({ campaignId, userId });
   
   const [sessionState, setSessionState] = useState<GameSessionState>({
@@ -56,6 +57,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     isLoading: true,
     error: null,
     bootstrapStatus: "idle",
+    lastWorldGenError: null,
     playtimeSeconds: 0,
     loadedFromSupabase: false,
     lastSavedAt: null,
@@ -439,18 +441,24 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     }
 
     try {
-      let generated = await generateInitialWorld({
-        title: campaignSeed.title,
-        description: campaignSeed.description,
-        themes: campaignSeed.themes ?? [],
-      });
-
-      if (!generated || !Array.isArray(generated.locations) || generated.locations.length === 0) {
-        generated = await generateInitialWorld({
-          title: `${campaignSeed.title} (retry)`,
+      let generated = await generateInitialWorld(
+        {
+          title: campaignSeed.title,
           description: campaignSeed.description,
           themes: campaignSeed.themes ?? [],
-        });
+        },
+        { campaignId }
+      );
+
+      if (!generated || !Array.isArray(generated.locations) || generated.locations.length === 0) {
+        generated = await generateInitialWorld(
+          {
+            title: `${campaignSeed.title} (retry)`,
+            description: campaignSeed.description,
+            themes: campaignSeed.themes ?? [],
+          },
+          { campaignId }
+        );
       }
 
       let normalizedLocations = generated?.locations?.length
@@ -576,6 +584,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         isLoading: false,
         error: null,
         bootstrapStatus: "ready",
+        lastWorldGenError: null,
         lastSavedAt: Date.now(),
       }));
 
@@ -588,6 +597,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         isLoading: false,
         isInitialized: false,
         bootstrapStatus: "error",
+        lastWorldGenError: lastEdgeError ?? error ?? null,
       }));
       toast.error(message);
       return null;
@@ -604,6 +614,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     fetchContent,
     generateInitialWorld,
     getErrorMessage,
+    lastEdgeError,
     mergeIntoWorldState,
     normalizeLocations,
     persistence,
@@ -794,6 +805,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         isLoading: false,
         error: null,
         bootstrapStatus: "ready",
+        lastWorldGenError: null,
         playtimeSeconds: initialPlaytime,
         loadedFromSupabase,
         lastSavedAt: prev.lastSavedAt,
