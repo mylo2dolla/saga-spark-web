@@ -292,6 +292,135 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     });
   }, [createDeterministicPosition, toKebab]);
 
+  const buildLocationFromSeed = useCallback((
+    seed: CampaignSeed,
+    index: number,
+    preferredId?: string
+  ): EnhancedLocation => {
+    const adjectives = ["Amber", "Broken", "Crimson", "Elder", "Frosted", "Golden", "Hidden", "Iron", "Mist", "Silent"];
+    const nouns = ["Vale", "Crossing", "Harbor", "Outpost", "Hollow", "Grove", "Keep", "March", "Ridge", "Reach"];
+    const hashBase = `${seed.id}:${seed.title}:${index}`;
+    const hash = Number.parseInt(hashString(hashBase), 16) || 0;
+    const adjective = adjectives[hash % adjectives.length];
+    const noun = nouns[(hash >>> 8) % nouns.length];
+    const name = `${adjective} ${noun}`;
+    const id = preferredId ?? `location-${index + 1}`;
+    return {
+      id,
+      name,
+      description: seed.description || `A region tied to ${seed.title}.`,
+      type: (["town", "ruins", "forest", "cave", "fort", "port"][(hash >>> 4) % 6] ?? "town"),
+      dangerLevel: 1 + (hash % 6),
+      position: createDeterministicPosition(`${seed.id}:${id}`),
+      connectedTo: [],
+    };
+  }, [createDeterministicPosition, hashString]);
+
+  const ensureMinimumWorldGraph = useCallback((
+    seed: CampaignSeed,
+    locations: EnhancedLocation[],
+    minimumCount: number
+  ) => {
+    const existingIds = new Set<string>();
+    const normalized = locations.map(loc => {
+      existingIds.add(loc.id);
+      return {
+        ...loc,
+        connectedTo: Array.from(new Set(loc.connectedTo ?? [])),
+      };
+    });
+
+    const ensureUniqueId = (baseId: string) => {
+      let candidate = baseId;
+      let suffix = 1;
+      while (existingIds.has(candidate)) {
+        candidate = `${baseId}-${suffix}`;
+        suffix += 1;
+      }
+      existingIds.add(candidate);
+      return candidate;
+    };
+
+    if (!existingIds.has("starting_location")) {
+      const start = buildLocationFromSeed(seed, 0, "starting_location");
+      normalized.unshift(start);
+      existingIds.add(start.id);
+    }
+
+    let index = normalized.length;
+    while (normalized.length < minimumCount) {
+      const newId = ensureUniqueId(`location-${index + 1}`);
+      normalized.push(buildLocationFromSeed(seed, index, newId));
+      index += 1;
+    }
+
+    const connectionMap = new Map<string, Set<string>>();
+    for (const location of normalized) {
+      connectionMap.set(location.id, new Set(location.connectedTo ?? []));
+    }
+
+    const addEdge = (from: string, to: string) => {
+      if (from === to) return;
+      connectionMap.get(from)?.add(to);
+      connectionMap.get(to)?.add(from);
+    };
+
+    const allIds = normalized.map(loc => loc.id);
+    const startId = "starting_location";
+    const otherIds = allIds.filter(id => id !== startId);
+    if (otherIds.length >= 2) {
+      addEdge(startId, otherIds[0]);
+      addEdge(startId, otherIds[1]);
+    }
+
+    for (let i = 0; i < allIds.length - 1; i += 1) {
+      addEdge(allIds[i], allIds[i + 1]);
+    }
+
+    const edgeKeys = new Set<string>();
+    connectionMap.forEach((targets, from) => {
+      targets.forEach((to) => {
+        edgeKeys.add([from, to].sort().join(":"));
+      });
+    });
+    if (edgeKeys.size < 4 && allIds.length > 2) {
+      addEdge(allIds[0], allIds[2]);
+      addEdge(allIds[1], allIds[3] ?? allIds[0]);
+    }
+
+    return normalized.map(loc => ({
+      ...loc,
+      connectedTo: Array.from(connectionMap.get(loc.id) ?? []),
+    }));
+  }, [buildLocationFromSeed]);
+
+  const expandWorldGraph = useCallback((
+    seed: CampaignSeed,
+    locations: EnhancedLocation[],
+    addCount: number
+  ) => {
+    if (addCount <= 0) return locations;
+    const existingIds = new Set(locations.map(loc => loc.id));
+    const expanded = [...locations];
+    let index = locations.length;
+    const ensureUniqueId = (baseId: string) => {
+      let candidate = baseId;
+      let suffix = 1;
+      while (existingIds.has(candidate)) {
+        candidate = `${baseId}-${suffix}`;
+        suffix += 1;
+      }
+      existingIds.add(candidate);
+      return candidate;
+    };
+    for (let i = 0; i < addCount; i += 1) {
+      const newId = ensureUniqueId(`location-${index + 1}`);
+      expanded.push(buildLocationFromSeed(seed, index, newId));
+      index += 1;
+    }
+    return ensureMinimumWorldGraph(seed, expanded, expanded.length);
+  }, [buildLocationFromSeed, ensureMinimumWorldGraph]);
+
   const bootstrapWorld = useCallback(async (
     campaignSeed: CampaignSeed,
     reason: string,
@@ -329,23 +458,18 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         : [];
 
       if (normalizedLocations.length === 0) {
-        const fallbackId = "starting_location";
-        const fallbackName = "The Outskirts";
-        normalizedLocations = [
-          {
-            id: fallbackId,
-            name: fallbackName,
-            description: campaignSeed.description || "A place to begin the journey.",
-            type: "town",
-            dangerLevel: 1,
-            position: createDeterministicPosition(`${campaignId}-${fallbackId}`),
-            connectedTo: [],
-          },
-        ];
+        normalizedLocations = [];
       }
+
+      normalizedLocations = ensureMinimumWorldGraph(
+        campaignSeed,
+        normalizedLocations as EnhancedLocation[],
+        5
+      );
 
       const resolvedStartingId =
         normalizedLocations.find(loc => loc.id === generated?.startingLocationId)?.id
+        ?? normalizedLocations.find(loc => loc.id === "starting_location")?.id
         ?? normalizedLocations[0]?.id
         ?? null;
 
@@ -485,6 +609,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     persistence,
     toKebab,
     worldContent,
+    ensureMinimumWorldGraph,
   ]);
 
   const retryBootstrap = useCallback(async () => {
@@ -803,6 +928,40 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     }
   }, [sessionState.unifiedState, sessionState.travelState, userId, computeFingerprint, performAutosave]);
 
+  const expandWorld = useCallback(async (count: number) => {
+    if (!sessionState.unifiedState || !sessionState.travelState || !sessionState.campaignSeed) return false;
+    const expandedLocations = expandWorldGraph(
+      sessionState.campaignSeed,
+      Array.from(sessionState.unifiedState.world.locations.values()) as EnhancedLocation[],
+      count
+    );
+    const expandedWorld = mergeIntoWorldState(sessionState.unifiedState.world, {
+      factions: [],
+      npcs: [],
+      quests: [],
+      locations: expandedLocations,
+      worldHooks: [],
+    });
+    const nextUnified = {
+      ...sessionState.unifiedState,
+      world: expandedWorld,
+    };
+    setSessionState(prev => ({
+      ...prev,
+      unifiedState: nextUnified,
+    }));
+    latestStateRef.current = { unified: nextUnified, travel: sessionState.travelState };
+    await autosaveNow(nextUnified, sessionState.travelState);
+    return true;
+  }, [
+    autosaveNow,
+    expandWorldGraph,
+    mergeIntoWorldState,
+    sessionState.campaignSeed,
+    sessionState.travelState,
+    sessionState.unifiedState,
+  ]);
+
   // Trigger autosave with debounce
   const triggerAutosave = useCallback((reason: string = "trigger") => {
     if (autosaveTimeoutRef.current) {
@@ -1061,6 +1220,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     triggerAutosave,
     autosaveNow,
     retryBootstrap,
+    expandWorld,
     fetchSaves: persistence.fetchSaves,
     deleteSave: persistence.deleteSave,
   };
