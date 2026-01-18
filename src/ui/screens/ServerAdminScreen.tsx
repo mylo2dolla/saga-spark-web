@@ -5,6 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useNetworkHealth } from "@/ui/data/networkHealth";
 
 interface ServerNodeRow {
   id: string;
@@ -20,9 +21,17 @@ interface ServerNodeRow {
 export default function ServerAdminScreen() {
   const { user, isLoading: authLoading } = useAuth();
   const { setLastError } = useDiagnostics();
+  const networkHealth = useNetworkHealth(1000);
   const [nodes, setNodes] = useState<ServerNodeRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dbTest, setDbTest] = useState<{ ok: boolean; status?: number; message?: string } | null>(null);
+  const [edgeTest, setEdgeTest] = useState<{ ok: boolean; status?: number; body?: string } | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
+
+  const DEV_DEBUG = import.meta.env.DEV;
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
   const fetchNodes = useCallback(async () => {
     if (!user) return;
@@ -65,6 +74,85 @@ export default function ServerAdminScreen() {
   useEffect(() => {
     fetchNodes();
   }, [fetchNodes]);
+
+  const handleDbTest = useCallback(async () => {
+    setIsTesting(true);
+    setDbTest(null);
+    try {
+      const response = await withTimeout(
+        supabase.from("campaigns").select("id").limit(1),
+        20000,
+      );
+      if (response.error) {
+        setDbTest({ ok: false, status: response.error.status, message: response.error.message });
+        return;
+      }
+      setDbTest({ ok: true, status: 200, message: "ok" });
+    } catch (err) {
+      if (isAbortError(err)) {
+        setDbTest({ ok: false, message: "Request canceled/timeout" });
+      } else {
+        setDbTest({ ok: false, message: formatError(err, "DB test failed") });
+      }
+    } finally {
+      setIsTesting(false);
+    }
+  }, []);
+
+  const handleEdgeTest = useCallback(async () => {
+    if (!DEV_DEBUG) return;
+    setIsTesting(true);
+    setEdgeTest(null);
+    try {
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+        setEdgeTest({ ok: false, body: "Missing Supabase env" });
+        return;
+      }
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+      };
+      if (session?.access_token) {
+        headers.Authorization = `Bearer ${session.access_token}`;
+      }
+      const url = `${SUPABASE_URL}/functions/v1/generate-class`;
+      const response = await withTimeout(
+        fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ classDescription: "Quick test class" }),
+        }),
+        20000,
+      );
+      const body = await response.text();
+      setEdgeTest({ ok: response.ok, status: response.status, body });
+    } catch (err) {
+      if (isAbortError(err)) {
+        setEdgeTest({ ok: false, body: "Request canceled/timeout" });
+      } else {
+        setEdgeTest({ ok: false, body: formatError(err, "Edge test failed") });
+      }
+    } finally {
+      setIsTesting(false);
+    }
+  }, [DEV_DEBUG, SUPABASE_ANON_KEY, SUPABASE_URL]);
+
+  const handleReconnectSession = useCallback(async () => {
+    setIsTesting(true);
+    try {
+      const { error } = await withTimeout(supabase.auth.refreshSession(), 20000);
+      if (error) {
+        setLastError(error.message);
+      } else {
+        setLastError(null);
+      }
+    } catch (err) {
+      setLastError(formatError(err, "Failed to refresh session"));
+    } finally {
+      setIsTesting(false);
+    }
+  }, [setLastError]);
 
   useEffect(() => {
     if (!user) return;
@@ -126,7 +214,12 @@ export default function ServerAdminScreen() {
           <h1 className="text-xl font-semibold">Servers/Admin</h1>
           <div className="text-xs text-muted-foreground">Live server nodes</div>
         </div>
-        <Button variant="outline" onClick={fetchNodes}>Reconnect</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={fetchNodes}>Reconnect</Button>
+          <Button variant="outline" onClick={handleReconnectSession} disabled={isTesting}>
+            Reconnect Session
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -164,6 +257,33 @@ export default function ServerAdminScreen() {
               })}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Diagnostics</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-xs text-muted-foreground">
+          <div>Requests/min: {networkHealth.requestsPerMinute}</div>
+          <div>Last DB write: {networkHealth.lastDbWriteAt ? new Date(networkHealth.lastDbWriteAt).toLocaleTimeString() : "-"}</div>
+          <div>Last Edge call: {networkHealth.lastEdgeCallAt ? new Date(networkHealth.lastEdgeCallAt).toLocaleTimeString() : "-"}</div>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={handleDbTest} disabled={isTesting}>
+              Test DB
+            </Button>
+            {DEV_DEBUG ? (
+              <Button variant="outline" onClick={handleEdgeTest} disabled={isTesting || !SUPABASE_URL}>
+                Test generate-class
+              </Button>
+            ) : null}
+          </div>
+          {dbTest ? (
+            <div>DB test: {dbTest.ok ? "ok" : "error"} {dbTest.status ? `(${dbTest.status})` : ""} {dbTest.message ?? ""}</div>
+          ) : null}
+          {edgeTest ? (
+            <div>Edge test: {edgeTest.ok ? "ok" : "error"} {edgeTest.status ? `(${edgeTest.status})` : ""}</div>
+          ) : null}
         </CardContent>
       </Card>
     </div>
