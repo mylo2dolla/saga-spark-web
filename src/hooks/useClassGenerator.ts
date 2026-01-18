@@ -36,22 +36,22 @@ export function useClassGenerator() {
           status: sessionError.status,
         });
       }
-      if (!session?.access_token) {
-        throw new Error("You must be logged in to generate a class");
-      }
+      const accessToken = session?.access_token ?? null;
 
       console.info("[generateClass] start", {
         url: GENERATE_URL,
-        userId: session.user?.id ?? null,
+        userId: session?.user?.id ?? null,
         timestamp: new Date().toISOString(),
       });
 
       const { controller, cleanup } = createAbortController(25000);
+      const apiKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
       const response = await fetch(GENERATE_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
+          apikey: apiKey,
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
         },
         body: JSON.stringify({ classDescription: description }),
         signal: controller.signal,
