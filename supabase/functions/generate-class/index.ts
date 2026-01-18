@@ -100,13 +100,22 @@ serve(async (req) => {
       );
     }
 
+    const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
     const AI_GATEWAY_API_KEY = Deno.env.get("AI_GATEWAY_API_KEY");
     const AI_GATEWAY_URL = Deno.env.get("AI_GATEWAY_URL");
-    if (!AI_GATEWAY_API_KEY) {
-      throw new Error("AI_GATEWAY_API_KEY is not configured");
+    const hasGroq = Boolean(GROQ_API_KEY);
+
+    if (!hasGroq && !AI_GATEWAY_API_KEY) {
+      return new Response(
+        JSON.stringify({ error: "AI provider key not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
-    if (!AI_GATEWAY_URL) {
-      throw new Error("AI_GATEWAY_URL is not configured");
+    if (!hasGroq && !AI_GATEWAY_URL) {
+      return new Response(
+        JSON.stringify({ error: "AI_GATEWAY_URL is not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const systemPrompt = `You are a fantasy RPG class designer. Given a text description of a character concept, generate a balanced and creative class with stats, abilities, and passives.
@@ -166,21 +175,26 @@ You MUST respond with ONLY a valid JSON object matching this structure:
   "baseAC": 12
 }`;
 
-    const response = await fetch(`${AI_GATEWAY_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${AI_GATEWAY_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Create a class based on this description: "${classDescription}"` },
-        ],
-        temperature: 0.8,
-      }),
-    });
+    const response = await fetch(
+      hasGroq
+        ? "https://api.groq.com/openai/v1/chat/completions"
+        : `${AI_GATEWAY_URL}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${hasGroq ? GROQ_API_KEY : AI_GATEWAY_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: hasGroq ? "llama-3.1-8b-instant" : "google/gemini-3-flash-preview",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `Create a class based on this description: "${classDescription}"` },
+          ],
+          temperature: 0.8,
+        }),
+      }
+    );
 
     if (!response.ok) {
       if (response.status === 429) {
