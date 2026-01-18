@@ -4,7 +4,7 @@
  * current location, destination, and combat interrupts.
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MapPin,
@@ -52,6 +52,7 @@ export function TravelPanel({
   onWorldEvent,
 }: TravelPanelProps) {
   const DEV_DEBUG = import.meta.env.DEV;
+  const lastLogAtRef = useRef(0);
   const [isTraveling, setIsTraveling] = useState(false);
   const [selectedDestination, setSelectedDestination] = useState<string | null>(null);
   const [travelResult, setTravelResult] = useState<BeginTravelResult | null>(null);
@@ -75,7 +76,11 @@ export function TravelPanel({
       .filter((loc): loc is EnhancedLocation => loc !== undefined);
   }, [currentLocation, world.locations]);
 
-  if (DEV_DEBUG) {
+  useEffect(() => {
+    if (!DEV_DEBUG) return;
+    const now = Date.now();
+    if (now - lastLogAtRef.current < 1000) return;
+    lastLogAtRef.current = now;
     console.info("DEV_DEBUG travelPanel render", {
       locationsSize: world.locations.size,
       currentLocationId: travelState.currentLocationId,
@@ -84,7 +89,14 @@ export function TravelPanel({
       connectedToCount: currentLocation?.connectedTo?.length ?? 0,
       availableDestinationsCount: reachableLocations.length,
     });
-  }
+  }, [
+    DEV_DEBUG,
+    world.locations.size,
+    travelState.currentLocationId,
+    currentLocation?.name,
+    currentLocation?.connectedTo,
+    reachableLocations.length,
+  ]);
 
   // Check if can travel to selected destination
   const canTravelToSelected = useMemo(() => {

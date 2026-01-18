@@ -712,7 +712,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     
     playtimeIntervalRef.current = setInterval(() => {
       playtimeRef.current += 1;
-      setSessionState(prev => ({ ...prev, playtimeSeconds: playtimeRef.current }));
+      if (playtimeRef.current % 10 === 0) {
+        setSessionState(prev => ({ ...prev, playtimeSeconds: playtimeRef.current }));
+      }
     }, 1000);
     
     return () => {
