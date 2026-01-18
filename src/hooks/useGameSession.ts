@@ -31,6 +31,8 @@ export interface GameSessionState {
   error: string | null;
   bootstrapStatus: "idle" | "loading_from_db" | "needs_bootstrap" | "bootstrapping" | "ready" | "error";
   lastWorldGenError: unknown | null;
+  lastWorldGenErrorAt: number | null;
+  lastWorldGenSuccessAt: number | null;
   playtimeSeconds: number;
   loadedFromSupabase: boolean;
   lastSavedAt: number | null;
@@ -58,6 +60,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     error: null,
     bootstrapStatus: "idle",
     lastWorldGenError: null,
+    lastWorldGenErrorAt: null,
+    lastWorldGenSuccessAt: null,
     playtimeSeconds: 0,
     loadedFromSupabase: false,
     lastSavedAt: null,
@@ -370,9 +374,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     const allIds = normalized.map(loc => loc.id);
     const startId = "starting_location";
     const otherIds = allIds.filter(id => id !== startId);
+    const townId = normalized.find(loc =>
+      loc.id.toLowerCase() === "town" || loc.name?.toLowerCase() === "town"
+    )?.id;
     if (otherIds.length >= 2) {
       addEdge(startId, otherIds[0]);
       addEdge(startId, otherIds[1]);
+    }
+    if (townId) {
+      addEdge(startId, townId);
     }
 
     for (let i = 0; i < allIds.length - 1; i += 1) {
@@ -585,6 +595,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         error: null,
         bootstrapStatus: "ready",
         lastWorldGenError: null,
+        lastWorldGenErrorAt: null,
+        lastWorldGenSuccessAt: Date.now(),
         lastSavedAt: Date.now(),
       }));
 
@@ -598,6 +610,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         isInitialized: false,
         bootstrapStatus: "error",
         lastWorldGenError: lastEdgeError ?? error ?? null,
+        lastWorldGenErrorAt: Date.now(),
       }));
       toast.error(message);
       return null;
@@ -806,6 +819,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         error: null,
         bootstrapStatus: "ready",
         lastWorldGenError: null,
+        lastWorldGenErrorAt: null,
+        lastWorldGenSuccessAt: Date.now(),
         playtimeSeconds: initialPlaytime,
         loadedFromSupabase,
         lastSavedAt: prev.lastSavedAt,
@@ -1079,6 +1094,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         unifiedState: invariantResult.unified,
         travelState: invariantResult.travel,
         isInitialized: true,
+        lastWorldGenError: null,
+        lastWorldGenErrorAt: null,
+        lastWorldGenSuccessAt: Date.now(),
         lastLoadedAt: Date.now(),
       }));
       

@@ -397,6 +397,36 @@ serve(async (req) => {
         };
       });
 
+      const ensureNamedLocation = (name: string, fallbackType: string) => {
+        const existing = parsed.locations.find((loc: { name?: string }) =>
+          typeof loc.name === "string" && loc.name.toLowerCase() === name.toLowerCase()
+        );
+        if (existing) return existing.id;
+        const id = toKebab(name) || `location-${parsed.locations.length + 1}`;
+        let uniqueId = id;
+        let suffix = 1;
+        while (seenIds.has(uniqueId)) {
+          uniqueId = `${id}-${suffix}`;
+          suffix += 1;
+        }
+        seenIds.add(uniqueId);
+        nameToId.set(name.toLowerCase(), uniqueId);
+        parsed.locations.push({
+          id: uniqueId,
+          name,
+          description: `${name} stands as a notable waypoint within ${campaignSeed.description || "the campaign"}.`,
+          type: fallbackType,
+          dangerLevel: 1,
+          position: createDeterministicPosition(uniqueId),
+          connectedTo: [],
+        });
+        return uniqueId;
+      };
+
+      const outskirtsId = ensureNamedLocation("Outskirts", "wilderness");
+      const townId = ensureNamedLocation("Town", "town");
+      ensureNamedLocation("Roadside Shrine", "temple");
+
       const locations = parsed.locations as Array<{
         id: string;
         name?: string;
@@ -461,6 +491,20 @@ serve(async (req) => {
             }
           }
           location.connectedTo = Array.from(connections);
+        }
+      }
+
+      const startId = typeof parsed.startingLocationId === "string" ? parsed.startingLocationId : outskirtsId;
+      const startLocation = locations.find(loc => loc.id === startId) ?? locations[0];
+      if (startLocation && townId) {
+        const connected = new Set(startLocation.connectedTo ?? []);
+        connected.add(townId);
+        startLocation.connectedTo = Array.from(connected);
+        const townLocation = locations.find(loc => loc.id === townId);
+        if (townLocation) {
+          const townConnections = new Set(townLocation.connectedTo ?? []);
+          townConnections.add(startLocation.id);
+          townLocation.connectedTo = Array.from(townConnections);
         }
       }
 
