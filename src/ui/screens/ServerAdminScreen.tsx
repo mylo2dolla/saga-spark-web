@@ -18,7 +18,7 @@ interface ServerNodeRow {
 }
 
 export default function ServerAdminScreen() {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const { setLastError } = useDiagnostics();
   const [nodes, setNodes] = useState<ServerNodeRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -95,7 +95,27 @@ export default function ServerAdminScreen() {
     };
   }, [user]);
 
+  if (authLoading) {
+    console.info("[auth] log", {
+      step: "auth_guard",
+      path: "/servers",
+      hasSession: Boolean(user),
+      userId: user?.id ?? null,
+      isLoading: authLoading,
+      reason: "auth_loading",
+    });
+    return <div className="text-sm text-muted-foreground">Loading session...</div>;
+  }
+
   if (!user) {
+    console.info("[auth] log", {
+      step: "auth_guard",
+      path: "/servers",
+      hasSession: false,
+      userId: null,
+      isLoading: authLoading,
+      reason: "no_user",
+    });
     return <div className="text-sm text-muted-foreground">Login required.</div>;
   }
 

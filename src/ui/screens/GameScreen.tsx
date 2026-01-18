@@ -13,7 +13,7 @@ import { useDiagnostics } from "@/ui/data/diagnostics";
 export default function GameScreen() {
   const { campaignId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const gameSession = useGameSessionContext();
   const { setEngineSnapshot } = useDiagnostics();
   const [showTravel, setShowTravel] = useState(true);
@@ -22,10 +22,29 @@ export default function GameScreen() {
 
   useEffect(() => {
     if (!campaignId) return;
+    if (authLoading) {
+      console.info("[auth] log", {
+        step: "auth_guard",
+        path: `/game/${campaignId}`,
+        hasSession: Boolean(user),
+        userId: user?.id ?? null,
+        isLoading: authLoading,
+        reason: "auth_loading",
+      });
+      return;
+    }
     if (!user) {
+      console.info("[auth] log", {
+        step: "auth_guard",
+        path: `/game/${campaignId}`,
+        hasSession: false,
+        userId: null,
+        isLoading: authLoading,
+        reason: "no_user",
+      });
       navigate("/login");
     }
-  }, [campaignId, navigate, user]);
+  }, [authLoading, campaignId, navigate, user]);
 
   const currentLocation = useMemo(() => {
     if (!gameSession.unifiedState || !gameSession.travelState) return undefined;
