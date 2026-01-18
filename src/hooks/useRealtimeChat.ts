@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { recordProfilesRead } from "@/ui/data/networkHealth";
 
 type MessageType = "player" | "dm" | "system" | "roll";
 
@@ -56,6 +57,7 @@ export function useRealtimeChat(campaignId: string | undefined) {
             .select("user_id, display_name, avatar_url")
             .in("user_id", uniqueUserIds);
           profilesData = data || [];
+          recordProfilesRead();
         }
 
         const messagesWithProfiles = (messagesData || []).map(msg => ({
@@ -111,6 +113,7 @@ export function useRealtimeChat(campaignId: string | undefined) {
               .eq("user_id", newMsg.user_id)
               .single();
             profile = data || undefined;
+            recordProfilesRead();
           }
 
           const chatMessage: ChatMessage = {

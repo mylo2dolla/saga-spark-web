@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
+import { recordCampaignMembersRead } from "@/ui/data/networkHealth";
 
 interface Campaign {
   id: string;
@@ -34,9 +35,17 @@ export default function DashboardScreen() {
   const [inviteCode, setInviteCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const fetchInFlightRef = useRef(false);
+  const lastFetchAtRef = useRef<number | null>(null);
 
-  const fetchCampaigns = useCallback(async () => {
+  const fetchCampaigns = useCallback(async (force = false) => {
     if (!user) return;
+    const now = Date.now();
+    if (!force && lastFetchAtRef.current && now - lastFetchAtRef.current < 15000) {
+      return;
+    }
+    if (fetchInFlightRef.current) return;
+    fetchInFlightRef.current = true;
     setIsLoading(true);
     setError(null);
     setLastError(null);
@@ -61,6 +70,8 @@ export default function DashboardScreen() {
         throw memberData.error;
       }
 
+      recordCampaignMembersRead();
+      lastFetchAtRef.current = now;
       const memberCampaignIds = memberData.data?.map(row => row.campaign_id) ?? [];
 
       const ownedData = await withTimeout(
@@ -126,6 +137,7 @@ export default function DashboardScreen() {
       toast({ title: "Failed to load campaigns", description: message, variant: "destructive" });
     } finally {
       setIsLoading(false);
+      fetchInFlightRef.current = false;
     }
   }, [user, toast, setLastError]);
 

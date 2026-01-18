@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { recordCampaignMembersRead } from "@/ui/data/networkHealth";
 
 const DEV_DEBUG = import.meta.env.DEV;
 
@@ -32,6 +33,8 @@ export interface CampaignMember {
 export function useCampaigns() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const fetchInFlightRef = useRef(false);
+  const lastFetchAtRef = useRef<number | null>(null);
 
   const logSupabaseError = (
     context: string,
@@ -47,7 +50,13 @@ export function useCampaigns() {
     });
   };
 
-  const fetchCampaigns = useCallback(async () => {
+  const fetchCampaigns = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && lastFetchAtRef.current && now - lastFetchAtRef.current < 15000) {
+      return;
+    }
+    if (fetchInFlightRef.current) return;
+    fetchInFlightRef.current = true;
     try {
       setIsLoading(true);
       const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -69,6 +78,7 @@ export function useCampaigns() {
         logSupabaseError("[campaigns] supabase error", memberError);
         throw memberError;
       }
+      recordCampaignMembersRead();
 
       const memberCampaignIds = memberData?.map(m => m.campaign_id) || [];
 
@@ -103,6 +113,7 @@ export function useCampaigns() {
       );
 
       setCampaigns(uniqueCampaigns);
+      lastFetchAtRef.current = now;
     } catch (error) {
       if ((error as { name?: string })?.name === "AbortError") {
         return;
@@ -111,6 +122,7 @@ export function useCampaigns() {
       toast.error("Failed to load campaigns");
     } finally {
       setIsLoading(false);
+      fetchInFlightRef.current = false;
     }
   }, []);
 

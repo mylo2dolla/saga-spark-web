@@ -2,8 +2,12 @@ import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
 import { withTimeout, isAbortError } from "@/ui/data/async";
+import { recordProfilesRead } from "@/ui/data/networkHealth";
 
 const DEV_DEBUG = import.meta.env.DEV;
+const PROFILE_TTL_MS = 60000;
+const profileCache = new Map<string, { data: Profile | null; fetchedAt: number }>();
+const profileInFlight = new Map<string, Promise<Profile | null>>();
 
 export interface Profile {
   id: string;
@@ -88,24 +92,57 @@ export function useAuth() {
 
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await withTimeout(
-        supabase
-          .from("profiles")
-          .select("*")
-          .eq("user_id", userId)
-          .maybeSingle(),
-        20000,
-      );
-
-      if (error) {
-        if (isAbortError(error)) {
-          return;
+      const cached = profileCache.get(userId);
+      const now = Date.now();
+      if (cached && now - cached.fetchedAt < PROFILE_TTL_MS) {
+        if (isMountedRef.current) {
+          setProfile(cached.data);
+          setIsLoading(false);
         }
-        logAuthError(error);
+        return;
       }
-      if (data) {
+
+      const inFlight = profileInFlight.get(userId);
+      if (inFlight) {
+        const data = await inFlight;
         if (isMountedRef.current) {
           setProfile(data);
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      const loadPromise = (async () => {
+        const { data, error } = await withTimeout(
+          supabase
+            .from("profiles")
+            .select("*")
+            .eq("user_id", userId)
+            .maybeSingle(),
+          20000,
+        );
+
+        if (error) {
+          if (isAbortError(error)) {
+            return null;
+          }
+          logAuthError(error);
+          return null;
+        }
+        recordProfilesRead();
+        if (data) {
+          profileCache.set(userId, { data, fetchedAt: Date.now() });
+        }
+        return data ?? null;
+      })();
+
+      profileInFlight.set(userId, loadPromise);
+      const profileData = await loadPromise;
+      profileInFlight.delete(userId);
+
+      if (profileData) {
+        if (isMountedRef.current) {
+          setProfile(profileData);
         }
         return;
       }
@@ -138,9 +175,13 @@ export function useAuth() {
         if (!isAbortError(createResult.error)) {
           logAuthError(createResult.error);
         }
-      } else if (isMountedRef.current) {
-        setProfile(createResult.data);
+      } else {
+        profileCache.set(userId, { data: createResult.data, fetchedAt: Date.now() });
+        if (isMountedRef.current) {
+          setProfile(createResult.data);
+        }
       }
+      return;
     } finally {
       if (isMountedRef.current) {
         setIsProfileCreating(false);
