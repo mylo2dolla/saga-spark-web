@@ -343,7 +343,7 @@ export default function GameScreen() {
       ...prev,
       world: World.setFlag(
         payload
-          ? World.setFlag(prev.world, payloadFlagId, payload, "encounter_outcome")
+          ? World.setFlag(prev.world, payloadFlagId, payload, "encounter_payload")
           : prev.world,
         outcomeFlagId,
         outcome,
