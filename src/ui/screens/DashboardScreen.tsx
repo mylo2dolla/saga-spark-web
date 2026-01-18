@@ -9,7 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
-import { recordCampaignMembersRead } from "@/ui/data/networkHealth";
+import { recordCampaignMembersRead, recordCampaignsRead } from "@/ui/data/networkHealth";
 
 interface Campaign {
   id: string;
@@ -118,6 +118,7 @@ export default function DashboardScreen() {
 
         memberCampaigns = (memberCampaignsData.data ?? []) as Campaign[];
       }
+      recordCampaignsRead();
 
       const combined = [...(ownedData.data ?? []), ...memberCampaigns];
       const unique = combined.filter(

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { recordCampaignMembersRead } from "@/ui/data/networkHealth";
+import { recordCampaignMembersRead, recordCampaignsRead } from "@/ui/data/networkHealth";
 
 const DEV_DEBUG = import.meta.env.DEV;
 
@@ -105,6 +105,7 @@ export function useCampaigns() {
         }
         memberCampaigns = (data || []) as unknown as Campaign[];
       }
+      recordCampaignsRead();
 
       // Combine and dedupe
       const allCampaigns = [...(ownedData || []), ...memberCampaigns] as unknown as Campaign[];

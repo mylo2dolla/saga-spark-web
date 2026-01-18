@@ -45,6 +45,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         userId: result.user?.id ?? null,
         error: null,
       });
+      console.info("[auth] log", { step: "login_success_bootstrap" });
       navigate("/dashboard");
     } catch (error) {
       if (isAbortError(error)) {
