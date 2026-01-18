@@ -9,6 +9,8 @@ import type { EnhancedLocation } from "@/engine/narrative/Travel";
 import type { TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import { resumeTravelAfterCombat } from "@/engine/WorldTravelEngine";
 import { useDiagnostics } from "@/ui/data/diagnostics";
+import WorldBoard from "@/ui/worldboard/WorldBoard";
+import { toWorldBoardModel } from "@/ui/worldboard/adapter";
 
 export default function GameScreen() {
   const { campaignId } = useParams();
@@ -64,6 +66,18 @@ export default function GameScreen() {
       ...gameSession.unifiedState.world,
       travelState: gameSession.travelState,
     };
+  }, [gameSession.unifiedState, gameSession.travelState]);
+
+  const worldBoardModel = useMemo(() => {
+    if (!gameSession.unifiedState) return null;
+    const stateWithTravel = {
+      ...gameSession.unifiedState,
+      world: {
+        ...gameSession.unifiedState.world,
+        travelState: gameSession.travelState ?? undefined,
+      },
+    };
+    return toWorldBoardModel(stateWithTravel);
   }, [gameSession.unifiedState, gameSession.travelState]);
 
   useEffect(() => {
@@ -148,6 +162,13 @@ export default function GameScreen() {
           </CardContent>
         </Card>
       </div>
+
+      {worldBoardModel ? (
+        <WorldBoard
+          model={worldBoardModel}
+          currentLocationId={gameSession.travelState?.currentLocationId ?? null}
+        />
+      ) : null}
 
       {showTravel && travelWorldState && user?.id ? (
         <TravelPanel

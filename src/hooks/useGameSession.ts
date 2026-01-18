@@ -11,7 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorldContent } from "@/hooks/useWorldContent";
 import { useGamePersistence } from "@/hooks/useGamePersistence";
-import { createUnifiedState, type UnifiedState } from "@/engine/UnifiedState";
+import { createUnifiedState, serializeUnifiedState, type UnifiedState } from "@/engine/UnifiedState";
 import * as World from "@/engine/narrative/World";
 import { createTravelState, type TravelState, type EnhancedLocation } from "@/engine/narrative/Travel";
 import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
@@ -97,6 +97,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const initializedKeyRef = useRef<string | null>(null);
   const initializingRef = useRef(false); // Prevents concurrent initializations
   const didAutosaveAfterInitRef = useRef(false);
+  const lastSavedFingerprintRef = useRef<string | null>(null);
+  const queuedFingerprintRef = useRef<string | null>(null);
+  const latestStateRef = useRef<{ unified: UnifiedState | null; travel: TravelState | null }>({
+    unified: null,
+    travel: null,
+  });
 
   const getErrorMessage = useCallback((error: unknown) => {
     if (!error) return "";
@@ -157,6 +163,30 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       currentLocationName: currentLocation?.name ?? null,
     });
   }, []);
+
+  const hashString = useCallback((value: string) => {
+    let hash = 0;
+    for (let i = 0; i < value.length; i += 1) {
+      hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+    }
+    return hash.toString(16);
+  }, []);
+
+  const buildTravelSnapshot = useCallback((travel: TravelState) => ({
+    currentLocationId: travel.currentLocationId,
+    previousLocationId: travel.previousLocationId,
+    isInTransit: travel.isInTransit,
+    transitProgress: travel.transitProgress,
+    transitDestinationId: travel.transitDestinationId,
+    travelHistory: travel.travelHistory,
+    discoveredLocations: Array.from(travel.discoveredLocations).sort(),
+  }), []);
+
+  const computeFingerprint = useCallback((unified: UnifiedState, travel: TravelState) => {
+    const unifiedSerialized = serializeUnifiedState(unified);
+    const travelSerialized = JSON.stringify(buildTravelSnapshot(travel));
+    return hashString(`${unifiedSerialized}|${travelSerialized}`);
+  }, [buildTravelSnapshot, hashString]);
 
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
@@ -331,8 +361,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       
       if (latestSave) {
         loadedFromSupabase = true;
-        // Load from save
-        const loaded = await persistence.loadGame(latestSave.id);
+        // Load from save without a second fetch
+        const loaded = await persistence.loadGameFromRow(latestSave);
         if (loaded) {
           unifiedState = loaded;
           preMergeLocationsSize = unifiedState.world.locations.size;
@@ -415,6 +445,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         lastMergedContentRef.current = worldContent;
       }
       
+      const fingerprintToStore = computeFingerprint(unifiedState, travelState);
+      if (loadedFromSupabase) {
+        lastSavedFingerprintRef.current = fingerprintToStore;
+      }
+      queuedFingerprintRef.current = null;
+      latestStateRef.current = { unified: unifiedState, travel: travelState };
+
       setSessionState(prev => ({
         ...prev,
         unifiedState,
@@ -434,6 +471,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       if (DEV_DEBUG && unifiedState && travelState) {
         const currentLocation = unifiedState.world.locations.get(travelState.currentLocationId);
         console.info("DEV_DEBUG gameSession initialized", {
+          source: loadedFromSupabase ? "db" : "fresh",
           loadedFromSupabase,
           preMergeLocationsSize,
           postMergeLocationsSize: unifiedState.world.locations.size,
@@ -474,6 +512,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     ensureWorldInvariants,
     logSupabaseError,
     logWorldSnapshot,
+    computeFingerprint,
   ]);
 
   // Update unified state
@@ -494,39 +533,49 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     }));
   }, []);
 
-  // Autosave function - includes travel state in updates
-  const autosave = useCallback(async () => {
-    if (!sessionState.unifiedState || !sessionState.travelState || !userId) return;
-    
+  const performAutosave = useCallback(async (
+    unifiedState: UnifiedState,
+    travelState: TravelState,
+    fingerprint: string,
+    reason: string
+  ) => {
+    if (!userId) return;
     try {
-      if (lastSaveIdRef.current) {
-        // Update existing save with travel state
-        const updated = await persistence.updateSave(
-          lastSaveIdRef.current,
-          sessionState.unifiedState,
-          playtimeRef.current,
-          sessionState.travelState
-        );
-        if (updated) {
-          setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
+      const saveId = await persistence.saveGame(
+        unifiedState,
+        travelState,
+        "Autosave",
+        playtimeRef.current,
+        { refreshList: false, silent: true }
+      );
+      if (saveId) {
+        lastSaveIdRef.current = saveId;
+        lastSavedFingerprintRef.current = fingerprint;
+        queuedFingerprintRef.current = null;
+        setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
+        if (DEV_DEBUG) {
+          console.info("DEV_DEBUG autosave", {
+            reason,
+            saveId,
+          });
         }
       } else {
-        // Create new autosave
-        const saveId = await persistence.saveGame(
-          sessionState.unifiedState,
-          sessionState.travelState,
-          "Autosave",
-          playtimeRef.current
-        );
-        if (saveId) {
-          lastSaveIdRef.current = saveId;
-          setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
-        }
+        queuedFingerprintRef.current = null;
       }
     } catch (error) {
+      queuedFingerprintRef.current = null;
       console.error("Autosave failed:", error);
     }
-  }, [sessionState.unifiedState, sessionState.travelState, userId, persistence]);
+  }, [persistence, userId]);
+
+  const autosaveImmediate = useCallback(async () => {
+    const unifiedState = latestStateRef.current.unified;
+    const travelState = latestStateRef.current.travel;
+    if (!unifiedState || !travelState || !userId) return;
+    const fingerprint = computeFingerprint(unifiedState, travelState);
+    if (fingerprint === lastSavedFingerprintRef.current) return;
+    await performAutosave(unifiedState, travelState, fingerprint, "immediate");
+  }, [computeFingerprint, performAutosave, userId]);
 
   const autosaveNow = useCallback(async (
     unifiedOverride?: UnifiedState,
@@ -537,40 +586,38 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     if (!unifiedState || !travelState || !userId) return;
 
     try {
-      if (lastSaveIdRef.current) {
-        const updated = await persistence.updateSave(
-          lastSaveIdRef.current,
-          unifiedState,
-          playtimeRef.current,
-          travelState
-        );
-        if (updated) {
-          setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
-        }
-      } else {
-        const saveId = await persistence.saveGame(
-          unifiedState,
-          travelState,
-          "Autosave",
-          playtimeRef.current
-        );
-        if (saveId) {
-          lastSaveIdRef.current = saveId;
-          setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
-        }
-      }
+      const fingerprint = computeFingerprint(unifiedState, travelState);
+      await performAutosave(unifiedState, travelState, fingerprint, "manual");
     } catch (error) {
       console.error("Autosave failed:", error);
     }
-  }, [sessionState.unifiedState, sessionState.travelState, userId, persistence]);
+  }, [sessionState.unifiedState, sessionState.travelState, userId, computeFingerprint, performAutosave]);
 
   // Trigger autosave with debounce
-  const triggerAutosave = useCallback(() => {
+  const triggerAutosave = useCallback((reason: string = "trigger") => {
     if (autosaveTimeoutRef.current) {
       clearTimeout(autosaveTimeoutRef.current);
     }
-    autosaveTimeoutRef.current = setTimeout(autosave, 2000);
-  }, [autosave]);
+    const unifiedState = latestStateRef.current.unified;
+    const travelState = latestStateRef.current.travel;
+    if (!unifiedState || !travelState || !userId) return;
+    const fingerprint = computeFingerprint(unifiedState, travelState);
+    if (fingerprint === lastSavedFingerprintRef.current || fingerprint === queuedFingerprintRef.current) {
+      return;
+    }
+    queuedFingerprintRef.current = fingerprint;
+    autosaveTimeoutRef.current = setTimeout(() => {
+      const currentUnified = latestStateRef.current.unified;
+      const currentTravel = latestStateRef.current.travel;
+      if (!currentUnified || !currentTravel) return;
+      const currentFingerprint = computeFingerprint(currentUnified, currentTravel);
+      if (currentFingerprint === lastSavedFingerprintRef.current) {
+        queuedFingerprintRef.current = null;
+        return;
+      }
+      void performAutosave(currentUnified, currentTravel, currentFingerprint, reason);
+    }, 1000);
+  }, [computeFingerprint, performAutosave, userId]);
 
   // Update travel state
   const updateTravelState = useCallback((updater: (state: TravelState) => TravelState) => {
@@ -581,8 +628,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         travelState: updater(prev.travelState),
       };
     });
-    triggerAutosave();
-  }, [triggerAutosave]);
+  }, []);
 
   // Manual save
   const saveGame = useCallback(async (saveName: string) => {
@@ -595,7 +641,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       sessionState.unifiedState,
       sessionState.travelState,
       saveName,
-      playtimeRef.current
+      playtimeRef.current,
+      { refreshList: true, silent: false }
     );
     if (saveId) {
       setSessionState(prev => ({ ...prev, lastSavedAt: Date.now() }));
@@ -622,6 +669,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       );
       
       lastSaveIdRef.current = saveId;
+      lastSavedFingerprintRef.current = computeFingerprint(invariantResult.unified, invariantResult.travel);
+      queuedFingerprintRef.current = null;
+      latestStateRef.current = {
+        unified: invariantResult.unified,
+        travel: invariantResult.travel,
+      };
       
       setSessionState(prev => ({
         ...prev,
@@ -668,14 +721,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   // Autosave on unload
   useEffect(() => {
     const handleUnload = () => {
-      autosave();
+      void autosaveImmediate();
     };
     
     window.addEventListener("beforeunload", handleUnload);
     return () => {
       window.removeEventListener("beforeunload", handleUnload);
     };
-  }, [autosave]);
+  }, [autosaveImmediate]);
 
   // Initialize on mount
   useEffect(() => {
@@ -709,13 +762,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     if (sessionState.isInitialized && sessionState.unifiedState && sessionState.travelState) {
       if (didAutosaveAfterInitRef.current) return;
       didAutosaveAfterInitRef.current = true;
-      // Debounced autosave after init
-      const timeout = setTimeout(() => {
-        autosave();
-      }, 3000);
-      return () => clearTimeout(timeout);
+      triggerAutosave("post-init");
     }
-  }, [sessionState.isInitialized, sessionState.unifiedState, sessionState.travelState, autosave]);
+  }, [sessionState.isInitialized, sessionState.unifiedState, sessionState.travelState, triggerAutosave]);
 
   // Merge new world content into state
   useEffect(() => {
@@ -736,8 +785,17 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         travelState: invariantResult.travel,
       };
     });
-    triggerAutosave();
+    triggerAutosave("world-content");
   }, [worldContent, mergeIntoWorldState, sessionState.unifiedState, ensureWorldInvariants, triggerAutosave]);
+
+  useEffect(() => {
+    latestStateRef.current = {
+      unified: sessionState.unifiedState,
+      travel: sessionState.travelState,
+    };
+    if (!sessionState.isInitialized || !sessionState.unifiedState || !sessionState.travelState) return;
+    triggerAutosave("state-change");
+  }, [sessionState.isInitialized, sessionState.unifiedState, sessionState.travelState, triggerAutosave]);
 
   // Cleanup
   useEffect(() => {

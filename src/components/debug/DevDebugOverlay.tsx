@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import { supabase } from "@/integrations/supabase/client";
 import type { EnhancedLocation } from "@/engine/narrative/Travel";
+import { useNetworkHealth } from "@/ui/data/networkHealth";
 
 const DEV_DEBUG = import.meta.env.DEV;
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -18,6 +19,7 @@ export default function DevDebugOverlay() {
   const world = session.unifiedState?.world;
   const travelState = session.travelState;
   const { campaignId } = useParams();
+  const networkHealth = useNetworkHealth(1000);
 
   const locations = useMemo(() => {
     if (!world) return [] as EnhancedLocation[];
@@ -124,16 +126,17 @@ export default function DevDebugOverlay() {
 
   const overlayPayload = useMemo(() => {
     if (!world || !travelState) {
-      return {
-        supabaseProjectRef: getProjectRef(SUPABASE_URL),
-        campaignId: campaignId ?? null,
-        loadedFromSupabase: session.loadedFromSupabase ?? false,
-        lastSavedAt: session.lastSavedAt ?? null,
-        lastLoadedAt: session.lastLoadedAt ?? null,
-        locationsSize: 0,
-        locationIds: [],
-        locationNames: [],
-        currentLocationId: travelState?.currentLocationId ?? null,
+    return {
+      supabaseProjectRef: getProjectRef(SUPABASE_URL),
+      campaignId: campaignId ?? null,
+      loadedFromSupabase: session.loadedFromSupabase ?? false,
+      lastSavedAt: session.lastSavedAt ?? null,
+      lastLoadedAt: session.lastLoadedAt ?? null,
+      networkHealth,
+      locationsSize: 0,
+      locationIds: [],
+      locationNames: [],
+      currentLocationId: travelState?.currentLocationId ?? null,
         connectedTo: [],
         availableDestinationIds: [],
         mapMarkers: [],
@@ -146,6 +149,7 @@ export default function DevDebugOverlay() {
       loadedFromSupabase: session.loadedFromSupabase ?? false,
       lastSavedAt: session.lastSavedAt ?? null,
       lastLoadedAt: session.lastLoadedAt ?? null,
+      networkHealth,
       locationsSize: world.locations.size,
       locationIds: locations.map(location => location.id),
       locationNames: locations.map(location => location.name),

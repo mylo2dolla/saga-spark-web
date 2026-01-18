@@ -3,6 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { createAbortController, isAbortError } from "@/ui/data/async";
 import type { GeneratedClass } from "@/types/game";
+import { recordEdgeCall, recordEdgeResponse } from "@/ui/data/networkHealth";
 
 const GENERATE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-class`;
 
@@ -53,6 +54,7 @@ export function useClassGenerator() {
           hasAuthorization: Boolean(bearerToken),
         });
       }
+      recordEdgeCall();
       const response = await fetch(GENERATE_URL, {
         method: "POST",
         headers: {
@@ -83,6 +85,7 @@ export function useClassGenerator() {
       }
 
       const data: GeneratedClass = await response.json();
+      recordEdgeResponse();
       setGeneratedClass(data);
       toast.success(`Generated: ${data.className}`);
       console.info("[generateClass] success", {

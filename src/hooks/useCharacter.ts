@@ -46,6 +46,37 @@ export interface Character {
   updated_at: string;
 }
 
+export interface CharacterPayload {
+  name: string;
+  class: string;
+  class_description?: string | null;
+  campaign_id: string;
+  user_id: string;
+  level: number;
+  hp: number;
+  max_hp: number;
+  ac: number;
+  stats: CharacterStats;
+  resources: Record<string, unknown>;
+  passives: Record<string, unknown>[];
+  abilities: Record<string, unknown>[];
+  xp: number;
+  xp_to_next: number;
+  position: { x: number; y: number };
+  status_effects: string[];
+  is_active: boolean;
+  equipment: Record<string, unknown>;
+  backpack: Record<string, unknown>[];
+}
+
+const mapCharacterRow = (data: Character) => ({
+  ...data,
+  stats: data.stats as unknown as CharacterStats,
+  abilities: (data.abilities as unknown as CharacterAbility[]) ?? [],
+  inventory: (data.inventory as unknown as Record<string, unknown>[]) ?? [],
+  position: data.position as unknown as { x: number; y: number } | null,
+});
+
 export function useCharacter(campaignId: string | undefined) {
   const [character, setCharacter] = useState<Character | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -102,13 +133,15 @@ export function useCharacter(campaignId: string | undefined) {
         if (!data.stats) {
           throw new Error("Character stats missing");
         }
-        setCharacter({
-          ...data,
-          stats: data.stats as unknown as CharacterStats,
-          abilities: (data.abilities as unknown as CharacterAbility[]) ?? [],
-          inventory: (data.inventory as unknown as Record<string, unknown>[]) ?? [],
-          position: data.position as unknown as { x: number; y: number } | null,
-        });
+        setCharacter(mapCharacterRow(data as Character));
+        if (import.meta.env.DEV) {
+          console.info("[character]", {
+            step: "loaded_from_db",
+            campaignId,
+            characterId: data.id,
+            userId: user.id,
+          });
+        }
       }
     } catch (error) {
       if (isAbortError(error)) {
@@ -160,6 +193,30 @@ export function useCharacter(campaignId: string | undefined) {
     toast.success("Character retired");
   }, [character]);
 
+  const saveCharacter = useCallback(async (payload: CharacterPayload, existingId?: string) => {
+    const dbPayload: Record<string, unknown> = {
+      ...payload,
+      stats: payload.stats as unknown as Record<string, unknown>,
+      resources: payload.resources as unknown as Record<string, unknown>,
+      passives: payload.passives as unknown as Record<string, unknown>[],
+      abilities: payload.abilities as unknown as Record<string, unknown>[],
+      position: payload.position as unknown as Record<string, unknown>,
+      equipment: payload.equipment as unknown as Record<string, unknown>,
+      backpack: payload.backpack as unknown as Record<string, unknown>[],
+      status_effects: payload.status_effects,
+    };
+
+    const query = existingId
+      ? supabase.from("characters").update(dbPayload).eq("id", existingId)
+      : supabase.from("characters").insert([dbPayload]);
+
+    const { data, error } = await query.select("*").single();
+    if (error) throw error;
+    const next = mapCharacterRow(data as Character);
+    setCharacter(next);
+    return next;
+  }, []);
+
   useEffect(() => {
     fetchCharacter();
   }, [fetchCharacter]);
@@ -170,6 +227,7 @@ export function useCharacter(campaignId: string | undefined) {
     error,
     updateCharacter,
     deleteCharacter,
+    saveCharacter,
     refetch: fetchCharacter,
   };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { AICharacterCreator } from "@/components/AICharacterCreator";
@@ -9,7 +9,7 @@ import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 import { useAuth } from "@/hooks/useAuth";
 import { useGameSessionContext } from "@/contexts/GameSessionContext";
-import { useCharacter } from "@/hooks/useCharacter";
+import { useCharacter, type CharacterPayload } from "@/hooks/useCharacter";
 
 interface AICharacterData {
   name: string;
@@ -32,6 +32,7 @@ export default function CharacterScreen() {
   const { setLastError } = useDiagnostics();
   const { user, isLoading: authLoading } = useAuth();
   const [isCreating, setIsCreating] = useState(false);
+  const [showCreator, setShowCreator] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [profileStatus, setProfileStatus] = useState<"unknown" | "loaded" | "missing" | "created" | "error">("unknown");
   const [sessionFallback, setSessionFallback] = useState<{
@@ -40,7 +41,9 @@ export default function CharacterScreen() {
     error: string | null;
   }>({ checking: false, hasSession: null, error: null });
   const gameSession = useGameSessionContext();
-  const { character, isLoading: characterLoading, error: characterError, refetch } = useCharacter(campaignId);
+  const { character, isLoading: characterLoading, error: characterError, refetch, saveCharacter } = useCharacter(campaignId);
+
+  const shouldShowCreator = useMemo(() => showCreator || !character, [showCreator, character]);
 
   console.info("[character]", {
     step: "enter_screen",
@@ -91,6 +94,12 @@ export default function CharacterScreen() {
       isMounted = false;
     };
   }, [authLoading, user]);
+
+  useEffect(() => {
+    if (character) {
+      setShowCreator(false);
+    }
+  }, [character]);
 
   if (authLoading || sessionFallback.checking) {
     console.info("[auth] log", {
@@ -151,6 +160,9 @@ export default function CharacterScreen() {
       campaignId,
       userId: user.id,
     });
+    if (!character) {
+      return <div className="text-sm text-muted-foreground">Loading character...</div>;
+    }
   } else {
     console.info("[character]", {
       step: "character_fetch_result",
@@ -201,60 +213,42 @@ export default function CharacterScreen() {
       const hp = hitDie + conMod;
       const ac = data.baseAC + dexMod;
 
-      const result = await withTimeout(
-        supabase.from("characters").insert([{ 
-          name: data.name,
-          class: data.class,
-          class_description: data.classDescription,
-          campaign_id: campaignId,
-          user_id: user.id,
-          level: 1,
-          hp,
-          max_hp: hp,
-          ac,
-          stats: JSON.parse(JSON.stringify(data.stats)),
-          resources: JSON.parse(JSON.stringify(data.resources)),
-          passives: JSON.parse(JSON.stringify(data.passives)),
-          abilities: JSON.parse(JSON.stringify(data.abilities.map((a, i) => ({ ...a, id: `ability-${i}` })))),
-          xp: 0,
-          xp_to_next: 300,
-          position: JSON.parse(JSON.stringify({ x: 2, y: 2 })),
-          status_effects: JSON.parse(JSON.stringify([])),
-          is_active: true,
-          equipment: JSON.parse(JSON.stringify({ weapon: null, armor: null, shield: null, helmet: null, boots: null, gloves: null, ring1: null, ring2: null, trinket1: null, trinket2: null, trinket3: null })),
-          backpack: JSON.parse(JSON.stringify([])),
-        }]),
+      const payload: CharacterPayload = {
+        name: data.name,
+        class: data.class,
+        class_description: data.classDescription,
+        campaign_id: campaignId,
+        user_id: user.id,
+        level: 1,
+        hp,
+        max_hp: hp,
+        ac,
+        stats: data.stats,
+        resources: data.resources as unknown as Record<string, unknown>,
+        passives: data.passives as unknown as Record<string, unknown>[],
+        abilities: data.abilities.map((a, i) => ({ ...a, id: `ability-${i}` })) as unknown as Record<string, unknown>[],
+        xp: 0,
+        xp_to_next: 300,
+        position: { x: 2, y: 2 },
+        status_effects: [],
+        is_active: true,
+        equipment: { weapon: null, armor: null, shield: null, helmet: null, boots: null, gloves: null, ring1: null, ring2: null, trinket1: null, trinket2: null, trinket3: null },
+        backpack: [],
+      };
+
+      const saved = await withTimeout(
+        saveCharacter(payload, character?.id),
         25000,
       );
 
-      if (result.error) {
-        console.error("[createCharacter] supabase error", {
-          message: result.error.message,
-          code: result.error.code,
-          details: result.error.details,
-          hint: result.error.hint,
-          status: result.error.status,
-        });
-        console.info("[character]", {
-          step: "create_character_error",
-          campaignId,
-          userId: user.id,
-          status: result.error.status ?? null,
-          code: result.error.code ?? null,
-          message: result.error.message ?? null,
-          details: result.error.details ?? null,
-          hint: result.error.hint ?? null,
-        });
-        throw result.error;
-      }
-
       console.info("[character]", {
-        step: "create_character_success",
+        step: character ? "update_character_success" : "create_character_success",
         campaignId,
         userId: user.id,
+        characterId: saved?.id ?? null,
       });
       toast({
-        title: "Character created",
+        title: character ? "Character updated" : "Character created",
         description: `${data.name} the ${data.class} is ready for adventure!`,
       });
       console.info("[character]", {
@@ -279,6 +273,16 @@ export default function CharacterScreen() {
         return;
       }
 
+      const supaError = error as { message?: string; code?: string; details?: string; hint?: string; status?: number };
+      if (supaError?.message) {
+        console.error("[createCharacter] supabase error", {
+          message: supaError.message,
+          code: supaError.code,
+          details: supaError.details,
+          hint: supaError.hint,
+          status: supaError.status,
+        });
+      }
       const message = formatError(error, "Failed to create character");
       console.info("[character]", {
         step: "create_character_failed",
@@ -317,6 +321,39 @@ export default function CharacterScreen() {
         >
           Retry
         </button>
+      </div>
+    );
+  }
+
+  if (!shouldShowCreator && character) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg border border-border bg-card/50 p-4">
+          <div className="text-lg font-semibold">{character.name}</div>
+          <div className="text-sm text-muted-foreground">{character.class}</div>
+          <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+            <div>Level: {character.level}</div>
+            <div>HP: {character.hp}/{character.max_hp}</div>
+            <div>AC: {character.ac}</div>
+            <div>XP: {character.xp}</div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+            onClick={() => navigate(`/game/${campaignId}`)}
+          >
+            Continue to Game
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+            onClick={() => setShowCreator(true)}
+          >
+            Regenerate Class
+          </button>
+        </div>
       </div>
     );
   }
