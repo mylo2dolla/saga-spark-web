@@ -26,11 +26,13 @@ export function toWorldBoardModel(state: UnifiedState): WorldBoardModel {
   }
 
   for (const location of world.locations.values()) {
+    const factionId = "factionControl" in location ? (location as { factionControl?: string | null }).factionControl : null;
     nodes.push({
       id: location.id,
       name: location.name,
       x: location.position?.x,
       y: location.position?.y,
+      factionId: factionId ?? null,
     });
 
     if (location.connectedTo) {

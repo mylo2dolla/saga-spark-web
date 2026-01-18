@@ -9,6 +9,7 @@ import type { EnhancedLocation } from "@/engine/narrative/Travel";
 import type { TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import { resumeTravelAfterCombat } from "@/engine/WorldTravelEngine";
 import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useUnifiedEngineOptional } from "@/contexts/UnifiedEngineContext";
 import WorldBoard from "@/ui/worldboard/WorldBoard";
 import { toWorldBoardModel } from "@/ui/worldboard/adapter";
 
@@ -18,9 +19,12 @@ export default function GameScreen() {
   const { user, isLoading: authLoading } = useAuth();
   const gameSession = useGameSessionContext();
   const { setEngineSnapshot } = useDiagnostics();
+  const engine = useUnifiedEngineOptional();
   const [showTravel, setShowTravel] = useState(true);
   const [combatState, setCombatState] = useState<"idle" | "active">("idle");
   const [combatMessage, setCombatMessage] = useState<string | null>(null);
+  const [uiTick, setUiTick] = useState<number>(0);
+  const DEV_DEBUG = import.meta.env.DEV;
 
   useEffect(() => {
     if (!campaignId) return;
@@ -78,7 +82,7 @@ export default function GameScreen() {
       },
     };
     return toWorldBoardModel(stateWithTravel);
-  }, [gameSession.unifiedState, gameSession.travelState]);
+  }, [gameSession.unifiedState, gameSession.travelState, uiTick]);
 
   useEffect(() => {
     setEngineSnapshot({
@@ -128,6 +132,20 @@ export default function GameScreen() {
           <Button variant="outline" onClick={() => navigate(`/game/${campaignId}/create-character`)}>
             Character
           </Button>
+          {DEV_DEBUG ? (
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (engine?.tick) {
+                  engine.tick();
+                } else {
+                  setUiTick(Date.now());
+                }
+              }}
+            >
+              Tick
+            </Button>
+          ) : null}
         </div>
       </div>
 
