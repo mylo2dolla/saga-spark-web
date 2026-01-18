@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
+import { callEdgeFunctionRaw } from "@/lib/edge";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
@@ -97,19 +98,9 @@ export default function ServerAdminScreen() {
         setEdgeTest({ ok: false, body: "Missing Supabase env" });
         return;
       }
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-        apikey: SUPABASE_ANON_KEY,
-      };
-      if (session?.access_token) {
-        headers.Authorization = `Bearer ${session.access_token}`;
-      }
-      const url = `${SUPABASE_URL}/functions/v1/generate-class`;
-      const response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ classDescription: "Quick test class" }),
+      const response = await callEdgeFunctionRaw("generate-class", {
+        requireAuth: false,
+        body: { classDescription: "Quick test class" },
       });
       const body = await response.text();
       setEdgeTest({ ok: response.ok, status: response.status, body });

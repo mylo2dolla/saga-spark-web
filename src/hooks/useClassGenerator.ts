@@ -1,10 +1,9 @@
 import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { callEdgeFunction } from "@/lib/edge";
 import { toast } from "sonner";
 import type { GeneratedClass } from "@/types/game";
 import { recordEdgeCall, recordEdgeResponse } from "@/ui/data/networkHealth";
-
-const GENERATE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-class`;
 
 export function useClassGenerator() {
   const [isGenerating, setIsGenerating] = useState(false);
@@ -36,57 +35,31 @@ export function useClassGenerator() {
           status: sessionError.status,
         });
       }
-      const accessToken = session?.access_token ?? null;
-
       console.info("[generateClass] start", {
-        url: GENERATE_URL,
         userId: session?.user?.id ?? null,
         timestamp: new Date().toISOString(),
       });
-
-      const apiKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const bearerToken = accessToken ?? null;
-      if (import.meta.env.DEV) {
-        console.info("[generateClass] headers", {
-          hasApikey: Boolean(apiKey),
-          hasAuthorization: Boolean(bearerToken),
-        });
-      }
       recordEdgeCall();
-      const response = await fetch(GENERATE_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: apiKey,
-          ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
-        },
-        body: JSON.stringify({ classDescription: description }),
-      });
+      const { data, error: edgeError, status } = await callEdgeFunction<GeneratedClass>(
+        "generate-class",
+        { body: { classDescription: description }, requireAuth: false }
+      );
 
-      if (!response.ok) {
-        const bodyText = await response.text();
+      if (edgeError) {
         logFetchError("[generateClass] fetch error", {
-          url: GENERATE_URL,
-          status: response.status,
-          statusText: response.statusText,
-          bodyText,
+          status,
+          message: edgeError.message,
         });
-        let message = `Request failed: ${response.status}`;
-        try {
-          const parsed = JSON.parse(bodyText) as { error?: string; message?: string };
-          message = parsed.error || parsed.message || message;
-        } catch {
-          // ignore JSON parse failure
-        }
-        throw new Error(message);
+        throw edgeError;
       }
 
-      const data: GeneratedClass = await response.json();
+      if (!data) {
+        throw new Error("Empty response");
+      }
       recordEdgeResponse();
       setGeneratedClass(data);
       toast.success(`Generated: ${data.className}`);
       console.info("[generateClass] success", {
-        url: GENERATE_URL,
         durationMs: Date.now() - startedAt,
       });
       return data;
