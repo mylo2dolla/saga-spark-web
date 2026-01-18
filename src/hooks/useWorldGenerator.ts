@@ -218,6 +218,13 @@ export function useWorldGenerator() {
     return generate<GeneratedQuest>("quest", seed, context);
   }, [generate]);
 
+  const generateLocation = useCallback(async (
+    seed: { title: string; description: string; themes?: string[] },
+    context?: GenerationContext
+  ): Promise<GeneratedWorld["locations"][number] | null> => {
+    return generate<GeneratedWorld["locations"][number]>("location", seed, context);
+  }, [generate]);
+
   // Generate dialogue for an NPC
   const generateDialog = useCallback(async (
     seed: { title: string; description: string; themes?: string[] },
@@ -335,6 +342,7 @@ export function useWorldGenerator() {
     generateNPC,
     generateQuest,
     generateDialog,
+    generateLocation,
     toEngineNPC,
     toEngineQuest,
     toEngineFactions,

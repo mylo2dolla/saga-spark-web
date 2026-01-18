@@ -40,6 +40,11 @@ interface TravelPanelProps {
   onTravelStateUpdate: (travelState: TravelState) => void;
   onCombatStart: (entities: readonly Entity[], encounter?: CombatEncounter | null) => void;
   onWorldEvent?: (event: WorldEvent) => void;
+  onTravelComplete?: (payload: {
+    world: TravelWorldState;
+    travelState: TravelState;
+    destination: EnhancedLocation | null;
+  }) => void;
 }
 
 export function TravelPanel({
@@ -50,6 +55,7 @@ export function TravelPanel({
   onTravelStateUpdate,
   onCombatStart,
   onWorldEvent,
+  onTravelComplete,
 }: TravelPanelProps) {
   const DEV_DEBUG = import.meta.env.DEV;
   const lastLogAtRef = useRef(0);
@@ -134,6 +140,11 @@ export function TravelPanel({
       // Arrived at destination
       toast.success(result.message);
       setSelectedDestination(null);
+      onTravelComplete?.({
+        world: result.world,
+        travelState: result.travelState,
+        destination: result.world.locations.get(result.travelState.currentLocationId) as EnhancedLocation | null,
+      });
     }
 
     setIsTraveling(false);
@@ -159,6 +170,11 @@ export function TravelPanel({
 
       if (result.arrived) {
         toast.success(result.message);
+        onTravelComplete?.({
+          world: result.world,
+          travelState: result.travelState,
+          destination: result.world.locations.get(result.travelState.currentLocationId) as EnhancedLocation | null,
+        });
       } else {
         toast.info(result.message);
       }
