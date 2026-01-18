@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { groqChatCompletions } from "../_shared/groq.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -100,24 +101,6 @@ serve(async (req) => {
       );
     }
 
-    const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
-    const AI_GATEWAY_API_KEY = Deno.env.get("AI_GATEWAY_API_KEY");
-    const AI_GATEWAY_URL = Deno.env.get("AI_GATEWAY_URL");
-    const hasGroq = Boolean(GROQ_API_KEY);
-
-    if (!hasGroq && !AI_GATEWAY_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "AI provider key not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-    if (!hasGroq && !AI_GATEWAY_URL) {
-      return new Response(
-        JSON.stringify({ error: "AI_GATEWAY_URL is not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     const systemPrompt = `You are a fantasy RPG class designer. Given a text description of a character concept, generate a balanced and creative class with stats, abilities, and passives.
 
 RULES:
@@ -175,44 +158,14 @@ You MUST respond with ONLY a valid JSON object matching this structure:
   "baseAC": 12
 }`;
 
-    const response = await fetch(
-      hasGroq
-        ? "https://api.groq.com/openai/v1/chat/completions"
-        : `${AI_GATEWAY_URL}/v1/chat/completions`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${hasGroq ? GROQ_API_KEY : AI_GATEWAY_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: hasGroq ? "llama-3.1-8b-instant" : "google/gemini-3-flash-preview",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Create a class based on this description: "${classDescription}"` },
-          ],
-          temperature: 0.8,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again shortly." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "API credits depleted." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      throw new Error("AI gateway error");
-    }
-
-    const data = await response.json();
+    const data = await groqChatCompletions({
+      model: "llama-3.1-8b-instant",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: `Create a class based on this description: "${classDescription}"` },
+      ],
+      temperature: 0.8,
+    });
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {

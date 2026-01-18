@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { groqChatCompletions } from "../_shared/groq.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -191,15 +192,6 @@ serve(async (req) => {
   try {
     const { type, campaignSeed, context } = (await req.json()) as GenerationRequest;
     
-    const AI_GATEWAY_API_KEY = Deno.env.get("AI_GATEWAY_API_KEY");
-    const AI_GATEWAY_URL = Deno.env.get("AI_GATEWAY_URL");
-    if (!AI_GATEWAY_API_KEY) {
-      throw new Error("AI_GATEWAY_API_KEY is not configured");
-    }
-    if (!AI_GATEWAY_URL) {
-      throw new Error("AI_GATEWAY_URL is not configured");
-    }
-
     let prompt: string;
     switch (type) {
       case "npc":
@@ -226,42 +218,15 @@ serve(async (req) => {
 
     console.log(`Generating ${type} for campaign: ${campaignSeed.title}`);
 
-    const response = await fetch(`${AI_GATEWAY_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${AI_GATEWAY_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.8,
-        max_tokens: 4096,
-      }),
+    const data = await groqChatCompletions({
+      model: "llama-3.1-70b-versatile",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.8,
+      max_tokens: 4096,
     });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again later." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Usage limit reached. Please add credits." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const errorText = await response.text();
-      console.error("AI Gateway error:", response.status, errorText);
-      throw new Error(`AI Gateway error: ${response.status}`);
-    }
-
-    const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
