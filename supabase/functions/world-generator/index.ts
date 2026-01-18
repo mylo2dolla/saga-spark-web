@@ -254,10 +254,12 @@ serve(async (req) => {
       campaignTitle: campaignSeed.title,
     });
 
+    const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
     let data;
     try {
+      console.log("Groq model:", GROQ_MODEL);
       data = await groqChatCompletions({
-        model: "llama-3.1-70b-versatile",
+        model: GROQ_MODEL,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },

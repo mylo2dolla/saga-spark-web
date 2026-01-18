@@ -227,8 +227,10 @@ Use these EXACT values in your narration. Do not invent or alter any numbers.`;
       }
     }
 
+    const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
+    console.log("Groq model:", GROQ_MODEL);
     const response = await groqChatCompletionsStream({
-      model: "llama-3.1-70b-versatile",
+      model: GROQ_MODEL,
       messages: [
         { role: "system", content: systemPrompt },
         ...messages,
