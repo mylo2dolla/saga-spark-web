@@ -22,19 +22,24 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitLockRef = useRef(false);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (!email.trim() || !password.trim()) {
       toast({ title: "Missing info", description: "Email and password are required", variant: "destructive" });
       return;
     }
 
-    if (submitLockRef.current) return;
+    if (submitLockRef.current || isSubmitting) {
+      console.info("[auth] log", { step: "login_submit_blocked" });
+      return;
+    }
     submitLockRef.current = true;
     setIsSubmitting(true);
     setLastError(null);
     console.info("[auth] log", { step: "login_submit" });
 
     try {
+      (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = true;
       const action = mode === "login"
         ? () => supabase.auth.signInWithPassword({ email, password })
         : () => supabase.auth.signUp({
@@ -89,6 +94,8 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     } finally {
       setIsSubmitting(false);
       submitLockRef.current = false;
+      (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = false;
+      console.info("[auth] log", { step: "login_submit_unlock" });
     }
   };
 
@@ -101,7 +108,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         {mode === "login" ? "Sign in to continue." : "Start a new campaign."}
       </p>
 
-      <div className="space-y-4">
+      <form className="space-y-4" onSubmit={handleSubmit}>
         {mode === "signup" ? (
           <div className="space-y-2">
             <Label htmlFor="display-name">Display name</Label>
@@ -133,10 +140,10 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
             placeholder="••••••••"
           />
         </div>
-        <Button className="w-full" onClick={handleSubmit} disabled={isSubmitting}>
+        <Button className="w-full" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Working..." : mode === "login" ? "Login" : "Sign up"}
         </Button>
-      </div>
+      </form>
 
       <div className="mt-4 text-xs text-muted-foreground">
         {mode === "login" ? (
