@@ -16,6 +16,7 @@ export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isProfileCreating, setIsProfileCreating] = useState(false);
   const isMountedRef = useRef(true);
 
   const logAuthError = (error: { message?: string; code?: string; details?: string; hint?: string; status?: number } | null) => {
@@ -94,11 +95,47 @@ export function useAuth() {
         }
         logAuthError(error);
       }
+      if (data) {
+        if (isMountedRef.current) {
+          setProfile(data);
+        }
+        return;
+      }
+
       if (isMountedRef.current) {
-        setProfile(data);
+        setIsProfileCreating(true);
+      }
+
+      const { data: userData } = await supabase.auth.getUser();
+      const currentUser = userData.user;
+      const displayName =
+        currentUser?.user_metadata?.display_name
+        ?? currentUser?.email?.split("@")[0]
+        ?? "Adventurer";
+
+      const createResult = await withTimeout(
+        supabase
+          .from("profiles")
+          .insert({
+            user_id: userId,
+            display_name: displayName,
+            avatar_url: null,
+          })
+          .select("*")
+          .single(),
+        20000,
+      );
+
+      if (createResult.error) {
+        if (!isAbortError(createResult.error)) {
+          logAuthError(createResult.error);
+        }
+      } else if (isMountedRef.current) {
+        setProfile(createResult.data);
       }
     } finally {
       if (isMountedRef.current) {
+        setIsProfileCreating(false);
         setIsLoading(false);
       }
     }
@@ -160,6 +197,7 @@ export function useAuth() {
     user,
     profile,
     isLoading,
+    isProfileCreating,
     signUp,
     signIn,
     signOut,

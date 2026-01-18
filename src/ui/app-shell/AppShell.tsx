@@ -8,7 +8,7 @@ const DEV_DEBUG = import.meta.env.DEV;
 
 export default function AppShell() {
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, isProfileCreating } = useAuth();
   const { status, lastError } = useDbHealth();
   const { lastError: lastApiError, lastErrorAt, engineSnapshot } = useDiagnostics();
 
@@ -41,6 +41,7 @@ export default function AppShell() {
           <div className="flex items-center justify-between border-b border-border bg-card/40 px-4 py-2 text-xs">
             <div className="flex flex-wrap items-center gap-4">
               <span>Auth: {user?.email ?? "guest"}</span>
+              {isProfileCreating ? <span>Profile: creating...</span> : null}
               <span>DB: {status === "ok" ? "ok" : status}</span>
               {lastError ? <span className="text-destructive">DB Error: {lastError}</span> : null}
             </div>
