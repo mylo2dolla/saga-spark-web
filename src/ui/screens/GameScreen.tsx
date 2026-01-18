@@ -94,8 +94,28 @@ export default function GameScreen() {
       locationId: currentLocation?.id ?? null,
       locationName: currentLocation?.name ?? null,
       destinationsCount: destinations.length,
+      campaignId: campaignId ?? null,
+      campaignSeedId: gameSession.campaignSeed?.id ?? null,
+      campaignSeedTitle: gameSession.campaignSeed?.title ?? null,
+      travel: {
+        currentLocationId: gameSession.travelState?.currentLocationId ?? null,
+        isInTransit: gameSession.travelState?.isInTransit ?? false,
+        transitProgress: gameSession.travelState?.transitProgress ?? 0,
+      },
+      combatState,
     });
-  }, [combatState, currentLocation, destinations.length, gameSession.travelState?.isInTransit, setEngineSnapshot]);
+  }, [
+    combatState,
+    currentLocation,
+    destinations.length,
+    campaignId,
+    gameSession.campaignSeed?.id,
+    gameSession.campaignSeed?.title,
+    gameSession.travelState?.currentLocationId,
+    gameSession.travelState?.isInTransit,
+    gameSession.travelState?.transitProgress,
+    setEngineSnapshot,
+  ]);
 
   if (!campaignId) {
     return <div className="text-sm text-muted-foreground">Campaign not found.</div>;

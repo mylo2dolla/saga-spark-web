@@ -5,6 +5,15 @@ export interface EngineSnapshot {
   locationId?: string | null;
   locationName?: string | null;
   destinationsCount?: number;
+  campaignId?: string | null;
+  campaignSeedId?: string | null;
+  campaignSeedTitle?: string | null;
+  travel?: {
+    currentLocationId: string | null;
+    isInTransit: boolean;
+    transitProgress: number;
+  };
+  combatState?: string | null;
 }
 
 interface DiagnosticsState {

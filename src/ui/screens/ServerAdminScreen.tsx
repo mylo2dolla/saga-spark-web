@@ -20,7 +20,7 @@ interface ServerNodeRow {
 
 export default function ServerAdminScreen() {
   const { user, isLoading: authLoading } = useAuth();
-  const { setLastError } = useDiagnostics();
+  const { setLastError, engineSnapshot, lastError, lastErrorAt } = useDiagnostics();
   const networkHealth = useNetworkHealth(1000);
   const [nodes, setNodes] = useState<ServerNodeRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -147,12 +147,31 @@ export default function ServerAdminScreen() {
       } else {
         setLastError(null);
       }
+      await fetchNodes();
     } catch (err) {
       setLastError(formatError(err, "Failed to refresh session"));
     } finally {
       setIsTesting(false);
     }
-  }, [setLastError]);
+  }, [fetchNodes, setLastError]);
+
+  const handleReconnectAll = useCallback(async () => {
+    setIsTesting(true);
+    try {
+      const { error } = await withTimeout(supabase.auth.refreshSession(), 20000);
+      if (error) {
+        setLastError(error.message);
+      } else {
+        setLastError(null);
+      }
+      await fetchNodes();
+      await handleDbTest();
+    } catch (err) {
+      setLastError(formatError(err, "Reconnect failed"));
+    } finally {
+      setIsTesting(false);
+    }
+  }, [fetchNodes, handleDbTest, setLastError]);
 
   useEffect(() => {
     if (!user) return;
@@ -216,6 +235,9 @@ export default function ServerAdminScreen() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={fetchNodes}>Reconnect</Button>
+          <Button variant="outline" onClick={handleReconnectAll} disabled={isTesting}>
+            Reconnect + Refresh
+          </Button>
           <Button variant="outline" onClick={handleReconnectSession} disabled={isTesting}>
             Reconnect Session
           </Button>
@@ -265,9 +287,29 @@ export default function ServerAdminScreen() {
           <CardTitle className="text-base">Diagnostics</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-xs text-muted-foreground">
+          <div>Auth: {user?.email ?? "guest"}</div>
+          <div>DB: {dbTest?.ok ? "ok" : "unknown"}</div>
           <div>Requests/min: {networkHealth.requestsPerMinute}</div>
+          <div>Last DB read: {networkHealth.lastDbReadAt ? new Date(networkHealth.lastDbReadAt).toLocaleTimeString() : "-"}</div>
           <div>Last DB write: {networkHealth.lastDbWriteAt ? new Date(networkHealth.lastDbWriteAt).toLocaleTimeString() : "-"}</div>
+          <div>Last DB load: {networkHealth.lastDbLoadAt ? new Date(networkHealth.lastDbLoadAt).toLocaleTimeString() : "-"}</div>
           <div>Last Edge call: {networkHealth.lastEdgeCallAt ? new Date(networkHealth.lastEdgeCallAt).toLocaleTimeString() : "-"}</div>
+          {lastError ? <div className="text-destructive">Last error: {lastError}</div> : null}
+          {lastErrorAt ? <div>Last error at: {new Date(lastErrorAt).toLocaleTimeString()}</div> : null}
+          {engineSnapshot ? (
+            <div className="space-y-1">
+              <div>
+                Engine: {engineSnapshot.state ?? "unknown"} | Location: {engineSnapshot.locationName ?? "-"} ({engineSnapshot.locationId ?? "-"})
+              </div>
+              <div>Campaign: {engineSnapshot.campaignSeedTitle ?? "-"} ({engineSnapshot.campaignSeedId ?? "-"})</div>
+              <div>
+                Travel: {engineSnapshot.travel?.currentLocationId ?? "-"} | In transit: {engineSnapshot.travel?.isInTransit ? "yes" : "no"} | {Math.round(engineSnapshot.travel?.transitProgress ?? 0)}%
+              </div>
+              <div>Combat: {engineSnapshot.combatState ?? "-"}</div>
+            </div>
+          ) : (
+            <div>Engine: no snapshot</div>
+          )}
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={handleDbTest} disabled={isTesting}>
               Test DB

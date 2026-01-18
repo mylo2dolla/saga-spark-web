@@ -418,19 +418,6 @@ export function AICharacterCreator({ campaignId, onComplete, onCancel }: Charact
                     />
                   </div>
                   
-                  <div className="flex flex-wrap gap-2 justify-center">
-                    {["Shadowfang", "Azura", "Grimrock", "Kira", "Valdris", "Zephyr"].map(name => (
-                      <Button
-                        key={name}
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setCharacterName(name)}
-                        className="text-xs"
-                      >
-                        {name}
-                      </Button>
-                    ))}
-                  </div>
                 </div>
               </motion.div>
             )}

@@ -19,6 +19,7 @@ import type {
   Equipment,
 } from "@/engine/narrative/types";
 import { toast } from "sonner";
+import { recordEdgeCall, recordEdgeResponse } from "@/ui/data/networkHealth";
 
 const DEV_DEBUG = import.meta.env.DEV;
 
@@ -112,6 +113,7 @@ export function useWorldGenerator() {
         });
       }
 
+      recordEdgeCall();
       const invokePromise = supabase.functions.invoke("world-generator", {
         body: { type, campaignSeed, context },
       });
@@ -128,6 +130,7 @@ export function useWorldGenerator() {
       if (data.error) {
         throw new Error(data.error);
       }
+      recordEdgeResponse();
 
       if (DEV_DEBUG) {
         console.info("DEV_DEBUG worldGenerator invoke success", {
