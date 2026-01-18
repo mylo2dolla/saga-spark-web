@@ -8,6 +8,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { callEdgeFunction } from "@/lib/edge";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorldContent } from "@/hooks/useWorldContent";
 import { useWorldGenerator, type GeneratedWorld } from "@/hooks/useWorldGenerator";
@@ -535,12 +536,10 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         }))),
       ];
 
-      const writeResult = await supabase.functions.invoke("world-content-writer", {
-        body: {
-          campaignId,
-          content: contentToStore,
-        },
-      });
+      const writeResult = await callEdgeFunction<{ error?: string }>(
+        "world-content-writer",
+        { body: { campaignId, content: contentToStore }, requireAuth: true }
+      );
       if (writeResult.error) {
         throw writeResult.error;
       }

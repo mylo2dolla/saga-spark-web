@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { callEdgeFunctionRaw } from "@/lib/edge";
 
 type MessageRole = "user" | "assistant";
 
@@ -156,8 +156,6 @@ interface SendOptions {
   appendUser?: boolean;
 }
 
-const DM_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dungeon-master`;
-
 export function useDungeonMaster() {
   const [messages, setMessages] = useState<DMMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -198,25 +196,15 @@ export function useDungeonMaster() {
     let assistantContent = "";
 
     try {
-      // Get the current session token for authenticated requests
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        throw new Error("You must be logged in to speak with the Dungeon Master");
-      }
-
-      const response = await fetch(DM_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
+      const response = await callEdgeFunctionRaw("dungeon-master", {
+        requireAuth: true,
+        body: {
           messages: [...messages, userMessage].map(m => ({
             role: m.role,
             content: m.content,
           })),
           context,
-        }),
+        },
       });
 
       if (!response.ok) {

@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { callEdgeFunction } from "@/lib/edge";
 import type { 
   CampaignSeed, 
   NPC, 
@@ -116,21 +116,11 @@ export function useWorldGenerator() {
         });
       }
 
-      const { data: { session } } = await supabase.auth.getSession();
-      const accessToken = session?.access_token ?? null;
-      if (DEV_DEBUG) {
-        console.info("DEV_DEBUG worldGenerator auth", {
-          type,
-          hasAccessToken: Boolean(accessToken),
-          userId: session?.user?.id ?? null,
-        });
-      }
-
       recordEdgeCall();
-      const invokePromise = supabase.functions.invoke("world-generator", {
-        body: { type, campaignSeed, context },
-        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
-      });
+      const invokePromise = callEdgeFunction<{ ok?: boolean; error?: string; message?: string; content?: T }>(
+        "world-generator",
+        { body: { type, campaignSeed, context }, requireAuth: false }
+      );
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error("World generation timed out")), 90000);
       });

@@ -11,6 +11,7 @@ import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 import { recordCampaignsRead } from "@/ui/data/networkHealth";
+import { callEdgeFunction } from "@/lib/edge";
 import type { Json } from "@/integrations/supabase/types";
 import type { GeneratedWorld } from "@/hooks/useWorldGenerator";
 
@@ -285,12 +286,16 @@ export default function DashboardScreen() {
         })),
       ];
 
-      const contentResult = await supabase.functions.invoke("world-content-writer", {
-        body: {
-          campaignId: insertResult.data.id,
-          content: contentToStore,
-        },
-      });
+      const contentResult = await callEdgeFunction<{ error?: string }>(
+        "world-content-writer",
+        {
+          body: {
+            campaignId: insertResult.data.id,
+            content: contentToStore,
+          },
+          requireAuth: true,
+        }
+      );
       if (contentResult.error) {
         throw contentResult.error;
       }

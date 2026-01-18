@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { callEdgeFunctionRaw } from "@/lib/edge";
 
 const DEV_DEBUG = import.meta.env.DEV;
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-const GENERATE_URL = `${SUPABASE_URL}/functions/v1/generate-class`;
 
 export default function ApiDebugPanel() {
   const [lastStatus, setLastStatus] = useState<number | null>(null);
@@ -39,26 +38,10 @@ export default function ApiDebugPanel() {
     setHasSession(Boolean(session));
     setHasAccessToken(Boolean(accessToken));
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      apikey: ANON_KEY ?? "",
-    };
-
-    if (accessToken) {
-      headers.Authorization = `Bearer ${accessToken}`;
-    }
-
-    console.info("[generateClass] request", {
-      url: GENERATE_URL,
-      hasApiKey: Boolean(ANON_KEY),
-      hasAuthorization: Boolean(accessToken),
-    });
-
     try {
-      const response = await fetch(GENERATE_URL, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ classDescription: "Arcane duelist" }),
+      const response = await callEdgeFunctionRaw("generate-class", {
+        requireAuth: false,
+        body: { classDescription: "Arcane duelist" },
       });
       const bodyText = await response.text();
       setLastStatus(response.status);
