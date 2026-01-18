@@ -338,11 +338,11 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       // Fetch saves directly to ensure we have latest data
       const { data: savesData, error: savesError } = await supabase
         .from("game_saves")
-        .select("*")
+        .select("id, world_state, game_state, playtime_seconds, updated_at")
         .eq("campaign_id", campaignId)
         .eq("user_id", userId)
         .order("updated_at", { ascending: false })
-        .limit(10);
+        .limit(1);
 
       let existingSaves = savesData ?? [];
       if (savesError) {
