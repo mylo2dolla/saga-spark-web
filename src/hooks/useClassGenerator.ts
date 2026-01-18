@@ -46,7 +46,7 @@ export function useClassGenerator() {
 
       const { controller, cleanup } = createAbortController(25000);
       const apiKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-      const bearerToken = accessToken ?? apiKey ?? null;
+      const bearerToken = accessToken ?? null;
       const response = await fetch(GENERATE_URL, {
         method: "POST",
         headers: {

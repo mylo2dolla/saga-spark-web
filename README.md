@@ -30,3 +30,24 @@ npm run build
 ## RLS smoke test (optional)
 
 In the Supabase SQL editor, run `supabase/smoke-test.sql` after replacing `__USER_UUID__` with your user id.
+
+## generate-class curl checks
+
+```bash
+curl -i -X OPTIONS https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-class
+```
+
+```bash
+curl -i -X POST https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-class \
+  -H "apikey: <anon-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"classDescription":"Arcane duelist"}'
+```
+
+```bash
+curl -i -X POST https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-class \
+  -H "apikey: <anon-key>" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"classDescription":"Arcane duelist"}'
+```
