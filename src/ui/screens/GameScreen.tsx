@@ -9,6 +9,7 @@ import { DMChat } from "@/components/DMChat";
 import type { EnhancedLocation } from "@/engine/narrative/Travel";
 import type { TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import { resumeTravelAfterCombat } from "@/engine/WorldTravelEngine";
+import * as World from "@/engine/narrative/World";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 import { useUnifiedEngineOptional } from "@/contexts/UnifiedEngineContext";
 import { useDungeonMaster } from "@/hooks/useDungeonMaster";
@@ -110,6 +111,12 @@ export default function GameScreen() {
     inCombat: combatState === "active",
     enemies: [],
   }), [character, combatState, currentLocation?.name, gameSession.campaignSeed?.title]);
+
+  const encounterFlagForCurrent = useMemo(() => {
+    if (!gameSession.unifiedState || !currentLocation) return null;
+    const flagId = `encounter_possible:${currentLocation.id}`;
+    return World.getFlag(gameSession.unifiedState.world, flagId);
+  }, [currentLocation, gameSession.unifiedState]);
 
   const hashString = useCallback((value: string) => {
     let hash = 0;
@@ -261,6 +268,11 @@ export default function GameScreen() {
       visitedLocationsRef.current.add(currentLoc.id);
 
       const encounterFlag = shouldFlagEncounter(currentLoc);
+      const flagId = `encounter_possible:${currentLoc.id}`;
+      gameSession.updateUnifiedState(prev => ({
+        ...prev,
+        world: World.setFlag(prev.world, flagId, encounterFlag, "arrival"),
+      }));
       const narrationPrompt = `In 1-2 sentences, narrate the party arriving at ${currentLoc.name}.` +
         (encounterFlag ? " Hint that danger may be nearby." : "");
       await dungeonMaster.sendNarration?.(narrationPrompt, dmContext);
@@ -509,6 +521,9 @@ export default function GameScreen() {
               <div>Quests: {gameSession.unifiedState.world.quests.size}</div>
               <div>Items: {gameSession.unifiedState.world.items.size}</div>
               <div>Current: {currentLocation?.name ?? "Unknown"}</div>
+              {encounterFlagForCurrent?.value === true ? (
+                <div className="text-muted-foreground">You sense something nearby.</div>
+              ) : null}
             </CardContent>
           </Card>
 
