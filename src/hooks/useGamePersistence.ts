@@ -68,7 +68,10 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
 
   const getFallbackTravelState = useCallback((state: UnifiedState) => {
     const firstLocationId = Array.from(state.world.locations.keys())[0];
-    return createTravelState(firstLocationId ?? "starting_location");
+    if (!firstLocationId) {
+      throw new Error("Cannot persist travel state without a location");
+    }
+    return createTravelState(firstLocationId);
   }, []);
 
   // Fetch all saves for this campaign

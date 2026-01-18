@@ -19,38 +19,6 @@ import type { CampaignSeed } from "@/engine/narrative/types";
 import { toast } from "sonner";
 import { recordCampaignsRead, recordSavesRead } from "@/ui/data/networkHealth";
 
-const FALLBACK_LOCATION_ID = "starting_location";
-
-const createFallbackLocation = (campaignSeed: CampaignSeed): EnhancedLocation => {
-  const title = campaignSeed.title?.trim();
-  const name = title ? `The ${title} Outskirts` : "The Outskirts";
-  const description = campaignSeed.description?.trim()
-    ? `Beyond ${title}, the outskirts stir with new rumors and distant lights.`
-    : "The outskirts stir with new rumors and distant lights.";
-
-  return {
-    id: FALLBACK_LOCATION_ID,
-    name,
-    description,
-    type: "town",
-    connectedTo: [],
-    position: { x: 100, y: 100 },
-    radius: 30,
-    discovered: true,
-    items: [],
-    dangerLevel: 1,
-    npcs: [],
-    factionControl: null,
-    questHooks: [],
-    services: ["rest", "trade", "heal"] as const,
-    ambientDescription: description,
-    shops: [],
-    inn: true,
-    travelTime: {},
-    currentEvents: [],
-  };
-};
-
 const DEV_DEBUG = import.meta.env.DEV;
 
 export interface GameSessionState {
@@ -193,52 +161,30 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     unified: UnifiedState,
     travel: TravelState | null,
     worldContentLocationsCount: number
-  ): { unified: UnifiedState; travel: TravelState } => {
+  ): { unified: UnifiedState; travel: TravelState | null } => {
     let nextWorld = unified.world;
     const locations = new Map(nextWorld.locations);
     let locationIds = Array.from(locations.keys());
     const firstLocationId = locationIds[0];
-    const fallbackLocation = createFallbackLocation(unified.world.campaignSeed);
-    let nextTravel = travel ?? createTravelState(firstLocationId ?? fallbackLocation.id);
-    const shouldInjectFallbackLocation =
-      locations.size === 0 &&
-      worldContentLocationsCount === 0 &&
-      nextWorld.npcs.size === 0 &&
-      nextWorld.quests.size === 0 &&
-      nextWorld.items.size === 0;
-    let injectedFallbackLocation = false;
-
-    if (shouldInjectFallbackLocation) {
-      locations.set(fallbackLocation.id, fallbackLocation);
-      injectedFallbackLocation = true;
+    let nextTravel = travel ?? (firstLocationId ? createTravelState(firstLocationId) : null);
+    const realLocationsExist = locations.size > 0;
+    if (!firstLocationId || !nextTravel) {
+      if (DEV_DEBUG) {
+        console.warn("DEV_DEBUG gameSession invariants missing locations", {
+          locationsSize: locations.size,
+          worldContentLocationsCount,
+        });
+      }
+      return { unified, travel: nextTravel };
     }
-
-    const hasOnlyDefaultLocation =
-      locations.size === 1 && locations.has(fallbackLocation.id);
-    const realLocationsExist = locations.size > 0 && !hasOnlyDefaultLocation;
-    if (worldContentLocationsCount > 0 && locations.has(fallbackLocation.id) && !realLocationsExist) {
-      locations.delete(fallbackLocation.id);
-    }
-    if (realLocationsExist && locations.has(fallbackLocation.id)) {
-      locations.delete(fallbackLocation.id);
-    }
-    locationIds = Array.from(locations.keys());
     let currentLocationId = nextTravel.currentLocationId;
-    const preferredRealLocationId =
-      locationIds.find(id => id !== fallbackLocation.id) ?? locationIds[0];
+    const preferredRealLocationId = locationIds[0];
 
     if (realLocationsExist) {
-      if (!locations.has(currentLocationId) || currentLocationId === fallbackLocation.id) {
+      if (!locations.has(currentLocationId)) {
         if (preferredRealLocationId) {
           currentLocationId = preferredRealLocationId;
         }
-      }
-    } else if (!locations.has(currentLocationId)) {
-      const fallbackId = locations.has(fallbackLocation.id)
-        ? fallbackLocation.id
-        : locationIds[0];
-      if (fallbackId) {
-        currentLocationId = fallbackId;
       }
     }
 
@@ -286,7 +232,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         currentLocationId,
         currentLocationName: currentLocation?.name ?? null,
         connectedToCount: currentLocation?.connectedTo?.length ?? 0,
-        fallbackStartingLocationInjected: injectedFallbackLocation,
+        fallbackStartingLocationInjected: false,
       });
     }
 
@@ -376,8 +322,11 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           const worldWithTravel = loaded.world as unknown as TravelWorldState;
           const savedLocationId = worldWithTravel.travelState?.currentLocationId;
           const firstLocationId = Array.from(worldWithTravel.locations.keys())[0];
-          const fallbackLocationId = savedLocationId ?? firstLocationId ?? FALLBACK_LOCATION_ID;
-          travelState = worldWithTravel.travelState ?? createTravelState(fallbackLocationId);
+          if (!firstLocationId && !savedLocationId) {
+            throw new Error("World state has no locations");
+          }
+          const resolvedLocationId = savedLocationId ?? firstLocationId ?? "";
+          travelState = worldWithTravel.travelState ?? createTravelState(resolvedLocationId);
           initialPlaytime = latestSave.playtime_seconds;
           lastSaveIdRef.current = latestSave.id;
           
@@ -416,10 +365,10 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         }
 
         const locationIds = Array.from(unifiedState.world.locations.keys());
-        const startingId =
-          locationIds.find(id => id !== FALLBACK_LOCATION_ID)
-          ?? locationIds[0]
-          ?? FALLBACK_LOCATION_ID;
+        if (locationIds.length === 0) {
+          throw new Error("World generation returned no locations");
+        }
+        const startingId = locationIds[0];
 
         // Initialize travel state with starting location
         travelState = createTravelState(startingId);
@@ -433,6 +382,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         travelState,
         worldContent?.locations.length ?? 0
       );
+      if (!invariantResult.travel) {
+        throw new Error("World state missing travel location");
+      }
       unifiedState = invariantResult.unified;
       travelState = invariantResult.travel;
       
@@ -660,9 +612,17 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     if (loaded) {
       const worldWithTravel = loaded.world as unknown as TravelWorldState;
       const firstLocationId = Array.from(worldWithTravel.locations.keys())[0];
-      const fallbackLocationId =
-        worldWithTravel.travelState?.currentLocationId ?? firstLocationId ?? FALLBACK_LOCATION_ID;
-      const travelState = worldWithTravel.travelState ?? createTravelState(fallbackLocationId);
+      const resolvedLocationId = worldWithTravel.travelState?.currentLocationId ?? firstLocationId ?? null;
+      if (!resolvedLocationId) {
+        setSessionState(prev => ({
+          ...prev,
+          isInitialized: false,
+          isLoading: false,
+          error: "Saved world has no locations.",
+        }));
+        return false;
+      }
+      const travelState = worldWithTravel.travelState ?? createTravelState(resolvedLocationId);
       const mergedWorld = worldContent
         ? mergeIntoWorldState(loaded.world, worldContent)
         : loaded.world;
@@ -671,6 +631,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         travelState,
         worldContent?.locations.length ?? 0
       );
+      if (!invariantResult.travel) {
+        setSessionState(prev => ({
+          ...prev,
+          isInitialized: false,
+          isLoading: false,
+          error: "Saved world has no active travel location.",
+        }));
+        return false;
+      }
       
       lastSaveIdRef.current = saveId;
       lastSavedFingerprintRef.current = computeFingerprint(invariantResult.unified, invariantResult.travel);
@@ -785,6 +754,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         prev.travelState,
         worldContent?.locations.length ?? 0
       );
+      if (!invariantResult.travel) {
+        return {
+          ...prev,
+          error: "World content missing locations.",
+          isInitialized: false,
+          isLoading: false,
+        };
+      }
       return {
         ...prev,
         unifiedState: invariantResult.unified,

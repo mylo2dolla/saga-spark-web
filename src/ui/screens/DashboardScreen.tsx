@@ -7,9 +7,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 import { recordCampaignMembersRead, recordCampaignsRead } from "@/ui/data/networkHealth";
+import type { Json } from "@/integrations/supabase/types";
+import type { GeneratedWorld } from "@/hooks/useWorldGenerator";
 
 interface Campaign {
   id: string;
@@ -23,6 +26,7 @@ interface Campaign {
 
 export default function DashboardScreen() {
   const { user, isLoading: authLoading } = useAuth();
+  const { generateInitialWorld, isGenerating } = useWorldGenerator();
   const { toast } = useToast();
   const navigate = useNavigate();
   const { setLastError } = useDiagnostics();
@@ -37,6 +41,55 @@ export default function DashboardScreen() {
   const [isJoining, setIsJoining] = useState(false);
   const fetchInFlightRef = useRef(false);
   const lastFetchAtRef = useRef<number | null>(null);
+  const creatingRef = useRef(false);
+
+  const toKebab = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+  const hashString = (value: string): number => {
+    let hash = 0;
+    for (let i = 0; i < value.length; i += 1) {
+      hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+    }
+    return hash;
+  };
+
+  const createDeterministicPosition = (seed: string): { x: number; y: number } => {
+    const hashed = hashString(seed);
+    return {
+      x: 50 + (hashed % 400),
+      y: 50 + ((hashed >>> 16) % 400),
+    };
+  };
+
+  const normalizeLocations = (locations: GeneratedWorld["locations"]) => {
+    const seenIds = new Set<string>();
+    return locations.map((location, index) => {
+      const baseName = location.name?.trim() || `location-${index + 1}`;
+      let id = location.id?.trim() || toKebab(baseName);
+      if (!id || id === "starting_location") {
+        id = `location-${index + 1}`;
+      }
+      let uniqueId = id;
+      let suffix = 1;
+      while (seenIds.has(uniqueId)) {
+        uniqueId = `${id}-${suffix}`;
+        suffix += 1;
+      }
+      seenIds.add(uniqueId);
+      const position = location.position?.x !== undefined && location.position?.y !== undefined
+        ? { x: location.position.x, y: location.position.y }
+        : createDeterministicPosition(uniqueId);
+      return {
+        ...location,
+        id: uniqueId,
+        position,
+      };
+    });
+  };
 
   const fetchCampaigns = useCallback(async (force = false) => {
     if (!user) return;
@@ -179,10 +232,16 @@ export default function DashboardScreen() {
   }, [authLoading, user, navigate, fetchCampaigns]);
 
   const handleCreate = async () => {
-    if (!user || !newCampaignName.trim()) return;
+    if (!user || !newCampaignName.trim() || !newCampaignDescription.trim()) {
+      toast({ title: "Missing info", description: "Name and description are required", variant: "destructive" });
+      return;
+    }
+    if (creatingRef.current) return;
+    creatingRef.current = true;
     setIsCreating(true);
     setLastError(null);
 
+    let createdCampaignId: string | null = null;
     try {
       const inviteCodeValue = Math.random().toString(36).substring(2, 8).toUpperCase();
       const insertResult = await withTimeout(
@@ -224,6 +283,94 @@ export default function DashboardScreen() {
         supabase.from("combat_state").insert({ campaign_id: insertResult.data.id }),
         25000,
       );
+      createdCampaignId = insertResult.data.id;
+
+      const generatedWorld = await generateInitialWorld({
+        title: newCampaignName.trim(),
+        description: newCampaignDescription.trim(),
+        themes: [],
+      });
+      if (!generatedWorld) {
+        throw new Error("World generation failed");
+      }
+      if (!Array.isArray(generatedWorld.locations) || generatedWorld.locations.length === 0) {
+        throw new Error("World generation returned no locations");
+      }
+
+      const normalizedLocations = normalizeLocations(generatedWorld.locations);
+      const startingLocationId = generatedWorld.startingLocationId;
+      const resolvedStartingId =
+        normalizedLocations.find(loc => loc.id === startingLocationId)?.id
+        ?? normalizedLocations[0]?.id
+        ?? null;
+
+      const contentToStore = [
+        ...generatedWorld.factions.map(f => ({
+          campaign_id: insertResult.data.id,
+          content_type: "faction",
+          content_id: f.id,
+          content: JSON.parse(JSON.stringify(f)) as Json,
+          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+        })),
+        ...generatedWorld.npcs.map((npc, i) => ({
+          campaign_id: insertResult.data.id,
+          content_type: "npc",
+          content_id: `npc_initial_${i}`,
+          content: JSON.parse(JSON.stringify(npc)) as Json,
+          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+        })),
+        {
+          campaign_id: insertResult.data.id,
+          content_type: "quest",
+          content_id: "initial_quest",
+          content: JSON.parse(JSON.stringify(generatedWorld.initialQuest)) as Json,
+          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+        },
+        ...normalizedLocations.map((location) => ({
+          campaign_id: insertResult.data.id,
+          content_type: "location",
+          content_id: location.id,
+          content: JSON.parse(JSON.stringify(location)) as Json,
+          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+        })),
+        ...(generatedWorld.worldHooks ?? []).map((hook, index) => ({
+          campaign_id: insertResult.data.id,
+          content_type: "world_hooks",
+          content_id: `world_hook_${index}`,
+          content: JSON.parse(JSON.stringify([hook])) as Json,
+          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+        })),
+      ];
+
+      const contentResult = await withTimeout(
+        supabase.functions.invoke("world-content-writer", {
+          body: {
+            campaignId: insertResult.data.id,
+            content: contentToStore,
+          },
+        }),
+        25000,
+      );
+      if (contentResult.error) {
+        throw contentResult.error;
+      }
+      if (contentResult.data?.error) {
+        throw new Error(contentResult.data.error);
+      }
+
+      if (resolvedStartingId) {
+        const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
+        if (sceneName) {
+          const sceneResult = await withTimeout(
+            supabase
+              .from("campaigns")
+              .update({ current_scene: sceneName })
+              .eq("id", insertResult.data.id),
+            20000,
+          );
+          if (sceneResult.error) throw sceneResult.error;
+        }
+      }
 
       toast({
         title: "Campaign created",
@@ -233,7 +380,11 @@ export default function DashboardScreen() {
       setNewCampaignName("");
       setNewCampaignDescription("");
       setCampaigns(prev => [insertResult.data as Campaign, ...prev]);
+      navigate(`/game/${insertResult.data.id}/create-character`);
     } catch (err) {
+      if (createdCampaignId) {
+        await supabase.from("campaigns").delete().eq("id", createdCampaignId);
+      }
       if (isAbortError(err)) {
         toast({ title: "Request canceled/timeout", description: "Please retry.", variant: "destructive" });
         setLastError("Request canceled/timeout");
@@ -244,6 +395,7 @@ export default function DashboardScreen() {
       toast({ title: "Failed to create campaign", description: message, variant: "destructive" });
     } finally {
       setIsCreating(false);
+      creatingRef.current = false;
     }
   };
 
@@ -361,12 +513,12 @@ export default function DashboardScreen() {
                 onChange={e => setNewCampaignName(e.target.value)}
               />
               <Textarea
-                placeholder="Description (optional)"
+                placeholder="Campaign description"
                 value={newCampaignDescription}
                 onChange={e => setNewCampaignDescription(e.target.value)}
               />
-              <Button onClick={handleCreate} disabled={isCreating || !newCampaignName.trim()}>
-                {isCreating ? "Creating..." : "Create"}
+              <Button onClick={handleCreate} disabled={isCreating || isGenerating || !newCampaignName.trim() || !newCampaignDescription.trim()}>
+                {isCreating || isGenerating ? "Creating..." : "Create"}
               </Button>
             </CardContent>
           </Card>
