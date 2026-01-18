@@ -24,6 +24,12 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    event.stopPropagation();
+    const nativeEvent = event.nativeEvent as SubmitEvent | undefined;
+    if (nativeEvent && nativeEvent.isTrusted === false) {
+      console.info("[auth] log", { step: "login_submit_blocked_untrusted" });
+      return;
+    }
     if (!email.trim() || !password.trim()) {
       toast({ title: "Missing info", description: "Email and password are required", variant: "destructive" });
       return;
@@ -40,6 +46,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
 
     try {
       (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = true;
+      console.info("[auth] log", { step: "login_signin_call" });
       const action = mode === "login"
         ? () => supabase.auth.signInWithPassword({ email, password })
         : () => supabase.auth.signUp({
@@ -60,6 +67,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         error: null,
       });
       console.info("[auth] log", { step: "login_success_bootstrap" });
+      console.info("[auth] log", { step: "login_navigate" });
       navigate("/dashboard");
     } catch (error) {
       if (isAbortError(error)) {
