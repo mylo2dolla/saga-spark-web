@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { AICharacterCreator } from "@/components/AICharacterCreator";
 import { supabase } from "@/integrations/supabase/client";
@@ -8,6 +8,8 @@ import type { CharacterStats, CharacterResources, PassiveAbility, GameAbility } 
 import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 import { useAuth } from "@/hooks/useAuth";
+import { useGameSessionContext } from "@/contexts/GameSessionContext";
+import { useCharacter } from "@/hooks/useCharacter";
 
 interface AICharacterData {
   name: string;
@@ -25,13 +27,28 @@ interface AICharacterData {
 export default function CharacterScreen() {
   const { campaignId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { setLastError } = useDiagnostics();
   const { user, isLoading: authLoading } = useAuth();
   const [isCreating, setIsCreating] = useState(false);
+  const [lastAction, setLastAction] = useState<string | null>(null);
+  const gameSession = useGameSessionContext();
+  const { character, isLoading: characterLoading, error: characterError } = useCharacter(campaignId);
 
   if (!campaignId) {
-    return <div className="text-sm text-muted-foreground">Campaign not found.</div>;
+    return (
+      <div className="space-y-2 text-sm text-muted-foreground">
+        <div>Campaign not found.</div>
+        <button
+          type="button"
+          className="text-primary underline"
+          onClick={() => navigate("/dashboard")}
+        >
+          Go to dashboard
+        </button>
+      </div>
+    );
   }
 
   if (authLoading) {
@@ -64,6 +81,7 @@ export default function CharacterScreen() {
   const handleComplete = async (data: AICharacterData) => {
     setIsCreating(true);
     setLastError(null);
+    setLastAction("create_character_submit");
 
     try {
       const userResult = await withTimeout(supabase.auth.getUser(), 20000);
@@ -162,10 +180,30 @@ export default function CharacterScreen() {
   }
 
   return (
-    <AICharacterCreator
-      campaignId={campaignId}
-      onComplete={handleComplete}
-      onCancel={() => navigate("/dashboard")}
-    />
+    <>
+      <AICharacterCreator
+        campaignId={campaignId}
+        onComplete={handleComplete}
+        onCancel={() => {
+          setLastAction("create_character_cancel");
+          navigate("/dashboard");
+        }}
+      />
+      {import.meta.env.DEV ? (
+        <div className="fixed bottom-2 right-2 z-[9999] max-w-xs rounded-md border border-border bg-card/95 p-2 text-[11px] text-muted-foreground">
+          <div>route: {location.pathname}</div>
+          <div>campaignId: {campaignId}</div>
+          <div>userId: {user?.id ?? "-"}</div>
+          <div>hasSession: {user ? "yes" : "no"}</div>
+          <div>authLoading: {String(authLoading)}</div>
+          <div>characterLoading: {String(characterLoading)}</div>
+          <div>characterExists: {character ? "yes" : "no"}</div>
+          <div>characterError: {characterError ?? "none"}</div>
+          <div>engineReady: {gameSession.isInitialized ? "yes" : "no"}</div>
+          <div>lastError: {gameSession.error ?? "none"}</div>
+          <div>lastAction: {lastAction ?? "none"}</div>
+        </div>
+      ) : null}
+    </>
   );
 }
