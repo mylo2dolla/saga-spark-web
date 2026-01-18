@@ -62,8 +62,8 @@ serve(async (req) => {
     const hasBearer = authHeader?.startsWith("Bearer ");
     const bearerToken = authHeader?.replace("Bearer ", "") ?? "";
     const hasAnonKey = Boolean(apiKeyHeader) && apiKeyHeader === anonKey;
-    const bearerIsAnon = bearerToken === anonKey;
-    if (!hasBearer && !hasAnonKey) {
+    const bearerIsAnon = bearerToken === apiKeyHeader;
+    if (!hasBearer) {
       return new Response(
         JSON.stringify({ error: "Authentication required" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -76,7 +76,9 @@ serve(async (req) => {
       { global: { headers: authHeader ? { Authorization: authHeader } : {} } }
     );
 
-    if (hasBearer && !bearerIsAnon) {
+    if (bearerIsAnon && hasAnonKey) {
+      // anon/dev mode: skip user lookup
+    } else {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) {
         return new Response(
