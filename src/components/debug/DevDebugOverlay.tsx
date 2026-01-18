@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useParams } from "react-router-dom";
 import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import { supabase } from "@/integrations/supabase/client";
 import type { EnhancedLocation } from "@/engine/narrative/Travel";
 import { useNetworkHealth } from "@/ui/data/networkHealth";
+import { useAuth } from "@/hooks/useAuth";
 
 const DEV_DEBUG = import.meta.env.DEV;
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -14,7 +15,7 @@ const getProjectRef = (url?: string) => {
   return url.replace("https://", "").split(".")[0] ?? null;
 };
 
-export default function DevDebugOverlay() {
+function DevDebugOverlayAuthedStats() {
   const session = useGameSessionContext();
   const world = session.unifiedState?.world;
   const travelState = session.travelState;
@@ -226,4 +227,29 @@ export default function DevDebugOverlay() {
       ) : null}
     </div>
   );
+}
+
+export default function DevDebugOverlay() {
+  const location = useLocation();
+  const { user, isLoading } = useAuth();
+  const isLoginRoute = location.pathname === "/login" || location.pathname === "/signup";
+
+  useEffect(() => {
+    if (!DEV_DEBUG) return;
+    if (!isLoading && user && !isLoginRoute) return;
+    console.info("[auth] log", {
+      step: "dev_overlay_skip",
+      route: location.pathname,
+      hasSession: Boolean(user),
+      isLoading,
+      reason: isLoginRoute ? "login_route" : "no_user",
+    });
+  }, [isLoading, isLoginRoute, location.pathname, user]);
+
+  if (!DEV_DEBUG) return null;
+  if (isLoading || !user || isLoginRoute) {
+    return null;
+  }
+
+  return <DevDebugOverlayAuthedStats />;
 }
