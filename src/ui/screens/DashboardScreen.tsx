@@ -122,43 +122,12 @@ export default function DashboardScreen() {
   }, [session?.user?.id, setLastError]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const run = async () => {
-      const ownerId = session?.user?.id ?? user?.id ?? null;
-      if (!ownerId) {
-        if (!cancelled) setIsLoading(false);
-        return;
-      }
-      setIsLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("campaigns")
-          .select("*")
-          .eq("owner_id", ownerId);
-
-        if (error) throw error;
-        if (!cancelled) {
-          setCampaigns(data ?? []);
-          recordCampaignsRead();
-        }
-      } catch (err) {
-        console.error("Failed to load campaigns", err);
-        if (!cancelled) {
-          const message = formatError(err, "Failed to load campaigns");
-          setError(message);
-          setLastError(message);
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    };
-
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [session?.user?.id, user?.id, setLastError]);
+    if (!session?.user?.id) {
+      setIsLoading(false);
+      return;
+    }
+    fetchCampaigns();
+  }, [session?.user?.id, fetchCampaigns]);
 
   const trimmedName = newCampaignName.trim();
   const trimmedDescription = newCampaignDescription.trim();
@@ -305,6 +274,7 @@ export default function DashboardScreen() {
       setDescriptionTouched(false);
       setSubmitAttempted(false);
       setCampaigns(prev => [insertResult.data as Campaign, ...prev]);
+      fetchCampaigns();
       navigate(`/game/${insertResult.data.id}/create-character`);
     } catch (err) {
       if (createdCampaignId) {
