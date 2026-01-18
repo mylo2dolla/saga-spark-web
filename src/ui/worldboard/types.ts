@@ -3,6 +3,7 @@ export interface WorldBoardNode {
   name: string;
   x?: number;
   y?: number;
+  factionId?: string | null;
 }
 
 export interface WorldBoardEdge {
