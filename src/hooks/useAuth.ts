@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import type { User } from "@supabase/supabase-js";
+import { withTimeout, isAbortError } from "@/ui/data/async";
 
 const DEV_DEBUG = import.meta.env.DEV;
 
@@ -15,10 +16,11 @@ export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const isMountedRef = useRef(true);
 
-  const logSupabaseError = (context: string, error: { message?: string; code?: string; details?: string; hint?: string; status?: number } | null) => {
+  const logAuthError = (error: { message?: string; code?: string; details?: string; hint?: string; status?: number } | null) => {
     if (!error) return;
-    console.error(context, {
+    console.error("[auth] supabase error", {
       message: error.message,
       code: error.code,
       details: error.details,
@@ -28,15 +30,12 @@ export function useAuth() {
   };
 
   useEffect(() => {
-    let isMounted = true;
     const loadSession = async () => {
       try {
         // Get initial session
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) {
-          logSupabaseError("[auth] supabase error", error);
-        }
-        if (!isMounted) return;
+        const { data: { session }, error } = await withTimeout(supabase.auth.getSession(), 20000);
+        if (error) logAuthError(error);
+        if (!isMountedRef.current) return;
         setUser(session?.user ?? null);
         if (session?.user) {
           fetchProfile(session.user.id);
@@ -44,11 +43,14 @@ export function useAuth() {
           setIsLoading(false);
         }
       } catch (error) {
-        if ((error as { name?: string })?.name === "AbortError") {
+        if (isAbortError(error)) {
+          if (isMountedRef.current) {
+            setIsLoading(false);
+          }
           return;
         }
-        logSupabaseError("[auth] supabase error", error as { message?: string; code?: string; details?: string; hint?: string; status?: number });
-        if (isMounted) {
+        logAuthError(error as { message?: string; code?: string; details?: string; hint?: string; status?: number });
+        if (isMountedRef.current) {
           setIsLoading(false);
         }
       }
@@ -70,28 +72,35 @@ export function useAuth() {
     );
 
     return () => {
-      isMounted = false;
+      isMountedRef.current = false;
       subscription.unsubscribe();
     };
   }, []);
 
   const fetchProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("*")
-        .eq("user_id", userId)
-        .maybeSingle();
+      const { data, error } = await withTimeout(
+        supabase
+          .from("profiles")
+          .select("*")
+          .eq("user_id", userId)
+          .maybeSingle(),
+        20000,
+      );
 
       if (error) {
-        if ((error as { name?: string })?.name === "AbortError") {
+        if (isAbortError(error)) {
           return;
         }
-        logSupabaseError("[auth] supabase error", error);
+        logAuthError(error);
       }
-      setProfile(data);
+      if (isMountedRef.current) {
+        setProfile(data);
+      }
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
