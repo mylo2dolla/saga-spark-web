@@ -118,7 +118,7 @@ export default function GameScreen() {
     return World.getFlag(gameSession.unifiedState.world, flagId);
   }, [currentLocation, gameSession.unifiedState]);
 
-  const encounterChoiceForCurrent = useMemo(() => {
+  const encounterChoiceFlagForCurrent = useMemo(() => {
     if (!gameSession.unifiedState || !currentLocation) return null;
     const flagId = `encounter_choice:${currentLocation.id}`;
     return World.getFlag(gameSession.unifiedState.world, flagId);
@@ -550,7 +550,7 @@ export default function GameScreen() {
               {encounterFlagForCurrent?.value === true ? (
                 <div className="text-muted-foreground">You sense something nearby.</div>
               ) : null}
-              {encounterFlagForCurrent?.value === true && !encounterChoiceForCurrent ? (
+              {encounterFlagForCurrent?.value === true && encounterChoiceFlagForCurrent?.value == null ? (
                 <div className="flex flex-wrap gap-2 pt-1">
                   <Button size="sm" variant="outline" onClick={() => handleEncounterChoice("investigate")}>
                     Investigate
