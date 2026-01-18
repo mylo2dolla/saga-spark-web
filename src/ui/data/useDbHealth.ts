@@ -2,11 +2,16 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
 
-export function useDbHealth() {
+export function useDbHealth(enabled = true) {
   const [status, setStatus] = useState<"ok" | "error" | "loading">("loading");
   const [lastError, setLastError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!enabled) {
+      setStatus("loading");
+      setLastError(null);
+      return;
+    }
     let isMounted = true;
     let interval: ReturnType<typeof setInterval> | null = null;
 
