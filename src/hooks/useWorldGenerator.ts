@@ -91,11 +91,13 @@ interface GenerationContext {
   npcPersonality?: string[];
   playerRelationship?: string;
   worldState?: Record<string, unknown>;
+  campaignId?: string;
 }
 
 export function useWorldGenerator() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastEdgeError, setLastEdgeError] = useState<unknown | null>(null);
 
   const generate = useCallback(async <T>(
     type: "npc" | "quest" | "dialog" | "faction" | "location" | "initial_world",
@@ -104,6 +106,7 @@ export function useWorldGenerator() {
   ): Promise<T | null> => {
     setIsGenerating(true);
     setError(null);
+    setLastEdgeError(null);
 
     try {
       if (DEV_DEBUG) {
@@ -113,9 +116,20 @@ export function useWorldGenerator() {
         });
       }
 
+      const { data: { session } } = await supabase.auth.getSession();
+      const accessToken = session?.access_token ?? null;
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG worldGenerator auth", {
+          type,
+          hasAccessToken: Boolean(accessToken),
+          userId: session?.user?.id ?? null,
+        });
+      }
+
       recordEdgeCall();
       const invokePromise = supabase.functions.invoke("world-generator", {
         body: { type, campaignSeed, context },
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
       });
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error("World generation timed out")), 90000);
@@ -124,10 +138,26 @@ export function useWorldGenerator() {
       const { data, error: fnError } = await Promise.race([invokePromise, timeoutPromise]);
 
       if (fnError) {
+        setLastEdgeError({
+          ok: false,
+          code: "invoke_error",
+          message: fnError.message || "Generation failed",
+          details: fnError,
+        });
         throw new Error(fnError.message || "Generation failed");
       }
 
-      if (data.error) {
+      if (data?.ok === false) {
+        setLastEdgeError(data);
+        throw new Error(data.message || "Generation failed");
+      }
+      if (data?.error) {
+        setLastEdgeError({
+          ok: false,
+          code: "function_error",
+          message: data.error,
+          details: data,
+        });
         throw new Error(data.error);
       }
       recordEdgeResponse();
@@ -166,9 +196,10 @@ export function useWorldGenerator() {
 
   // Generate initial world for a new campaign
   const generateInitialWorld = useCallback(async (
-    seed: { title: string; description: string; themes?: string[] }
+    seed: { title: string; description: string; themes?: string[] },
+    context?: GenerationContext
   ): Promise<GeneratedWorld | null> => {
-    return generate<GeneratedWorld>("initial_world", seed);
+    return generate<GeneratedWorld>("initial_world", seed, context);
   }, [generate]);
 
   // Generate a single NPC
@@ -299,6 +330,7 @@ export function useWorldGenerator() {
   return {
     isGenerating,
     error,
+    lastEdgeError,
     generateInitialWorld,
     generateNPC,
     generateQuest,

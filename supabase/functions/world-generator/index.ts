@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { groqChatCompletions } from "../_shared/groq.ts";
 
 const corsHeaders = {
@@ -25,6 +26,7 @@ interface GenerationRequest {
     npcPersonality?: string[];
     playerRelationship?: string;
     worldState?: Record<string, unknown>;
+    campaignId?: string;
   };
 }
 
@@ -189,8 +191,36 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const requestId = crypto.randomUUID();
+  const errorResponse = (
+    status: number,
+    code: string,
+    message: string,
+    details?: unknown
+  ) =>
+    new Response(
+      JSON.stringify({ ok: false, code, message, details, requestId }),
+      { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+
   try {
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+    let userId: string | null = null;
+    if (supabaseUrl && anonKey && authHeader) {
+      const supabase = createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.error("world-generator auth lookup failed", { requestId, error: userError.message });
+      } else {
+        userId = user?.id ?? null;
+      }
+    }
     const { type, campaignSeed, context } = (await req.json()) as GenerationRequest;
+    const campaignId = context?.campaignId ?? null;
     
     let prompt: string;
     switch (type) {
@@ -216,17 +246,34 @@ serve(async (req) => {
         throw new Error(`Unknown generation type: ${type}`);
     }
 
-    console.log(`Generating ${type} for campaign: ${campaignSeed.title}`);
-
-    const data = await groqChatCompletions({
-      model: "llama-3.1-70b-versatile",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.8,
-      max_tokens: 4096,
+    console.log("Generating world content", {
+      requestId,
+      userId,
+      campaignId,
+      type,
+      campaignTitle: campaignSeed.title,
     });
+
+    let data;
+    try {
+      data = await groqChatCompletions({
+        model: "llama-3.1-70b-versatile",
+        messages: [
+          { role: "system", content: SYSTEM_PROMPT },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.8,
+        max_tokens: 4096,
+      });
+    } catch (error) {
+      console.error("world-generator downstream error", {
+        requestId,
+        userId,
+        campaignId,
+        error: error instanceof Error ? error.message : error,
+      });
+      return errorResponse(500, "groq_error", "AI generation failed", error);
+    }
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
@@ -436,14 +483,19 @@ serve(async (req) => {
     console.log(`Successfully generated ${type}`);
 
     return new Response(
-      JSON.stringify({ type, content: parsed }),
+      JSON.stringify({ ok: true, type, content: parsed, requestId }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("World generator error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    console.error("World generator error:", {
+      requestId,
+      error: error instanceof Error ? error.message : error,
+    });
+    return errorResponse(
+      500,
+      "world_generator_error",
+      error instanceof Error ? error.message : "Unknown error",
+      error
     );
   }
 });

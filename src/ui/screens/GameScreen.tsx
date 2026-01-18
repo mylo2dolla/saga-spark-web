@@ -216,6 +216,12 @@ export default function GameScreen() {
           ) : null}
         </div>
       </div>
+      {DEV_DEBUG && gameSession.lastWorldGenError ? (
+        <div className="rounded-md border border-border bg-card/70 p-3 text-xs text-muted-foreground">
+          <div className="mb-1 font-semibold text-foreground">Last world-generator error</div>
+          <pre className="whitespace-pre-wrap">{JSON.stringify(gameSession.lastWorldGenError, null, 2)}</pre>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[1fr,2fr,1fr]">
         <Card className="flex h-[640px] flex-col">
