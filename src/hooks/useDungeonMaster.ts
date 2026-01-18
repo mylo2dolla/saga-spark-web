@@ -152,6 +152,10 @@ interface GameContext {
   roundNumber?: number;
 }
 
+interface SendOptions {
+  appendUser?: boolean;
+}
+
 const DM_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/dungeon-master`;
 
 export function useDungeonMaster() {
@@ -174,7 +178,8 @@ export function useDungeonMaster() {
 
   const sendMessage = useCallback(async (
     content: string,
-    context?: GameContext
+    context?: GameContext,
+    options?: SendOptions
   ) => {
     const userMessage: DMMessage = {
       id: crypto.randomUUID(),
@@ -183,7 +188,10 @@ export function useDungeonMaster() {
       timestamp: new Date(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    const shouldAppendUser = options?.appendUser !== false;
+    if (shouldAppendUser) {
+      setMessages(prev => [...prev, userMessage]);
+    }
     setIsLoading(true);
     setCurrentResponse("");
 
@@ -297,6 +305,10 @@ export function useDungeonMaster() {
     }
   }, [messages]);
 
+  const sendNarration = useCallback(async (prompt: string, context?: GameContext) => {
+    return sendMessage(prompt, context, { appendUser: false });
+  }, [sendMessage]);
+
   const clearMessages = useCallback(() => {
     setMessages([]);
     setCurrentResponse("");
@@ -315,6 +327,7 @@ export function useDungeonMaster() {
     isLoading,
     currentResponse,
     sendMessage,
+    sendNarration,
     clearMessages,
     startNewAdventure,
   };

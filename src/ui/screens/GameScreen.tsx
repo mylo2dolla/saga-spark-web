@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import { useDiagnostics } from "@/ui/data/diagnostics";
 import { useUnifiedEngineOptional } from "@/contexts/UnifiedEngineContext";
 import { useDungeonMaster } from "@/hooks/useDungeonMaster";
 import { useCharacter } from "@/hooks/useCharacter";
+import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import WorldBoard from "@/ui/worldboard/WorldBoard";
 import { toWorldBoardModel } from "@/ui/worldboard/adapter";
 
@@ -31,6 +32,10 @@ export default function GameScreen() {
   const DEV_DEBUG = import.meta.env.DEV;
   const { character } = useCharacter(campaignId);
   const dungeonMaster = useDungeonMaster();
+  const { generateLocation } = useWorldGenerator();
+  const lastLocationIdRef = useRef<string | null>(null);
+  const arrivalInFlightRef = useRef(false);
+  const visitedLocationsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!campaignId) return;
@@ -105,6 +110,210 @@ export default function GameScreen() {
     inCombat: combatState === "active",
     enemies: [],
   }), [character, combatState, currentLocation?.name, gameSession.campaignSeed?.title]);
+
+  const hashString = useCallback((value: string) => {
+    let hash = 0;
+    for (let i = 0; i < value.length; i += 1) {
+      hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+    }
+    return hash;
+  }, []);
+
+  const shouldFlagEncounter = useCallback((location: EnhancedLocation | undefined) => {
+    if (!location) return false;
+    const danger = location.dangerLevel ?? 1;
+    const roll = hashString(location.id) % 100;
+    return roll < Math.min(90, danger * 10);
+  }, [hashString]);
+
+  const expandWorldAtLocation = useCallback(async (location: EnhancedLocation) => {
+    if (!gameSession.unifiedState || !gameSession.campaignSeed || !campaignId) return;
+    const existingIds = new Set(gameSession.unifiedState.world.locations.keys());
+    const normalizeId = (base: string) => {
+      let id = base.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      if (!id) id = `location-${existingIds.size + 1}`;
+      let unique = id;
+      let suffix = 1;
+      while (existingIds.has(unique)) {
+        unique = `${id}-${suffix}`;
+        suffix += 1;
+      }
+      existingIds.add(unique);
+      return unique;
+    };
+
+    const count = location.connectedTo?.length ? 1 : 2;
+    const newLocations: EnhancedLocation[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const generated = await generateLocation(
+        {
+          title: gameSession.campaignSeed.title,
+          description: gameSession.campaignSeed.description ?? "",
+          themes: gameSession.campaignSeed.themes ?? [],
+        },
+        { campaignId, worldState: { currentLocationId: location.id } }
+      );
+      if (generated) {
+        const newId = normalizeId(generated.id || generated.name || `location-${existingIds.size + 1}`);
+        newLocations.push({
+          ...generated,
+          id: newId,
+          connectedTo: [location.id],
+        } as EnhancedLocation);
+      }
+    }
+
+    if (newLocations.length === 0) {
+      if (location.connectedTo?.length) return;
+      const fallback = Array.from(gameSession.unifiedState.world.locations.values()).find(loc => loc.id !== location.id) as EnhancedLocation | undefined;
+      if (fallback) {
+        connectLocations(location.id, fallback.id);
+        await gameSession.autosaveNow?.();
+      }
+      return;
+    }
+
+    gameSession.updateUnifiedState(prev => {
+      const locations = new Map(prev.world.locations);
+      const current = locations.get(location.id) as EnhancedLocation | undefined;
+      const updatedConnections = new Set(current?.connectedTo ?? []);
+      newLocations.forEach(loc => updatedConnections.add(loc.id));
+      if (current) {
+        locations.set(location.id, {
+          ...current,
+          connectedTo: Array.from(updatedConnections),
+        });
+      }
+      newLocations.forEach(loc => {
+        locations.set(loc.id, loc);
+      });
+      return {
+        ...prev,
+        world: {
+          ...prev.world,
+          locations,
+        },
+      };
+    });
+    await gameSession.autosaveNow?.();
+  }, [campaignId, connectLocations, gameSession, generateLocation]);
+
+  const travelToLocation = useCallback((destinationId: string) => {
+    const travelState = gameSession.travelState;
+    if (!travelState) return;
+    const now = Date.now();
+    const history = travelState.travelHistory.map(entry =>
+      entry.departedAt === null && entry.locationId === travelState.currentLocationId
+        ? { ...entry, departedAt: now }
+        : entry
+    );
+    const nextHistory = [
+      ...history,
+      {
+        locationId: destinationId,
+        arrivedAt: now,
+        departedAt: null,
+      },
+    ];
+    const nextDiscovered = new Set(travelState.discoveredLocations);
+    nextDiscovered.add(destinationId);
+    gameSession.updateTravelState(prev => ({
+      ...prev,
+      previousLocationId: prev.currentLocationId,
+      currentLocationId: destinationId,
+      isInTransit: false,
+      transitProgress: 0,
+      transitDestinationId: null,
+      travelHistory: nextHistory,
+      discoveredLocations: nextDiscovered,
+    }));
+  }, [gameSession]);
+
+  const connectLocations = useCallback((fromId: string, toId: string) => {
+    gameSession.updateUnifiedState(prev => {
+      const locations = new Map(prev.world.locations);
+      const from = locations.get(fromId) as EnhancedLocation | undefined;
+      const to = locations.get(toId) as EnhancedLocation | undefined;
+      if (!from || !to) return prev;
+      const fromConnections = new Set(from.connectedTo ?? []);
+      const toConnections = new Set(to.connectedTo ?? []);
+      fromConnections.add(toId);
+      toConnections.add(fromId);
+      locations.set(fromId, { ...from, connectedTo: Array.from(fromConnections) });
+      locations.set(toId, { ...to, connectedTo: Array.from(toConnections) });
+      return {
+        ...prev,
+        world: {
+          ...prev.world,
+          locations,
+        },
+      };
+    });
+  }, [gameSession]);
+
+  const handleArrival = useCallback(async (locationId: string, location?: EnhancedLocation | null) => {
+    if (arrivalInFlightRef.current) return;
+    arrivalInFlightRef.current = true;
+    try {
+      const currentLoc = location ?? (gameSession.unifiedState?.world.locations.get(locationId) as EnhancedLocation | undefined);
+      if (!currentLoc) return;
+      const isFirstVisit = !visitedLocationsRef.current.has(currentLoc.id);
+      visitedLocationsRef.current.add(currentLoc.id);
+
+      const encounterFlag = shouldFlagEncounter(currentLoc);
+      const narrationPrompt = `In 1-2 sentences, narrate the party arriving at ${currentLoc.name}.` +
+        (encounterFlag ? " Hint that danger may be nearby." : "");
+      await dungeonMaster.sendNarration?.(narrationPrompt, dmContext);
+
+      if (isFirstVisit) {
+        await expandWorldAtLocation(currentLoc);
+      }
+      await gameSession.autosaveNow?.();
+      await gameSession.reloadLatestFromDb?.();
+    } finally {
+      arrivalInFlightRef.current = false;
+    }
+  }, [dmContext, dungeonMaster, expandWorldAtLocation, gameSession, shouldFlagEncounter]);
+
+  useEffect(() => {
+    const currentId = gameSession.travelState?.currentLocationId ?? null;
+    if (!currentId) return;
+    if (lastLocationIdRef.current === currentId) return;
+    lastLocationIdRef.current = currentId;
+    void handleArrival(currentId, currentLocation ?? null);
+  }, [currentLocation, gameSession.travelState?.currentLocationId, handleArrival]);
+
+  const handleSendMessage = useCallback(async (message: string) => {
+    const normalized = message.toLowerCase();
+    if (normalized.includes("go to town") || normalized.includes("travel to town")) {
+      const locations = gameSession.unifiedState?.world.locations ?? new Map();
+      const town = Array.from(locations.values()).find(loc =>
+        loc.name?.toLowerCase().includes("town") || loc.id.toLowerCase() === "town" || loc.type === "town"
+      ) as EnhancedLocation | undefined;
+      if (town && currentLocation) {
+        if (!town.connectedTo?.includes(currentLocation.id)) {
+          connectLocations(currentLocation.id, town.id);
+          await gameSession.autosaveNow?.();
+        }
+        if (town.id !== currentLocation.id) {
+          travelToLocation(town.id);
+          return;
+        }
+      }
+      if (currentLocation) {
+        await expandWorldAtLocation(currentLocation);
+      }
+    }
+    return dungeonMaster.sendMessage(message, dmContext);
+  }, [
+    connectLocations,
+    currentLocation,
+    dmContext,
+    dungeonMaster,
+    expandWorldAtLocation,
+    gameSession,
+    travelToLocation,
+  ]);
 
   useEffect(() => {
     if (!worldBoardModel?.nodes.length) return;
@@ -237,7 +446,7 @@ export default function GameScreen() {
               messages={dungeonMaster.messages}
               isLoading={dungeonMaster.isLoading}
               currentResponse={dungeonMaster.currentResponse}
-              onSendMessage={(message) => dungeonMaster.sendMessage(message, dmContext)}
+              onSendMessage={handleSendMessage}
               suggestions={dungeonMaster.messages.at(-1)?.parsed?.suggestions}
             />
           </CardContent>
@@ -263,6 +472,12 @@ export default function GameScreen() {
               onCombatStart={() => {
                 setCombatState("active");
                 setCombatMessage("Combat encountered during travel.");
+              }}
+              onTravelComplete={async ({ travelState, destination }) => {
+                if (destination) {
+                  lastLocationIdRef.current = destination.id;
+                  await handleArrival(travelState.currentLocationId, destination);
+                }
               }}
             />
           ) : null}
