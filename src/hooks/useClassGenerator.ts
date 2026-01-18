@@ -1,7 +1,6 @@
 import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { createAbortController, isAbortError } from "@/ui/data/async";
 import type { GeneratedClass } from "@/types/game";
 import { recordEdgeCall, recordEdgeResponse } from "@/ui/data/networkHealth";
 
@@ -45,7 +44,6 @@ export function useClassGenerator() {
         timestamp: new Date().toISOString(),
       });
 
-      const { controller, cleanup } = createAbortController(25000);
       const apiKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
       const bearerToken = accessToken ?? null;
       if (import.meta.env.DEV) {
@@ -63,8 +61,7 @@ export function useClassGenerator() {
           ...(bearerToken ? { Authorization: `Bearer ${bearerToken}` } : {}),
         },
         body: JSON.stringify({ classDescription: description }),
-        signal: controller.signal,
-      }).finally(cleanup);
+      });
 
       if (!response.ok) {
         const bodyText = await response.text();
@@ -94,9 +91,6 @@ export function useClassGenerator() {
       });
       return data;
     } catch (err) {
-      if (isAbortError(err)) {
-        return null;
-      }
       const message = err instanceof Error ? err.message : "Failed to generate class";
       setError(message);
       toast.error(`Failed to generate class — ${message}`);

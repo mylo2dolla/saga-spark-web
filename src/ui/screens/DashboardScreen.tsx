@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
-import { withTimeout, isAbortError, formatError } from "@/ui/data/async";
+import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 import { recordCampaignMembersRead, recordCampaignsRead } from "@/ui/data/networkHealth";
 import type { Json } from "@/integrations/supabase/types";
@@ -104,13 +104,10 @@ export default function DashboardScreen() {
     setLastError(null);
 
     try {
-      const memberData = await withTimeout(
-        supabase
-          .from("campaign_members")
-          .select("campaign_id")
-          .eq("user_id", user.id),
-        25000,
-      );
+      const memberData = await supabase
+        .from("campaign_members")
+        .select("campaign_id")
+        .eq("user_id", user.id);
 
       if (memberData.error) {
         console.error("[campaigns] supabase error", {
@@ -127,14 +124,11 @@ export default function DashboardScreen() {
       lastFetchAtRef.current = now;
       const memberCampaignIds = memberData.data?.map(row => row.campaign_id) ?? [];
 
-      const ownedData = await withTimeout(
-        supabase
-          .from("campaigns")
-          .select("id, name, description, invite_code, owner_id, is_active, updated_at")
-          .eq("owner_id", user.id)
-          .order("updated_at", { ascending: false }),
-        25000,
-      );
+      const ownedData = await supabase
+        .from("campaigns")
+        .select("id, name, description, invite_code, owner_id, is_active, updated_at")
+        .eq("owner_id", user.id)
+        .order("updated_at", { ascending: false });
 
       if (ownedData.error) {
         console.error("[campaigns] supabase error", {
@@ -149,14 +143,11 @@ export default function DashboardScreen() {
 
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length) {
-        const memberCampaignsData = await withTimeout(
-          supabase
-            .from("campaigns")
-            .select("id, name, description, invite_code, owner_id, is_active, updated_at")
-            .in("id", memberCampaignIds)
-            .order("updated_at", { ascending: false }),
-          25000,
-        );
+        const memberCampaignsData = await supabase
+          .from("campaigns")
+          .select("id, name, description, invite_code, owner_id, is_active, updated_at")
+          .in("id", memberCampaignIds)
+          .order("updated_at", { ascending: false });
 
         if (memberCampaignsData.error) {
           console.error("[campaigns] supabase error", {
@@ -180,11 +171,6 @@ export default function DashboardScreen() {
 
       setCampaigns(unique);
     } catch (err) {
-      if (isAbortError(err)) {
-        setError("Request canceled/timeout");
-        setLastError("Request canceled/timeout");
-        return;
-      }
       const message = formatError(err, "Failed to load campaigns");
       setError(message);
       setLastError(message);
@@ -244,20 +230,17 @@ export default function DashboardScreen() {
     let createdCampaignId: string | null = null;
     try {
       const inviteCodeValue = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const insertResult = await withTimeout(
-        supabase
-          .from("campaigns")
-          .insert({
-            name: newCampaignName.trim(),
-            description: newCampaignDescription || null,
-            owner_id: user.id,
-            invite_code: inviteCodeValue,
-            is_active: true,
-          })
-          .select("id, name, description, invite_code, owner_id, is_active, updated_at")
-          .single(),
-        25000,
-      );
+      const insertResult = await supabase
+        .from("campaigns")
+        .insert({
+          name: newCampaignName.trim(),
+          description: newCampaignDescription || null,
+          owner_id: user.id,
+          invite_code: inviteCodeValue,
+          is_active: true,
+        })
+        .select("id, name, description, invite_code, owner_id, is_active, updated_at")
+        .single();
 
       if (insertResult.error) {
         console.error("[createCampaign] supabase error", {
@@ -270,19 +253,13 @@ export default function DashboardScreen() {
         throw insertResult.error;
       }
 
-      await withTimeout(
-        supabase.from("campaign_members").insert({
-          campaign_id: insertResult.data.id,
-          user_id: user.id,
-          is_dm: true,
-        }),
-        25000,
-      );
+      await supabase.from("campaign_members").insert({
+        campaign_id: insertResult.data.id,
+        user_id: user.id,
+        is_dm: true,
+      });
 
-      await withTimeout(
-        supabase.from("combat_state").insert({ campaign_id: insertResult.data.id }),
-        25000,
-      );
+      await supabase.from("combat_state").insert({ campaign_id: insertResult.data.id });
       createdCampaignId = insertResult.data.id;
 
       const generatedWorld = await generateInitialWorld({
@@ -342,15 +319,12 @@ export default function DashboardScreen() {
         })),
       ];
 
-      const contentResult = await withTimeout(
-        supabase.functions.invoke("world-content-writer", {
-          body: {
-            campaignId: insertResult.data.id,
-            content: contentToStore,
-          },
-        }),
-        25000,
-      );
+      const contentResult = await supabase.functions.invoke("world-content-writer", {
+        body: {
+          campaignId: insertResult.data.id,
+          content: contentToStore,
+        },
+      });
       if (contentResult.error) {
         throw contentResult.error;
       }
@@ -361,13 +335,10 @@ export default function DashboardScreen() {
       if (resolvedStartingId) {
         const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
         if (sceneName) {
-          const sceneResult = await withTimeout(
-            supabase
-              .from("campaigns")
-              .update({ current_scene: sceneName })
-              .eq("id", insertResult.data.id),
-            20000,
-          );
+          const sceneResult = await supabase
+            .from("campaigns")
+            .update({ current_scene: sceneName })
+            .eq("id", insertResult.data.id);
           if (sceneResult.error) throw sceneResult.error;
         }
       }
@@ -385,11 +356,6 @@ export default function DashboardScreen() {
       if (createdCampaignId) {
         await supabase.from("campaigns").delete().eq("id", createdCampaignId);
       }
-      if (isAbortError(err)) {
-        toast({ title: "Request canceled/timeout", description: "Please retry.", variant: "destructive" });
-        setLastError("Request canceled/timeout");
-        return;
-      }
       const message = formatError(err, "Failed to create campaign");
       setLastError(message);
       toast({ title: "Failed to create campaign", description: message, variant: "destructive" });
@@ -405,10 +371,7 @@ export default function DashboardScreen() {
     setLastError(null);
 
     try {
-      const response = await withTimeout(
-        supabase.rpc("get_campaign_by_invite_code", { _invite_code: inviteCode.trim() }),
-        25000,
-      );
+      const response = await supabase.rpc("get_campaign_by_invite_code", { _invite_code: inviteCode.trim() });
 
       if (response.error) {
         console.error("[campaigns] supabase error", {
@@ -427,24 +390,16 @@ export default function DashboardScreen() {
 
       const campaign = response.data[0] as Campaign;
 
-      await withTimeout(
-        supabase.from("campaign_members").insert({
-          campaign_id: campaign.id,
-          user_id: user.id,
-          is_dm: false,
-        }),
-        25000,
-      );
+      await supabase.from("campaign_members").insert({
+        campaign_id: campaign.id,
+        user_id: user.id,
+        is_dm: false,
+      });
 
       toast({ title: "Joined campaign", description: campaign.name });
       setInviteCode("");
       fetchCampaigns();
     } catch (err) {
-      if (isAbortError(err)) {
-        toast({ title: "Request canceled/timeout", description: "Please retry.", variant: "destructive" });
-        setLastError("Request canceled/timeout");
-        return;
-      }
       const message = formatError(err, "Failed to join campaign");
       setLastError(message);
       toast({ title: "Failed to join campaign", description: message, variant: "destructive" });

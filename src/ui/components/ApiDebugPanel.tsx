@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { withTimeout, isAbortError } from "@/ui/data/async";
 
 const DEV_DEBUG = import.meta.env.DEV;
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -56,25 +55,17 @@ export default function ApiDebugPanel() {
     });
 
     try {
-      const response = await withTimeout(
-        fetch(GENERATE_URL, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ classDescription: "Arcane duelist" }),
-        }),
-        20000,
-      );
+      const response = await fetch(GENERATE_URL, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ classDescription: "Arcane duelist" }),
+      });
       const bodyText = await response.text();
       setLastStatus(response.status);
       setLastBody(bodyText);
     } catch (error) {
-      if (isAbortError(error)) {
-        setLastStatus(null);
-        setLastBody("Request canceled/timeout");
-      } else {
-        setLastStatus(null);
-        setLastBody(error instanceof Error ? error.message : "Unknown error");
-      }
+      setLastStatus(null);
+      setLastBody(error instanceof Error ? error.message : "Unknown error");
     } finally {
       setIsTesting(false);
     }
