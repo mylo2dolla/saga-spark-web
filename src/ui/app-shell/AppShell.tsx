@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import ApiDebugPanel from "../components/ApiDebugPanel";
@@ -10,8 +11,20 @@ const DEV_DEBUG = import.meta.env.DEV;
 export default function AppShell() {
   const location = useLocation();
   const { user, isProfileCreating } = useAuth();
-  const { status, lastError } = useDbHealth();
+  const isLoginRoute = location.pathname === "/login" || location.pathname === "/signup";
+  const shouldPollDb = Boolean(user) && !isLoginRoute;
+  const { status, lastError } = useDbHealth(shouldPollDb);
   const { lastError: lastApiError, lastErrorAt, engineSnapshot } = useDiagnostics();
+  useEffect(() => {
+    if (!DEV_DEBUG) return;
+    console.info("[auth] log", {
+      step: "route_guard",
+      route: location.pathname,
+      hasSession: Boolean(user),
+      bootstrapped: Boolean(user),
+      skipGameHooks: isLoginRoute || !user,
+    });
+  }, [location.pathname, user]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -43,7 +56,7 @@ export default function AppShell() {
             <div className="flex flex-wrap items-center gap-4">
               <span>Auth: {user?.email ?? "guest"}</span>
               {isProfileCreating ? <span>Profile: creating...</span> : null}
-              <span>DB: {status === "ok" ? "ok" : status}</span>
+              <span>DB: {shouldPollDb ? (status === "ok" ? "ok" : status) : "paused"}</span>
               {lastError ? <span className="text-destructive">DB Error: {lastError}</span> : null}
             </div>
             <div className="text-muted-foreground">{location.pathname}</div>
