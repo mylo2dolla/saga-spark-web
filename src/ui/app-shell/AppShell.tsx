@@ -1,6 +1,6 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import ApiDebugPanel from "@/ui/components/ApiDebugPanel";
+import ApiDebugPanel from "../components/ApiDebugPanel";
 import { useDbHealth } from "@/ui/data/useDbHealth";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 
