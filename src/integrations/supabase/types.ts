@@ -117,6 +117,50 @@ export type Database = {
           },
         ]
       }
+      world_events: {
+        Row: {
+          id: string
+          campaign_id: string
+          user_id: string
+          action_text: string
+          response_text: string | null
+          delta: Json | null
+          location_id: string | null
+          location_name: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          campaign_id: string
+          user_id: string
+          action_text: string
+          response_text?: string | null
+          delta?: Json | null
+          location_id?: string | null
+          location_name?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          campaign_id?: string
+          user_id?: string
+          action_text?: string
+          response_text?: string | null
+          delta?: Json | null
+          location_id?: string | null
+          location_name?: string | null
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "world_events_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       campaign_members: {
         Row: {
           campaign_id: string

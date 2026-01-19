@@ -403,7 +403,9 @@ export default function GameScreen() {
         await expandWorldAtLocation(currentLocation);
       }
     }
-    return dungeonMaster.sendMessage(message, dmContext);
+    const dmResult = await dungeonMaster.sendMessage(message, dmContext);
+    await gameSession.submitPlayerAction?.(message, dmResult?.parsed?.narration ?? null);
+    return dmResult;
   }, [
     connectLocations,
     currentLocation,
@@ -451,6 +453,31 @@ export default function GameScreen() {
     gameSession.travelState?.transitProgress,
     setEngineSnapshot,
   ]);
+
+  const lastActionDelta = useMemo(() => {
+    if (!gameSession.lastActionDelta) return null;
+    if (typeof gameSession.lastActionDelta === "string") return { summary: gameSession.lastActionDelta };
+    if (typeof gameSession.lastActionDelta === "object") {
+      return gameSession.lastActionDelta as {
+        summary?: string;
+        locations?: unknown[];
+        npcs?: unknown[];
+        quests?: unknown[];
+        storyFlags?: unknown[];
+      };
+    }
+    return null;
+  }, [gameSession.lastActionDelta]);
+
+  const lastActionSummary = lastActionDelta?.summary ?? null;
+  const lastActionCounts = lastActionDelta
+    ? {
+        locations: Array.isArray(lastActionDelta.locations) ? lastActionDelta.locations.length : 0,
+        npcs: Array.isArray(lastActionDelta.npcs) ? lastActionDelta.npcs.length : 0,
+        quests: Array.isArray(lastActionDelta.quests) ? lastActionDelta.quests.length : 0,
+        storyFlags: Array.isArray(lastActionDelta.storyFlags) ? lastActionDelta.storyFlags.length : 0,
+      }
+    : null;
 
   if (!campaignId) {
     return <div className="text-sm text-muted-foreground">Campaign not found.</div>;
@@ -608,6 +635,21 @@ export default function GameScreen() {
               <div>Quests: {gameSession.unifiedState.world.quests.size}</div>
               <div>Items: {gameSession.unifiedState.world.items.size}</div>
               <div>Current: {currentLocation?.name ?? "Unknown"}</div>
+              {gameSession.lastActionEvent ? (
+                <div className="pt-2 text-muted-foreground">
+                  <div className="font-medium text-foreground">Last action</div>
+                  <div>{gameSession.lastActionEvent.actionText}</div>
+                  {lastActionSummary ? <div className="mt-1">{lastActionSummary}</div> : null}
+                  {lastActionCounts ? (
+                    <div className="mt-1">
+                      Changes: +{lastActionCounts.locations} locations, +{lastActionCounts.npcs} npcs, +{lastActionCounts.quests} quests, +{lastActionCounts.storyFlags} flags
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {gameSession.lastActionError ? (
+                <div className="text-destructive">Action failed: {gameSession.lastActionError}</div>
+              ) : null}
               {encounterFlagForCurrent?.value === true ? (
                 <div className="text-muted-foreground">You sense something nearby.</div>
               ) : null}
