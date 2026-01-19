@@ -91,8 +91,9 @@ interface UseGameSessionOptions {
 }
 
 export function useGameSession({ campaignId }: UseGameSessionOptions) {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const userId = user?.id ?? "";
+  const accessToken = session?.access_token ?? null;
   
   const { content: worldContent, hasLoadedContent, mergeIntoWorldState, fetchContent } = useWorldContent({ campaignId });
   const { generateInitialWorld, lastEdgeError } = useWorldGenerator();
@@ -819,6 +820,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         "world-content-writer",
         { body: { campaignId, content: contentToStore }, requireAuth: true }
       );
+      if (writeResult.skipped) {
+        setSessionState(prev => ({
+          ...prev,
+          isLoading: false,
+          bootstrapStatus: "idle",
+        }));
+        return null;
+      }
       if (writeResult.error) {
         throw writeResult.error;
       }
@@ -1257,7 +1266,16 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     actionInFlightRef.current.add(actionHash);
 
     try {
-      const { data, error } = await callEdgeFunction<{
+      if (!accessToken) {
+        setSessionState(prev => ({
+          ...prev,
+          isApplyingAction: false,
+        }));
+        actionInFlightRef.current.delete(actionHash);
+        return;
+      }
+
+      const { data, error, skipped } = await callEdgeFunction<{
         ok?: boolean;
         error?: string;
         message?: string;
@@ -1289,6 +1307,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         }
       );
 
+      if (skipped) {
+        setSessionState(prev => ({
+          ...prev,
+          isApplyingAction: false,
+        }));
+        actionInFlightRef.current.delete(actionHash);
+        return;
+      }
       if (error) {
         throw error;
       }

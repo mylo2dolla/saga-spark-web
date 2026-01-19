@@ -312,6 +312,9 @@ export default function DashboardScreen() {
           requireAuth: true,
         }
       );
+      if (contentResult.skipped) {
+        return;
+      }
       if (contentResult.error) {
         throw contentResult.error;
       }
