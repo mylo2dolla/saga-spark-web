@@ -8,7 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
-import { formatError } from "@/ui/data/async";
+import { formatError, isAbortError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/diagnostics";
 import { recordCampaignsRead } from "@/ui/data/networkHealth";
 import { callEdgeFunction } from "@/lib/edge";
@@ -26,7 +26,7 @@ interface Campaign {
 }
 
 export default function DashboardScreen() {
-  const { user, session } = useAuth();
+  const { user, session, isLoading: authLoading } = useAuth();
   const { generateInitialWorld, isGenerating } = useWorldGenerator();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -58,6 +58,7 @@ export default function DashboardScreen() {
   const activeSession = session ?? authSession;
   const activeUser = user ?? authUser;
   const activeUserId = session?.user?.id ?? user?.id ?? authUser?.id ?? null;
+  const isAuthReady = !authLoading || Boolean(activeSession);
 
   const toKebab = (value: string): string =>
     value
@@ -108,7 +109,10 @@ export default function DashboardScreen() {
   };
 
   const fetchCampaigns = useCallback(async () => {
-    if (!activeUserId) return;
+    if (!activeUserId) {
+      setIsLoading(false);
+      return;
+    }
     if (fetchInFlightRef.current) return;
     fetchInFlightRef.current = true;
     setIsLoading(true);
@@ -125,6 +129,9 @@ export default function DashboardScreen() {
       recordCampaignsRead();
       setCampaigns(data ?? []);
     } catch (err) {
+      if (isAbortError(err)) {
+        return;
+      }
       console.error("Failed to load campaigns", err);
       const message = formatError(err, "Failed to load campaigns");
       setError(message);
@@ -136,6 +143,7 @@ export default function DashboardScreen() {
   }, [activeUserId, setLastError]);
 
   useEffect(() => {
+    if (!isAuthReady) return;
     if (!activeUserId) {
       setCampaigns([]);
       setIsLoading(false);
@@ -143,7 +151,7 @@ export default function DashboardScreen() {
       return;
     }
     fetchCampaigns();
-  }, [activeUserId, fetchCampaigns]);
+  }, [activeUserId, fetchCampaigns, isAuthReady]);
 
   useEffect(() => {
     let cancelled = false;
