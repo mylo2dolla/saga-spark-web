@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
@@ -41,6 +41,8 @@ export default function ServerAdminScreen() {
   const [worldEvents, setWorldEvents] = useState<WorldEventRow[]>([]);
   const [worldEventsStatus, setWorldEventsStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [worldEventsError, setWorldEventsError] = useState<string | null>(null);
+  const [isOwner, setIsOwner] = useState(false);
+  const ownerCheckRef = useRef<string | null>(null);
 
   const DEV_DEBUG = import.meta.env.DEV;
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -105,6 +107,29 @@ export default function ServerAdminScreen() {
   useEffect(() => {
     fetchWorldEvents();
   }, [fetchWorldEvents]);
+
+  useEffect(() => {
+    if (!user || !engineSnapshot?.campaignId) {
+      setIsOwner(false);
+      ownerCheckRef.current = null;
+      return;
+    }
+    if (ownerCheckRef.current === engineSnapshot.campaignId) return;
+    ownerCheckRef.current = engineSnapshot.campaignId;
+    const loadOwner = async () => {
+      const { data, error } = await supabase
+        .from("campaigns")
+        .select("owner_id")
+        .eq("id", engineSnapshot.campaignId)
+        .maybeSingle();
+      if (error || !data) {
+        setIsOwner(false);
+        return;
+      }
+      setIsOwner(data.owner_id === user.id);
+    };
+    loadOwner();
+  }, [engineSnapshot?.campaignId, user]);
 
   const handleDbTest = useCallback(async () => {
     setIsTesting(true);
@@ -359,6 +384,43 @@ export default function ServerAdminScreen() {
           ) : null}
         </CardContent>
       </Card>
+
+      {isOwner && engineSnapshot ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">World State Inspector</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs text-muted-foreground">
+            <details className="rounded-md border border-border p-2">
+              <summary className="cursor-pointer text-sm text-foreground">Current snapshot</summary>
+              <div className="mt-2 space-y-1">
+                <div>Current location: {engineSnapshot.locationName ?? "-"} ({engineSnapshot.locationId ?? "-"})</div>
+                <div>Known locations: {engineSnapshot.knownLocations?.length ?? 0}</div>
+                {engineSnapshot.knownLocations?.length ? (
+                  <div className="text-muted-foreground">
+                    {engineSnapshot.knownLocations.slice(0, 8).join(", ")}
+                    {engineSnapshot.knownLocations.length > 8 ? "…" : ""}
+                  </div>
+                ) : null}
+                <div>Active flags: {engineSnapshot.storyFlags?.length ?? 0}</div>
+                {engineSnapshot.storyFlags?.length ? (
+                  <div className="text-muted-foreground">
+                    {engineSnapshot.storyFlags.slice(0, 8).join(", ")}
+                    {engineSnapshot.storyFlags.length > 8 ? "…" : ""}
+                  </div>
+                ) : null}
+                <div>Active quests: {engineSnapshot.activeQuests?.length ?? 0}</div>
+                {engineSnapshot.activeQuests?.length ? (
+                  <div className="text-muted-foreground">
+                    {engineSnapshot.activeQuests.slice(0, 6).join(", ")}
+                    {engineSnapshot.activeQuests.length > 6 ? "…" : ""}
+                  </div>
+                ) : null}
+              </div>
+            </details>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>

@@ -62,6 +62,16 @@ interface WorldEventRecord {
   locationName: string | null;
 }
 
+interface WorldEventRow {
+  id: string;
+  action_text: string;
+  response_text: string | null;
+  delta: unknown | null;
+  created_at: string;
+  location_id: string | null;
+  location_name: string | null;
+}
+
 interface ActionContextPayload {
   locations: Array<{
     id: string;
@@ -1665,6 +1675,56 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       }
     };
   }, [sessionState.isInitialized]);
+
+  useEffect(() => {
+    if (!campaignId || !userId) return;
+    const channel = supabase
+      .channel(`world-events-${campaignId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "world_events", filter: `campaign_id=eq.${campaignId}` },
+        payload => {
+          const row = payload.new as WorldEventRow | undefined;
+          if (!row) return;
+          const nextEvent: WorldEventRecord = {
+            id: row.id,
+            actionText: row.action_text,
+            responseText: row.response_text ?? null,
+            delta: row.delta ?? null,
+            createdAt: row.created_at,
+            locationId: row.location_id ?? null,
+            locationName: row.location_name ?? null,
+          };
+          setSessionState(prev => {
+            if (prev.worldEvents.some(event => event.id === nextEvent.id)) {
+              return prev;
+            }
+            const updatedEvents = [nextEvent, ...prev.worldEvents].slice(0, 50);
+            let nextUnified = prev.unifiedState;
+            if (nextUnified && nextEvent.delta) {
+              nextUnified = applyDeltaToUnifiedState(nextUnified, nextEvent.delta);
+              latestStateRef.current.unified = nextUnified;
+            }
+            return {
+              ...prev,
+              unifiedState: nextUnified ?? prev.unifiedState,
+              worldEvents: updatedEvents,
+              worldEventsStatus: "ok",
+              lastActionEvent: nextEvent,
+              lastActionDelta: nextEvent.delta ?? null,
+              lastActionAt: new Date(nextEvent.createdAt).getTime(),
+              lastActionSource: "realtime",
+              lastActionHash: extractActionHash(nextEvent.delta),
+            };
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [applyDeltaToUnifiedState, campaignId, extractActionHash, userId]);
 
   // Autosave on unload
   useEffect(() => {

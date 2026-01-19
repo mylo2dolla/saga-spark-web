@@ -8,6 +8,9 @@ export interface EngineSnapshot {
   campaignId?: string | null;
   campaignSeedId?: string | null;
   campaignSeedTitle?: string | null;
+  knownLocations?: string[];
+  storyFlags?: string[];
+  activeQuests?: string[];
   travel?: {
     currentLocationId: string | null;
     isInTransit: boolean;
