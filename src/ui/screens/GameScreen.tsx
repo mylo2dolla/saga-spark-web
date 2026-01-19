@@ -454,6 +454,21 @@ export default function GameScreen() {
     setEngineSnapshot,
   ]);
 
+  useEffect(() => {
+    if (!DEV_DEBUG) return;
+    const controls = {
+      replayLastEvents: (count: number = 10) => gameSession.replayWorldEvents?.(count),
+      reloadFromDb: () => gameSession.reloadLatestFromDb?.(),
+    };
+    (globalThis as { __worldEventControls?: typeof controls }).__worldEventControls = controls;
+    return () => {
+      const existing = (globalThis as { __worldEventControls?: typeof controls }).__worldEventControls;
+      if (existing === controls) {
+        delete (globalThis as { __worldEventControls?: typeof controls }).__worldEventControls;
+      }
+    };
+  }, [DEV_DEBUG, gameSession]);
+
   const lastActionDelta = useMemo(() => {
     if (!gameSession.lastActionDelta) return null;
     if (typeof gameSession.lastActionDelta === "string") return { summary: gameSession.lastActionDelta };
@@ -478,6 +493,29 @@ export default function GameScreen() {
         storyFlags: Array.isArray(lastActionDelta.storyFlags) ? lastActionDelta.storyFlags.length : 0,
       }
     : null;
+
+  const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
+  const toggleEvent = useCallback((id: string) => {
+    setExpandedEvents(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const formatEventCounts = useCallback((delta: unknown) => {
+    if (!delta || typeof delta !== "object") return null;
+    const obj = delta as Record<string, unknown>;
+    const locations = Array.isArray(obj.locations) ? obj.locations.length : 0;
+    const npcs = Array.isArray(obj.npcs) ? obj.npcs.length : 0;
+    const quests = Array.isArray(obj.quests) ? obj.quests.length : 0;
+    const flags = Array.isArray(obj.storyFlags) ? obj.storyFlags.length : 0;
+    return { locations, npcs, quests, flags };
+  }, []);
 
   if (!campaignId) {
     return <div className="text-sm text-muted-foreground">Campaign not found.</div>;
@@ -543,6 +581,9 @@ export default function GameScreen() {
               Tick
             </Button>
           ) : null}
+          <div className="text-xs text-muted-foreground self-center">
+            DB: {gameSession.worldEventsStatus === "loading" ? "loading" : gameSession.worldEventsStatus}
+          </div>
           {DEV_DEBUG ? (
             <Button
               variant="outline"
@@ -622,6 +663,52 @@ export default function GameScreen() {
               <div>Position: {selectedNode?.x != null ? `${Math.round(selectedNode.x)}, ${Math.round(selectedNode.y)}` : "-"}</div>
               <div>Current: {selectedNode?.id === currentLocation?.id ? "yes" : "no"}</div>
               <div>Connected: {destinations.length}</div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">World Events</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-xs">
+              {gameSession.worldEventsStatus === "loading" ? (
+                <div className="text-muted-foreground">Loading events...</div>
+              ) : null}
+              {gameSession.worldEventsError ? (
+                <div className="text-destructive">DB: {gameSession.worldEventsError}</div>
+              ) : null}
+              {gameSession.worldEvents.length === 0 && gameSession.worldEventsStatus === "ok" ? (
+                <div className="text-muted-foreground">No world events yet.</div>
+              ) : null}
+              {gameSession.worldEvents.map((event) => {
+                const counts = formatEventCounts(event.delta);
+                const expanded = expandedEvents.has(event.id);
+                return (
+                  <div key={event.id} className="rounded-md border border-border p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="space-y-1">
+                        <div className="text-xs text-muted-foreground">
+                          {new Date(event.createdAt).toLocaleString()}
+                        </div>
+                        <div className="text-sm font-medium text-foreground">{event.actionText}</div>
+                        {counts ? (
+                          <div className="text-xs text-muted-foreground">
+                            +{counts.locations} locs, +{counts.npcs} npcs, +{counts.quests} quests, +{counts.flags} flags
+                          </div>
+                        ) : null}
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => toggleEvent(event.id)}>
+                        {expanded ? "Hide" : "Show"}
+                      </Button>
+                    </div>
+                    {expanded ? (
+                      <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2">
+                        {JSON.stringify(event.delta, null, 2)}
+                      </pre>
+                    ) : null}
+                  </div>
+                );
+              })}
             </CardContent>
           </Card>
 

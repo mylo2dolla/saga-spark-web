@@ -44,6 +44,9 @@ export interface GameSessionState {
   lastActionDelta: unknown | null;
   lastActionAt: number | null;
   lastActionSource: "loaded" | "generated" | null;
+  worldEvents: WorldEventRecord[];
+  worldEventsStatus: "idle" | "loading" | "ok" | "error";
+  worldEventsError: string | null;
 }
 
 interface WorldEventRecord {
@@ -113,6 +116,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     lastActionDelta: null,
     lastActionAt: null,
     lastActionSource: null,
+    worldEvents: [],
+    worldEventsStatus: "idle",
+    worldEventsError: null,
   });
   
   const playtimeRef = useRef(0);
@@ -202,6 +208,57 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     };
   }, [campaignId, userId]);
 
+  const fetchWorldEvents = useCallback(async (limit: number = 50): Promise<WorldEventRecord[]> => {
+    if (!campaignId || !userId) return [];
+    setSessionState(prev => ({
+      ...prev,
+      worldEventsStatus: "loading",
+      worldEventsError: null,
+    }));
+
+    const { data, error } = await supabase
+      .from("world_events")
+      .select("id, action_text, response_text, delta, created_at, location_id, location_name")
+      .eq("campaign_id", campaignId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error("World events fetch failed", {
+        campaignId,
+        userId,
+        message: error.message,
+        status: error.status,
+      });
+      const message = error.message || "Failed to load world events";
+      setSessionState(prev => ({
+        ...prev,
+        worldEventsStatus: "error",
+        worldEventsError: message,
+      }));
+      return [];
+    }
+
+    const events = (data ?? []).map((event) => ({
+      id: event.id,
+      actionText: event.action_text,
+      responseText: event.response_text ?? null,
+      delta: event.delta ?? null,
+      createdAt: event.created_at,
+      locationId: event.location_id ?? null,
+      locationName: event.location_name ?? null,
+    }));
+
+    setSessionState(prev => ({
+      ...prev,
+      worldEvents: events,
+      worldEventsStatus: "ok",
+      worldEventsError: null,
+    }));
+
+    return events;
+  }, [campaignId, userId]);
+
   const logWorldSnapshot = useCallback((
     label: string,
     world: UnifiedState["world"],
@@ -231,6 +288,123 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     }
     return hash.toString(16);
   }, []);
+
+  const toStringArray = useCallback((value: unknown): string[] => {
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is string => typeof item === "string");
+  }, []);
+
+  const normalizeDeltaLocation = useCallback((raw: Record<string, unknown>) => {
+    const id = typeof raw.id === "string" ? raw.id.trim() : "";
+    const name = typeof raw.name === "string" ? raw.name.trim() : "";
+    const description = typeof raw.description === "string" ? raw.description : "";
+    const type = typeof raw.type === "string" ? raw.type : "";
+    if (!id || !name || !type) return null;
+    const connectedTo = toStringArray(raw.connectedTo);
+    const position = raw.position as { x?: number; y?: number } | undefined;
+    const resolvedPosition =
+      typeof position?.x === "number" && typeof position?.y === "number"
+        ? { x: position.x, y: position.y }
+        : createDeterministicPosition(id);
+    return {
+      id,
+      name,
+      description,
+      type,
+      connectedTo,
+      position: resolvedPosition,
+      dangerLevel: typeof raw.dangerLevel === "number" ? raw.dangerLevel : undefined,
+      ambientDescription: typeof raw.ambientDescription === "string" ? raw.ambientDescription : undefined,
+      services: toStringArray(raw.services),
+    };
+  }, [createDeterministicPosition, toStringArray]);
+
+  const applyDeltaToUnifiedState = useCallback((
+    unified: UnifiedState,
+    delta: unknown
+  ): UnifiedState => {
+    if (!delta || typeof delta !== "object") return unified;
+    const deltaObj = delta as Record<string, unknown>;
+    const nextLocations = new Map(unified.world.locations);
+    const nextFlags = new Map(unified.world.storyFlags);
+
+    const rawLocations = Array.isArray(deltaObj.locations) ? deltaObj.locations : [];
+    for (const entry of rawLocations) {
+      if (!entry || typeof entry !== "object") continue;
+      const normalized = normalizeDeltaLocation(entry as Record<string, unknown>);
+      if (!normalized) continue;
+      const existing = nextLocations.get(normalized.id);
+      const mergedConnected = new Set([
+        ...(existing?.connectedTo ?? []),
+        ...normalized.connectedTo,
+      ]);
+      const nextLocation: EnhancedLocation = {
+        id: normalized.id,
+        name: normalized.name,
+        description: normalized.description || existing?.description || "",
+        type: (normalized.type as EnhancedLocation["type"]) ?? existing?.type ?? "town",
+        position: normalized.position,
+        radius: existing?.radius ?? 30,
+        discovered: existing?.discovered ?? false,
+        items: existing?.items ?? [],
+        npcs: existing?.npcs ?? [],
+        connectedTo: Array.from(mergedConnected),
+        dangerLevel: normalized.dangerLevel ?? existing?.dangerLevel ?? 1,
+        factionControl: existing?.factionControl ?? null,
+        questHooks: existing?.questHooks ?? [],
+        services: normalized.services.length > 0 ? normalized.services as readonly string[] : (existing?.services ?? ["rest", "trade"]),
+        ambientDescription: normalized.ambientDescription ?? existing?.ambientDescription ?? normalized.description ?? existing?.description ?? "",
+        shops: existing?.shops ?? [],
+        inn: existing?.inn ?? true,
+        travelTime: existing?.travelTime ?? {},
+        currentEvents: existing?.currentEvents ?? [],
+      };
+      nextLocations.set(normalized.id, nextLocation);
+    }
+
+    const rawFlags = Array.isArray(deltaObj.storyFlags) ? deltaObj.storyFlags : [];
+    for (const entry of rawFlags) {
+      if (!entry || typeof entry !== "object") continue;
+      const flag = entry as Record<string, unknown>;
+      const id = typeof flag.id === "string" ? flag.id : "";
+      if (!id || flag.value === undefined) continue;
+      nextFlags.set(id, {
+        id,
+        value: flag.value as string | number | boolean,
+        setAt: typeof flag.setAt === "number" ? flag.setAt : Date.now(),
+        source: typeof flag.source === "string" ? flag.source : "action",
+      });
+    }
+
+    return {
+      ...unified,
+      world: {
+        ...unified.world,
+        locations: nextLocations,
+        storyFlags: nextFlags,
+      },
+    };
+  }, [normalizeDeltaLocation]);
+
+  const replayWorldEvents = useCallback(async (count: number = 10) => {
+    const unifiedState = latestStateRef.current.unified ?? sessionState.unifiedState;
+    if (!unifiedState) return;
+    const events = sessionState.worldEvents.length > 0
+      ? sessionState.worldEvents.slice(0, count)
+      : await fetchWorldEvents(count);
+
+    const sorted = [...events].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    let nextUnified = unifiedState;
+    for (const event of sorted) {
+      nextUnified = applyDeltaToUnifiedState(nextUnified, event.delta);
+    }
+
+    latestStateRef.current.unified = nextUnified;
+    setSessionState(prev => ({
+      ...prev,
+      unifiedState: nextUnified,
+    }));
+  }, [applyDeltaToUnifiedState, fetchWorldEvents, sessionState.unifiedState, sessionState.worldEvents]);
 
   const buildTravelSnapshot = useCallback((travel: TravelState) => ({
     currentLocationId: travel.currentLocationId,
@@ -885,7 +1059,16 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       queuedFingerprintRef.current = null;
       latestStateRef.current = { unified: unifiedState, travel: travelState };
 
-      const latestEvent = await fetchLatestWorldEvent();
+        const latestEvent = await fetchLatestWorldEvent();
+        const worldEvents = await fetchWorldEvents(50);
+        if (worldEvents.length > 0) {
+          const ordered = [...worldEvents].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+          for (const event of ordered) {
+            unifiedState = applyDeltaToUnifiedState(unifiedState, event.delta);
+          }
+        }
 
       setSessionState(prev => ({
         ...prev,
@@ -907,6 +1090,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         lastActionDelta: latestEvent?.delta ?? null,
         lastActionAt: latestEvent ? new Date(latestEvent.createdAt).getTime() : null,
         lastActionSource: latestEvent ? "loaded" : null,
+        worldEvents,
+        worldEventsStatus: worldEvents.length > 0 ? "ok" : "ok",
+        worldEventsError: null,
       }));
       
       initializingRef.current = false;
@@ -958,6 +1144,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     computeFingerprint,
     bootstrapWorld,
     fetchLatestWorldEvent,
+    fetchWorldEvents,
+    applyDeltaToUnifiedState,
   ]);
 
   const submitPlayerAction = useCallback(async (
@@ -1071,6 +1259,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       }));
 
       await fetchContent();
+      await fetchWorldEvents(50);
       return event;
     } catch (error) {
       const message = getErrorMessage(error) || "Action failed";
@@ -1089,6 +1278,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     sessionState.unifiedState,
     sessionState.travelState,
     fetchContent,
+    fetchWorldEvents,
     getErrorMessage,
   ]);
 
@@ -1305,10 +1495,20 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       };
 
       const latestEvent = await fetchLatestWorldEvent();
+      const worldEvents = await fetchWorldEvents(50);
+      let nextUnified = invariantResult.unified;
+      if (worldEvents.length > 0) {
+        const ordered = [...worldEvents].sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        for (const event of ordered) {
+          nextUnified = applyDeltaToUnifiedState(nextUnified, event.delta);
+        }
+      }
       
       setSessionState(prev => ({
         ...prev,
-        unifiedState: invariantResult.unified,
+        unifiedState: nextUnified,
         travelState: invariantResult.travel,
         isInitialized: true,
         lastWorldGenError: null,
@@ -1319,12 +1519,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         lastActionDelta: latestEvent?.delta ?? null,
         lastActionAt: latestEvent ? new Date(latestEvent.createdAt).getTime() : null,
         lastActionSource: latestEvent ? "loaded" : null,
+        worldEvents,
+        worldEventsStatus: "ok",
+        worldEventsError: null,
       }));
       
       return true;
     }
     return false;
-  }, [persistence, ensureWorldInvariants, worldContent, mergeIntoWorldState, computeFingerprint, fetchLatestWorldEvent]);
+  }, [persistence, ensureWorldInvariants, worldContent, mergeIntoWorldState, computeFingerprint, fetchLatestWorldEvent, fetchWorldEvents, applyDeltaToUnifiedState]);
 
   const reloadLatestFromDb = useCallback(async () => {
     const autosaveId = await persistence.getOrCreateAutosave();
@@ -1473,6 +1676,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     retryBootstrap,
     expandWorld,
     submitPlayerAction,
+    replayWorldEvents,
+    fetchWorldEvents,
     fetchSaves: persistence.fetchSaves,
     deleteSave: persistence.deleteSave,
   };

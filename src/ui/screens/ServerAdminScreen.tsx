@@ -29,6 +29,7 @@ export default function ServerAdminScreen() {
   const [dbTest, setDbTest] = useState<{ ok: boolean; status?: number; message?: string } | null>(null);
   const [edgeTest, setEdgeTest] = useState<{ ok: boolean; status?: number; body?: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
+  const [eventToolsMessage, setEventToolsMessage] = useState<string | null>(null);
 
   const DEV_DEBUG = import.meta.env.DEV;
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -145,6 +146,30 @@ export default function ServerAdminScreen() {
       setIsTesting(false);
     }
   }, [fetchNodes, handleDbTest, setLastError]);
+
+  const handleReplayEvents = useCallback(async () => {
+    setEventToolsMessage(null);
+    const controls = (globalThis as { __worldEventControls?: { replayLastEvents?: (count: number) => void } })
+      .__worldEventControls;
+    if (!controls?.replayLastEvents) {
+      setEventToolsMessage("No active game session to replay.");
+      return;
+    }
+    controls.replayLastEvents(10);
+    setEventToolsMessage("Replayed last 10 events.");
+  }, []);
+
+  const handleReloadState = useCallback(async () => {
+    setEventToolsMessage(null);
+    const controls = (globalThis as { __worldEventControls?: { reloadFromDb?: () => Promise<void> | void } })
+      .__worldEventControls;
+    if (!controls?.reloadFromDb) {
+      setEventToolsMessage("No active game session to reload.");
+      return;
+    }
+    await controls.reloadFromDb();
+    setEventToolsMessage("Reloaded state from DB.");
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -301,6 +326,28 @@ export default function ServerAdminScreen() {
           ) : null}
         </CardContent>
       </Card>
+
+      {DEV_DEBUG ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">World Events Tools</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs text-muted-foreground">
+            <div>Requires an active Game session in another tab.</div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={handleReplayEvents} disabled={isTesting}>
+                Replay last 10 events
+              </Button>
+              <Button variant="outline" onClick={handleReloadState} disabled={isTesting}>
+                Clear local state and reload from DB
+              </Button>
+            </div>
+            {eventToolsMessage ? (
+              <div>{eventToolsMessage}</div>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }
