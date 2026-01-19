@@ -435,6 +435,11 @@ export default function GameScreen() {
       campaignId: campaignId ?? null,
       campaignSeedId: gameSession.campaignSeed?.id ?? null,
       campaignSeedTitle: gameSession.campaignSeed?.title ?? null,
+      knownLocations: Array.from(gameSession.unifiedState.world.locations.keys()),
+      storyFlags: Array.from(gameSession.unifiedState.world.storyFlags.keys()),
+      activeQuests: Array.from(gameSession.unifiedState.world.quests.values())
+        .filter(quest => quest.status !== "completed")
+        .map(quest => quest.title),
       travel: {
         currentLocationId: gameSession.travelState?.currentLocationId ?? null,
         isInTransit: gameSession.travelState?.isInTransit ?? false,
@@ -712,14 +717,22 @@ export default function GameScreen() {
                     {group.events.map((event) => {
                       const counts = formatEventCounts(event.delta);
                       const expanded = expandedEvents.has(event.id);
+                      const summary =
+                        typeof (event.delta as { summary?: string } | null)?.summary === "string"
+                          ? (event.delta as { summary?: string }).summary
+                          : event.responseText ?? event.actionText;
+                      const eventType = "Action";
                       return (
                         <div key={event.id} className="rounded-md border border-border p-2">
                           <div className="flex items-center justify-between gap-2">
                             <div className="space-y-1">
                               <div className="text-xs text-muted-foreground">
-                                {new Date(event.createdAt).toLocaleTimeString()}
+                                {new Date(event.createdAt).toLocaleTimeString()} · {eventType}
                               </div>
-                              <div className="text-sm font-medium text-foreground">{event.actionText}</div>
+                              <div className="text-sm font-medium text-foreground">{summary}</div>
+                              {event.locationName ? (
+                                <div className="text-xs text-muted-foreground">Location: {event.locationName}</div>
+                              ) : null}
                               {counts ? (
                                 <div className="text-xs text-muted-foreground">
                                   +{counts.locations} locs, +{counts.npcs} npcs, +{counts.quests} quests, +{counts.flags} flags
