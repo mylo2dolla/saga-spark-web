@@ -19,6 +19,14 @@ interface ServerNodeRow {
   database_latency_ms: number;
 }
 
+interface WorldEventRow {
+  id: string;
+  campaign_id: string;
+  user_id: string;
+  action_text: string;
+  created_at: string;
+}
+
 export default function ServerAdminScreen() {
   const { user, isLoading: authLoading } = useAuth();
   const { setLastError, engineSnapshot, lastError, lastErrorAt } = useDiagnostics();
@@ -30,6 +38,9 @@ export default function ServerAdminScreen() {
   const [edgeTest, setEdgeTest] = useState<{ ok: boolean; status?: number; body?: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [eventToolsMessage, setEventToolsMessage] = useState<string | null>(null);
+  const [worldEvents, setWorldEvents] = useState<WorldEventRow[]>([]);
+  const [worldEventsStatus, setWorldEventsStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [worldEventsError, setWorldEventsError] = useState<string | null>(null);
 
   const DEV_DEBUG = import.meta.env.DEV;
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -72,6 +83,28 @@ export default function ServerAdminScreen() {
   useEffect(() => {
     fetchNodes();
   }, [fetchNodes]);
+
+  const fetchWorldEvents = useCallback(async () => {
+    if (!user) return;
+    setWorldEventsStatus("loading");
+    setWorldEventsError(null);
+    const { data, error } = await supabase
+      .from("world_events")
+      .select("id, campaign_id, user_id, action_text, created_at")
+      .order("created_at", { ascending: false })
+      .limit(20);
+    if (error) {
+      setWorldEventsStatus("error");
+      setWorldEventsError(error.message);
+      return;
+    }
+    setWorldEvents(data ?? []);
+    setWorldEventsStatus("ok");
+  }, [user]);
+
+  useEffect(() => {
+    fetchWorldEvents();
+  }, [fetchWorldEvents]);
 
   const handleDbTest = useCallback(async () => {
     setIsTesting(true);
@@ -323,6 +356,38 @@ export default function ServerAdminScreen() {
           ) : null}
           {edgeTest ? (
             <div>Edge test: {edgeTest.ok ? "ok" : "error"} {edgeTest.status ? `(${edgeTest.status})` : ""}</div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Recent World Events</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-xs text-muted-foreground">
+          {worldEventsStatus === "loading" ? (
+            <div>Loading events...</div>
+          ) : null}
+          {worldEventsError ? (
+            <div className="text-destructive">{worldEventsError}</div>
+          ) : null}
+          {worldEventsStatus === "ok" && worldEvents.length === 0 ? (
+            <div>No events available.</div>
+          ) : null}
+          {worldEvents.length > 0 ? (
+            <div className="space-y-2">
+              {worldEvents.map((event) => (
+                <div key={event.id} className="rounded-md border border-border p-2">
+                  <div className="text-[11px] text-muted-foreground">
+                    {new Date(event.created_at).toLocaleString()}
+                  </div>
+                  <div className="text-xs text-foreground">{event.action_text}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Campaign: {event.campaign_id} | User: {event.user_id}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : null}
         </CardContent>
       </Card>

@@ -35,6 +35,7 @@ interface ActionContext {
 interface ContentPayload {
   campaignId: string;
   content?: ContentEntry[];
+  actionHash?: string;
   action?: ActionPayload;
   context?: ActionContext;
   dmResponse?: { narration?: string };
@@ -180,6 +181,32 @@ serve(async (req) => {
     }
 
     if (body.action) {
+      if (!body.actionHash) {
+        return errorResponse(400, "missing_action_hash", "actionHash is required for action mutations");
+      }
+      const existingEvent = await serviceClient
+        .from("world_events")
+        .select("id, action_text, response_text, delta, created_at, location_id, location_name")
+        .eq("campaign_id", body.campaignId)
+        .eq("user_id", user.id)
+        .contains("delta", { action_hash: body.actionHash })
+        .maybeSingle();
+      if (existingEvent.error) {
+        return errorResponse(500, "event_lookup_failed", "Failed to check existing action", existingEvent.error.message);
+      }
+      if (existingEvent.data) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            deduped: true,
+            delta: existingEvent.data.delta ?? null,
+            event: existingEvent.data,
+            requestId,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
       console.log("Groq model:", GROQ_MODEL);
 
@@ -205,13 +232,14 @@ serve(async (req) => {
         return errorResponse(500, "empty_ai_response", "AI returned empty response");
       }
 
-      let parsed: ActionDelta;
+      let parsed: ActionDelta & { action_hash?: string };
       try {
         const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/) || [null, content];
         parsed = JSON.parse(jsonMatch[1].trim());
       } catch (parseError) {
         return errorResponse(500, "invalid_ai_json", "Invalid JSON response from AI", content.slice(0, 500));
       }
+      parsed.action_hash = body.actionHash;
 
       const currentLocationId = body.action.locationId ?? null;
       const contextLocations = body.context?.locations ?? [];
@@ -364,6 +392,7 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({
           ok: true,
+          deduped: false,
           inserted: payload.length,
           delta: parsed,
           event: eventRow,

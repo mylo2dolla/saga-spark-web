@@ -50,6 +50,8 @@ export default function DashboardScreen() {
   const [inviteCode, setInviteCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [joinError, setJoinError] = useState<string | null>(null);
   const fetchInFlightRef = useRef(false);
   const creatingRef = useRef(false);
 
@@ -135,7 +137,9 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (!activeUserId) {
+      setCampaigns([]);
       setIsLoading(false);
+      setError(null);
       return;
     }
     fetchCampaigns();
@@ -187,12 +191,16 @@ export default function DashboardScreen() {
   const handleCreate = async () => {
     if (!activeUser || !isCreateValid) {
       setSubmitAttempted(true);
+      if (!activeUser) {
+        setCreateError("You must be signed in to create a campaign.");
+      }
       return;
     }
     if (creatingRef.current) return;
     creatingRef.current = true;
     setIsCreating(true);
     setLastError(null);
+    setCreateError(null);
 
     let createdCampaignId: string | null = null;
     try {
@@ -333,6 +341,7 @@ export default function DashboardScreen() {
       }
       const message = formatError(err, "Failed to create campaign");
       setLastError(message);
+      setCreateError(message);
       toast({ title: "Failed to create campaign", description: message, variant: "destructive" });
     } finally {
       setIsCreating(false);
@@ -406,9 +415,15 @@ export default function DashboardScreen() {
   };
 
   const handleJoin = async () => {
-    if (!activeUser || !inviteCode.trim()) return;
+    if (!activeUser || !inviteCode.trim()) {
+      if (!activeUser) {
+        setJoinError("You must be signed in to join a campaign.");
+      }
+      return;
+    }
     setIsJoining(true);
     setLastError(null);
+    setJoinError(null);
 
     try {
       const response = await supabase.rpc("get_campaign_by_invite_code", { _invite_code: inviteCode.trim() });
@@ -442,6 +457,7 @@ export default function DashboardScreen() {
     } catch (err) {
       const message = formatError(err, "Failed to join campaign");
       setLastError(message);
+      setJoinError(message);
       toast({ title: "Failed to join campaign", description: message, variant: "destructive" });
     } finally {
       setIsJoining(false);
@@ -571,6 +587,9 @@ export default function DashboardScreen() {
               {showDescriptionError ? (
                 <div className="text-xs text-destructive">Campaign description is required.</div>
               ) : null}
+              {createError ? (
+                <div className="text-xs text-destructive">{createError}</div>
+              ) : null}
               <Button onClick={handleCreate} disabled={isCreating || isGenerating || !isCreateValid}>
                 {isCreating || isGenerating ? "Creating..." : "Create"}
               </Button>
@@ -587,6 +606,9 @@ export default function DashboardScreen() {
                 value={inviteCode}
                 onChange={e => setInviteCode(e.target.value)}
               />
+              {joinError ? (
+                <div className="text-xs text-destructive">{joinError}</div>
+              ) : null}
               <Button onClick={handleJoin} disabled={isJoining || !inviteCode.trim()}>
                 {isJoining ? "Joining..." : "Join"}
               </Button>

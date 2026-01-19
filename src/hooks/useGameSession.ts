@@ -43,10 +43,13 @@ export interface GameSessionState {
   lastActionEvent: WorldEventRecord | null;
   lastActionDelta: unknown | null;
   lastActionAt: number | null;
-  lastActionSource: "loaded" | "generated" | null;
+  lastActionSource: "loaded" | "generated" | "deduped" | null;
+  lastActionHash: string | null;
   worldEvents: WorldEventRecord[];
   worldEventsStatus: "idle" | "loading" | "ok" | "error";
   worldEventsError: string | null;
+  isReplayingEvents: boolean;
+  replayEventsCount: number | null;
 }
 
 interface WorldEventRecord {
@@ -116,9 +119,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     lastActionDelta: null,
     lastActionAt: null,
     lastActionSource: null,
+    lastActionHash: null,
     worldEvents: [],
     worldEventsStatus: "idle",
     worldEventsError: null,
+    isReplayingEvents: false,
+    replayEventsCount: null,
   });
   
   const playtimeRef = useRef(0);
@@ -134,6 +140,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const didAutosaveAfterInitRef = useRef(false);
   const lastSavedFingerprintRef = useRef<string | null>(null);
   const queuedFingerprintRef = useRef<string | null>(null);
+  const actionInFlightRef = useRef<Set<string>>(new Set());
+  const recentActionHashesRef = useRef<Map<string, number>>(new Map());
   const latestStateRef = useRef<{ unified: UnifiedState | null; travel: TravelState | null }>({
     unified: null,
     travel: null,
@@ -386,9 +394,20 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     };
   }, [normalizeDeltaLocation]);
 
+  const extractActionHash = useCallback((delta: unknown) => {
+    if (!delta || typeof delta !== "object") return null;
+    const obj = delta as Record<string, unknown>;
+    return typeof obj.action_hash === "string" ? obj.action_hash : null;
+  }, []);
+
   const replayWorldEvents = useCallback(async (count: number = 10) => {
     const unifiedState = latestStateRef.current.unified ?? sessionState.unifiedState;
     if (!unifiedState) return;
+    setSessionState(prev => ({
+      ...prev,
+      isReplayingEvents: true,
+      replayEventsCount: count,
+    }));
     const events = sessionState.worldEvents.length > 0
       ? sessionState.worldEvents.slice(0, count)
       : await fetchWorldEvents(count);
@@ -403,6 +422,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     setSessionState(prev => ({
       ...prev,
       unifiedState: nextUnified,
+      isReplayingEvents: false,
+      replayEventsCount: null,
     }));
   }, [applyDeltaToUnifiedState, fetchWorldEvents, sessionState.unifiedState, sessionState.worldEvents]);
 
@@ -421,6 +442,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     const travelSerialized = JSON.stringify(buildTravelSnapshot(travel));
     return hashString(`${unifiedSerialized}|${travelSerialized}`);
   }, [buildTravelSnapshot, hashString]);
+
+  const computeActionHash = useCallback((
+    actionText: string,
+    locationId: string | null
+  ) => {
+    return hashString(`${campaignId}|${userId}|${locationId ?? "none"}|${actionText.trim().toLowerCase()}`);
+  }, [campaignId, hashString, userId]);
 
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
@@ -1059,16 +1087,22 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       queuedFingerprintRef.current = null;
       latestStateRef.current = { unified: unifiedState, travel: travelState };
 
-        const latestEvent = await fetchLatestWorldEvent();
-        const worldEvents = await fetchWorldEvents(50);
-        if (worldEvents.length > 0) {
-          const ordered = [...worldEvents].sort(
-            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-          );
-          for (const event of ordered) {
-            unifiedState = applyDeltaToUnifiedState(unifiedState, event.delta);
-          }
+      setSessionState(prev => ({
+        ...prev,
+        isReplayingEvents: true,
+        replayEventsCount: 50,
+      }));
+
+      const latestEvent = await fetchLatestWorldEvent();
+      const worldEvents = await fetchWorldEvents(50);
+      if (worldEvents.length > 0) {
+        const ordered = [...worldEvents].sort(
+          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        );
+        for (const event of ordered) {
+          unifiedState = applyDeltaToUnifiedState(unifiedState, event.delta);
         }
+      }
 
       setSessionState(prev => ({
         ...prev,
@@ -1090,6 +1124,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         lastActionDelta: latestEvent?.delta ?? null,
         lastActionAt: latestEvent ? new Date(latestEvent.createdAt).getTime() : null,
         lastActionSource: latestEvent ? "loaded" : null,
+        lastActionHash: latestEvent ? extractActionHash(latestEvent.delta) : null,
+        isReplayingEvents: false,
+        replayEventsCount: null,
         worldEvents,
         worldEventsStatus: worldEvents.length > 0 ? "ok" : "ok",
         worldEventsError: null,
@@ -1146,6 +1183,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     fetchLatestWorldEvent,
     fetchWorldEvents,
     applyDeltaToUnifiedState,
+    extractActionHash,
   ]);
 
   const submitPlayerAction = useCallback(async (
@@ -1162,10 +1200,30 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       toast.error("World state is not ready");
       return null;
     }
-    if (!actionText.trim()) return null;
+    const normalizedAction = actionText.trim();
+    if (!normalizedAction) return null;
 
     const currentLocationId = travelState.currentLocationId;
     const currentLocation = unifiedState.world.locations.get(currentLocationId);
+    const actionHash = computeActionHash(normalizedAction, currentLocationId ?? null);
+    const now = Date.now();
+    for (const [hash, ts] of recentActionHashesRef.current.entries()) {
+      if (now - ts > 60000) {
+        recentActionHashesRef.current.delete(hash);
+      }
+    }
+    const recentTimestamp = recentActionHashesRef.current.get(actionHash);
+    if (recentTimestamp && now - recentTimestamp < 30000) {
+      setSessionState(prev => ({
+        ...prev,
+        lastActionError: "Action already processed recently.",
+        lastActionHash: actionHash,
+      }));
+      return null;
+    }
+    if (actionInFlightRef.current.has(actionHash)) {
+      return null;
+    }
 
     const context: ActionContextPayload = {
       locations: Array.from(unifiedState.world.locations.values()).map(location => ({
@@ -1194,7 +1252,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       ...prev,
       isApplyingAction: true,
       lastActionError: null,
+      lastActionHash: actionHash,
     }));
+    actionInFlightRef.current.add(actionHash);
 
     try {
       const { data, error } = await callEdgeFunction<{
@@ -1217,8 +1277,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           requireAuth: true,
           body: {
             campaignId,
+            actionHash,
             action: {
-              text: actionText,
+              text: normalizedAction,
               locationId: currentLocationId ?? null,
               locationName: currentLocation?.name ?? null,
             },
@@ -1255,25 +1316,36 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         lastActionEvent: event,
         lastActionDelta: data?.delta ?? event?.delta ?? null,
         lastActionAt: Date.now(),
-        lastActionSource: "generated",
+        lastActionSource: data?.event ? "generated" : "deduped",
+        lastActionHash: actionHash,
       }));
+      recentActionHashesRef.current.set(actionHash, Date.now());
 
       await fetchContent();
       await fetchWorldEvents(50);
       return event;
     } catch (error) {
       const message = getErrorMessage(error) || "Action failed";
+      console.error("Action submit failed", {
+        campaignId,
+        userId,
+        actionHash,
+        message,
+        error,
+      });
       setSessionState(prev => ({
         ...prev,
         lastActionError: message,
+        lastActionHash: actionHash,
       }));
-      toast.error(message);
       return null;
     } finally {
       setSessionState(prev => ({ ...prev, isApplyingAction: false }));
+      actionInFlightRef.current.delete(actionHash);
     }
   }, [
     campaignId,
+    computeActionHash,
     userId,
     sessionState.unifiedState,
     sessionState.travelState,
@@ -1495,6 +1567,11 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       };
 
       const latestEvent = await fetchLatestWorldEvent();
+      setSessionState(prev => ({
+        ...prev,
+        isReplayingEvents: true,
+        replayEventsCount: 50,
+      }));
       const worldEvents = await fetchWorldEvents(50);
       let nextUnified = invariantResult.unified;
       if (worldEvents.length > 0) {
@@ -1519,6 +1596,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         lastActionDelta: latestEvent?.delta ?? null,
         lastActionAt: latestEvent ? new Date(latestEvent.createdAt).getTime() : null,
         lastActionSource: latestEvent ? "loaded" : null,
+        lastActionHash: latestEvent ? extractActionHash(latestEvent.delta) : null,
+        isReplayingEvents: false,
+        replayEventsCount: null,
         worldEvents,
         worldEventsStatus: "ok",
         worldEventsError: null,
@@ -1527,7 +1607,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       return true;
     }
     return false;
-  }, [persistence, ensureWorldInvariants, worldContent, mergeIntoWorldState, computeFingerprint, fetchLatestWorldEvent, fetchWorldEvents, applyDeltaToUnifiedState]);
+  }, [persistence, ensureWorldInvariants, worldContent, mergeIntoWorldState, computeFingerprint, fetchLatestWorldEvent, fetchWorldEvents, applyDeltaToUnifiedState, extractActionHash]);
 
   const reloadLatestFromDb = useCallback(async () => {
     const autosaveId = await persistence.getOrCreateAutosave();

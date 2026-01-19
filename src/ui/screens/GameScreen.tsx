@@ -30,6 +30,7 @@ export default function GameScreen() {
   const [combatMessage, setCombatMessage] = useState<string | null>(null);
   const [uiTick, setUiTick] = useState<number>(0);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const timelineRef = useRef<HTMLDivElement | null>(null);
   const DEV_DEBUG = import.meta.env.DEV;
   const { character } = useCharacter(campaignId);
   const dungeonMaster = useDungeonMaster();
@@ -494,6 +495,25 @@ export default function GameScreen() {
       }
     : null;
 
+  const groupedEvents = useMemo(() => {
+    const today = new Date().toDateString();
+    const groups: Array<{ label: string; events: typeof gameSession.worldEvents }> = [];
+    const todayEvents = gameSession.worldEvents.filter(event => new Date(event.createdAt).toDateString() === today);
+    const earlierEvents = gameSession.worldEvents.filter(event => new Date(event.createdAt).toDateString() !== today);
+    if (todayEvents.length > 0) {
+      groups.push({ label: "Today", events: todayEvents });
+    }
+    if (earlierEvents.length > 0) {
+      groups.push({ label: "Earlier", events: earlierEvents });
+    }
+    return groups;
+  }, [gameSession.worldEvents]);
+
+  useEffect(() => {
+    if (!timelineRef.current) return;
+    timelineRef.current.scrollTop = 0;
+  }, [gameSession.worldEvents.length]);
+
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const toggleEvent = useCallback((id: string) => {
     setExpandedEvents(prev => {
@@ -583,6 +603,7 @@ export default function GameScreen() {
           ) : null}
           <div className="text-xs text-muted-foreground self-center">
             DB: {gameSession.worldEventsStatus === "loading" ? "loading" : gameSession.worldEventsStatus}
+            {gameSession.isReplayingEvents && gameSession.replayEventsCount ? ` • replaying ${gameSession.replayEventsCount}` : ""}
           </div>
           {DEV_DEBUG ? (
             <Button
@@ -615,6 +636,7 @@ export default function GameScreen() {
               currentResponse={dungeonMaster.currentResponse}
               onSendMessage={handleSendMessage}
               suggestions={dungeonMaster.messages.at(-1)?.parsed?.suggestions}
+              error={gameSession.lastActionError}
             />
           </CardContent>
         </Card>
@@ -680,35 +702,53 @@ export default function GameScreen() {
               {gameSession.worldEvents.length === 0 && gameSession.worldEventsStatus === "ok" ? (
                 <div className="text-muted-foreground">No world events yet.</div>
               ) : null}
-              {gameSession.worldEvents.map((event) => {
-                const counts = formatEventCounts(event.delta);
-                const expanded = expandedEvents.has(event.id);
-                return (
-                  <div key={event.id} className="rounded-md border border-border p-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="space-y-1">
-                        <div className="text-xs text-muted-foreground">
-                          {new Date(event.createdAt).toLocaleString()}
-                        </div>
-                        <div className="text-sm font-medium text-foreground">{event.actionText}</div>
-                        {counts ? (
-                          <div className="text-xs text-muted-foreground">
-                            +{counts.locations} locs, +{counts.npcs} npcs, +{counts.quests} quests, +{counts.flags} flags
+              <div ref={timelineRef} className="max-h-[320px] overflow-auto space-y-3">
+                {gameSession.isReplayingEvents ? (
+                  <div className="text-muted-foreground">Replaying events...</div>
+                ) : null}
+                {groupedEvents.map(group => (
+                  <div key={group.label} className="space-y-2">
+                    <div className="text-xs uppercase text-muted-foreground">{group.label}</div>
+                    {group.events.map((event) => {
+                      const counts = formatEventCounts(event.delta);
+                      const expanded = expandedEvents.has(event.id);
+                      return (
+                        <div key={event.id} className="rounded-md border border-border p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="space-y-1">
+                              <div className="text-xs text-muted-foreground">
+                                {new Date(event.createdAt).toLocaleTimeString()}
+                              </div>
+                              <div className="text-sm font-medium text-foreground">{event.actionText}</div>
+                              {counts ? (
+                                <div className="text-xs text-muted-foreground">
+                                  +{counts.locations} locs, +{counts.npcs} npcs, +{counts.quests} quests, +{counts.flags} flags
+                                </div>
+                              ) : null}
+                            </div>
+                            <Button size="sm" variant="outline" onClick={() => toggleEvent(event.id)}>
+                              {expanded ? "Hide" : "Show"}
+                            </Button>
                           </div>
-                        ) : null}
-                      </div>
-                      <Button size="sm" variant="outline" onClick={() => toggleEvent(event.id)}>
-                        {expanded ? "Hide" : "Show"}
-                      </Button>
-                    </div>
-                    {expanded ? (
-                      <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2">
-                        {JSON.stringify(event.delta, null, 2)}
-                      </pre>
-                    ) : null}
+                          {expanded ? (
+                            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2">
+                              {JSON.stringify(event.delta, null, 2)}
+                            </pre>
+                          ) : null}
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
+                ))}
+              </div>
+              {DEV_DEBUG && gameSession.lastActionError ? (
+                <details className="rounded-md border border-border p-2 text-xs">
+                  <summary className="cursor-pointer">Last error (dev)</summary>
+                  <pre className="mt-2 whitespace-pre-wrap">
+                    {JSON.stringify({ error: gameSession.lastActionError, actionHash: gameSession.lastActionHash }, null, 2)}
+                  </pre>
+                </details>
+              ) : null}
             </CardContent>
           </Card>
 
