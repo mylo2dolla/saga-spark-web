@@ -38,6 +38,46 @@ export interface GameSessionState {
   loadedFromSupabase: boolean;
   lastSavedAt: number | null;
   lastLoadedAt: number | null;
+  isApplyingAction: boolean;
+  lastActionError: string | null;
+  lastActionEvent: WorldEventRecord | null;
+  lastActionDelta: unknown | null;
+  lastActionAt: number | null;
+  lastActionSource: "loaded" | "generated" | null;
+}
+
+interface WorldEventRecord {
+  id: string;
+  actionText: string;
+  responseText: string | null;
+  delta: unknown | null;
+  createdAt: string;
+  locationId: string | null;
+  locationName: string | null;
+}
+
+interface ActionContextPayload {
+  locations: Array<{
+    id: string;
+    name: string;
+    type?: string;
+    connectedTo?: string[];
+  }>;
+  npcs: Array<{
+    id: string;
+    name: string;
+    locationId?: string | null;
+  }>;
+  quests: Array<{
+    id: string;
+    title: string;
+    status?: string;
+  }>;
+  storyFlags: Array<{
+    id: string;
+    value: string | number | boolean;
+    source?: string;
+  }>;
 }
 
 interface UseGameSessionOptions {
@@ -67,6 +107,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     loadedFromSupabase: false,
     lastSavedAt: null,
     lastLoadedAt: null,
+    isApplyingAction: false,
+    lastActionError: null,
+    lastActionEvent: null,
+    lastActionDelta: null,
+    lastActionAt: null,
+    lastActionSource: null,
   });
   
   const playtimeRef = useRef(0);
@@ -124,6 +170,37 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       toastMessage: message || stringifyError(error),
     };
   }, [campaignId, userId, getErrorMessage, stringifyError]);
+
+  const fetchLatestWorldEvent = useCallback(async (): Promise<WorldEventRecord | null> => {
+    if (!campaignId || !userId) return null;
+    const { data, error } = await supabase
+      .from("world_events")
+      .select("id, action_text, response_text, delta, created_at, location_id, location_name")
+      .eq("campaign_id", campaignId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.error("World events fetch failed", {
+        campaignId,
+        userId,
+        message: error.message,
+        status: error.status,
+      });
+      return null;
+    }
+    const event = data?.[0];
+    if (!event) return null;
+    return {
+      id: event.id,
+      actionText: event.action_text,
+      responseText: event.response_text ?? null,
+      delta: event.delta ?? null,
+      createdAt: event.created_at,
+      locationId: event.location_id ?? null,
+      locationName: event.location_name ?? null,
+    };
+  }, [campaignId, userId]);
 
   const logWorldSnapshot = useCallback((
     label: string,
@@ -808,6 +885,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       queuedFingerprintRef.current = null;
       latestStateRef.current = { unified: unifiedState, travel: travelState };
 
+      const latestEvent = await fetchLatestWorldEvent();
+
       setSessionState(prev => ({
         ...prev,
         unifiedState,
@@ -824,6 +903,10 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         loadedFromSupabase,
         lastSavedAt: prev.lastSavedAt,
         lastLoadedAt,
+        lastActionEvent: latestEvent,
+        lastActionDelta: latestEvent?.delta ?? null,
+        lastActionAt: latestEvent ? new Date(latestEvent.createdAt).getTime() : null,
+        lastActionSource: latestEvent ? "loaded" : null,
       }));
       
       initializingRef.current = false;
@@ -874,6 +957,139 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     logWorldSnapshot,
     computeFingerprint,
     bootstrapWorld,
+    fetchLatestWorldEvent,
+  ]);
+
+  const submitPlayerAction = useCallback(async (
+    actionText: string,
+    dmNarration?: string | null
+  ) => {
+    if (!campaignId || !userId) {
+      toast.error("You must be signed in to act");
+      return null;
+    }
+    const unifiedState = latestStateRef.current.unified ?? sessionState.unifiedState;
+    const travelState = latestStateRef.current.travel ?? sessionState.travelState;
+    if (!unifiedState || !travelState) {
+      toast.error("World state is not ready");
+      return null;
+    }
+    if (!actionText.trim()) return null;
+
+    const currentLocationId = travelState.currentLocationId;
+    const currentLocation = unifiedState.world.locations.get(currentLocationId);
+
+    const context: ActionContextPayload = {
+      locations: Array.from(unifiedState.world.locations.values()).map(location => ({
+        id: location.id,
+        name: location.name,
+        type: location.type,
+        connectedTo: Array.from(location.connectedTo ?? []),
+      })),
+      npcs: Array.from(unifiedState.world.npcs.values()).map(npc => ({
+        id: npc.id,
+        name: npc.name,
+      })),
+      quests: Array.from(unifiedState.world.quests.values()).map(quest => ({
+        id: quest.id,
+        title: quest.title,
+        status: quest.status,
+      })),
+      storyFlags: Array.from(unifiedState.world.storyFlags.values()).map(flag => ({
+        id: flag.id,
+        value: flag.value,
+        source: flag.source,
+      })),
+    };
+
+    setSessionState(prev => ({
+      ...prev,
+      isApplyingAction: true,
+      lastActionError: null,
+    }));
+
+    try {
+      const { data, error } = await callEdgeFunction<{
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        event?: {
+          id: string;
+          action_text: string;
+          response_text: string | null;
+          delta: unknown | null;
+          created_at: string;
+          location_id: string | null;
+          location_name: string | null;
+        };
+        delta?: unknown;
+      }>(
+        "world-content-writer",
+        {
+          requireAuth: true,
+          body: {
+            campaignId,
+            action: {
+              text: actionText,
+              locationId: currentLocationId ?? null,
+              locationName: currentLocation?.name ?? null,
+            },
+            context,
+            dmResponse: dmNarration ? { narration: dmNarration } : undefined,
+          },
+        }
+      );
+
+      if (error) {
+        throw error;
+      }
+      if (data?.ok === false) {
+        throw new Error(data.message || "Action failed");
+      }
+      if (data?.error) {
+        throw new Error(data.error);
+      }
+
+      const event = data?.event
+        ? {
+            id: data.event.id,
+            actionText: data.event.action_text,
+            responseText: data.event.response_text ?? null,
+            delta: data.event.delta ?? null,
+            createdAt: data.event.created_at,
+            locationId: data.event.location_id ?? null,
+            locationName: data.event.location_name ?? null,
+          }
+        : null;
+
+      setSessionState(prev => ({
+        ...prev,
+        lastActionEvent: event,
+        lastActionDelta: data?.delta ?? event?.delta ?? null,
+        lastActionAt: Date.now(),
+        lastActionSource: "generated",
+      }));
+
+      await fetchContent();
+      return event;
+    } catch (error) {
+      const message = getErrorMessage(error) || "Action failed";
+      setSessionState(prev => ({
+        ...prev,
+        lastActionError: message,
+      }));
+      toast.error(message);
+      return null;
+    } finally {
+      setSessionState(prev => ({ ...prev, isApplyingAction: false }));
+    }
+  }, [
+    campaignId,
+    userId,
+    sessionState.unifiedState,
+    sessionState.travelState,
+    fetchContent,
+    getErrorMessage,
   ]);
 
   // Update unified state
@@ -1087,6 +1303,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         unified: invariantResult.unified,
         travel: invariantResult.travel,
       };
+
+      const latestEvent = await fetchLatestWorldEvent();
       
       setSessionState(prev => ({
         ...prev,
@@ -1097,12 +1315,16 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         lastWorldGenErrorAt: null,
         lastWorldGenSuccessAt: Date.now(),
         lastLoadedAt: Date.now(),
+        lastActionEvent: latestEvent,
+        lastActionDelta: latestEvent?.delta ?? null,
+        lastActionAt: latestEvent ? new Date(latestEvent.createdAt).getTime() : null,
+        lastActionSource: latestEvent ? "loaded" : null,
       }));
       
       return true;
     }
     return false;
-  }, [persistence, ensureWorldInvariants, worldContent, mergeIntoWorldState]);
+  }, [persistence, ensureWorldInvariants, worldContent, mergeIntoWorldState, computeFingerprint, fetchLatestWorldEvent]);
 
   const reloadLatestFromDb = useCallback(async () => {
     const autosaveId = await persistence.getOrCreateAutosave();
@@ -1250,6 +1472,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     autosaveNow,
     retryBootstrap,
     expandWorld,
+    submitPlayerAction,
     fetchSaves: persistence.fetchSaves,
     deleteSave: persistence.deleteSave,
   };

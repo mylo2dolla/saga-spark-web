@@ -6,7 +6,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { WorldState, NPC, Quest, Location, FactionInfo, Alignment, PersonalityTrait } from "@/engine/narrative/types";
+import type { WorldState, NPC, Quest, Location, FactionInfo, Alignment, PersonalityTrait, StoryFlag } from "@/engine/narrative/types";
 import type { EnhancedLocation, LocationService } from "@/engine/narrative/Travel";
 import { toast } from "sonner";
 import { recordDbRead } from "@/ui/data/networkHealth";
@@ -19,6 +19,7 @@ interface WorldContent {
   quests: Quest[];
   locations: EnhancedLocation[];
   worldHooks: string[];
+  storyFlags: StoryFlag[];
 }
 
 interface UseWorldContentOptions {
@@ -78,6 +79,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       const quests: Quest[] = [];
       const locations: EnhancedLocation[] = [];
       const worldHooks: string[] = [];
+      const storyFlags: StoryFlag[] = [];
       const rawLocationSamples: Array<{ contentId: string; rawId?: string; rawName?: string }> = [];
 
       for (const item of data) {
@@ -131,6 +133,14 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
               );
             }
             break;
+          case "story_flag":
+            {
+              const flag = convertToStoryFlag(raw, item.content_id);
+              if (flag) {
+                storyFlags.push(flag);
+              }
+              break;
+            }
         }
       }
 
@@ -141,7 +151,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
         });
       }
 
-      const result: WorldContent = { factions, npcs, quests, locations, worldHooks };
+      const result: WorldContent = { factions, npcs, quests, locations, worldHooks, storyFlags };
       if (DEV_DEBUG) {
         const locationPositions = result.locations.slice(0, 3).map(location => ({
           id: location.id,
@@ -187,6 +197,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     const newNPCs = new Map(baseWorld.npcs);
     const newQuests = new Map(baseWorld.quests);
     const newLocations = new Map(baseWorld.locations);
+    const newStoryFlags = new Map(baseWorld.storyFlags);
     const contentLocationIds = new Set(worldContent.locations.map(location => location.id));
     const hasRealContentLocations = worldContent.locations.some(
       location => location.id !== "starting_location"
@@ -217,6 +228,11 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       newLocations.set(location.id, location);
     }
 
+    // Merge Story Flags
+    for (const flag of worldContent.storyFlags) {
+      newStoryFlags.set(flag.id, flag);
+    }
+
     const resolvedLocations = resolveLocationConnections(newLocations);
 
     // Update campaign seed with factions if not already present
@@ -231,6 +247,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       npcs: newNPCs,
       quests: newQuests,
       locations: resolvedLocations,
+      storyFlags: newStoryFlags,
       campaignSeed: {
         ...baseWorld.campaignSeed,
         factions: newFactions,
@@ -260,6 +277,16 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
 }
 
 // ============= Converters =============
+
+function convertToStoryFlag(raw: Record<string, unknown>, contentId: string): StoryFlag | null {
+  const id = getString(raw.id) || contentId;
+  if (!id) return null;
+  const value = raw.value as StoryFlag["value"];
+  if (value === undefined) return null;
+  const setAt = typeof raw.setAt === "number" ? raw.setAt : Date.now();
+  const source = getString(raw.source) || "action";
+  return { id, value, setAt, source };
+}
 
 function convertToFaction(raw: Record<string, unknown>, contentId: string): FactionInfo | null {
   const name = getString(raw.name);
