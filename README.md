@@ -27,6 +27,15 @@ npm run dev
 npm run build
 ```
 
+## Verify Groq API access
+
+Set your API key in the environment (or a local `.env.local` file) and run the verification script:
+
+```bash
+export GROQ_API_KEY="your_api_key"
+npm run verify:groq
+```
+
 ## RLS smoke test (optional)
 
 In the Supabase SQL editor, run `supabase/smoke-test.sql` after replacing `__USER_UUID__` with your user id.
