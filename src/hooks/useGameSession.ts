@@ -830,6 +830,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         "world-content-writer",
         { body: { campaignId, content: contentToStore }, requireAuth: true }
       );
+      if (writeResult.error) {
+        throw writeResult.error;
+      }
       if (writeResult.skipped) {
         setSessionState(prev => ({
           ...prev,
@@ -837,9 +840,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           bootstrapStatus: "idle",
         }));
         return null;
-      }
-      if (writeResult.error) {
-        throw writeResult.error;
       }
       if (writeResult.data?.error) {
         throw new Error(writeResult.data.error);
@@ -1317,6 +1317,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         }
       );
 
+      if (error) {
+        throw error;
+      }
       if (skipped) {
         setSessionState(prev => ({
           ...prev,
@@ -1324,9 +1327,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         }));
         actionInFlightRef.current.delete(actionHash);
         return;
-      }
-      if (error) {
-        throw error;
       }
       if (data?.ok === false) {
         throw new Error(data.message || "Action failed");

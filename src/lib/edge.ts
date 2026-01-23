@@ -14,6 +14,11 @@ interface EdgeRawOptions extends EdgeOptions {
   body?: unknown;
 }
 
+interface AuthContext {
+  accessToken: string | null;
+  authError: Error | null;
+}
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -23,13 +28,24 @@ const ensureEnv = () => {
   }
 };
 
-const buildHeaders = async (
-  options?: EdgeOptions,
-): Promise<{ headers: EdgeHeaders; skipped: boolean }> => {
-  ensureEnv();
+const getAuthContext = async (requireAuth?: boolean): Promise<AuthContext> => {
   const { data: { session } } = await supabase.auth.getSession();
   const accessToken = session?.access_token ?? null;
-  if (options?.requireAuth && !accessToken) {
+  if (requireAuth && !accessToken) {
+    return {
+      accessToken: null,
+      authError: new Error("You must be signed in to continue."),
+    };
+  }
+  return { accessToken, authError: null };
+};
+
+const buildHeaders = async (
+  options?: EdgeOptions,
+): Promise<{ headers: EdgeHeaders; skipped: boolean; authError: Error | null }> => {
+  ensureEnv();
+  const { accessToken, authError } = await getAuthContext(options?.requireAuth);
+  if (authError) {
     return {
       headers: {
         "Content-Type": "application/json",
@@ -37,6 +53,7 @@ const buildHeaders = async (
         ...(options?.headers ?? {}),
       },
       skipped: true,
+      authError,
     };
   }
   return {
@@ -47,6 +64,7 @@ const buildHeaders = async (
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     skipped: false,
+    authError: null,
   };
 };
 
@@ -59,54 +77,55 @@ export async function callEdgeFunction<T>(
   name: string,
   options?: EdgeOptions
 ): Promise<{ data: T | null; error: Error | null; status: number; raw: Response; skipped: boolean }> {
-  const { headers, skipped } = await buildHeaders(options);
-  if (skipped) {
+  ensureEnv();
+  const { authError } = await getAuthContext(options?.requireAuth);
+  if (authError) {
     return {
       data: null,
-      error: null,
-      status: 0,
-      raw: new Response(null, { status: 0, statusText: "auth_skipped" }),
+      error: authError,
+      status: 401,
+      raw: new Response(null, { status: 401, statusText: "auth_required" }),
       skipped: true,
     };
   }
-  const response = await fetch(buildUrl(name), {
+
+  const { data, error } = await supabase.functions.invoke<T>(name, {
+    body: options?.body,
+    headers: options?.headers,
     method: options?.method ?? "POST",
-    headers,
-    body: options?.body ? JSON.stringify(options.body) : undefined,
-    signal: options?.signal,
   });
 
-  const text = await response.text();
-  if (!response.ok) {
-    let message = `Request failed: ${response.status}`;
-    try {
-      const parsed = JSON.parse(text) as { error?: string; message?: string };
-      message = parsed.error || parsed.message || message;
-    } catch {
-      // ignore parse error
-    }
-    return { data: null, error: new Error(message), status: response.status, raw: response, skipped: false };
+  if (error) {
+    const errorContext = (error as { context?: Response }).context ?? null;
+    const status = errorContext?.status ?? 500;
+    return {
+      data: null,
+      error: new Error(error.message),
+      status,
+      raw: errorContext ?? new Response(null, { status }),
+      skipped: false,
+    };
   }
 
-  if (!text) {
-    return { data: null, error: null, status: response.status, raw: response, skipped: false };
-  }
-
-  try {
-    const parsed = JSON.parse(text) as T;
-    return { data: parsed, error: null, status: response.status, raw: response, skipped: false };
-  } catch {
-    return { data: null, error: new Error("Invalid JSON response"), status: response.status, raw: response, skipped: false };
-  }
+  return {
+    data: data ?? null,
+    error: null,
+    status: 200,
+    raw: new Response(data ? JSON.stringify(data) : null, {
+      status: 200,
+      headers: data ? { "Content-Type": "application/json" } : undefined,
+    }),
+    skipped: false,
+  };
 }
 
 export async function callEdgeFunctionRaw(
   name: string,
   options?: EdgeRawOptions
 ): Promise<Response> {
-  const { headers, skipped } = await buildHeaders(options);
-  if (skipped) {
-    return new Response(null, { status: 0, statusText: "auth_skipped" });
+  const { headers, skipped, authError } = await buildHeaders(options);
+  if (skipped || authError) {
+    return new Response(null, { status: 401, statusText: "auth_required" });
   }
   return fetch(buildUrl(name), {
     method: options?.method ?? "POST",
