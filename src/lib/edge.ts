@@ -73,13 +73,42 @@ const buildUrl = (name: string) => {
   return `${SUPABASE_URL}/functions/v1/${name}`;
 };
 
+const buildInvokeHeaders = (accessToken: string | null, headers?: EdgeHeaders) => ({
+  ...(ANON_KEY ? { apikey: ANON_KEY } : {}),
+  ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+  ...(headers ?? {}),
+});
+
+const logEdgeFailure = async (
+  name: string,
+  status: number,
+  error: Error,
+  response?: Response | null
+) => {
+  let responseText: string | null = null;
+  if (response) {
+    try {
+      responseText = await response.clone().text();
+    } catch {
+      responseText = null;
+    }
+  }
+  console.error("[edge] invoke failed", {
+    name,
+    status,
+    message: error.message,
+    responseText,
+  });
+};
+
 export async function callEdgeFunction<T>(
   name: string,
   options?: EdgeOptions
 ): Promise<{ data: T | null; error: Error | null; status: number; raw: Response; skipped: boolean }> {
   ensureEnv();
-  const { authError } = await getAuthContext(options?.requireAuth);
+  const { authError, accessToken } = await getAuthContext(options?.requireAuth);
   if (authError) {
+    await logEdgeFailure(name, 401, authError, null);
     return {
       data: null,
       error: authError,
@@ -91,13 +120,14 @@ export async function callEdgeFunction<T>(
 
   const { data, error } = await supabase.functions.invoke<T>(name, {
     body: options?.body,
-    headers: options?.headers,
+    headers: buildInvokeHeaders(accessToken, options?.headers),
     method: options?.method ?? "POST",
   });
 
   if (error) {
     const errorContext = (error as { context?: Response }).context ?? null;
     const status = errorContext?.status ?? 500;
+    await logEdgeFailure(name, status, error, errorContext);
     return {
       data: null,
       error: new Error(error.message),
@@ -125,12 +155,19 @@ export async function callEdgeFunctionRaw(
 ): Promise<Response> {
   const { headers, skipped, authError } = await buildHeaders(options);
   if (skipped || authError) {
+    if (authError) {
+      await logEdgeFailure(name, 401, authError, null);
+    }
     return new Response(null, { status: 401, statusText: "auth_required" });
   }
-  return fetch(buildUrl(name), {
+  const response = await fetch(buildUrl(name), {
     method: options?.method ?? "POST",
     headers,
     body: options?.body ? JSON.stringify(options.body) : undefined,
     signal: options?.signal,
   });
+  if (!response.ok) {
+    await logEdgeFailure(name, response.status, new Error(`Edge function ${name} failed`), response);
+  }
+  return response;
 }

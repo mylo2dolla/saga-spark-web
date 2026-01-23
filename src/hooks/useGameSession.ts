@@ -1277,10 +1277,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
     try {
       if (!accessToken) {
+        const message = "You must be signed in to continue.";
         setSessionState(prev => ({
           ...prev,
           isApplyingAction: false,
+          lastActionError: message,
         }));
+        toast.error(message);
         actionInFlightRef.current.delete(actionHash);
         return;
       }
