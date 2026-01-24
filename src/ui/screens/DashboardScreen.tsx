@@ -108,6 +108,53 @@ export default function DashboardScreen() {
     });
   };
 
+  const persistGeneratedContent = useCallback(async (
+    campaignId: string,
+    content: Array<{
+      campaign_id: string;
+      content_type: string;
+      content_id: string;
+      content: Json;
+      generation_context: Json;
+    }>
+  ) => {
+    const edgeResult = await callEdgeFunction<{ error?: string }>(
+      "world-content-writer",
+      {
+        body: {
+          campaignId,
+          content,
+        },
+        requireAuth: true,
+      }
+    );
+
+    if (!edgeResult.error && !edgeResult.data?.error && !edgeResult.skipped) {
+      return;
+    }
+
+    console.warn("[campaigns] edge writer failed, falling back to direct insert", {
+      campaignId,
+      edgeError: edgeResult.error?.message ?? null,
+      edgeMessage: edgeResult.data?.error ?? null,
+      skipped: edgeResult.skipped,
+    });
+
+    const fallbackResult = await supabase
+      .from("ai_generated_content")
+      .insert(content);
+
+    if (fallbackResult.error) {
+      if (edgeResult.error) {
+        throw edgeResult.error;
+      }
+      if (edgeResult.data?.error) {
+        throw new Error(edgeResult.data.error);
+      }
+      throw fallbackResult.error;
+    }
+  }, []);
+
   const fetchCampaigns = useCallback(async () => {
     if (!activeUserId) {
       setIsLoading(false);
@@ -328,25 +375,7 @@ export default function DashboardScreen() {
         })),
       ];
 
-      const contentResult = await callEdgeFunction<{ error?: string }>(
-        "world-content-writer",
-        {
-          body: {
-            campaignId: insertResult.data.id,
-            content: contentToStore,
-          },
-          requireAuth: true,
-        }
-      );
-      if (contentResult.error) {
-        throw contentResult.error;
-      }
-      if (contentResult.skipped) {
-        return;
-      }
-      if (contentResult.data?.error) {
-        throw new Error(contentResult.data.error);
-      }
+      await persistGeneratedContent(insertResult.data.id, contentToStore);
 
       if (resolvedStartingId) {
         const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
