@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import ApiDebugPanel from "../components/ApiDebugPanel";
 import { useDbHealth } from "@/ui/data/useDbHealth";
-import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useDiagnostics } from "@/ui/data/useDiagnostics";
 
 const buildSha = import.meta.env.VITE_GIT_SHA ?? "unknown";
 const DEV_DEBUG = import.meta.env.DEV;
@@ -30,7 +30,7 @@ export default function AppShell() {
       bootstrapped: Boolean(user),
       skipGameHooks: isLoginRoute || !user,
     });
-  }, [location.pathname, user]);
+  }, [isLoginRoute, location.pathname, user]);
 
   return (
     <div className="min-h-screen bg-background text-foreground">

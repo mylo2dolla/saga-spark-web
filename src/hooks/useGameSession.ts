@@ -493,7 +493,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   ): { unified: UnifiedState; travel: TravelState | null } => {
     let nextWorld = unified.world;
     const locations = new Map(nextWorld.locations);
-    let locationIds = Array.from(locations.keys());
+    const locationIds = Array.from(locations.keys());
     const firstLocationId = locationIds[0];
     let nextTravel = travel ?? (firstLocationId ? createTravelState(firstLocationId) : null);
     const realLocationsExist = locations.size > 0;
@@ -966,7 +966,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   }, [
     campaignId,
     userId,
-    createDeterministicPosition,
     fetchContent,
     generateInitialWorld,
     getErrorMessage,
@@ -974,7 +973,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     mergeIntoWorldState,
     normalizeLocations,
     persistence,
-    toKebab,
     worldContent,
     ensureMinimumWorldGraph,
     persistGeneratedContent,
@@ -1010,7 +1008,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         .from("campaigns")
         .select("name, description")
         .eq("id", campaignId)
-        .single();
+        .maybeSingle();
 
       if (campaignError || !campaign) {
         const error = campaignError ?? new Error("Campaign not found");
