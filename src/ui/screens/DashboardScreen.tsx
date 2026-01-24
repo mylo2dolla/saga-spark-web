@@ -60,6 +60,7 @@ export default function DashboardScreen() {
   const activeUser = user ?? authUser;
   const activeUserId = session?.user?.id ?? user?.id ?? authUser?.id ?? null;
   const isAuthReady = !authLoading || Boolean(activeSession);
+  const activeAccessToken = activeSession?.access_token ?? null;
 
   const toKebab = (value: string): string =>
     value
@@ -161,6 +162,7 @@ export default function DashboardScreen() {
           content,
         },
         requireAuth: true,
+        accessToken: activeAccessToken,
       }
     );
 
@@ -188,7 +190,7 @@ export default function DashboardScreen() {
       }
       throw fallbackResult.error;
     }
-  }, []);
+  }, [activeAccessToken]);
 
   useEffect(() => {
     isMountedRef.current = true;
