@@ -1329,7 +1329,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           isApplyingAction: false,
         }));
         actionInFlightRef.current.delete(actionHash);
-        return;
+        return null;
       }
       if (data?.ok === false) {
         throw new Error(data.message || "Action failed");
@@ -1385,6 +1385,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   }, [
     campaignId,
     computeActionHash,
+    accessToken,
     userId,
     sessionState.unifiedState,
     sessionState.travelState,
