@@ -6,7 +6,8 @@ import { recordNetworkRequest } from "@/ui/data/networkHealth";
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SUPABASE_KEY = SUPABASE_ANON_KEY ?? SUPABASE_PUBLISHABLE_KEY;
+const isPublishableKey = (key: string | null | undefined) => Boolean(key && key.startsWith("sb_publishable_"));
+const SUPABASE_KEY = SUPABASE_ANON_KEY && !isPublishableKey(SUPABASE_ANON_KEY) ? SUPABASE_ANON_KEY : null;
 const SUPABASE_KEY_SOURCE = SUPABASE_ANON_KEY
   ? (import.meta.env.VITE_SUPABASE_ANON_KEY ? "VITE_SUPABASE_ANON_KEY" : "NEXT_PUBLIC_SUPABASE_ANON_KEY")
   : SUPABASE_PUBLISHABLE_KEY
@@ -29,8 +30,13 @@ if (DEV_DEBUG) {
 }
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
+  if (SUPABASE_ANON_KEY && isPublishableKey(SUPABASE_ANON_KEY)) {
+    throw new Error(
+      "VITE_SUPABASE_ANON_KEY is set to a publishable key. Use the anon key from Supabase settings instead."
+    );
+  }
   throw new Error(
-    "Missing Supabase configuration. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (preferred) or VITE_SUPABASE_PUBLISHABLE_KEY."
+    "Missing Supabase configuration. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY."
   );
 }
 
