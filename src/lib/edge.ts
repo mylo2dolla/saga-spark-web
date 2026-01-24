@@ -28,9 +28,30 @@ const ensureEnv = () => {
   }
 };
 
+const REFRESH_BUFFER_MS = 60_000;
+
 const getAuthContext = async (requireAuth?: boolean): Promise<AuthContext> => {
-  const { data: { session } } = await supabase.auth.getSession();
-  const accessToken = session?.access_token ?? null;
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) {
+    return { accessToken: null, authError: sessionError };
+  }
+
+  let activeSession = session;
+  const expiresAt = activeSession?.expires_at ? activeSession.expires_at * 1000 : null;
+  const shouldRefresh = Boolean(
+    (requireAuth && !activeSession?.access_token)
+      || (expiresAt && expiresAt - Date.now() < REFRESH_BUFFER_MS)
+  );
+
+  if (shouldRefresh) {
+    const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError) {
+      return { accessToken: activeSession?.access_token ?? null, authError: refreshError };
+    }
+    activeSession = refreshed.session;
+  }
+
+  const accessToken = activeSession?.access_token ?? null;
   if (requireAuth && !accessToken) {
     return {
       accessToken: null,
@@ -172,11 +193,14 @@ export async function callEdgeFunction<T>(
     };
   }
 
-  const { data, error } = await supabase.functions.invoke<T>(name, {
-    body: options?.body,
-    headers: buildInvokeHeaders(accessToken, options?.headers),
-    method: options?.method ?? "POST",
-  });
+  const invoke = async (token: string | null) =>
+    supabase.functions.invoke<T>(name, {
+      body: options?.body,
+      headers: buildInvokeHeaders(token, options?.headers),
+      method: options?.method ?? "POST",
+    });
+
+  const { data, error } = await invoke(accessToken);
 
   if (error) {
     const errorContext = (error as { context?: Response }).context ?? null;
@@ -191,6 +215,25 @@ export async function callEdgeFunction<T>(
       error.message,
       requestId
     );
+    if (status === 401) {
+      const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+      const refreshedToken = refreshed?.session?.access_token ?? null;
+      if (!refreshError && refreshedToken) {
+        const retry = await invoke(refreshedToken);
+        if (!retry.error) {
+          return {
+            data: retry.data ?? null,
+            error: null,
+            status: 200,
+            raw: new Response(retry.data ? JSON.stringify(retry.data) : null, {
+              status: 200,
+              headers: retry.data ? { "Content-Type": "application/json" } : undefined,
+            }),
+            skipped: false,
+          };
+        }
+      }
+    }
     await logEdgeFailure(name, status, new Error(message), errorContext);
     return {
       data: null,
