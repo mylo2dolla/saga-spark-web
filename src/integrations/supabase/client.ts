@@ -4,7 +4,9 @@ import type { Database } from './types';
 import { recordNetworkRequest } from "@/ui/data/networkHealth";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SUPABASE_KEY = SUPABASE_PUBLISHABLE_KEY ?? SUPABASE_ANON_KEY;
 const DEV_DEBUG = import.meta.env.DEV;
 
 // Import the supabase client like this:
@@ -14,11 +16,33 @@ if (DEV_DEBUG) {
   const projectRef = SUPABASE_URL?.replace("https://", "").split(".")[0] ?? null;
   console.info("DEV_DEBUG supabase config", {
     hasUrl: Boolean(SUPABASE_URL),
-    hasKey: Boolean(SUPABASE_ANON_KEY),
+    hasKey: Boolean(SUPABASE_KEY),
     projectRef,
     url: SUPABASE_URL ?? null,
   });
 }
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  throw new Error(
+    "Missing Supabase configuration. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_ANON_KEY)."
+  );
+}
+
+const createSafeStorage = () => {
+  if (typeof window !== "undefined" && window.localStorage) {
+    return window.localStorage;
+  }
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+  } as Storage;
+};
 
 const baseFetch = globalThis.fetch.bind(globalThis);
 const debugFetch: typeof fetch = async (input, init) => {
@@ -48,9 +72,9 @@ const debugFetch: typeof fetch = async (input, init) => {
   }
 };
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
-    storage: localStorage,
+    storage: createSafeStorage(),
     persistSession: true,
     autoRefreshToken: true,
   },

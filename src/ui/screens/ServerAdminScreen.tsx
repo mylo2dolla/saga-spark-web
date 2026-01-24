@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { callEdgeFunctionRaw } from "@/lib/edge";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/ui/data/async";
-import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useNetworkHealth } from "@/ui/data/networkHealth";
 
 interface ServerNodeRow {

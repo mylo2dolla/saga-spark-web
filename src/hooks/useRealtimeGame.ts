@@ -109,10 +109,13 @@ export function useRealtimeCharacters(campaignId: string | undefined) {
   // Fetch initial characters
   useEffect(() => {
     if (!campaignId) return;
+    let isMounted = true;
 
     const fetchCharacters = async () => {
       try {
-        setIsLoading(true);
+        if (isMounted) {
+          setIsLoading(true);
+        }
         const { data: charsData, error } = await supabase
           .from("characters")
           .select("*")
@@ -139,20 +142,28 @@ export function useRealtimeCharacters(campaignId: string | undefined) {
           parseCharacter(char, profilesData.find(p => p.user_id === char.user_id))
         );
 
-        setCharacters(parsedChars);
+        if (isMounted) {
+          setCharacters(parsedChars);
+        }
       } catch (error) {
         console.error("Error fetching characters:", error);
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
     fetchCharacters();
+    return () => {
+      isMounted = false;
+    };
   }, [campaignId]);
 
   // Subscribe to realtime updates
   useEffect(() => {
     if (!campaignId) return;
+    let isMounted = true;
 
     const channel: RealtimeChannel = supabase
       .channel(`characters:${campaignId}`)
@@ -170,24 +181,33 @@ export function useRealtimeCharacters(campaignId: string | undefined) {
               .from("profiles")
               .select("display_name")
               .eq("user_id", (payload.new as { user_id: string }).user_id)
-              .single();
+              .maybeSingle();
             recordProfilesRead();
 
             const parsedChar = parseCharacter(payload.new, profileData || undefined);
 
-            if (payload.eventType === "INSERT") {
-              setCharacters(prev => [...prev, parsedChar]);
-            } else {
-              setCharacters(prev => prev.map(c => c.id === parsedChar.id ? parsedChar : c));
+            if (isMounted) {
+              if (payload.eventType === "INSERT") {
+                setCharacters(prev => (
+                  prev.some(c => c.id === parsedChar.id)
+                    ? prev
+                    : [...prev, parsedChar]
+                ));
+              } else {
+                setCharacters(prev => prev.map(c => c.id === parsedChar.id ? parsedChar : c));
+              }
             }
           } else if (payload.eventType === "DELETE") {
-            setCharacters(prev => prev.filter(c => c.id !== (payload.old as { id: string }).id));
+            if (isMounted) {
+              setCharacters(prev => prev.filter(c => c.id !== (payload.old as { id: string }).id));
+            }
           }
         }
       )
       .subscribe();
 
     return () => {
+      isMounted = false;
       supabase.removeChannel(channel);
     };
   }, [campaignId]);

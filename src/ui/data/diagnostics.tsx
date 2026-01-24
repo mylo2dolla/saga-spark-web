@@ -1,33 +1,5 @@
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
-
-export interface EngineSnapshot {
-  state?: string;
-  locationId?: string | null;
-  locationName?: string | null;
-  destinationsCount?: number;
-  campaignId?: string | null;
-  campaignSeedId?: string | null;
-  campaignSeedTitle?: string | null;
-  knownLocations?: string[];
-  storyFlags?: string[];
-  activeQuests?: string[];
-  travel?: {
-    currentLocationId: string | null;
-    isInTransit: boolean;
-    transitProgress: number;
-  };
-  combatState?: string | null;
-}
-
-interface DiagnosticsState {
-  lastError: string | null;
-  lastErrorAt: number | null;
-  setLastError: (message: string | null) => void;
-  engineSnapshot: EngineSnapshot | null;
-  setEngineSnapshot: (snapshot: EngineSnapshot | null) => void;
-}
-
-const DiagnosticsContext = createContext<DiagnosticsState | null>(null);
+import { useMemo, useState, type ReactNode } from "react";
+import { DiagnosticsContext, type EngineSnapshot } from "@/ui/data/diagnosticsContext";
 
 export function DiagnosticsProvider({ children }: { children: ReactNode }) {
   const [lastError, setLastErrorState] = useState<string | null>(null);
@@ -52,12 +24,4 @@ export function DiagnosticsProvider({ children }: { children: ReactNode }) {
       {children}
     </DiagnosticsContext.Provider>
   );
-}
-
-export function useDiagnostics() {
-  const ctx = useContext(DiagnosticsContext);
-  if (!ctx) {
-    throw new Error("useDiagnostics must be used within DiagnosticsProvider");
-  }
-  return ctx;
 }

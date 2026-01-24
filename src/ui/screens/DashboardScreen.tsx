@@ -9,7 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { formatError, isAbortError } from "@/ui/data/async";
-import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { recordCampaignsRead } from "@/ui/data/networkHealth";
 import { callEdgeFunction } from "@/lib/edge";
 import type { Json } from "@/integrations/supabase/types";
@@ -54,6 +54,7 @@ export default function DashboardScreen() {
   const [joinError, setJoinError] = useState<string | null>(null);
   const fetchInFlightRef = useRef(false);
   const creatingRef = useRef(false);
+  const isMountedRef = useRef(true);
 
   const activeSession = session ?? authSession;
   const activeUser = user ?? authUser;
@@ -155,16 +156,27 @@ export default function DashboardScreen() {
     }
   }, []);
 
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const fetchCampaigns = useCallback(async () => {
     if (!activeUserId) {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
       return;
     }
     if (fetchInFlightRef.current) return;
     fetchInFlightRef.current = true;
-    setIsLoading(true);
-    setError(null);
-    setLastError(null);
+    if (isMountedRef.current) {
+      setIsLoading(true);
+      setError(null);
+      setLastError(null);
+    }
 
     try {
       const { data: memberData, error: memberError } = await supabase
@@ -200,17 +212,23 @@ export default function DashboardScreen() {
       });
 
       recordCampaignsRead();
-      setCampaigns(Array.from(combined.values()));
+      if (isMountedRef.current) {
+        setCampaigns(Array.from(combined.values()));
+      }
     } catch (err) {
       if (isAbortError(err)) {
         return;
       }
       console.error("Failed to load campaigns", err);
       const message = formatError(err, "Failed to load campaigns");
-      setError(message);
-      setLastError(message);
+      if (isMountedRef.current) {
+        setError(message);
+        setLastError(message);
+      }
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
       fetchInFlightRef.current = false;
     }
   }, [activeUserId, setLastError]);
@@ -279,9 +297,11 @@ export default function DashboardScreen() {
     }
     if (creatingRef.current) return;
     creatingRef.current = true;
-    setIsCreating(true);
-    setLastError(null);
-    setCreateError(null);
+    if (isMountedRef.current) {
+      setIsCreating(true);
+      setLastError(null);
+      setCreateError(null);
+    }
 
     let createdCampaignId: string | null = null;
     try {
@@ -393,12 +413,14 @@ export default function DashboardScreen() {
         description: `${insertResult.data.name} is ready.`,
       });
 
-      setNewCampaignName("");
-      setNewCampaignDescription("");
-      setNameTouched(false);
-      setDescriptionTouched(false);
-      setSubmitAttempted(false);
-      setCampaigns(prev => [insertResult.data as Campaign, ...prev]);
+      if (isMountedRef.current) {
+        setNewCampaignName("");
+        setNewCampaignDescription("");
+        setNameTouched(false);
+        setDescriptionTouched(false);
+        setSubmitAttempted(false);
+        setCampaigns(prev => [insertResult.data as Campaign, ...prev]);
+      }
       fetchCampaigns();
       navigate(`/game/${insertResult.data.id}/create-character`);
     } catch (err) {
@@ -406,11 +428,15 @@ export default function DashboardScreen() {
         await supabase.from("campaigns").delete().eq("id", createdCampaignId);
       }
       const message = formatError(err, "Failed to create campaign");
-      setLastError(message);
-      setCreateError(message);
+      if (isMountedRef.current) {
+        setLastError(message);
+        setCreateError(message);
+      }
       toast({ title: "Failed to create campaign", description: message, variant: "destructive" });
     } finally {
-      setIsCreating(false);
+      if (isMountedRef.current) {
+        setIsCreating(false);
+      }
       creatingRef.current = false;
     }
   };
@@ -421,21 +447,29 @@ export default function DashboardScreen() {
       return;
     }
     if (authBusy) return;
-    setAuthBusy(true);
-    setAuthError(null);
+    if (isMountedRef.current) {
+      setAuthBusy(true);
+      setAuthError(null);
+    }
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: authEmail.trim(),
         password: authPassword,
       });
       if (error) throw error;
-      setAuthSession(data.session);
-      setAuthUser(data.user ?? null);
+      if (isMountedRef.current) {
+        setAuthSession(data.session);
+        setAuthUser(data.user ?? null);
+      }
     } catch (err) {
       const message = formatError(err, "Sign in failed");
-      setAuthError(message);
+      if (isMountedRef.current) {
+        setAuthError(message);
+      }
     } finally {
-      setAuthBusy(false);
+      if (isMountedRef.current) {
+        setAuthBusy(false);
+      }
     }
   };
 
@@ -445,38 +479,54 @@ export default function DashboardScreen() {
       return;
     }
     if (authBusy) return;
-    setAuthBusy(true);
-    setAuthError(null);
+    if (isMountedRef.current) {
+      setAuthBusy(true);
+      setAuthError(null);
+    }
     try {
       const { data, error } = await supabase.auth.signUp({
         email: authEmail.trim(),
         password: authPassword,
       });
       if (error) throw error;
-      setAuthSession(data.session);
-      setAuthUser(data.user ?? null);
+      if (isMountedRef.current) {
+        setAuthSession(data.session);
+        setAuthUser(data.user ?? null);
+      }
     } catch (err) {
       const message = formatError(err, "Sign up failed");
-      setAuthError(message);
+      if (isMountedRef.current) {
+        setAuthError(message);
+      }
     } finally {
-      setAuthBusy(false);
+      if (isMountedRef.current) {
+        setAuthBusy(false);
+      }
     }
   };
 
   const handleSignOut = async () => {
     if (authBusy) return;
-    setAuthBusy(true);
-    setAuthError(null);
+    if (isMountedRef.current) {
+      setAuthBusy(true);
+      setAuthError(null);
+    }
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      setAuthSession(null);
-      setAuthUser(null);
+      if (isMountedRef.current) {
+        setAuthSession(null);
+        setAuthUser(null);
+      }
     } catch (err) {
       const message = formatError(err, "Sign out failed");
-      setAuthError(message);
+      if (isMountedRef.current) {
+        setAuthError(message);
+      }
     } finally {
-      setAuthBusy(false);
+      if (isMountedRef.current) {
+        setAuthBusy(false);
+      }
     }
   };
 
@@ -487,9 +537,11 @@ export default function DashboardScreen() {
       }
       return;
     }
-    setIsJoining(true);
-    setLastError(null);
-    setJoinError(null);
+    if (isMountedRef.current) {
+      setIsJoining(true);
+      setLastError(null);
+      setJoinError(null);
+    }
 
     try {
       const response = await supabase.rpc("get_campaign_by_invite_code", { _invite_code: inviteCode.trim() });
@@ -518,15 +570,21 @@ export default function DashboardScreen() {
       });
 
       toast({ title: "Joined campaign", description: campaign.name });
-      setInviteCode("");
+      if (isMountedRef.current) {
+        setInviteCode("");
+      }
       fetchCampaigns();
     } catch (err) {
       const message = formatError(err, "Failed to join campaign");
-      setLastError(message);
-      setJoinError(message);
+      if (isMountedRef.current) {
+        setLastError(message);
+        setJoinError(message);
+      }
       toast({ title: "Failed to join campaign", description: message, variant: "destructive" });
     } finally {
-      setIsJoining(false);
+      if (isMountedRef.current) {
+        setIsJoining(false);
+      }
     }
   };
 

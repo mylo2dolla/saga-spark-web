@@ -157,6 +157,7 @@ export function TravelPanel({
     onTravelStateUpdate,
     onCombatStart,
     onWorldEvent,
+    onTravelComplete,
   ]);
 
   // Handle resuming travel after combat
@@ -179,7 +180,7 @@ export function TravelPanel({
         toast.info(result.message);
       }
     },
-    [world, playerId, onWorldUpdate, onTravelStateUpdate, onWorldEvent]
+    [world, playerId, onWorldUpdate, onTravelStateUpdate, onWorldEvent, onTravelComplete]
   );
 
   // Get danger level badge color
