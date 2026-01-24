@@ -19,8 +19,8 @@ interface AuthContext {
   authError: Error | null;
 }
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
+const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 const ensureEnv = () => {
   if (!SUPABASE_URL || !ANON_KEY) {
@@ -167,7 +167,17 @@ export async function callEdgeFunctionRaw(
     signal: options?.signal,
   });
   if (!response.ok) {
-    await logEdgeFailure(name, response.status, new Error(`Edge function ${name} failed`), response);
+    const responseText = await response.clone().text().catch(() => "");
+    await logEdgeFailure(
+      name,
+      response.status,
+      new Error(`Edge function ${name} failed`),
+      response
+    );
+    const message = responseText
+      ? `Edge function ${name} failed: ${response.status} ${response.statusText} - ${responseText}`
+      : `Edge function ${name} failed: ${response.status} ${response.statusText}`;
+    throw new Error(message);
   }
   return response;
 }

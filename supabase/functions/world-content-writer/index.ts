@@ -4,7 +4,8 @@ import { groqChatCompletions } from "../_shared/groq.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 interface ContentEntry {
@@ -93,8 +94,13 @@ const createDeterministicPosition = (seed: string) => {
 };
 
 serve(async (req) => {
+  const { pathname } = new URL(req.url);
+  console.log("world-content-writer request", { method: req.method, pathname });
+  const hasAuthHeader = Boolean(req.headers.get("Authorization"));
+  console.log("world-content-writer auth header present", { present: hasAuthHeader });
+
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   const requestId = crypto.randomUUID();
@@ -107,10 +113,16 @@ serve(async (req) => {
     new Response(
       JSON.stringify({ ok: false, code, message, details, requestId }),
       { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+  );
 
   try {
     const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: "Missing Authorization" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
     if (!authHeader?.startsWith("Bearer ")) {
       return errorResponse(401, "auth_required", "Authentication required");
     }
