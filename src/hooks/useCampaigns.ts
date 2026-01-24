@@ -35,6 +35,14 @@ export function useCampaigns() {
   const [isLoading, setIsLoading] = useState(true);
   const fetchInFlightRef = useRef(false);
   const lastFetchAtRef = useRef<number | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const logSupabaseError = (
     context: string,
@@ -58,14 +66,18 @@ export function useCampaigns() {
     if (fetchInFlightRef.current) return;
     fetchInFlightRef.current = true;
     try {
-      setIsLoading(true);
+      if (isMountedRef.current) {
+        setIsLoading(true);
+      }
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError) {
         logSupabaseError("[auth] supabase error", userError);
         throw userError;
       }
       if (!user) {
-        setIsLoading(false);
+        if (isMountedRef.current) {
+          setIsLoading(false);
+        }
         return;
       }
 
@@ -113,7 +125,9 @@ export function useCampaigns() {
         (c, i, self) => self.findIndex(x => x.id === c.id) === i
       );
 
-      setCampaigns(uniqueCampaigns);
+      if (isMountedRef.current) {
+        setCampaigns(uniqueCampaigns);
+      }
       lastFetchAtRef.current = now;
     } catch (error) {
       if ((error as { name?: string })?.name === "AbortError") {
@@ -122,7 +136,9 @@ export function useCampaigns() {
       console.error("Error fetching campaigns:", error);
       toast.error("Failed to load campaigns");
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
       fetchInFlightRef.current = false;
     }
   }, []);
@@ -171,7 +187,9 @@ export function useCampaigns() {
       }
 
       const campaign = data as unknown as Campaign;
-      setCampaigns(prev => [...prev, campaign]);
+      if (isMountedRef.current) {
+        setCampaigns(prev => [...prev, campaign]);
+      }
       toast.success("Campaign created!");
       if (DEV_DEBUG) {
         console.info("DEV_DEBUG campaigns create success", { campaignId: data.id });
@@ -246,7 +264,9 @@ export function useCampaigns() {
 
       if (error) throw error;
 
-      setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+      if (isMountedRef.current) {
+        setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+      }
       toast.success("Campaign deleted");
     } catch (error) {
       console.error("Error deleting campaign:", error);

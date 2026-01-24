@@ -6,7 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import type { CharacterStats, CharacterResources, PassiveAbility, GameAbility } from "@/types/game";
 import { formatError } from "@/ui/data/async";
-import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useAuth } from "@/hooks/useAuth";
 import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import { useCharacter, type CharacterPayload } from "@/hooks/useCharacter";
@@ -53,28 +53,16 @@ export default function CharacterScreen() {
     userId: user?.id ?? null,
   });
 
-  if (!campaignId) {
-    return (
-      <div className="space-y-2 text-sm text-muted-foreground">
-        <div>Campaign not found.</div>
-        <button
-          type="button"
-          className="text-primary underline"
-          onClick={() => navigate("/dashboard")}
-        >
-          Go to dashboard
-        </button>
-      </div>
-    );
-  }
-
   useEffect(() => {
     if (authLoading || user) return;
     let isMounted = true;
     const run = async () => {
-      setSessionFallback({ checking: true, hasSession: null, error: null });
+      if (isMounted) {
+        setSessionFallback({ checking: true, hasSession: null, error: null });
+      }
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
+        if (!isMounted) return;
         if (error) {
           setSessionFallback({ checking: false, hasSession: false, error: error.message ?? "Session error" });
         } else {
@@ -96,6 +84,29 @@ export default function CharacterScreen() {
       setShowCreator(false);
     }
   }, [character]);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    if (authLoading || sessionFallback.checking) return;
+    if (!user && !sessionFallback.hasSession) {
+      navigate("/login");
+    }
+  }, [authLoading, campaignId, navigate, sessionFallback.checking, sessionFallback.hasSession, user]);
+
+  if (!campaignId) {
+    return (
+      <div className="space-y-2 text-sm text-muted-foreground">
+        <div>Campaign not found.</div>
+        <button
+          type="button"
+          className="text-primary underline"
+          onClick={() => navigate("/dashboard")}
+        >
+          Go to dashboard
+        </button>
+      </div>
+    );
+  }
 
   if (authLoading || sessionFallback.checking) {
     console.info("[auth] log", {
@@ -139,7 +150,6 @@ export default function CharacterScreen() {
       campaignId,
       route: location.pathname,
     });
-    navigate("/login");
     return null;
   }
 

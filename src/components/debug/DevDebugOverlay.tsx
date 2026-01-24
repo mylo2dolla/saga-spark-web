@@ -173,6 +173,7 @@ function DevDebugOverlayAuthedStats() {
     session.loadedFromSupabase,
     session.lastSavedAt,
     session.lastLoadedAt,
+    networkHealth,
   ]);
 
   if (!DEV_DEBUG) return null;

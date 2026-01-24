@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/ui/data/async";
-import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import SupabaseStatusIndicator from "@/ui/components/SupabaseStatusIndicator";
 
 interface AuthScreenProps {
