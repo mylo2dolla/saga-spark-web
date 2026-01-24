@@ -187,12 +187,24 @@ This should feel like a rich, living world ready for adventure.
 Respond with JSON only.`;
 }
 
+const getRequestId = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
+
+const respondJson = (payload: unknown, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  const requestId = crypto.randomUUID();
+  const requestId = getRequestId(req);
   const expectedEnvKeys = [
     "SUPABASE_URL",
     "SUPABASE_ANON_KEY",
@@ -213,12 +225,34 @@ serve(async (req) => {
     message: string,
     details?: unknown
   ) =>
-    new Response(
-      JSON.stringify({ ok: false, code, message, details, requestId }),
-      { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    respondJson({ ok: false, code, message, details, requestId }, status);
 
   try {
+    let payload: GenerationRequest;
+    try {
+      payload = (await req.json()) as GenerationRequest;
+    } catch (error) {
+      console.error("world-generator invalid json", {
+        requestId,
+        error: error instanceof Error ? error.message : error,
+      });
+      return errorResponse(400, "invalid_json", "Request body must be valid JSON");
+    }
+
+    const { type, campaignSeed, context } = payload ?? {};
+    const allowedTypes = ["npc", "quest", "dialog", "faction", "location", "initial_world"];
+    if (!type || !allowedTypes.includes(type)) {
+      return errorResponse(400, "invalid_type", "Unsupported generation type", { type });
+    }
+    if (!campaignSeed || typeof campaignSeed.title !== "string" || typeof campaignSeed.description !== "string") {
+      return errorResponse(
+        400,
+        "invalid_campaign_seed",
+        "campaignSeed.title and campaignSeed.description are required",
+        { campaignSeed }
+      );
+    }
+
     const missingRequired = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "GROQ_API_KEY"].filter(
       key => !Deno.env.get(key)
     );
@@ -246,7 +280,6 @@ serve(async (req) => {
         userId = user?.id ?? null;
       }
     }
-    const { type, campaignSeed, context } = (await req.json()) as GenerationRequest;
     const campaignId = context?.campaignId ?? null;
     
     let prompt: string;
@@ -270,7 +303,7 @@ serve(async (req) => {
         prompt = getInitialWorldPrompt(campaignSeed);
         break;
       default:
-        throw new Error(`Unknown generation type: ${type}`);
+        return errorResponse(400, "invalid_type", `Unknown generation type: ${type}`);
     }
 
     console.log("Generating world content", {
@@ -300,8 +333,11 @@ serve(async (req) => {
         userId,
         campaignId,
         error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
       });
-      return errorResponse(500, "groq_error", "AI generation failed", error);
+      return errorResponse(500, "groq_error", "AI generation failed", {
+        message: error instanceof Error ? error.message : error,
+      });
     }
     const content = data.choices?.[0]?.message?.content;
 
@@ -555,14 +591,12 @@ serve(async (req) => {
 
     console.log(`Successfully generated ${type}`);
 
-    return new Response(
-      JSON.stringify({ ok: true, type, content: parsed, requestId }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return respondJson({ ok: true, type, content: parsed, requestId }, 200);
   } catch (error) {
     console.error("World generator error:", {
       requestId,
       error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return errorResponse(
       500,
