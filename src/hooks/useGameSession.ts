@@ -152,6 +152,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     isReplayingEvents: false,
     replayEventsCount: null,
   });
+
+  const resolvedUnifiedState = sessionState.unifiedState ?? initialUnifiedState;
   
   const playtimeRef = useRef(0);
   const playtimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -1857,12 +1859,27 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
   useEffect(() => {
     latestStateRef.current = {
-      unified: sessionState.unifiedState,
+      unified: resolvedUnifiedState,
       travel: sessionState.travelState,
     };
-    if (!sessionState.isInitialized || !sessionState.unifiedState || !sessionState.travelState) return;
+    if (!sessionState.isInitialized || !sessionState.travelState) return;
     triggerAutosave("state-change");
-  }, [sessionState.isInitialized, sessionState.unifiedState, sessionState.travelState, triggerAutosave]);
+  }, [resolvedUnifiedState, sessionState.isInitialized, sessionState.travelState, triggerAutosave]);
+
+  useEffect(() => {
+    if (sessionState.unifiedState) return;
+    console.error("Unified state missing; resetting to initial state.", {
+      campaignId,
+      userId,
+    });
+    setSessionState(prev => ({
+      ...prev,
+      unifiedState: initialUnifiedState,
+      error: prev.error ?? "World state failed to initialize.",
+      isInitialized: false,
+      isLoading: false,
+    }));
+  }, [campaignId, initialUnifiedState, sessionState.unifiedState, userId]);
 
   // Cleanup
   useEffect(() => {
@@ -1878,6 +1895,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
 
   return {
     ...sessionState,
+    unifiedState: resolvedUnifiedState,
     saves: persistence.saves,
     isSaving: persistence.isSaving,
     updateUnifiedState,
