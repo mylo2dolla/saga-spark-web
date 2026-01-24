@@ -79,25 +79,79 @@ const buildInvokeHeaders = (accessToken: string | null, headers?: EdgeHeaders) =
   ...(headers ?? {}),
 });
 
+const MAX_RESPONSE_SNIPPET = 2000;
+
+const extractRequestId = (response?: Response | null, json?: unknown): string | null => {
+  if (response) {
+    const headerId =
+      response.headers.get("x-request-id")
+      ?? response.headers.get("x-correlation-id")
+      ?? response.headers.get("x-vercel-id");
+    if (headerId) return headerId;
+  }
+  if (json && typeof json === "object" && "requestId" in json) {
+    const value = (json as { requestId?: string }).requestId;
+    return value ?? null;
+  }
+  return null;
+};
+
+const readResponseBody = async (
+  response?: Response | null
+): Promise<{ text: string | null; json: unknown | null }> => {
+  if (!response) return { text: null, json: null };
+  let text: string | null = null;
+  try {
+    const raw = await response.clone().text();
+    text = raw.slice(0, MAX_RESPONSE_SNIPPET);
+  } catch {
+    text = null;
+  }
+  if (!text) return { text, json: null };
+  try {
+    return { text, json: JSON.parse(text) };
+  } catch {
+    return { text, json: null };
+  }
+};
+
+const buildEdgeErrorMessage = (
+  name: string,
+  status: number,
+  statusText: string | null,
+  responseDetails: { text: string | null; json: unknown | null },
+  fallback: string,
+  requestId: string | null
+) => {
+  const json = responseDetails.json as
+    | { message?: string; error?: string; details?: { message?: string } }
+    | null;
+  const message =
+    json?.message
+    ?? json?.error
+    ?? json?.details?.message
+    ?? responseDetails.text
+    ?? fallback;
+  const requestSuffix = requestId ? ` (requestId: ${requestId})` : "";
+  const statusSuffix = statusText ? ` ${statusText}` : "";
+  return `Edge function ${name} failed (${status}${statusSuffix}): ${message}${requestSuffix}`;
+};
+
 const logEdgeFailure = async (
   name: string,
   status: number,
   error: Error,
   response?: Response | null
 ) => {
-  let responseText: string | null = null;
-  if (response) {
-    try {
-      responseText = await response.clone().text();
-    } catch {
-      responseText = null;
-    }
-  }
+  const responseDetails = await readResponseBody(response);
+  const requestId = extractRequestId(response, responseDetails.json);
   console.error("[edge] invoke failed", {
     name,
     status,
     message: error.message,
-    responseText,
+    requestId,
+    responseText: responseDetails.text,
+    responseJson: responseDetails.json,
   });
 };
 
@@ -127,10 +181,20 @@ export async function callEdgeFunction<T>(
   if (error) {
     const errorContext = (error as { context?: Response }).context ?? null;
     const status = errorContext?.status ?? 500;
-    await logEdgeFailure(name, status, error, errorContext);
+    const responseDetails = await readResponseBody(errorContext);
+    const requestId = extractRequestId(errorContext, responseDetails.json);
+    const message = buildEdgeErrorMessage(
+      name,
+      status,
+      errorContext?.statusText ?? null,
+      responseDetails,
+      error.message,
+      requestId
+    );
+    await logEdgeFailure(name, status, new Error(message), errorContext);
     return {
       data: null,
-      error: new Error(error.message),
+      error: new Error(message),
       status,
       raw: errorContext ?? new Response(null, { status }),
       skipped: false,
@@ -167,16 +231,17 @@ export async function callEdgeFunctionRaw(
     signal: options?.signal,
   });
   if (!response.ok) {
-    const responseText = await response.clone().text().catch(() => "");
-    await logEdgeFailure(
+    const responseDetails = await readResponseBody(response);
+    const requestId = extractRequestId(response, responseDetails.json);
+    const message = buildEdgeErrorMessage(
       name,
       response.status,
-      new Error(`Edge function ${name} failed`),
-      response
+      response.statusText,
+      responseDetails,
+      "Edge function request failed",
+      requestId
     );
-    const message = responseText
-      ? `Edge function ${name} failed: ${response.status} ${response.statusText} - ${responseText}`
-      : `Edge function ${name} failed: ${response.status} ${response.statusText}`;
+    await logEdgeFailure(name, response.status, new Error(message), response);
     throw new Error(message);
   }
   return response;
