@@ -34,6 +34,7 @@ const App = () => (
                 <Route path="/game" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/login" element={<AuthScreen mode="login" />} />
                 <Route path="/signup" element={<AuthScreen mode="signup" />} />
+                <Route path="/auth" element={<Navigate to="/login" replace />} />
                 <Route element={<AppShell />}>
                   <Route path="/dashboard" element={<DashboardScreen />} />
                   <Route path="/servers" element={<ServerAdminScreen />} />
