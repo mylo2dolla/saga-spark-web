@@ -17,6 +17,7 @@ import SupabaseDebugScreen from "@/ui/screens/SupabaseDebugScreen";
 import LandingScreen from "@/ui/screens/LandingScreen";
 import GameSessionRoute from "./routes/GameSessionRoute";
 import NotFound from "./pages/NotFound";
+import DevBanner from "./DevBanner";
 
 const queryClient = new QueryClient();
 
@@ -25,6 +26,7 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
+      <DevBanner />
       <EnvGuard>
         <BrowserRouter>
           <DiagnosticsProvider>
