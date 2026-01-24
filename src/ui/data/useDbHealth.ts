@@ -19,7 +19,8 @@ export function useDbHealth(enabled = true) {
       setStatus("loading");
       setLastError(null);
       try {
-        await supabase.from("campaigns").select("id").limit(1);
+        const { error } = await supabase.from("campaigns").select("id").limit(1);
+        if (error) throw error;
         if (isMounted) setStatus("ok");
       } catch (error) {
         if (isMounted) {
