@@ -14,9 +14,9 @@ export function useClassGenerator() {
     ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${edgeFunctionName}`
     : null;
 
-  const logFetchError = (context: string, payload: Record<string, unknown>) => {
+  const logFetchError = useCallback((context: string, payload: Record<string, unknown>) => {
     console.error(context, payload);
-  };
+  }, []);
 
   const generateClass = useCallback(async (description: string): Promise<GeneratedClass | null> => {
     if (!description.trim()) {
@@ -81,7 +81,7 @@ export function useClassGenerator() {
     } finally {
       setIsGenerating(false);
     }
-  }, []);
+  }, [edgeFunctionName, edgeFunctionUrl, logFetchError]);
 
   const clearClass = useCallback(() => {
     setGeneratedClass(null);

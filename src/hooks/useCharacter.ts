@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { formatError } from "@/ui/data/async";
@@ -81,16 +81,21 @@ export function useCharacter(campaignId: string | undefined) {
   const [character, setCharacter] = useState<Character | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
 
   const fetchCharacter = useCallback(async () => {
     if (!campaignId) {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
       return;
     }
 
     try {
-      setIsLoading(true);
-      setError(null);
+      if (isMountedRef.current) {
+        setIsLoading(true);
+        setError(null);
+      }
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError) {
         console.error("[character] supabase error", {
@@ -103,7 +108,9 @@ export function useCharacter(campaignId: string | undefined) {
         throw userError;
       }
       if (!user) {
-        setIsLoading(false);
+        if (isMountedRef.current) {
+          setIsLoading(false);
+        }
         return;
       }
 
@@ -130,7 +137,9 @@ export function useCharacter(campaignId: string | undefined) {
         if (!data.stats) {
           throw new Error("Character stats missing");
         }
-        setCharacter(mapCharacterRow(data as Character));
+        if (isMountedRef.current) {
+          setCharacter(mapCharacterRow(data as Character));
+        }
         if (import.meta.env.DEV) {
           console.info("[character]", {
             step: "loaded_from_db",
@@ -146,10 +155,14 @@ export function useCharacter(campaignId: string | undefined) {
       const message = status === 401 || status === 403
         ? `Unauthorized (${status}): ${baseMessage}`
         : baseMessage;
-      setError(message);
+      if (isMountedRef.current) {
+        setError(message);
+      }
       console.error("[character] fetch error", { message, status });
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   }, [campaignId]);
 
@@ -203,15 +216,22 @@ export function useCharacter(campaignId: string | undefined) {
       ? supabase.from("characters").update(dbPayload).eq("id", existingId)
       : supabase.from("characters").insert([dbPayload]);
 
-    const { data, error } = await query.select("*").single();
+    const { data, error } = await query.select("*").maybeSingle();
     if (error) throw error;
+    if (!data) {
+      throw new Error("Character save returned no data");
+    }
     const next = mapCharacterRow(data as Character);
     setCharacter(next);
     return next;
   }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
     fetchCharacter();
+    return () => {
+      isMountedRef.current = false;
+    };
   }, [fetchCharacter]);
 
   return {

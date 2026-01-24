@@ -33,11 +33,12 @@ interface UseServerHeartbeatOptions {
 
 // Generate a stable client node name based on session
 function generateNodeName(): string {
-  const stored = sessionStorage.getItem("server_node_name");
+  const storage = typeof window !== "undefined" ? window.sessionStorage : null;
+  const stored = storage?.getItem("server_node_name");
   if (stored) return stored;
-  
+
   const name = `Client-${Math.random().toString(36).slice(2, 8)}`;
-  sessionStorage.setItem("server_node_name", name);
+  storage?.setItem("server_node_name", name);
   return name;
 }
 
@@ -54,6 +55,7 @@ export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
   const [latency, setLatency] = useState(0);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
   const nodeNameRef = useRef(nodeName);
+  const isMountedRef = useRef(true);
 
   // Send heartbeat using UPSERT with unique constraint (user_id, node_name)
   const sendHeartbeat = useCallback(async () => {
@@ -87,23 +89,38 @@ export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
           onConflict: "user_id,node_name",
         })
         .select("id")
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.error("Heartbeat insert failed:", error);
-        setIsConnected(false);
+        if (isMountedRef.current) {
+          setIsConnected(false);
+        }
       } else if (data) {
-        setNodeId(data.id);
-        setLatency(currentLatency);
-        setIsConnected(true);
+        if (isMountedRef.current) {
+          setNodeId(data.id);
+          setLatency(currentLatency);
+          setIsConnected(true);
+        }
+      } else if (isMountedRef.current) {
+        setIsConnected(false);
       }
     } catch (err) {
       console.error("Heartbeat failed:", err);
-      setIsConnected(false);
+      if (isMountedRef.current) {
+        setIsConnected(false);
+      }
     }
   }, [user, campaignId]);
 
   // Register/update node on mount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (!user) return;
 

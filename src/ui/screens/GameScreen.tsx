@@ -10,7 +10,7 @@ import type { EnhancedLocation } from "@/engine/narrative/Travel";
 import type { TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import { resumeTravelAfterCombat } from "@/engine/WorldTravelEngine";
 import * as World from "@/engine/narrative/World";
-import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useUnifiedEngineOptional } from "@/contexts/UnifiedEngineContext";
 import { useDungeonMaster } from "@/hooks/useDungeonMaster";
 import { useCharacter } from "@/hooks/useCharacter";
@@ -28,7 +28,6 @@ export default function GameScreen() {
   const [showTravel, setShowTravel] = useState(true);
   const [combatState, setCombatState] = useState<"idle" | "active">("idle");
   const [combatMessage, setCombatMessage] = useState<string | null>(null);
-  const [uiTick, setUiTick] = useState<number>(0);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const DEV_DEBUG = import.meta.env.DEV;
@@ -38,6 +37,7 @@ export default function GameScreen() {
   const lastLocationIdRef = useRef<string | null>(null);
   const arrivalInFlightRef = useRef(false);
   const visitedLocationsRef = useRef<Set<string>>(new Set());
+  const worldEvents = gameSession.worldEvents;
 
   useEffect(() => {
     if (!campaignId) return;
@@ -95,7 +95,7 @@ export default function GameScreen() {
       },
     };
     return toWorldBoardModel(stateWithTravel);
-  }, [gameSession.unifiedState, gameSession.travelState, uiTick]);
+  }, [gameSession.unifiedState, gameSession.travelState]);
 
   const selectedNode = worldBoardModel?.nodes.find(node => node.id === selectedNodeId) ?? null;
 
@@ -423,6 +423,7 @@ export default function GameScreen() {
   }, [gameSession.travelState?.currentLocationId, worldBoardModel?.nodes]);
 
   useEffect(() => {
+    if (!gameSession.unifiedState) return;
     setEngineSnapshot({
       state: combatState === "active"
         ? "combat"
@@ -457,6 +458,10 @@ export default function GameScreen() {
     gameSession.travelState?.currentLocationId,
     gameSession.travelState?.isInTransit,
     gameSession.travelState?.transitProgress,
+    gameSession.unifiedState,
+    gameSession.unifiedState?.world.locations,
+    gameSession.unifiedState?.world.quests,
+    gameSession.unifiedState?.world.storyFlags,
     setEngineSnapshot,
   ]);
 
@@ -502,9 +507,9 @@ export default function GameScreen() {
 
   const groupedEvents = useMemo(() => {
     const today = new Date().toDateString();
-    const groups: Array<{ label: string; events: typeof gameSession.worldEvents }> = [];
-    const todayEvents = gameSession.worldEvents.filter(event => new Date(event.createdAt).toDateString() === today);
-    const earlierEvents = gameSession.worldEvents.filter(event => new Date(event.createdAt).toDateString() !== today);
+    const groups: Array<{ label: string; events: typeof worldEvents }> = [];
+    const todayEvents = worldEvents.filter(event => new Date(event.createdAt).toDateString() === today);
+    const earlierEvents = worldEvents.filter(event => new Date(event.createdAt).toDateString() !== today);
     if (todayEvents.length > 0) {
       groups.push({ label: "Today", events: todayEvents });
     }
@@ -512,12 +517,12 @@ export default function GameScreen() {
       groups.push({ label: "Earlier", events: earlierEvents });
     }
     return groups;
-  }, [gameSession.worldEvents]);
+  }, [worldEvents]);
 
   useEffect(() => {
     if (!timelineRef.current) return;
     timelineRef.current.scrollTop = 0;
-  }, [gameSession.worldEvents.length]);
+  }, [worldEvents.length]);
 
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const toggleEvent = useCallback((id: string) => {
