@@ -617,7 +617,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   ) => {
     const writeResult = await callEdgeFunction<{ error?: string }>(
       "world-content-writer",
-      { body: { campaignId, content }, requireAuth: true }
+      { body: { campaignId, content }, requireAuth: true, accessToken }
     );
 
     if (!writeResult.error && !writeResult.data?.error && !writeResult.skipped) {
@@ -644,7 +644,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       }
       throw fallbackResult.error;
     }
-  }, [campaignId]);
+  }, [campaignId, accessToken]);
 
   const buildLocationFromSeed = useCallback((
     seed: CampaignSeed,
@@ -1351,6 +1351,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         "world-content-writer",
         {
           requireAuth: true,
+          accessToken,
           body: {
             campaignId,
             actionHash,
