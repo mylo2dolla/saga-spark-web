@@ -109,6 +109,40 @@ export default function DashboardScreen() {
     });
   };
 
+  const buildFallbackWorld = (seed: { title: string; description: string }): GeneratedWorld => ({
+    factions: [],
+    locations: [
+      {
+        id: "starting_location",
+        name: "Town Square",
+        description: `A quiet gathering place that marks the beginning of ${seed.title}.`,
+        type: "settlement",
+      },
+    ],
+    startingLocationId: "starting_location",
+    npcs: [],
+    initialQuest: {
+      title: "A Fresh Start",
+      description: "Gather your bearings and learn about the world around you.",
+      briefDescription: "Explore your surroundings.",
+      importance: "main",
+      objectives: [
+        {
+          type: "explore",
+          description: "Take in the sights and sounds of your starting location.",
+          required: 1,
+        },
+      ],
+      rewards: {
+        xp: 25,
+        gold: 10,
+        items: [],
+        storyFlags: [],
+      },
+    },
+    worldHooks: [],
+  });
+
   const persistGeneratedContent = useCallback(async (
     campaignId: string,
     content: Array<{
@@ -343,42 +377,56 @@ export default function DashboardScreen() {
         description: trimmedDescription,
         themes: [],
       });
+      const fallbackWorld = buildFallbackWorld({
+        title: trimmedName,
+        description: trimmedDescription,
+      });
       if (!generatedWorld) {
-        throw new Error("World generation failed");
-      }
-      if (!Array.isArray(generatedWorld.locations) || generatedWorld.locations.length === 0) {
-        throw new Error("World generation returned no locations");
+        toast({
+          title: "Using fallback world",
+          description: "World generation failed, so a starter world was created instead.",
+        });
       }
 
-      const normalizedLocations = normalizeLocations(generatedWorld.locations);
-      const startingLocationId = generatedWorld.startingLocationId;
+      const safeWorld = generatedWorld ?? fallbackWorld;
+      const factions = Array.isArray(safeWorld.factions) ? safeWorld.factions : [];
+      const npcs = Array.isArray(safeWorld.npcs) ? safeWorld.npcs : [];
+      const locations = Array.isArray(safeWorld.locations) ? safeWorld.locations : [];
+      const worldHooks = Array.isArray(safeWorld.worldHooks) ? safeWorld.worldHooks : [];
+      const initialQuest = safeWorld.initialQuest ?? fallbackWorld.initialQuest;
+
+      const rawLocations = locations.length > 0 ? locations : fallbackWorld.locations;
+      const normalizedLocations = normalizeLocations(rawLocations);
+      const startingLocationId = safeWorld.startingLocationId ?? fallbackWorld.startingLocationId;
       const resolvedStartingId =
         normalizedLocations.find(loc => loc.id === startingLocationId)?.id
         ?? normalizedLocations[0]?.id
         ?? null;
 
       const contentToStore = [
-        ...generatedWorld.factions.map(f => ({
+        ...factions.map(f => ({
           campaign_id: insertResult.data.id,
           content_type: "faction",
           content_id: f.id,
           content: JSON.parse(JSON.stringify(f)) as Json,
           generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         })),
-        ...generatedWorld.npcs.map((npc, i) => ({
+        ...npcs.map((npc, i) => ({
           campaign_id: insertResult.data.id,
           content_type: "npc",
           content_id: `npc_initial_${i}`,
           content: JSON.parse(JSON.stringify(npc)) as Json,
           generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
         })),
-        {
-          campaign_id: insertResult.data.id,
-          content_type: "quest",
-          content_id: "initial_quest",
-          content: JSON.parse(JSON.stringify(generatedWorld.initialQuest)) as Json,
-          generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
-        },
+        ...(initialQuest
+          ? [{
+            campaign_id: insertResult.data.id,
+            content_type: "quest",
+            content_id: "initial_quest",
+            content: JSON.parse(JSON.stringify(initialQuest)) as Json,
+            generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
+          }]
+          : []),
         ...normalizedLocations.map((location) => ({
           campaign_id: insertResult.data.id,
           content_type: "location",
@@ -386,7 +434,7 @@ export default function DashboardScreen() {
           content: JSON.parse(JSON.stringify(location)) as Json,
           generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         })),
-        ...(generatedWorld.worldHooks ?? []).map((hook, index) => ({
+        ...worldHooks.map((hook, index) => ({
           campaign_id: insertResult.data.id,
           content_type: "world_hooks",
           content_id: `world_hook_${index}`,
