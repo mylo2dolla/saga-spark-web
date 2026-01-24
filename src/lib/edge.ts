@@ -7,6 +7,7 @@ interface EdgeOptions {
   headers?: EdgeHeaders;
   method?: string;
   requireAuth?: boolean;
+  accessToken?: string | null;
   signal?: AbortSignal;
 }
 
@@ -181,7 +182,10 @@ export async function callEdgeFunction<T>(
   options?: EdgeOptions
 ): Promise<{ data: T | null; error: Error | null; status: number; raw: Response; skipped: boolean }> {
   ensureEnv();
-  const { authError, accessToken } = await getAuthContext(options?.requireAuth);
+  const overrideToken = options?.accessToken ?? null;
+  const { authError, accessToken } = overrideToken
+    ? { authError: null, accessToken: overrideToken }
+    : await getAuthContext(options?.requireAuth);
   if (authError) {
     await logEdgeFailure(name, 401, authError, null);
     return {
@@ -215,7 +219,8 @@ export async function callEdgeFunction<T>(
       error.message,
       requestId
     );
-    if (status === 401) {
+    const shouldRefresh = status === 401 || message.toLowerCase().includes("invalid jwt");
+    if (shouldRefresh) {
       const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
       const refreshedToken = refreshed?.session?.access_token ?? null;
       if (!refreshError && refreshedToken) {
