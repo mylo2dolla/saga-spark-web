@@ -5,6 +5,7 @@ import { groqChatCompletions } from "../_shared/groq.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 interface CampaignSeed {
@@ -192,6 +193,20 @@ serve(async (req) => {
   }
 
   const requestId = crypto.randomUUID();
+  const expectedEnvKeys = [
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "AI_GATEWAY_API_KEY",
+    "GROQ_API_KEY",
+    "GROQ_BASE_URL",
+    "GROQ_MODEL",
+  ];
+  const envStatus = expectedEnvKeys.reduce<Record<string, "set" | "missing">>((acc, key) => {
+    acc[key] = Deno.env.get(key) ? "set" : "missing";
+    return acc;
+  }, {});
+  console.log("world-generator expected env keys", envStatus);
   const errorResponse = (
     status: number,
     code: string,
@@ -204,6 +219,18 @@ serve(async (req) => {
     );
 
   try {
+    const missingRequired = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "GROQ_API_KEY"].filter(
+      key => !Deno.env.get(key)
+    );
+    if (missingRequired.length > 0) {
+      return errorResponse(
+        500,
+        "missing_env",
+        `Missing required env vars: ${missingRequired.join(", ")}`,
+        { expectedEnvKeys, missingRequired }
+      );
+    }
+
     const authHeader = req.headers.get("Authorization") ?? "";
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
