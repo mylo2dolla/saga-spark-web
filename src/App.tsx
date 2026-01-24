@@ -14,6 +14,7 @@ import CharacterScreen from "@/ui/screens/CharacterScreen";
 import GameScreen from "@/ui/screens/GameScreen";
 import ServerAdminScreen from "@/ui/screens/ServerAdminScreen";
 import SupabaseDebugScreen from "@/ui/screens/SupabaseDebugScreen";
+import LandingScreen from "@/ui/screens/LandingScreen";
 import GameSessionRoute from "./routes/GameSessionRoute";
 import NotFound from "./pages/NotFound";
 
@@ -29,7 +30,7 @@ const App = () => (
           <DiagnosticsProvider>
           <ErrorBoundary>
             <Routes>
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/" element={<LandingScreen />} />
                 <Route path="/game" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/login" element={<AuthScreen mode="login" />} />
                 <Route path="/signup" element={<AuthScreen mode="signup" />} />
