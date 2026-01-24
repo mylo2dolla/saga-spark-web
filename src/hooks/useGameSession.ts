@@ -6,7 +6,7 @@
  * - Per-player travel authority
  */
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { callEdgeFunction } from "@/lib/edge";
 import { useAuth } from "@/hooks/useAuth";
@@ -25,7 +25,7 @@ import { recordCampaignsRead, recordSavesRead } from "@/ui/data/networkHealth";
 const DEV_DEBUG = import.meta.env.DEV;
 
 export interface GameSessionState {
-  unifiedState: UnifiedState | null;
+  unifiedState: UnifiedState;
   travelState: TravelState | null;
   campaignSeed: CampaignSeed | null;
   isInitialized: boolean;
@@ -110,8 +110,22 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const { generateInitialWorld, lastEdgeError } = useWorldGenerator();
   const persistence = useGamePersistence({ campaignId, userId });
   
+  const initialCampaignSeed = useMemo<CampaignSeed>(() => ({
+    id: campaignId,
+    title: "",
+    description: "",
+    themes: [],
+    factions: [],
+    createdAt: Date.now(),
+  }), [campaignId]);
+
+  const initialUnifiedState = useMemo(
+    () => createUnifiedState(initialCampaignSeed, [], 10, 12),
+    [initialCampaignSeed]
+  );
+
   const [sessionState, setSessionState] = useState<GameSessionState>({
-    unifiedState: null,
+    unifiedState: initialUnifiedState,
     travelState: null,
     campaignSeed: null,
     isInitialized: false,
@@ -154,8 +168,8 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const queuedFingerprintRef = useRef<string | null>(null);
   const actionInFlightRef = useRef<Set<string>>(new Set());
   const recentActionHashesRef = useRef<Map<string, number>>(new Map());
-  const latestStateRef = useRef<{ unified: UnifiedState | null; travel: TravelState | null }>({
-    unified: null,
+  const latestStateRef = useRef<{ unified: UnifiedState; travel: TravelState | null }>({
+    unified: initialUnifiedState,
     travel: null,
   });
 
