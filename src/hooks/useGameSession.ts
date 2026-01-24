@@ -18,6 +18,7 @@ import * as World from "@/engine/narrative/World";
 import { createTravelState, type TravelState, type EnhancedLocation } from "@/engine/narrative/Travel";
 import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
 import type { CampaignSeed } from "@/engine/narrative/types";
+import type { Json } from "@/integrations/supabase/types";
 import { toast } from "sonner";
 import { recordCampaignsRead, recordSavesRead } from "@/ui/data/networkHealth";
 
@@ -308,6 +309,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     return hash.toString(16);
   }, []);
 
+  const createDeterministicPosition = useCallback((seed: string): { x: number; y: number } => {
+    const hashed = Number.parseInt(hashString(seed), 16) || 0;
+    return {
+      x: 50 + (hashed % 400),
+      y: 50 + ((hashed >>> 16) % 400),
+    };
+  }, [hashString]);
+
   const toStringArray = useCallback((value: unknown): string[] => {
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is string => typeof item === "string");
@@ -555,14 +564,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, ""), []);
 
-  const createDeterministicPosition = useCallback((seed: string): { x: number; y: number } => {
-    const hashed = Number.parseInt(hashString(seed), 16) || 0;
-    return {
-      x: 50 + (hashed % 400),
-      y: 50 + ((hashed >>> 16) % 400),
-    };
-  }, [hashString]);
-
   const normalizeLocations = useCallback((locations: GeneratedWorld["locations"]) => {
     const seenIds = new Set<string>();
     return locations.map((location, index) => {
@@ -588,6 +589,46 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       };
     });
   }, [createDeterministicPosition, toKebab]);
+
+  const persistGeneratedContent = useCallback(async (
+    content: Array<{
+      campaign_id: string;
+      content_type: string;
+      content_id: string;
+      content: Json;
+      generation_context: Json;
+    }>
+  ) => {
+    const writeResult = await callEdgeFunction<{ error?: string }>(
+      "world-content-writer",
+      { body: { campaignId, content }, requireAuth: true }
+    );
+
+    if (!writeResult.error && !writeResult.data?.error && !writeResult.skipped) {
+      return;
+    }
+
+    console.warn("[gameSession] edge writer failed, falling back to direct insert", {
+      campaignId,
+      edgeError: writeResult.error?.message ?? null,
+      edgeMessage: writeResult.data?.error ?? null,
+      skipped: writeResult.skipped,
+    });
+
+    const fallbackResult = await supabase
+      .from("ai_generated_content")
+      .insert(content);
+
+    if (fallbackResult.error) {
+      if (writeResult.error) {
+        throw writeResult.error;
+      }
+      if (writeResult.data?.error) {
+        throw new Error(writeResult.data.error);
+      }
+      throw fallbackResult.error;
+    }
+  }, [campaignId]);
 
   const buildLocationFromSeed = useCallback((
     seed: CampaignSeed,
@@ -826,24 +867,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         }))),
       ];
 
-      const writeResult = await callEdgeFunction<{ error?: string }>(
-        "world-content-writer",
-        { body: { campaignId, content: contentToStore }, requireAuth: true }
-      );
-      if (writeResult.error) {
-        throw writeResult.error;
-      }
-      if (writeResult.skipped) {
-        setSessionState(prev => ({
-          ...prev,
-          isLoading: false,
-          bootstrapStatus: "idle",
-        }));
-        return null;
-      }
-      if (writeResult.data?.error) {
-        throw new Error(writeResult.data.error);
-      }
+      await persistGeneratedContent(contentToStore as Array<{
+        campaign_id: string;
+        content_type: string;
+        content_id: string;
+        content: Json;
+        generation_context: Json;
+      }>);
 
       await fetchContent();
 
@@ -931,6 +961,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     toKebab,
     worldContent,
     ensureMinimumWorldGraph,
+    persistGeneratedContent,
   ]);
 
   const retryBootstrap = useCallback(async () => {
