@@ -120,14 +120,40 @@ export default function DashboardScreen() {
     setLastError(null);
 
     try {
-      const { data, error } = await supabase
+      const { data: memberData, error: memberError } = await supabase
+        .from("campaign_members")
+        .select("campaign_id")
+        .eq("user_id", activeUserId);
+
+      if (memberError) throw memberError;
+
+      const memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
+
+      const { data: ownedData, error: ownedError } = await supabase
         .from("campaigns")
         .select("*")
         .eq("owner_id", activeUserId);
 
-      if (error) throw error;
+      if (ownedError) throw ownedError;
+
+      let memberCampaigns: Campaign[] = [];
+      if (memberCampaignIds.length > 0) {
+        const { data, error: memberCampaignsError } = await supabase
+          .from("campaigns")
+          .select("*")
+          .in("id", memberCampaignIds);
+
+        if (memberCampaignsError) throw memberCampaignsError;
+        memberCampaigns = data ?? [];
+      }
+
+      const combined = new Map<string, Campaign>();
+      [...(ownedData ?? []), ...memberCampaigns].forEach(campaign => {
+        combined.set(campaign.id, campaign);
+      });
+
       recordCampaignsRead();
-      setCampaigns(data ?? []);
+      setCampaigns(Array.from(combined.values()));
     } catch (err) {
       if (isAbortError(err)) {
         return;
