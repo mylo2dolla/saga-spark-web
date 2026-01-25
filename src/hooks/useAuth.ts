@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 import { recordProfilesRead } from "@/ui/data/networkHealth";
 
-const DEV_DEBUG = import.meta.env.DEV;
+const AUTH_DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUTH === "true";
 const PROFILE_TTL_MS = 60000;
 const profileCache = new Map<string, { data: Profile | null; fetchedAt: number }>();
 const profileInFlight = new Map<string, Promise<Profile | null>>();
@@ -30,6 +30,12 @@ const listeners = new Set<(state: AuthState) => void>();
 let authInitialized = false;
 let authInitPromise: Promise<void> | null = null;
 let authSubscription: { unsubscribe: () => void } | null = null;
+let authListenerCount = 0;
+
+const logAuthDebug = (payload: Record<string, unknown>) => {
+  if (!AUTH_DEBUG) return;
+  console.debug("[auth] log", payload);
+};
 
 const setAuthState = (partial: Partial<AuthState>) => {
   authState = { ...authState, ...partial };
@@ -59,9 +65,7 @@ const ensureAuthSubscription = () => {
 };
 
 const fetchProfileInternal = async (userId: string) => {
-  if (DEV_DEBUG) {
-    console.info("[auth] log", { step: "profile_fetch_start", userId });
-  }
+  logAuthDebug({ step: "profile_fetch_start", userId });
   try {
     const cached = profileCache.get(userId);
     const now = Date.now();
@@ -130,9 +134,7 @@ const fetchProfileInternal = async (userId: string) => {
       setAuthState({ profile: createResult.data });
     }
   } finally {
-    if (DEV_DEBUG) {
-      console.info("[auth] log", { step: "profile_fetch_end", userId });
-    }
+    logAuthDebug({ step: "profile_fetch_end", userId });
     setAuthState({ isProfileCreating: false, isLoading: false });
   }
 };
@@ -141,7 +143,7 @@ const initAuth = async () => {
   if (authInitialized) return;
   if (authInitPromise) return authInitPromise;
   authInitPromise = (async () => {
-    console.info("[auth] log", { step: "auth_bootstrap_start" });
+    logAuthDebug({ step: "auth_bootstrap_start" });
     try {
       const { data: { session }, error } = await supabase.auth.getSession();
       if (error) {
@@ -153,7 +155,7 @@ const initAuth = async () => {
       } else {
         setAuthState({ isLoading: false });
       }
-      console.info("[auth] log", {
+      logAuthDebug({
         step: "auth_bootstrap_end",
         hasSession: Boolean(session),
         userId: session?.user?.id ?? null,
@@ -162,6 +164,7 @@ const initAuth = async () => {
       notifyAuthError(error as { message?: string; status?: number });
       setAuthState({ isLoading: false });
     } finally {
+      setAuthState({ isLoading: false });
       authInitialized = true;
     }
   })();
@@ -193,18 +196,24 @@ export function useAuth() {
 
   useEffect(() => {
     const handleUpdate = (next: AuthState) => {
-    if (isMountedRef.current) {
-      setState(next);
-    }
+      if (isMountedRef.current) {
+        setState(next);
+      }
     };
 
     listeners.add(handleUpdate);
+    authListenerCount += 1;
     ensureAuthSubscription();
     void initAuth();
 
     return () => {
       isMountedRef.current = false;
       listeners.delete(handleUpdate);
+      authListenerCount = Math.max(0, authListenerCount - 1);
+      if (authListenerCount === 0 && authSubscription) {
+        authSubscription.unsubscribe();
+        authSubscription = null;
+      }
     };
   }, []);
 

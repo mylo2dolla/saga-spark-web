@@ -7,6 +7,7 @@ import { useDiagnostics } from "@/ui/data/useDiagnostics";
 
 const buildSha = import.meta.env.VITE_GIT_SHA ?? "unknown";
 const DEV_DEBUG = import.meta.env.DEV;
+const AUTH_DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUTH === "true";
 
 export default function AppShell() {
   const location = useLocation();
@@ -22,8 +23,8 @@ export default function AppShell() {
     { to: "/servers", label: "Servers/Admin" },
   ];
   useEffect(() => {
-    if (!DEV_DEBUG) return;
-    console.info("[auth] log", {
+    if (!AUTH_DEBUG) return;
+    console.debug("[auth] log", {
       step: "route_guard",
       route: location.pathname,
       hasSession: Boolean(user),
