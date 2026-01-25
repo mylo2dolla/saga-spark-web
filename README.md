@@ -107,6 +107,7 @@ npm run test:e2e
 Notes for Codespaces:
 - If `playwright install --with-deps` fails due to the Yarn apt repo signature, remove `/etc/apt/sources.list.d/yarn.list` and run `sudo npx playwright install-deps`.
 - Alternatively install the missing libs listed by Playwright (e.g. `libatk1.0-0t64`, `libgtk-3-0t64`) and rerun `npm run test:e2e`.
+- You can also run `npm run test:e2e:deps` to apply the workaround automatically.
 
 ## generate-class curl checks
 
