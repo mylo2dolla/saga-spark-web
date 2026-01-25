@@ -57,31 +57,32 @@ const createSafeStorage = () => {
 };
 
 const baseFetch = globalThis.fetch.bind(globalThis);
-const debugFetch: typeof fetch = async (input, init) => {
+const debugFetch: typeof fetch = (input, init) => {
   const url = typeof input === "string" ? input : input.url;
   const method = init?.method ?? "GET";
   if (DEV_DEBUG) {
     console.info("DEV_DEBUG supabase fetch start", { method, url });
   }
 
-  try {
-    const response = await baseFetch(input, init);
-    if (DEV_DEBUG) {
-      console.info("DEV_DEBUG supabase fetch response", {
-        method,
-        url,
-        status: response.status,
-      });
-    }
-    recordNetworkRequest();
-    return response;
-  } catch (error) {
-    if (DEV_DEBUG) {
-      console.error("DEV_DEBUG supabase fetch error", { method, url, error });
-    }
-    recordNetworkRequest();
-    throw error;
-  }
+  return baseFetch(input, init)
+    .then((response) => {
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG supabase fetch response", {
+          method,
+          url,
+          status: response.status,
+        });
+      }
+      recordNetworkRequest();
+      return response;
+    })
+    .catch((error) => {
+      if (DEV_DEBUG) {
+        console.error("DEV_DEBUG supabase fetch error", { method, url, error });
+      }
+      recordNetworkRequest();
+      throw error;
+    });
 };
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
