@@ -93,6 +93,7 @@ function DevDebugOverlayAuthedStats() {
       hasAnonKey: boolean;
       authSession?: { hasSession: boolean; error: string | null };
       authHealth?: { ok: boolean; status: number | null; body?: string | null; error?: string | null };
+      dbHealth?: { ok: boolean; status: number | null; error?: string | null };
       error?: string;
     } = {
       action: "supabase-self-test",
@@ -129,6 +130,22 @@ function DevDebugOverlayAuthedStats() {
           error: error instanceof Error ? error.message : "unknown error",
         };
       }
+    }
+
+    try {
+      const { error } = await supabase
+        .from("campaigns")
+        .select("id", { head: true, count: "exact" })
+        .limit(1);
+      report.dbHealth = error
+        ? { ok: false, status: (error as { status?: number })?.status ?? null, error: error.message }
+        : { ok: true, status: 200, error: null };
+    } catch (error) {
+      report.dbHealth = {
+        ok: false,
+        status: null,
+        error: error instanceof Error ? error.message : "unknown error",
+      };
     }
 
     console.info("DEV_DEBUG supabase connectivity", report);
