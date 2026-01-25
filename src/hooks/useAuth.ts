@@ -4,6 +4,7 @@ import type { Session, User } from "@supabase/supabase-js";
 import { recordProfilesRead } from "@/ui/data/networkHealth";
 
 const AUTH_DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUTH === "true";
+const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 const PROFILE_TTL_MS = 60000;
 const profileCache = new Map<string, { data: Profile | null; fetchedAt: number }>();
 const profileInFlight = new Map<string, Promise<Profile | null>>();
@@ -195,6 +196,29 @@ export function useAuth() {
   };
 
   useEffect(() => {
+    if (E2E_BYPASS_AUTH) {
+      const fakeUser = {
+        id: "e2e-user",
+        email: "e2e@example.com",
+      } as User;
+      setState({
+        session: { user: fakeUser } as Session,
+        user: fakeUser,
+        profile: {
+          id: "e2e-profile",
+          user_id: "e2e-user",
+          display_name: "E2E Tester",
+          avatar_url: null,
+        },
+        isLoading: false,
+        isProfileCreating: false,
+        lastAuthError: null,
+      });
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
+
     const handleUpdate = (next: AuthState) => {
       if (isMountedRef.current) {
         setState(next);
@@ -218,11 +242,13 @@ export function useAuth() {
   }, []);
 
   const signOut = async () => {
+    if (E2E_BYPASS_AUTH) return;
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   };
 
   const updateProfile = async (updates: Partial<Profile>) => {
+    if (E2E_BYPASS_AUTH) return;
     if (!state.user) throw new Error("Not authenticated");
 
     const { error } = await supabase

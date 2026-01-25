@@ -16,10 +16,12 @@ import ServerAdminScreen from "@/ui/screens/ServerAdminScreen";
 import SupabaseDebugScreen from "@/ui/screens/SupabaseDebugScreen";
 import LandingScreen from "@/ui/screens/LandingScreen";
 import GameSessionRoute from "./routes/GameSessionRoute";
+import E2EGameSessionRoute from "./routes/E2EGameSessionRoute";
 import NotFound from "./pages/NotFound";
 import DevBanner from "./DevBanner";
 
 const queryClient = new QueryClient();
+const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -37,6 +39,9 @@ const App = () => (
                 <Route path="/login" element={<AuthScreen mode="login" />} />
                 <Route path="/signup" element={<AuthScreen mode="signup" />} />
                 <Route path="/auth" element={<Navigate to="/login" replace />} />
+                {E2E_BYPASS_AUTH ? (
+                  <Route path="/__e2e/game/:campaignId" element={<E2EGameSessionRoute />} />
+                ) : null}
                 <Route element={<AppShell />}>
                   <Route path="/dashboard" element={<DashboardScreen />} />
                   <Route path="/servers" element={<ServerAdminScreen />} />
