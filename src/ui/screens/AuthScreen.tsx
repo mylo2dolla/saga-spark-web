@@ -26,6 +26,20 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const submitLockRef = useRef(false);
   const DEV_DEBUG = import.meta.env.DEV;
 
+  const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${ms}ms`));
+      }, ms);
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -61,7 +75,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           },
         });
 
-      const result = await action();
+      const result = await withTimeout(action(), 8000, "Sign-in request");
       console.info("[auth] log", { step: "login_signin_end" });
       if (result.error) throw result.error;
       const session = result.data?.session ?? null;
@@ -73,17 +87,14 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         userId: user?.id ?? null,
         error: null,
       });
-      console.info("[auth] log", { step: "login_success_bootstrap" });
-      console.info("[auth] log", { step: "login_navigate" });
-      navigate("/dashboard");
-    } catch (error) {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        console.info("[auth] log", { step: "login_result", hasSession: true, userId: session.user?.id ?? null, error: null });
+      if (hasSession) {
+        console.info("[auth] log", { step: "login_success_bootstrap" });
+        console.info("[auth] log", { step: "login_navigate" });
         navigate("/dashboard");
         return;
       }
-
+      throw new Error("No session returned from sign-in");
+    } catch (error) {
       if (error instanceof TypeError) {
         const message = error.message || "Failed to fetch";
         const description = DEV_DEBUG ? `Network/CORS failure — ${message}` : "Network error. Please try again.";
