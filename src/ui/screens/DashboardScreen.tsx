@@ -10,6 +10,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { formatError, isAbortError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
+import { useDbHealth } from "@/ui/data/useDbHealth";
 import { recordCampaignsRead } from "@/ui/data/networkHealth";
 import { callEdgeFunction } from "@/lib/edge";
 import type { Json } from "@/integrations/supabase/types";
@@ -26,7 +27,7 @@ interface Campaign {
 }
 
 export default function DashboardScreen() {
-  const { user, session, isLoading: authLoading } = useAuth();
+  const { user, session } = useAuth();
   const { generateInitialWorld, isGenerating } = useWorldGenerator();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -53,14 +54,17 @@ export default function DashboardScreen() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const fetchInFlightRef = useRef(false);
+  const fetchStartedAtRef = useRef<number | null>(null);
+  const fetchRequestIdRef = useRef(0);
   const creatingRef = useRef(false);
   const isMountedRef = useRef(true);
 
   const activeSession = session ?? authSession;
   const activeUser = user ?? authUser;
   const activeUserId = session?.user?.id ?? user?.id ?? authUser?.id ?? null;
-  const isAuthReady = !authLoading || Boolean(activeSession);
   const activeAccessToken = activeSession?.access_token ?? null;
+  const dbEnabled = Boolean(activeUserId);
+  const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled);
 
   const toKebab = (value: string): string =>
     value
@@ -192,6 +196,24 @@ export default function DashboardScreen() {
     }
   }, [activeAccessToken]);
 
+  const withTimeout = useCallback(async <T,>(
+    promise: Promise<T>,
+    ms: number,
+    label: string
+  ): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${ms}ms`));
+      }, ms);
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }, []);
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -206,8 +228,14 @@ export default function DashboardScreen() {
       }
       return;
     }
-    if (fetchInFlightRef.current) return;
+    const now = Date.now();
+    if (fetchInFlightRef.current && fetchStartedAtRef.current && now - fetchStartedAtRef.current < 5000) {
+      return;
+    }
     fetchInFlightRef.current = true;
+    fetchStartedAtRef.current = now;
+    const requestId = fetchRequestIdRef.current + 1;
+    fetchRequestIdRef.current = requestId;
     if (isMountedRef.current) {
       setIsLoading(true);
       setError(null);
@@ -215,28 +243,42 @@ export default function DashboardScreen() {
     }
 
     try {
-      const { data: memberData, error: memberError } = await supabase
-        .from("campaign_members")
-        .select("campaign_id")
-        .eq("user_id", activeUserId);
+      const { data: memberData, error: memberError } = await withTimeout(
+        supabase
+          .from("campaign_members")
+          .select("campaign_id")
+          .eq("user_id", activeUserId),
+        5000,
+        "Campaign members fetch"
+      );
 
       if (memberError) throw memberError;
+      if (fetchRequestIdRef.current !== requestId) return;
 
       const memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
 
-      const { data: ownedData, error: ownedError } = await supabase
-        .from("campaigns")
-        .select("*")
-        .eq("owner_id", activeUserId);
+      const { data: ownedData, error: ownedError } = await withTimeout(
+        supabase
+          .from("campaigns")
+          .select("*")
+          .eq("owner_id", activeUserId),
+        5000,
+        "Owned campaigns fetch"
+      );
 
       if (ownedError) throw ownedError;
+      if (fetchRequestIdRef.current !== requestId) return;
 
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
-        const { data, error: memberCampaignsError } = await supabase
-          .from("campaigns")
-          .select("*")
-          .in("id", memberCampaignIds);
+        const { data, error: memberCampaignsError } = await withTimeout(
+          supabase
+            .from("campaigns")
+            .select("*")
+            .in("id", memberCampaignIds),
+          5000,
+          "Member campaigns fetch"
+        );
 
         if (memberCampaignsError) throw memberCampaignsError;
         memberCampaigns = data ?? [];
@@ -248,7 +290,7 @@ export default function DashboardScreen() {
       });
 
       recordCampaignsRead();
-      if (isMountedRef.current) {
+      if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
         setCampaigns(Array.from(combined.values()));
       }
     } catch (err) {
@@ -257,20 +299,22 @@ export default function DashboardScreen() {
       }
       console.error("Failed to load campaigns", err);
       const message = formatError(err, "Failed to load campaigns");
-      if (isMountedRef.current) {
+      if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
         setError(message);
         setLastError(message);
       }
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
         setIsLoading(false);
       }
-      fetchInFlightRef.current = false;
+      if (fetchRequestIdRef.current === requestId) {
+        fetchInFlightRef.current = false;
+        fetchStartedAtRef.current = null;
+      }
     }
-  }, [activeUserId, setLastError]);
+  }, [activeUserId, setLastError, withTimeout]);
 
   useEffect(() => {
-    if (!isAuthReady) return;
     if (!activeUserId) {
       setCampaigns([]);
       setIsLoading(false);
@@ -278,7 +322,7 @@ export default function DashboardScreen() {
       return;
     }
     fetchCampaigns();
-  }, [activeUserId, fetchCampaigns, isAuthReady]);
+  }, [activeUserId, fetchCampaigns]);
 
   useEffect(() => {
     let cancelled = false;
@@ -671,7 +715,7 @@ export default function DashboardScreen() {
     );
   }, [campaigns, error, fetchCampaigns, isLoading, navigate]);
 
-  const dbStatus = isLoading ? "loading" : error ? "error" : "ok";
+  const dbStatusLabel = dbEnabled ? dbStatus : "paused";
 
   return (
     <div className="space-y-6">
@@ -679,8 +723,11 @@ export default function DashboardScreen() {
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">Your campaigns and access codes.</p>
         <div className="mt-2 text-xs text-muted-foreground">
-          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatus}
+          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
         </div>
+        {dbError ? (
+          <div className="mt-1 text-xs text-destructive">DB Error: {dbError}</div>
+        ) : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">

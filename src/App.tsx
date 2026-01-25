@@ -16,7 +16,7 @@ import ServerAdminScreen from "@/ui/screens/ServerAdminScreen";
 import SupabaseDebugScreen from "@/ui/screens/SupabaseDebugScreen";
 import LandingScreen from "@/ui/screens/LandingScreen";
 import GameSessionRoute from "./routes/GameSessionRoute";
-import E2EGameSessionRoute from "./routes/E2EGameSessionRoute";
+import E2EGameSessionRoute, { E2ECharacterRoute } from "./routes/E2EGameSessionRoute";
 import NotFound from "./pages/NotFound";
 import DevBanner from "./DevBanner";
 
@@ -40,7 +40,10 @@ const App = () => (
                 <Route path="/signup" element={<AuthScreen mode="signup" />} />
                 <Route path="/auth" element={<Navigate to="/login" replace />} />
                 {E2E_BYPASS_AUTH ? (
-                  <Route path="/__e2e/game/:campaignId" element={<E2EGameSessionRoute />} />
+                  <>
+                    <Route path="/__e2e/game/:campaignId" element={<E2EGameSessionRoute />} />
+                    <Route path="/__e2e/game/:campaignId/create-character" element={<E2ECharacterRoute />} />
+                  </>
                 ) : null}
                 <Route element={<AppShell />}>
                   <Route path="/dashboard" element={<DashboardScreen />} />

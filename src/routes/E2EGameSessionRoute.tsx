@@ -7,6 +7,7 @@ import { createUnifiedState } from "@/engine/UnifiedState";
 import type { useGameSession } from "@/hooks/useGameSession";
 import { MockGameSessionProvider } from "@/contexts/GameSessionContext";
 import GameScreen from "@/ui/screens/GameScreen";
+import CharacterScreen from "@/ui/screens/CharacterScreen";
 
 type GameSessionValue = ReturnType<typeof useGameSession>;
 
@@ -116,6 +117,20 @@ export default function E2EGameSessionRoute() {
   return (
     <MockGameSessionProvider value={session}>
       <GameScreen />
+    </MockGameSessionProvider>
+  );
+}
+
+export function E2ECharacterRoute() {
+  const { campaignId } = useParams();
+  const session = useMemo(
+    () => buildE2ESession(campaignId ?? "e2e-campaign"),
+    [campaignId]
+  );
+
+  return (
+    <MockGameSessionProvider value={session}>
+      <CharacterScreen />
     </MockGameSessionProvider>
   );
 }
