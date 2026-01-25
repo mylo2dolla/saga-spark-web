@@ -90,6 +90,20 @@ npm run verify:groq
 
 In the Supabase SQL editor, run `supabase/smoke-test.sql` after replacing `__USER_UUID__` with your user id.
 
+## Playwright smoke test (optional)
+
+Run once to install browsers:
+
+```bash
+npm run test:e2e:install
+```
+
+Then run the smoke test:
+
+```bash
+npm run test:e2e
+```
+
 ## generate-class curl checks
 
 ```bash
