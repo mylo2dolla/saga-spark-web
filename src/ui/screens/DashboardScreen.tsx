@@ -56,7 +56,6 @@ export default function DashboardScreen() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const fetchInFlightRef = useRef(false);
-  const fetchStartedAtRef = useRef<number | null>(null);
   const fetchRequestIdRef = useRef(0);
   const lastLoadedUserIdRef = useRef<string | null>(null);
   const creatingRef = useRef(false);
@@ -233,10 +232,8 @@ export default function DashboardScreen() {
       return;
     }
     if (fetchInFlightRef.current) return;
-    if (lastLoadedUserIdRef.current === loadUserId && campaigns.length > 0) return;
-    const now = Date.now();
+    if (lastLoadedUserIdRef.current === loadUserId) return;
     fetchInFlightRef.current = true;
-    fetchStartedAtRef.current = now;
     const requestId = fetchRequestIdRef.current + 1;
     fetchRequestIdRef.current = requestId;
     if (isMountedRef.current) {
@@ -247,31 +244,39 @@ export default function DashboardScreen() {
     }
 
     try {
-      const { data: ownedData, error: ownedError } = await withTimeout(
-        supabase
-          .from("campaigns")
-          .select("*")
-          .eq("owner_id", loadUserId),
-        5000,
-        "Owned campaigns fetch"
-      );
+      const { data: ownedData, error: ownedError } = await supabase
+        .from("campaigns")
+        .select("*")
+        .eq("owner_id", loadUserId);
 
-      if (ownedError) throw ownedError;
       if (fetchRequestIdRef.current !== requestId) return;
+      if (ownedError) {
+        const message = formatError(ownedError, "Failed to load owned campaigns");
+        if (isMountedRef.current) {
+          setError(message);
+          setLastError(message);
+        }
+      }
 
-      const { data: memberData, error: memberError } = await withTimeout(
-        supabase
-          .from("campaign_members")
-          .select("campaign_id")
-          .eq("user_id", loadUserId),
-        5000,
-        "Campaign members fetch"
-      );
-
-      if (memberError) throw memberError;
+      let memberCampaignIds: string[] = [];
+      try {
+        const { data: memberData, error: memberError } = await withTimeout(
+          supabase
+            .from("campaign_members")
+            .select("campaign_id")
+            .eq("user_id", loadUserId),
+          8000,
+          "Campaign members fetch"
+        );
+        if (memberError) throw memberError;
+        memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
+      } catch (memberErr) {
+        const message = formatError(memberErr, "Failed to load campaign membership");
+        if (isMountedRef.current) {
+          setMembersError(message);
+        }
+      }
       if (fetchRequestIdRef.current !== requestId) return;
-
-      const memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
 
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
@@ -280,7 +285,7 @@ export default function DashboardScreen() {
             .from("campaigns")
             .select("*")
             .in("id", memberCampaignIds),
-          5000,
+          8000,
           "Member campaigns fetch"
         );
 
@@ -308,7 +313,7 @@ export default function DashboardScreen() {
                 .from("campaign_members")
                 .select("campaign_id")
                 .in("campaign_id", ids),
-              5000,
+              8000,
               "Campaign members batch fetch"
             );
             if (membersFetchError) throw membersFetchError;
@@ -344,11 +349,15 @@ export default function DashboardScreen() {
       }
       if (fetchRequestIdRef.current === requestId) {
         fetchInFlightRef.current = false;
-        fetchStartedAtRef.current = null;
         lastLoadedUserIdRef.current = loadUserId;
       }
     }
-  }, [campaigns.length, loadUserId, setLastError, withTimeout]);
+  }, [loadUserId, setLastError, withTimeout]);
+
+  const handleRetry = useCallback(() => {
+    lastLoadedUserIdRef.current = null;
+    fetchCampaigns();
+  }, [fetchCampaigns]);
 
   useEffect(() => {
     if (!loadUserId) {
@@ -358,7 +367,7 @@ export default function DashboardScreen() {
       return;
     }
     fetchCampaigns();
-  }, [fetchCampaigns, loadUserId]);
+  }, [fetchCampaigns]);
 
   useEffect(() => {
     let cancelled = false;
@@ -726,7 +735,7 @@ export default function DashboardScreen() {
       return (
         <div className="space-y-2 text-sm">
           <div className="text-destructive">{error}</div>
-          <Button variant="outline" onClick={fetchCampaigns}>Retry</Button>
+          <Button variant="outline" onClick={handleRetry}>Retry</Button>
         </div>
       );
     }
@@ -759,7 +768,7 @@ export default function DashboardScreen() {
         ))}
       </div>
     );
-  }, [campaigns, error, fetchCampaigns, isLoading, membersByCampaign, membersError, navigate]);
+  }, [campaigns, error, handleRetry, isLoading, membersByCampaign, membersError, navigate]);
 
   const dbStatusLabel = dbEnabled ? dbStatus : "paused";
 

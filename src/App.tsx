@@ -8,6 +8,7 @@ import { ErrorBoundary } from "@/ui/components/ErrorBoundary";
 import EnvGuard from "@/ui/components/EnvGuard";
 import AuthDebugPanel from "@/ui/components/AuthDebugPanel";
 import { DiagnosticsProvider } from "@/ui/data/diagnostics";
+import { AuthProvider } from "@/contexts/AuthContext";
 import AuthScreen from "@/ui/screens/AuthScreen";
 import DashboardScreen from "@/ui/screens/DashboardScreen";
 import CharacterScreen from "@/ui/screens/CharacterScreen";
@@ -30,10 +31,11 @@ const App = () => (
       <Sonner />
       <DevBanner />
       <EnvGuard>
-        <BrowserRouter>
-          <DiagnosticsProvider>
-          <ErrorBoundary>
-            <Routes>
+        <AuthProvider>
+          <BrowserRouter>
+            <DiagnosticsProvider>
+              <ErrorBoundary>
+                <Routes>
                 <Route path="/" element={<LandingScreen />} />
                 <Route path="/game" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/login" element={<AuthScreen mode="login" />} />
@@ -57,11 +59,12 @@ const App = () => (
                 </Route>
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />
-            </Routes>
-            <AuthDebugPanel />
-          </ErrorBoundary>
-          </DiagnosticsProvider>
-        </BrowserRouter>
+                </Routes>
+                <AuthDebugPanel />
+              </ErrorBoundary>
+            </DiagnosticsProvider>
+          </BrowserRouter>
+        </AuthProvider>
       </EnvGuard>
     </TooltipProvider>
   </QueryClientProvider>

@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
+import { useAuth } from "@/hooks/useAuth";
 import SupabaseStatusIndicator from "@/ui/components/SupabaseStatusIndicator";
 
 interface AuthScreenProps {
@@ -17,6 +18,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { setLastError } = useDiagnostics();
+  useAuth(); // ensure auth subscription is active on the login screen
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -62,11 +64,13 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       const result = await action();
       console.info("[auth] log", { step: "login_signin_end" });
       if (result.error) throw result.error;
-      const hasSession = Boolean(result.session);
+      const session = result.data?.session ?? null;
+      const user = result.data?.user ?? null;
+      const hasSession = Boolean(session);
       console.info("[auth] log", {
         step: "login_result",
         hasSession,
-        userId: result.user?.id ?? null,
+        userId: user?.id ?? null,
         error: null,
       });
       console.info("[auth] log", { step: "login_success_bootstrap" });
