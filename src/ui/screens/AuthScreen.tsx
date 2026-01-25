@@ -26,20 +26,6 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const submitLockRef = useRef(false);
   const DEV_DEBUG = import.meta.env.DEV;
 
-  const withTimeout = async <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => {
-        reject(new Error(`${label} timed out after ${ms}ms`));
-      }, ms);
-    });
-    try {
-      return await Promise.race([promise, timeoutPromise]);
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-    }
-  };
-
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -61,12 +47,6 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     setIsSubmitting(true);
     setLastError(null);
     console.info("[auth] log", { step: "login_submit" });
-    let submitTimeout: ReturnType<typeof setTimeout> | null = null;
-    submitTimeout = setTimeout(() => {
-      console.warn("[auth] log", { step: "login_submit_timeout" });
-      submitLockRef.current = false;
-      setIsSubmitting(false);
-    }, 12000);
 
     try {
       (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = true;
@@ -81,7 +61,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           },
         });
 
-      const result = await withTimeout(action(), 8000, "Sign-in request");
+      const result = await action();
       console.info("[auth] log", { step: "login_signin_end" });
       if (result.error) throw result.error;
       const session = result.data?.session ?? null;
@@ -129,7 +109,6 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         },
       });
     } finally {
-      if (submitTimeout) clearTimeout(submitTimeout);
       setIsSubmitting(false);
       submitLockRef.current = false;
       (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = false;
