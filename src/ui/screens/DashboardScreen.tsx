@@ -41,6 +41,8 @@ export default function DashboardScreen() {
   const [authPassword, setAuthPassword] = useState("");
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [membersByCampaign, setMembersByCampaign] = useState<Record<string, number>>({});
+  const [membersError, setMembersError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newCampaignName, setNewCampaignName] = useState("");
@@ -56,6 +58,7 @@ export default function DashboardScreen() {
   const fetchInFlightRef = useRef(false);
   const fetchStartedAtRef = useRef<number | null>(null);
   const fetchRequestIdRef = useRef(0);
+  const lastLoadedUserIdRef = useRef<string | null>(null);
   const creatingRef = useRef(false);
   const isMountedRef = useRef(true);
 
@@ -63,6 +66,7 @@ export default function DashboardScreen() {
   const activeUser = user ?? authUser;
   const activeUserId = session?.user?.id ?? user?.id ?? authUser?.id ?? null;
   const activeAccessToken = activeSession?.access_token ?? null;
+  const loadUserId = session?.user?.id ?? null;
   const dbEnabled = Boolean(activeUserId);
   const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled);
 
@@ -222,16 +226,15 @@ export default function DashboardScreen() {
   }, []);
 
   const fetchCampaigns = useCallback(async () => {
-    if (!activeUserId) {
+    if (!loadUserId) {
       if (isMountedRef.current) {
         setIsLoading(false);
       }
       return;
     }
+    if (fetchInFlightRef.current) return;
+    if (lastLoadedUserIdRef.current === loadUserId && campaigns.length > 0) return;
     const now = Date.now();
-    if (fetchInFlightRef.current && fetchStartedAtRef.current && now - fetchStartedAtRef.current < 5000) {
-      return;
-    }
     fetchInFlightRef.current = true;
     fetchStartedAtRef.current = now;
     const requestId = fetchRequestIdRef.current + 1;
@@ -240,14 +243,27 @@ export default function DashboardScreen() {
       setIsLoading(true);
       setError(null);
       setLastError(null);
+      setMembersError(null);
     }
 
     try {
+      const { data: ownedData, error: ownedError } = await withTimeout(
+        supabase
+          .from("campaigns")
+          .select("*")
+          .eq("owner_id", loadUserId),
+        5000,
+        "Owned campaigns fetch"
+      );
+
+      if (ownedError) throw ownedError;
+      if (fetchRequestIdRef.current !== requestId) return;
+
       const { data: memberData, error: memberError } = await withTimeout(
         supabase
           .from("campaign_members")
           .select("campaign_id")
-          .eq("user_id", activeUserId),
+          .eq("user_id", loadUserId),
         5000,
         "Campaign members fetch"
       );
@@ -256,18 +272,6 @@ export default function DashboardScreen() {
       if (fetchRequestIdRef.current !== requestId) return;
 
       const memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
-
-      const { data: ownedData, error: ownedError } = await withTimeout(
-        supabase
-          .from("campaigns")
-          .select("*")
-          .eq("owner_id", activeUserId),
-        5000,
-        "Owned campaigns fetch"
-      );
-
-      if (ownedError) throw ownedError;
-      if (fetchRequestIdRef.current !== requestId) return;
 
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
@@ -290,8 +294,39 @@ export default function DashboardScreen() {
       });
 
       recordCampaignsRead();
+      const campaignsList = Array.from(combined.values());
       if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
-        setCampaigns(Array.from(combined.values()));
+        setCampaigns(campaignsList);
+      }
+
+      if (campaignsList.length > 0) {
+        void (async () => {
+          try {
+            const ids = campaignsList.map(campaign => campaign.id);
+            const { data, error: membersFetchError } = await withTimeout(
+              supabase
+                .from("campaign_members")
+                .select("campaign_id")
+                .in("campaign_id", ids),
+              5000,
+              "Campaign members batch fetch"
+            );
+            if (membersFetchError) throw membersFetchError;
+            const grouped: Record<string, number> = {};
+            (data ?? []).forEach(member => {
+              const id = member.campaign_id;
+              grouped[id] = (grouped[id] ?? 0) + 1;
+            });
+            if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
+              setMembersByCampaign(grouped);
+            }
+          } catch (membersErr) {
+            const message = formatError(membersErr, "Failed to load campaign members");
+            if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
+              setMembersError(message);
+            }
+          }
+        })();
       }
     } catch (err) {
       if (isAbortError(err)) {
@@ -310,19 +345,20 @@ export default function DashboardScreen() {
       if (fetchRequestIdRef.current === requestId) {
         fetchInFlightRef.current = false;
         fetchStartedAtRef.current = null;
+        lastLoadedUserIdRef.current = loadUserId;
       }
     }
-  }, [activeUserId, setLastError, withTimeout]);
+  }, [campaigns.length, loadUserId, setLastError, withTimeout]);
 
   useEffect(() => {
-    if (!activeUserId) {
+    if (!loadUserId) {
       setCampaigns([]);
       setIsLoading(false);
       setError(null);
       return;
     }
     fetchCampaigns();
-  }, [activeUserId, fetchCampaigns]);
+  }, [fetchCampaigns, loadUserId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -700,12 +736,22 @@ export default function DashboardScreen() {
 
     return (
       <div className="space-y-3">
+        {membersError ? (
+          <div className="text-xs text-muted-foreground">
+            Members unavailable: <span className="text-destructive">{membersError}</span>
+          </div>
+        ) : null}
         {campaigns.map(campaign => (
           <Card key={campaign.id} className="border border-border">
             <CardContent className="flex items-center justify-between p-4">
               <div>
                 <div className="text-sm font-semibold">{campaign.name}</div>
                 <div className="text-xs text-muted-foreground">Invite: {campaign.invite_code}</div>
+                {membersByCampaign[campaign.id] != null ? (
+                  <div className="text-xs text-muted-foreground">
+                    Members: {membersByCampaign[campaign.id]}
+                  </div>
+                ) : null}
               </div>
               <Button size="sm" onClick={() => navigate(`/game/${campaign.id}`)}>Open</Button>
             </CardContent>
@@ -713,7 +759,7 @@ export default function DashboardScreen() {
         ))}
       </div>
     );
-  }, [campaigns, error, fetchCampaigns, isLoading, navigate]);
+  }, [campaigns, error, fetchCampaigns, isLoading, membersByCampaign, membersError, navigate]);
 
   const dbStatusLabel = dbEnabled ? dbStatus : "paused";
 
