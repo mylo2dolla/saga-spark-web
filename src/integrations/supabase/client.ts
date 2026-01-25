@@ -89,6 +89,7 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
     storage: createSafeStorage(),
     persistSession: true,
     autoRefreshToken: true,
+    detectSessionInUrl: false,
   },
   global: {
     fetch: DEV_DEBUG ? debugFetch : baseFetch,
