@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
-import { useAuth } from "@/hooks/useAuth";
+import { AuthProvider as InternalAuthProvider } from "@/hooks/useAuth";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  useAuth();
-  return <>{children}</>;
+  return <InternalAuthProvider>{children}</InternalAuthProvider>;
 }

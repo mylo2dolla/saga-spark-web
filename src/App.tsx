@@ -36,29 +36,29 @@ const App = () => (
             <DiagnosticsProvider>
               <ErrorBoundary>
                 <Routes>
-                <Route path="/" element={<LandingScreen />} />
-                <Route path="/game" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/login" element={<AuthScreen mode="login" />} />
-                <Route path="/signup" element={<AuthScreen mode="signup" />} />
-                <Route path="/auth" element={<Navigate to="/login" replace />} />
-                {E2E_BYPASS_AUTH ? (
-                  <>
-                    <Route path="/__e2e/game/:campaignId" element={<E2EGameSessionRoute />} />
-                    <Route path="/__e2e/game/:campaignId/create-character" element={<E2ECharacterRoute />} />
-                  </>
-                ) : null}
-                <Route element={<AppShell />}>
-                  <Route path="/dashboard" element={<DashboardScreen />} />
-                  <Route path="/servers" element={<ServerAdminScreen />} />
-                  <Route path="/admin" element={<ServerAdminScreen />} />
-                  <Route path="/debug/supabase" element={<SupabaseDebugScreen />} />
-                  <Route path="/game/:campaignId" element={<GameSessionRoute />}>
-                    <Route index element={<GameScreen />} />
-                    <Route path="create-character" element={<CharacterScreen />} />
+                  <Route path="/" element={<LandingScreen />} />
+                  <Route path="/game" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/login" element={<AuthScreen mode="login" />} />
+                  <Route path="/signup" element={<AuthScreen mode="signup" />} />
+                  <Route path="/auth" element={<Navigate to="/login" replace />} />
+                  {E2E_BYPASS_AUTH ? (
+                    <>
+                      <Route path="/__e2e/game/:campaignId" element={<E2EGameSessionRoute />} />
+                      <Route path="/__e2e/game/:campaignId/create-character" element={<E2ECharacterRoute />} />
+                    </>
+                  ) : null}
+                  <Route element={<AppShell />}>
+                    <Route path="/dashboard" element={<DashboardScreen />} />
+                    <Route path="/servers" element={<ServerAdminScreen />} />
+                    <Route path="/admin" element={<ServerAdminScreen />} />
+                    <Route path="/debug/supabase" element={<SupabaseDebugScreen />} />
+                    <Route path="/game/:campaignId" element={<GameSessionRoute />}>
+                      <Route index element={<GameScreen />} />
+                      <Route path="create-character" element={<CharacterScreen />} />
+                    </Route>
                   </Route>
-                </Route>
-                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-                <Route path="*" element={<NotFound />} />
+                  {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                  <Route path="*" element={<NotFound />} />
                 </Routes>
                 <AuthDebugPanel />
               </ErrorBoundary>
