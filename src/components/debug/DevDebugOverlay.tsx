@@ -22,23 +22,33 @@ function DevDebugOverlayAuthedStats() {
   const { campaignId } = useParams();
   const networkHealth = useNetworkHealth(1000);
 
+  const locationsMap = useMemo(() => {
+    const raw = world?.locations as unknown;
+    if (raw instanceof Map) return raw as Map<string, EnhancedLocation>;
+    if (Array.isArray(raw)) return new Map(raw as Array<[string, EnhancedLocation]>);
+    if (raw && typeof raw === "object") {
+      return new Map(Object.entries(raw as Record<string, EnhancedLocation>));
+    }
+    return new Map<string, EnhancedLocation>();
+  }, [world]);
+
   const locations = useMemo(() => {
     if (!world) return [] as EnhancedLocation[];
-    return Array.from(world.locations.values()) as EnhancedLocation[];
-  }, [world]);
+    return Array.from(locationsMap.values()) as EnhancedLocation[];
+  }, [locationsMap, world]);
 
   const currentLocation = useMemo(() => {
     if (!world || !travelState) return undefined;
-    return world.locations.get(travelState.currentLocationId) as EnhancedLocation | undefined;
-  }, [world, travelState]);
+    return locationsMap.get(travelState.currentLocationId) as EnhancedLocation | undefined;
+  }, [locationsMap, travelState, world]);
 
   const availableDestinationIds = useMemo(() => {
     if (!currentLocation || !world) return [];
     return (currentLocation.connectedTo ?? [])
-      .map(id => world.locations.get(id))
+      .map(id => locationsMap.get(id))
       .filter((loc): loc is EnhancedLocation => Boolean(loc))
       .map(loc => loc.id);
-  }, [currentLocation, world]);
+  }, [currentLocation, locationsMap, world]);
 
   const [persistenceReport, setPersistenceReport] = useState<string | null>(null);
   const [connectivityReport, setConnectivityReport] = useState<string | null>(null);
@@ -47,14 +57,14 @@ function DevDebugOverlayAuthedStats() {
     if (!world) {
       return { label, locationsSize: 0, locationIds: [], currentLocationId: null };
     }
-    const locationsList = Array.from(world.locations.values()) as EnhancedLocation[];
+    const locationsList = Array.from(locationsMap.values()) as EnhancedLocation[];
     return {
       label,
-      locationsSize: world.locations.size,
+      locationsSize: locationsMap.size,
       locationIds: locationsList.slice(0, 10).map(location => location.id),
       currentLocationId: travelState?.currentLocationId ?? null,
     };
-  }, [world, travelState]);
+  }, [locationsMap, travelState, world]);
 
   const handleForceSave = useCallback(async () => {
     if (!session.autosaveNow) return;
@@ -136,22 +146,22 @@ function DevDebugOverlayAuthedStats() {
         networkHealth,
         locationsSize: 0,
         locationIds: [],
-      locationNames: [],
-      currentLocationId: travelState?.currentLocationId ?? null,
+        locationNames: [],
+        currentLocationId: travelState?.currentLocationId ?? null,
         connectedTo: [],
         availableDestinationIds: [],
         mapMarkers: [],
       };
     }
 
-      return {
-        supabaseProjectRef: getProjectRef(SUPABASE_URL),
-        campaignId: campaignId ?? null,
-        loadedFromSupabase: session.loadedFromSupabase ?? false,
-        lastSavedAt: session.lastSavedAt ?? null,
-        lastLoadedAt: session.lastLoadedAt ?? null,
-        networkHealth,
-        locationsSize: world.locations.size,
+    return {
+      supabaseProjectRef: getProjectRef(SUPABASE_URL),
+      campaignId: campaignId ?? null,
+      loadedFromSupabase: session.loadedFromSupabase ?? false,
+      lastSavedAt: session.lastSavedAt ?? null,
+      lastLoadedAt: session.lastLoadedAt ?? null,
+      networkHealth,
+      locationsSize: locationsMap.size,
       locationIds: locations.map(location => location.id),
       locationNames: locations.map(location => location.name),
       currentLocationId: travelState.currentLocationId,
@@ -167,6 +177,7 @@ function DevDebugOverlayAuthedStats() {
     world,
     travelState,
     locations,
+    locationsMap,
     currentLocation,
     availableDestinationIds,
     campaignId,
