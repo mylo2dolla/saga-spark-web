@@ -33,8 +33,6 @@ export default function DashboardScreen() {
   const navigate = useNavigate();
   const { setLastError } = useDiagnostics();
 
-  const [authSession, setAuthSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
-  const [authUser, setAuthUser] = useState<Awaited<ReturnType<typeof supabase.auth.getUser>>["data"]["user"] | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -61,9 +59,9 @@ export default function DashboardScreen() {
   const creatingRef = useRef(false);
   const isMountedRef = useRef(true);
 
-  const activeSession = session ?? authSession;
-  const activeUser = user ?? authUser;
-  const activeUserId = session?.user?.id ?? user?.id ?? authUser?.id ?? null;
+  const activeSession = session ?? null;
+  const activeUser = user ?? null;
+  const activeUserId = session?.user?.id ?? user?.id ?? null;
   const activeAccessToken = activeSession?.access_token ?? null;
   const loadUserId = session?.user?.id ?? null;
   const dbEnabled = Boolean(activeUserId);
@@ -368,41 +366,6 @@ export default function DashboardScreen() {
     }
     fetchCampaigns();
   }, [fetchCampaigns]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadSession = async () => {
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) {
-          if (!cancelled) setAuthError(error.message);
-          return;
-        }
-        if (!cancelled) {
-          setAuthSession(data.session);
-          setAuthUser(data.session?.user ?? null);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          const message = formatError(err, "Failed to load session");
-          setAuthError(message);
-        }
-      }
-    };
-
-    loadSession();
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (cancelled) return;
-      setAuthSession(nextSession);
-      setAuthUser(nextSession?.user ?? null);
-    });
-
-    return () => {
-      cancelled = true;
-      subscription.subscription.unsubscribe();
-    };
-  }, []);
 
   const trimmedName = newCampaignName.trim();
   const trimmedDescription = newCampaignDescription.trim();
