@@ -38,6 +38,7 @@ export default function GameScreen() {
   const arrivalInFlightRef = useRef(false);
   const visitedLocationsRef = useRef<Set<string>>(new Set());
   const worldEvents = gameSession.worldEvents;
+  const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
   useEffect(() => {
     if (!campaignId) return;
@@ -293,6 +294,7 @@ export default function GameScreen() {
   }, [gameSession]);
 
   const handleArrival = useCallback(async (locationId: string, location?: EnhancedLocation | null) => {
+    if (E2E_BYPASS_AUTH) return;
     if (arrivalInFlightRef.current) return;
     arrivalInFlightRef.current = true;
     try {
@@ -319,7 +321,7 @@ export default function GameScreen() {
     } finally {
       arrivalInFlightRef.current = false;
     }
-  }, [dmContext, dungeonMaster, expandWorldAtLocation, gameSession, locations, shouldFlagEncounter]);
+  }, [E2E_BYPASS_AUTH, dmContext, dungeonMaster, expandWorldAtLocation, gameSession, locations, shouldFlagEncounter]);
 
   const handleEncounterChoice = useCallback(async (choice: "investigate" | "avoid") => {
     if (!currentLocation) return;
@@ -405,6 +407,7 @@ export default function GameScreen() {
   }, [resolveEncounterOutcome]);
 
   const handleSendMessage = useCallback(async (message: string) => {
+    if (E2E_BYPASS_AUTH) return null;
     const normalized = message.toLowerCase();
     if (normalized.includes("go to town") || normalized.includes("travel to town")) {
       const localLocations = locations.size ? locations : new Map<string, EnhancedLocation>();
@@ -429,6 +432,7 @@ export default function GameScreen() {
     await gameSession.submitPlayerAction?.(message, dmResult?.parsed?.narration ?? null);
     return dmResult;
   }, [
+    E2E_BYPASS_AUTH,
     connectLocations,
     currentLocation,
     dmContext,
