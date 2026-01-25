@@ -56,6 +56,31 @@ const createSafeStorage = () => {
 };
 
 const baseFetch = globalThis.fetch.bind(globalThis);
+const debugFetch: typeof fetch = (input, init) => {
+  const url = typeof input === "string" ? input : input.url;
+  const method = init?.method ?? "GET";
+  if (DEV_DEBUG) {
+    console.info("DEV_DEBUG supabase fetch start", { method, url });
+  }
+
+  return baseFetch(input, init)
+    .then((response) => {
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG supabase fetch response", {
+          method,
+          url,
+          status: response.status,
+        });
+      }
+      return response;
+    })
+    .catch((error) => {
+      if (DEV_DEBUG) {
+        console.error("DEV_DEBUG supabase fetch error", { method, url, error });
+      }
+      throw error;
+    });
+};
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
@@ -65,7 +90,7 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
     detectSessionInUrl: false,
   },
   global: {
-    fetch: baseFetch,
+    fetch: DEV_DEBUG ? debugFetch : baseFetch,
   },
 });
 
