@@ -65,37 +65,58 @@ export default function GameScreen() {
     }
   }, [authLoading, campaignId, navigate, user]);
 
-  const currentLocation = useMemo(() => {
-    if (!gameSession.unifiedState || !gameSession.travelState) return undefined;
-    return gameSession.unifiedState.world.locations.get(gameSession.travelState.currentLocationId) as EnhancedLocation | undefined;
-  }, [gameSession.unifiedState, gameSession.travelState]);
+  const locations = useMemo(() => {
+    const raw = gameSession.unifiedState?.world?.locations as unknown;
+    if (raw instanceof Map) return raw as Map<string, EnhancedLocation>;
+    if (Array.isArray(raw)) return new Map(raw as Array<[string, EnhancedLocation]>);
+    if (raw && typeof raw === "object") {
+      return new Map(Object.entries(raw as Record<string, EnhancedLocation>));
+    }
+    return new Map<string, EnhancedLocation>();
+  }, [gameSession.unifiedState]);
 
-  const destinations = useMemo(() => {
-    if (!gameSession.unifiedState || !currentLocation) return [] as EnhancedLocation[];
-    return (currentLocation.connectedTo ?? [])
-      .map(id => gameSession.unifiedState?.world.locations.get(id) as EnhancedLocation | undefined)
-      .filter((loc): loc is EnhancedLocation => Boolean(loc));
-  }, [currentLocation, gameSession.unifiedState]);
-
-  const travelWorldState = useMemo((): TravelWorldState | null => {
-    if (!gameSession.unifiedState || !gameSession.travelState) return null;
+  const safeWorld = useMemo(() => {
+    if (!gameSession.unifiedState?.world) return null;
+    if (gameSession.unifiedState.world.locations === locations) {
+      return gameSession.unifiedState.world;
+    }
     return {
       ...gameSession.unifiedState.world,
+      locations,
+    };
+  }, [gameSession.unifiedState, locations]);
+
+  const currentLocation = useMemo(() => {
+    if (!safeWorld || !gameSession.travelState) return undefined;
+    return locations.get(gameSession.travelState.currentLocationId) as EnhancedLocation | undefined;
+  }, [gameSession.travelState, locations, safeWorld]);
+
+  const destinations = useMemo(() => {
+    if (!safeWorld || !currentLocation) return [] as EnhancedLocation[];
+    return (currentLocation.connectedTo ?? [])
+      .map(id => locations.get(id) as EnhancedLocation | undefined)
+      .filter((loc): loc is EnhancedLocation => Boolean(loc));
+  }, [currentLocation, locations, safeWorld]);
+
+  const travelWorldState = useMemo((): TravelWorldState | null => {
+    if (!safeWorld || !gameSession.travelState) return null;
+    return {
+      ...safeWorld,
       travelState: gameSession.travelState,
     };
-  }, [gameSession.unifiedState, gameSession.travelState]);
+  }, [gameSession.travelState, safeWorld]);
 
   const worldBoardModel = useMemo(() => {
-    if (!gameSession.unifiedState) return null;
+    if (!safeWorld || !gameSession.unifiedState) return null;
     const stateWithTravel = {
       ...gameSession.unifiedState,
       world: {
-        ...gameSession.unifiedState.world,
+        ...safeWorld,
         travelState: gameSession.travelState ?? undefined,
       },
     };
     return toWorldBoardModel(stateWithTravel);
-  }, [gameSession.unifiedState, gameSession.travelState]);
+  }, [gameSession.travelState, gameSession.unifiedState, safeWorld]);
 
   const selectedNode = worldBoardModel?.nodes.find(node => node.id === selectedNodeId) ?? null;
 
@@ -114,22 +135,22 @@ export default function GameScreen() {
   }), [character, combatState, currentLocation?.name, gameSession.campaignSeed?.title]);
 
   const encounterFlagForCurrent = useMemo(() => {
-    if (!gameSession.unifiedState || !currentLocation) return null;
+    if (!safeWorld || !currentLocation) return null;
     const flagId = `encounter_possible:${currentLocation.id}`;
-    return World.getFlag(gameSession.unifiedState.world, flagId);
-  }, [currentLocation, gameSession.unifiedState]);
+    return World.getFlag(safeWorld, flagId);
+  }, [currentLocation, safeWorld]);
 
   const encounterChoiceFlagForCurrent = useMemo(() => {
-    if (!gameSession.unifiedState || !currentLocation) return null;
+    if (!safeWorld || !currentLocation) return null;
     const flagId = `encounter_choice:${currentLocation.id}`;
-    return World.getFlag(gameSession.unifiedState.world, flagId);
-  }, [currentLocation, gameSession.unifiedState]);
+    return World.getFlag(safeWorld, flagId);
+  }, [currentLocation, safeWorld]);
 
   const encounterOutcomeFlagForCurrent = useMemo(() => {
-    if (!gameSession.unifiedState || !currentLocation) return null;
+    if (!safeWorld || !currentLocation) return null;
     const flagId = `encounter_outcome:${currentLocation.id}`;
-    return World.getFlag(gameSession.unifiedState.world, flagId);
-  }, [currentLocation, gameSession.unifiedState]);
+    return World.getFlag(safeWorld, flagId);
+  }, [currentLocation, safeWorld]);
 
   const hashString = useCallback((value: string) => {
     let hash = 0;
@@ -169,8 +190,8 @@ export default function GameScreen() {
   }, [gameSession]);
 
   const expandWorldAtLocation = useCallback(async (location: EnhancedLocation) => {
-    if (!gameSession.unifiedState || !gameSession.campaignSeed || !campaignId) return;
-    const existingIds = new Set(gameSession.unifiedState.world.locations.keys());
+    if (!safeWorld || !gameSession.campaignSeed || !campaignId) return;
+    const existingIds = new Set(locations.keys());
     const normalizeId = (base: string) => {
       let id = base.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
       if (!id) id = `location-${existingIds.size + 1}`;
@@ -207,7 +228,7 @@ export default function GameScreen() {
 
     if (newLocations.length === 0) {
       if (location.connectedTo?.length) return;
-      const fallback = Array.from(gameSession.unifiedState.world.locations.values()).find(loc => loc.id !== location.id) as EnhancedLocation | undefined;
+      const fallback = Array.from(locations.values()).find(loc => loc.id !== location.id) as EnhancedLocation | undefined;
       if (fallback) {
         connectLocations(location.id, fallback.id);
         await gameSession.autosaveNow?.();
@@ -238,7 +259,7 @@ export default function GameScreen() {
       };
     });
     await gameSession.autosaveNow?.();
-  }, [campaignId, connectLocations, gameSession, generateLocation]);
+  }, [campaignId, connectLocations, gameSession, generateLocation, locations, safeWorld]);
 
   const travelToLocation = useCallback((destinationId: string) => {
     const travelState = gameSession.travelState;
@@ -275,7 +296,7 @@ export default function GameScreen() {
     if (arrivalInFlightRef.current) return;
     arrivalInFlightRef.current = true;
     try {
-      const currentLoc = location ?? (gameSession.unifiedState?.world.locations.get(locationId) as EnhancedLocation | undefined);
+      const currentLoc = location ?? (locations.get(locationId) as EnhancedLocation | undefined);
       if (!currentLoc) return;
       const isFirstVisit = !visitedLocationsRef.current.has(currentLoc.id);
       visitedLocationsRef.current.add(currentLoc.id);
@@ -298,7 +319,7 @@ export default function GameScreen() {
     } finally {
       arrivalInFlightRef.current = false;
     }
-  }, [dmContext, dungeonMaster, expandWorldAtLocation, gameSession, shouldFlagEncounter]);
+  }, [dmContext, dungeonMaster, expandWorldAtLocation, gameSession, locations, shouldFlagEncounter]);
 
   const handleEncounterChoice = useCallback(async (choice: "investigate" | "avoid") => {
     if (!currentLocation) return;
@@ -386,8 +407,8 @@ export default function GameScreen() {
   const handleSendMessage = useCallback(async (message: string) => {
     const normalized = message.toLowerCase();
     if (normalized.includes("go to town") || normalized.includes("travel to town")) {
-      const locations = gameSession.unifiedState?.world.locations ?? new Map();
-      const town = Array.from(locations.values()).find(loc =>
+      const localLocations = locations.size ? locations : new Map<string, EnhancedLocation>();
+      const town = Array.from(localLocations.values()).find(loc =>
         loc.name?.toLowerCase().includes("town") || loc.id.toLowerCase() === "town" || loc.type === "town"
       ) as EnhancedLocation | undefined;
       if (town && currentLocation) {
@@ -414,6 +435,7 @@ export default function GameScreen() {
     dungeonMaster,
     expandWorldAtLocation,
     gameSession,
+    locations,
     travelToLocation,
   ]);
 
@@ -423,7 +445,7 @@ export default function GameScreen() {
   }, [gameSession.travelState?.currentLocationId, worldBoardModel?.nodes]);
 
   useEffect(() => {
-    if (!gameSession.unifiedState) return;
+    if (!safeWorld) return;
     setEngineSnapshot({
       state: combatState === "active"
         ? "combat"
@@ -436,9 +458,9 @@ export default function GameScreen() {
       campaignId: campaignId ?? null,
       campaignSeedId: gameSession.campaignSeed?.id ?? null,
       campaignSeedTitle: gameSession.campaignSeed?.title ?? null,
-      knownLocations: Array.from(gameSession.unifiedState.world.locations.keys()),
-      storyFlags: Array.from(gameSession.unifiedState.world.storyFlags.keys()),
-      activeQuests: Array.from(gameSession.unifiedState.world.quests.values())
+      knownLocations: Array.from(safeWorld.locations.keys()),
+      storyFlags: Array.from(safeWorld.storyFlags.keys()),
+      activeQuests: Array.from(safeWorld.quests.values())
         .filter(quest => quest.status !== "completed")
         .map(quest => quest.title),
       travel: {
@@ -458,10 +480,10 @@ export default function GameScreen() {
     gameSession.travelState?.currentLocationId,
     gameSession.travelState?.isInTransit,
     gameSession.travelState?.transitProgress,
-    gameSession.unifiedState,
-    gameSession.unifiedState?.world.locations,
-    gameSession.unifiedState?.world.quests,
-    gameSession.unifiedState?.world.storyFlags,
+    safeWorld,
+    safeWorld?.locations,
+    safeWorld?.quests,
+    safeWorld?.storyFlags,
     setEngineSnapshot,
   ]);
 
@@ -579,8 +601,18 @@ export default function GameScreen() {
     );
   }
 
-  if (!gameSession.unifiedState || !gameSession.travelState) {
-    return <div className="text-sm text-muted-foreground">World state unavailable.</div>;
+  if (!safeWorld || !gameSession.travelState || locations.size === 0) {
+    return (
+      <div className="space-y-2 text-sm text-muted-foreground">
+        <div>Loading world...</div>
+        <div className="text-xs">World data is still initializing.</div>
+        {gameSession.reloadLatestFromDb ? (
+          <Button variant="outline" onClick={() => gameSession.reloadLatestFromDb?.()}>
+            Reload from DB
+          </Button>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -775,10 +807,10 @@ export default function GameScreen() {
               <CardTitle className="text-base">Session</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-xs">
-              <div>Locations: {gameSession.unifiedState.world.locations.size}</div>
-              <div>NPCs: {gameSession.unifiedState.world.npcs.size}</div>
-              <div>Quests: {gameSession.unifiedState.world.quests.size}</div>
-              <div>Items: {gameSession.unifiedState.world.items.size}</div>
+              <div>Locations: {safeWorld.locations.size}</div>
+              <div>NPCs: {safeWorld.npcs.size}</div>
+              <div>Quests: {safeWorld.quests.size}</div>
+              <div>Items: {safeWorld.items.size}</div>
               <div>Current: {currentLocation?.name ?? "Unknown"}</div>
               {gameSession.lastActionEvent ? (
                 <div className="pt-2 text-muted-foreground">
