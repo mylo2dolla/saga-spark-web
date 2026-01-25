@@ -21,6 +21,56 @@ npm run dev
 4) Supabase Dashboard SQL editor: SQL Editor → New query → paste `supabase/bootstrap.sql` → Run.
 5) Deploy edge functions: `supabase functions deploy world-generator` and `supabase functions deploy world-content-writer`.
 
+## Supabase migrations (local + remote)
+
+Apply migrations locally:
+
+```bash
+supabase db reset
+```
+
+Push migrations to remote:
+
+```bash
+supabase db push
+```
+
+Verification SQL (FKs, indexes, policies from `20260120000000_add_missing_fks_indexes_policies.sql`):
+
+```sql
+SELECT conname
+FROM pg_constraint
+WHERE conname IN ('game_saves_user_id_fkey', 'server_nodes_user_id_fkey');
+
+SELECT indexname
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND indexname IN (
+    'idx_abilities_character_id',
+    'idx_campaign_members_campaign_id',
+    'idx_campaign_members_user_id',
+    'idx_campaigns_owner_id',
+    'idx_characters_campaign_id',
+    'idx_characters_user_id',
+    'idx_chat_messages_campaign_id',
+    'idx_chat_messages_user_id',
+    'idx_combat_state_campaign_id',
+    'idx_grid_state_campaign_id',
+    'idx_server_nodes_campaign_id',
+    'idx_server_nodes_user_id',
+    'idx_game_saves_user_id'
+  );
+
+SELECT polname
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename = 'chat_messages'
+  AND polname IN (
+    'Users can update their own chat messages',
+    'Users can delete their own chat messages'
+  );
+```
+
 ## Build
 
 ```bash
