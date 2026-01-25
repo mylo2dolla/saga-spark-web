@@ -31,6 +31,7 @@ export default function CharacterScreen() {
   const { toast } = useToast();
   const { setLastError } = useDiagnostics();
   const { user, isLoading: authLoading } = useAuth();
+  const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
   const [isCreating, setIsCreating] = useState(false);
   const [showCreator, setShowCreator] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
@@ -54,6 +55,7 @@ export default function CharacterScreen() {
   });
 
   useEffect(() => {
+    if (E2E_BYPASS_AUTH) return;
     if (authLoading || user) return;
     let isMounted = true;
     const run = async () => {
@@ -77,7 +79,7 @@ export default function CharacterScreen() {
     return () => {
       isMounted = false;
     };
-  }, [authLoading, user]);
+  }, [E2E_BYPASS_AUTH, authLoading, user]);
 
   useEffect(() => {
     if (character) {
@@ -86,12 +88,13 @@ export default function CharacterScreen() {
   }, [character]);
 
   useEffect(() => {
+    if (E2E_BYPASS_AUTH) return;
     if (!campaignId) return;
     if (authLoading || sessionFallback.checking) return;
     if (!user && !sessionFallback.hasSession) {
       navigate("/login");
     }
-  }, [authLoading, campaignId, navigate, sessionFallback.checking, sessionFallback.hasSession, user]);
+  }, [E2E_BYPASS_AUTH, authLoading, campaignId, navigate, sessionFallback.checking, sessionFallback.hasSession, user]);
 
   if (!campaignId) {
     return (

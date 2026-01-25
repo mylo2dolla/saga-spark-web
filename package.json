@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install --with-deps",
     "test:e2e:deps": "bash scripts/install-playwright-deps.sh",
