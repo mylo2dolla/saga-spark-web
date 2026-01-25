@@ -109,6 +109,9 @@ Notes for Codespaces:
 - Alternatively install the missing libs listed by Playwright (e.g. `libatk1.0-0t64`, `libgtk-3-0t64`) and rerun `npm run test:e2e`.
 - You can also run `npm run test:e2e:deps` to apply the workaround automatically.
 
+CI:
+- The Playwright HTML report is uploaded as a workflow artifact named `playwright-report`.
+
 ## generate-class curl checks
 
 ```bash
