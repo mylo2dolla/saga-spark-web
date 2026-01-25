@@ -61,6 +61,12 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     setIsSubmitting(true);
     setLastError(null);
     console.info("[auth] log", { step: "login_submit" });
+    let submitTimeout: ReturnType<typeof setTimeout> | null = null;
+    submitTimeout = setTimeout(() => {
+      console.warn("[auth] log", { step: "login_submit_timeout" });
+      submitLockRef.current = false;
+      setIsSubmitting(false);
+    }, 12000);
 
     try {
       (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = true;
@@ -123,6 +129,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         },
       });
     } finally {
+      if (submitTimeout) clearTimeout(submitTimeout);
       setIsSubmitting(false);
       submitLockRef.current = false;
       (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = false;
