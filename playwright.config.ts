@@ -8,6 +8,16 @@ export default defineConfig({
   expect: {
     timeout: 5_000,
   },
+  reporter: [
+    ["html", { outputFolder: "playwright-report", open: "never" }],
+    ["list"],
+  ],
+  projects: [
+    {
+      name: "chromium",
+      use: { browserName: "chromium" },
+    },
+  ],
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: "on-first-retry",
