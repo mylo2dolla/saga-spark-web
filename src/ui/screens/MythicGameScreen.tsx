@@ -8,6 +8,8 @@ import { useMythicCreator } from "@/hooks/useMythicCreator";
 import { useMythicBoard } from "@/hooks/useMythicBoard";
 import { useMythicCharacter } from "@/hooks/useMythicCharacter";
 import { useMythicDmContext } from "@/hooks/useMythicDmContext";
+import { useMythicDungeonMaster } from "@/hooks/useMythicDungeonMaster";
+import { MythicDMChat } from "@/components/MythicDMChat";
 
 function prettyJson(value: unknown): string {
   try {
@@ -32,6 +34,7 @@ export default function MythicGameScreen() {
   const { board, recentTransitions, isLoading: boardLoading, error: boardError, refetch } = useMythicBoard(campaignId);
   const { character, skills, isLoading: charLoading, error: charError } = useMythicCharacter(campaignId);
   const dm = useMythicDmContext(campaignId);
+  const mythicDm = useMythicDungeonMaster(campaignId);
 
   const [bootstrapped, setBootstrapped] = useState(false);
   const bootstrapOnceRef = useRef(false);
@@ -178,6 +181,33 @@ export default function MythicGameScreen() {
         ) : (
           <pre className="max-h-[360px] overflow-auto text-xs text-muted-foreground">{prettyJson(dm.data)}</pre>
         )}
+      </div>
+
+      <div className="mt-6 grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-2 text-sm font-semibold">Mythic DM (DB-driven narration)</div>
+          <div className="h-[520px] overflow-hidden rounded-lg border border-border bg-background/30">
+            <MythicDMChat
+              messages={mythicDm.messages}
+              isLoading={mythicDm.isLoading}
+              currentResponse={mythicDm.currentResponse}
+              onSendMessage={(msg) => mythicDm.sendMessage(msg)}
+            />
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Uses edge function <code>mythic-dungeon-master</code> and feeds it canonical rules/script + mythic.v_*_for_dm payloads.
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-2 text-sm font-semibold">Next: Combat Playback</div>
+          <div className="text-sm text-muted-foreground">
+            Next step is binding ability use to <code>mythic.skills</code> and emitting append-only <code>mythic.action_events</code>
+            so the UI animates deterministic turns from DB logs.
+          </div>
+          <div className="mt-3 text-xs text-muted-foreground">
+            You can already verify the DM never invents stats by comparing narration against the DM Context panel above.
+          </div>
+        </div>
       </div>
     </div>
   );
