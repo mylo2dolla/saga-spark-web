@@ -1,28 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import { AICharacterCreator } from "@/components/AICharacterCreator";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import type { CharacterStats, CharacterResources, PassiveAbility, GameAbility } from "@/types/game";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useAuth } from "@/hooks/useAuth";
 import { useGameSessionContext } from "@/contexts/GameSessionContext";
-import { useCharacter, type CharacterPayload } from "@/hooks/useCharacter";
-
-interface AICharacterData {
-  name: string;
-  class: string;
-  classDescription: string;
-  stats: CharacterStats;
-  resources: CharacterResources;
-  passives: PassiveAbility[];
-  abilities: Omit<GameAbility, "id">[];
-  campaign_id: string;
-  hitDice: string;
-  baseAC: number;
-}
+import { MythicCharacterCreator } from "@/components/MythicCharacterCreator";
+import { useMythicCharacter } from "@/hooks/useMythicCharacter";
+import type { MythicCreateCharacterResponse } from "@/types/mythic";
 
 export default function CharacterScreen() {
   const { campaignId } = useParams();
@@ -32,21 +19,21 @@ export default function CharacterScreen() {
   const { setLastError } = useDiagnostics();
   const { user, isLoading: authLoading } = useAuth();
   const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
-  const [isCreating, setIsCreating] = useState(false);
+
   const [showCreator, setShowCreator] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);
-  const [profileStatus, setProfileStatus] = useState<"unknown" | "loaded" | "missing" | "created" | "error">("unknown");
   const [sessionFallback, setSessionFallback] = useState<{
     checking: boolean;
     hasSession: boolean | null;
     error: string | null;
   }>({ checking: false, hasSession: null, error: null });
+
   const gameSession = useGameSessionContext();
-  const { character, isLoading: characterLoading, error: characterError, refetch, saveCharacter } = useCharacter(campaignId);
+  const { character, isLoading: characterLoading, error: characterError, refetch } = useMythicCharacter(campaignId);
 
   const shouldShowCreator = useMemo(() => showCreator || !character, [showCreator, character]);
 
-  console.info("[character]", {
+  console.info("[mythic.character]", {
     step: "enter_screen",
     route: location.pathname,
     campaignId,
@@ -58,6 +45,7 @@ export default function CharacterScreen() {
     if (E2E_BYPASS_AUTH) return;
     if (authLoading || user) return;
     let isMounted = true;
+
     const run = async () => {
       if (isMounted) {
         setSessionFallback({ checking: true, hasSession: null, error: null });
@@ -75,17 +63,12 @@ export default function CharacterScreen() {
         setSessionFallback({ checking: false, hasSession: false, error: formatError(error, "Session check failed") });
       }
     };
+
     run();
     return () => {
       isMounted = false;
     };
   }, [E2E_BYPASS_AUTH, authLoading, user]);
-
-  useEffect(() => {
-    if (character) {
-      setShowCreator(false);
-    }
-  }, [character]);
 
   useEffect(() => {
     if (E2E_BYPASS_AUTH) return;
@@ -95,6 +78,20 @@ export default function CharacterScreen() {
       navigate("/login");
     }
   }, [E2E_BYPASS_AUTH, authLoading, campaignId, navigate, sessionFallback.checking, sessionFallback.hasSession, user]);
+
+  const handleCompleteMythic = async (res: MythicCreateCharacterResponse) => {
+    setLastAction("create_mythic_character_success");
+    setShowCreator(false);
+    setLastError(null);
+
+    toast({
+      title: "Mythic character created",
+      description: `${res.class.class_name} kit saved in mythic schema.`,
+    });
+
+    // The mythic screen reads authoritative board + transitions + combat playback.
+    navigate(`/mythic/${campaignId}`);
+  };
 
   if (!campaignId) {
     return (
@@ -111,193 +108,11 @@ export default function CharacterScreen() {
     );
   }
 
-  if (authLoading || sessionFallback.checking) {
-    console.info("[auth] log", {
-      step: "auth_guard",
-      path: `/game/${campaignId}/create-character`,
-      hasSession: Boolean(user),
-      userId: user?.id ?? null,
-      isLoading: authLoading,
-      reason: sessionFallback.checking ? "session_check" : "auth_loading",
-    });
-    return <div className="text-sm text-muted-foreground">Loading session...</div>;
-  }
-
-  if (!user) {
-    if (sessionFallback.hasSession) {
-      return (
-        <div className="space-y-2 text-sm text-muted-foreground">
-          <div>Session exists but user not resolved.</div>
-          <button
-            type="button"
-            className="text-primary underline"
-            onClick={() => window.location.reload()}
-          >
-            Reload session
-          </button>
-        </div>
-      );
-    }
-
-    console.info("[auth] log", {
-      step: "auth_guard",
-      path: `/game/${campaignId}/create-character`,
-      hasSession: false,
-      userId: null,
-      isLoading: authLoading,
-      reason: "no_user",
-    });
-    console.info("[character]", {
-      step: "navigate_login",
-      reason: "no_user",
-      campaignId,
-      route: location.pathname,
-    });
-    return null;
-  }
-
-  console.info("[character]", {
-    step: "session_resolved",
-    campaignId,
-    userId: user.id,
-    hasSession: true,
-  });
-
-  if (characterLoading) {
-    console.info("[character]", {
-      step: "character_fetch_pending",
-      campaignId,
-      userId: user.id,
-    });
-    if (!character) {
-      return <div className="text-sm text-muted-foreground">Loading character...</div>;
-    }
-  } else {
-    console.info("[character]", {
-      step: "character_fetch_result",
-      campaignId,
-      userId: user.id,
-      characterExists: Boolean(character),
-      error: characterError ?? null,
-    });
-  }
-
-  const getModifier = (stat: number) => Math.floor((stat - 10) / 2);
-
-  const handleComplete = async (data: AICharacterData) => {
-    setIsCreating(true);
-    setLastError(null);
-    setLastAction("create_character_submit");
-    console.info("[character]", {
-      step: "create_character_start",
-      campaignId,
-      userId: user.id,
-      payload: {
-        name: data.name,
-        class: data.class,
-        hitDice: data.hitDice,
-        baseAC: data.baseAC,
-      },
-    });
-
-    try {
-      const userResult = await supabase.auth.getUser();
-      if (userResult.error) {
-        console.error("[auth] supabase error", {
-          message: userResult.error.message,
-          code: userResult.error.code,
-          details: userResult.error.details,
-          hint: userResult.error.hint,
-          status: userResult.error.status,
-        });
-        throw userResult.error;
-      }
-
-      const user = userResult.data.user;
-      if (!user) throw new Error("Not authenticated");
-
-      const hitDie = parseInt(data.hitDice.replace("d", ""));
-      const conMod = getModifier(data.stats.constitution);
-      const dexMod = getModifier(data.stats.dexterity);
-      const hp = hitDie + conMod;
-      const ac = data.baseAC + dexMod;
-
-      const payload: CharacterPayload = {
-        name: data.name,
-        class: data.class,
-        class_description: data.classDescription,
-        campaign_id: campaignId,
-        user_id: user.id,
-        level: 1,
-        hp,
-        max_hp: hp,
-        ac,
-        stats: data.stats,
-        resources: data.resources as unknown as Record<string, unknown>,
-        passives: data.passives as unknown as Record<string, unknown>[],
-        abilities: data.abilities.map((a, i) => ({ ...a, id: `ability-${i}` })) as unknown as Record<string, unknown>[],
-        xp: 0,
-        xp_to_next: 300,
-        position: { x: 2, y: 2 },
-        status_effects: [],
-        is_active: true,
-        equipment: { weapon: null, armor: null, shield: null, helmet: null, boots: null, gloves: null, ring1: null, ring2: null, trinket1: null, trinket2: null, trinket3: null },
-        backpack: [],
-      };
-
-      const saved = await saveCharacter(payload, character?.id);
-
-      console.info("[character]", {
-        step: character ? "update_character_success" : "create_character_success",
-        campaignId,
-        userId: user.id,
-        characterId: saved?.id ?? null,
-      });
-      toast({
-        title: character ? "Character updated" : "Character created",
-        description: `${data.name} the ${data.class} is ready for adventure!`,
-      });
-      console.info("[character]", {
-        step: "navigate_game",
-        campaignId,
-        reason: "character_created",
-      });
-      navigate(`/game/${campaignId}`);
-    } catch (error) {
-
-      const supaError = error as { message?: string; code?: string; details?: string; hint?: string; status?: number };
-      if (supaError?.message) {
-        console.error("[createCharacter] supabase error", {
-          message: supaError.message,
-          code: supaError.code,
-          details: supaError.details,
-          hint: supaError.hint,
-          status: supaError.status,
-        });
-      }
-      const message = formatError(error, "Failed to create character");
-      console.info("[character]", {
-        step: "create_character_failed",
-        campaignId,
-        userId: user.id,
-        message,
-      });
-      setLastError(message);
-      toast({
-        title: "Failed to create character",
-        description: message,
-        variant: "destructive",
-      });
-    } finally {
-      setIsCreating(false);
-    }
-  };
-
-  if (isCreating) {
+  if (authLoading || sessionFallback.checking || characterLoading) {
     return (
       <div className="flex flex-col items-center gap-2 py-12">
         <Loader2 className="h-6 w-6 animate-spin text-primary" />
-        <div className="text-sm text-muted-foreground">Creating your hero...</div>
+        <div className="text-sm text-muted-foreground">Loading character...</div>
       </div>
     );
   }
@@ -318,32 +133,42 @@ export default function CharacterScreen() {
   }
 
   if (!shouldShowCreator && character) {
+    const className = String((character.class_json as any)?.class_name ?? "(class)");
+    const role = String((character.class_json as any)?.role ?? "?");
+
     return (
       <div className="space-y-4">
         <div className="rounded-lg border border-border bg-card/50 p-4">
           <div className="text-lg font-semibold">{character.name}</div>
-          <div className="text-sm text-muted-foreground">{character.class}</div>
+          <div className="text-sm text-muted-foreground">{className} · {role}</div>
           <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
             <div>Level: {character.level}</div>
-            <div>HP: {character.hp}/{character.max_hp}</div>
-            <div>AC: {character.ac}</div>
-            <div>XP: {character.xp}</div>
+            <div>Offense: {character.offense}</div>
+            <div>Defense: {character.defense}</div>
+            <div>Mobility: {character.mobility}</div>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
             className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+            onClick={() => navigate(`/mythic/${campaignId}`)}
+          >
+            Continue (Mythic)
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
             onClick={() => navigate(`/game/${campaignId}`)}
           >
-            Continue to Game
+            Continue (Legacy)
           </button>
           <button
             type="button"
             className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
             onClick={() => setShowCreator(true)}
           >
-            Regenerate Class
+            Regenerate Mythic Kit
           </button>
         </div>
       </div>
@@ -352,9 +177,9 @@ export default function CharacterScreen() {
 
   return (
     <>
-      <AICharacterCreator
+      <MythicCharacterCreator
         campaignId={campaignId}
-        onComplete={handleComplete}
+        onComplete={handleCompleteMythic}
         onCancel={() => {
           setLastAction("create_character_cancel");
           navigate("/dashboard");
@@ -373,31 +198,6 @@ export default function CharacterScreen() {
           <div>engineReady: {gameSession.isInitialized ? "yes" : "no"}</div>
           <div>lastError: {gameSession.error ?? "none"}</div>
           <div>lastAction: {lastAction ?? "none"}</div>
-          <button
-            type="button"
-            className="mt-2 text-primary underline"
-            onClick={() => {
-              console.info("[character]", {
-                step: "dump_state",
-                route: location.pathname,
-                params: { campaignId },
-                userId: user?.id ?? null,
-                hasSession: Boolean(user),
-                campaignId,
-                profileStatus,
-                characterStatus: {
-                  loading: characterLoading,
-                  exists: Boolean(character),
-                  error: characterError ?? null,
-                },
-                engineReady: gameSession.isInitialized,
-                lastError: gameSession.error ?? null,
-                lastAction,
-              });
-            }}
-          >
-            Dump State
-          </button>
         </div>
       ) : null}
     </>
