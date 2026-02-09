@@ -29,6 +29,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     error?: string;
   } | null>(null);
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -210,15 +211,16 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                 try {
                   const timeout = (ms: number) =>
                     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out")), ms));
-                  const authReq = fetch(`${supabaseUrl}/auth/v1/health`, { method: "GET" });
-                  const restReq = fetch(`${supabaseUrl}/rest/v1/`, { method: "GET" });
+                  const headers = supabaseAnonKey ? { apikey: supabaseAnonKey } : undefined;
+                  const authReq = fetch(`${supabaseUrl}/auth/v1/health`, { method: "GET", headers });
+                  const restReq = fetch(`${supabaseUrl}/rest/v1/`, { method: "GET", headers });
                   const [authRes, restRes] = await Promise.all([
                     Promise.race([authReq, timeout(6000)]),
                     Promise.race([restReq, timeout(6000)]),
                   ]);
                   setCheckResult({
-                    authStatus: `auth ${authRes.status}`,
-                    restStatus: `rest ${restRes.status}`,
+                    authStatus: `auth ${authRes.status}${authRes.status === 401 ? " (key required)" : ""}`,
+                    restStatus: `rest ${restRes.status}${restRes.status === 401 ? " (key required)" : ""}`,
                   });
                 } catch (e) {
                   setCheckResult({ error: e instanceof Error ? e.message : "Connectivity check failed" });
