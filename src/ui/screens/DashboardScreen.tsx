@@ -228,6 +228,9 @@ export default function DashboardScreen() {
     }
     if (!single) return null as unknown as T;
     const data = await res.json();
+    if (Array.isArray(data)) {
+      return (data[0] ?? null) as T;
+    }
     return data as T;
   }, []);
 
@@ -463,10 +466,17 @@ export default function DashboardScreen() {
         throw insertResult.error;
       }
 
+      const createdCampaign = Array.isArray(insertResult.data)
+        ? insertResult.data[0]
+        : insertResult.data;
+      if (!createdCampaign?.id) {
+        throw new Error("Campaign insert returned no id");
+      }
+
       try {
         await withTimeout(
           supabase.from("campaign_members").insert({
-            campaign_id: insertResult.data.id,
+            campaign_id: createdCampaign.id,
             user_id: activeUser.id,
             is_dm: true,
           }),
@@ -476,7 +486,7 @@ export default function DashboardScreen() {
       } catch (err) {
         if (!activeAccessToken) throw err;
         await restInsert("campaign_members", {
-          campaign_id: insertResult.data.id,
+          campaign_id: createdCampaign.id,
           user_id: activeUser.id,
           is_dm: true,
         }, activeAccessToken, false);
@@ -484,15 +494,15 @@ export default function DashboardScreen() {
 
       try {
         await withTimeout(
-          supabase.from("combat_state").insert({ campaign_id: insertResult.data.id }),
+          supabase.from("combat_state").insert({ campaign_id: createdCampaign.id }),
           8000,
           "Create combat_state"
         );
       } catch (err) {
         if (!activeAccessToken) throw err;
-        await restInsert("combat_state", { campaign_id: insertResult.data.id }, activeAccessToken, false);
+        await restInsert("combat_state", { campaign_id: createdCampaign.id }, activeAccessToken, false);
       }
-      createdCampaignId = insertResult.data.id;
+      createdCampaignId = createdCampaign.id;
 
       const generatedWorld = await generateInitialWorld({
         title: trimmedName,
@@ -527,14 +537,14 @@ export default function DashboardScreen() {
 
       const contentToStore = [
         ...factions.map(f => ({
-          campaign_id: insertResult.data.id,
+          campaign_id: createdCampaign.id,
           content_type: "faction",
           content_id: f.id,
           content: JSON.parse(JSON.stringify(f)) as Json,
           generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         })),
         ...npcs.map((npc, i) => ({
-          campaign_id: insertResult.data.id,
+          campaign_id: createdCampaign.id,
           content_type: "npc",
           content_id: `npc_initial_${i}`,
           content: JSON.parse(JSON.stringify(npc)) as Json,
@@ -542,7 +552,7 @@ export default function DashboardScreen() {
         })),
         ...(initialQuest
           ? [{
-            campaign_id: insertResult.data.id,
+            campaign_id: createdCampaign.id,
             content_type: "quest",
             content_id: "initial_quest",
             content: JSON.parse(JSON.stringify(initialQuest)) as Json,
@@ -550,14 +560,14 @@ export default function DashboardScreen() {
           }]
           : []),
         ...normalizedLocations.map((location) => ({
-          campaign_id: insertResult.data.id,
+          campaign_id: createdCampaign.id,
           content_type: "location",
           content_id: location.id,
           content: JSON.parse(JSON.stringify(location)) as Json,
           generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         })),
         ...worldHooks.map((hook, index) => ({
-          campaign_id: insertResult.data.id,
+          campaign_id: createdCampaign.id,
           content_type: "world_hooks",
           content_id: `world_hook_${index}`,
           content: JSON.parse(JSON.stringify([hook])) as Json,
@@ -565,7 +575,7 @@ export default function DashboardScreen() {
         })),
       ];
 
-      await persistGeneratedContent(insertResult.data.id, contentToStore);
+      await persistGeneratedContent(createdCampaign.id, contentToStore);
 
       if (resolvedStartingId) {
         const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
@@ -573,14 +583,14 @@ export default function DashboardScreen() {
           const sceneResult = await supabase
             .from("campaigns")
             .update({ current_scene: sceneName })
-            .eq("id", insertResult.data.id);
+            .eq("id", createdCampaign.id);
           if (sceneResult.error) throw sceneResult.error;
         }
       }
 
       toast({
         title: "Campaign created",
-        description: `${insertResult.data.name} is ready.`,
+        description: `${createdCampaign.name} is ready.`,
       });
 
       if (isMountedRef.current) {
@@ -589,10 +599,10 @@ export default function DashboardScreen() {
         setNameTouched(false);
         setDescriptionTouched(false);
         setSubmitAttempted(false);
-        setCampaigns(prev => [insertResult.data as Campaign, ...prev]);
+        setCampaigns(prev => [createdCampaign as Campaign, ...prev]);
       }
       fetchCampaigns();
-      navigate(`/game/${insertResult.data.id}/create-character`);
+      navigate(`/game/${createdCampaign.id}/create-character`);
     } catch (err) {
       if (createdCampaignId) {
         await supabase.from("campaigns").delete().eq("id", createdCampaignId);
