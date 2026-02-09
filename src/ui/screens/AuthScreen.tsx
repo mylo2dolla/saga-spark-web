@@ -93,12 +93,44 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           }
           const access_token = (json as { access_token?: string })?.access_token ?? null;
           const refresh_token = (json as { refresh_token?: string })?.refresh_token ?? null;
+          const expires_in = Number((json as { expires_in?: number })?.expires_in ?? 3600);
+          const expires_at = Number((json as { expires_at?: number })?.expires_at ?? (Math.floor(Date.now() / 1000) + expires_in));
           if (!access_token || !refresh_token) {
             throw new Error("Auth tokens missing from response");
           }
-          const { error: setErr } = await supabase.auth.setSession({ access_token, refresh_token });
-          if (setErr) throw setErr;
-          return { data: { session: { access_token }, user: (json as { user?: unknown })?.user ?? null }, error: null } as const;
+          const sessionPayload = {
+            access_token,
+            refresh_token,
+            token_type: (json as { token_type?: string })?.token_type ?? "bearer",
+            expires_in,
+            expires_at,
+            user: (json as { user?: unknown })?.user ?? null,
+          };
+
+          const setSessionWithTimeout = async () => {
+            const timeoutMs = 2000;
+            const timeoutPromise = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("setSession timed out")), timeoutMs)
+            );
+            const setPromise = supabase.auth.setSession({ access_token, refresh_token });
+            return await Promise.race([setPromise, timeoutPromise]);
+          };
+
+          try {
+            const { error: setErr } = await setSessionWithTimeout();
+            if (setErr) throw setErr;
+          } catch (e) {
+            // Fallback: write session directly to storage if setSession hangs.
+            const projectRef = supabaseUrl.replace("https://", "").split(".")[0] ?? "supabase";
+            const storageKey = `sb-${projectRef}-auth-token`;
+            try {
+              window.localStorage.setItem(storageKey, JSON.stringify(sessionPayload));
+            } catch {
+              // If storage fails, we still proceed; login flow will show error if session is missing.
+            }
+          }
+
+          return { data: { session: { access_token }, user: sessionPayload.user }, error: null } as const;
         }
         : () => supabase.auth.signUp({
           email,
