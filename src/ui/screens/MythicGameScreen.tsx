@@ -10,6 +10,7 @@ import { useMythicCharacter } from "@/hooks/useMythicCharacter";
 import { useMythicDmContext } from "@/hooks/useMythicDmContext";
 import { useMythicDungeonMaster } from "@/hooks/useMythicDungeonMaster";
 import { MythicDMChat } from "@/components/MythicDMChat";
+import { useMythicCombat } from "@/hooks/useMythicCombat";
 
 function prettyJson(value: unknown): string {
   try {
@@ -35,6 +36,7 @@ export default function MythicGameScreen() {
   const { character, skills, isLoading: charLoading, error: charError } = useMythicCharacter(campaignId);
   const dm = useMythicDmContext(campaignId);
   const mythicDm = useMythicDungeonMaster(campaignId);
+  const combat = useMythicCombat();
 
   const [bootstrapped, setBootstrapped] = useState(false);
   const bootstrapOnceRef = useRef(false);
@@ -121,6 +123,21 @@ export default function MythicGameScreen() {
           <Button variant="outline" onClick={() => navigate(`/game/${campaignId}`)}>Legacy Game</Button>
           <Button variant="outline" onClick={() => refetch()}>Refresh</Button>
           <Button variant="outline" onClick={() => dm.refetch()}>Refresh DM</Button>
+          {board.board_type !== "combat" ? (
+            <Button
+              onClick={async () => {
+                const combatId = await combat.startCombat(campaignId);
+                if (combatId) {
+                  // Board switch + action_events are written server-side. Pull fresh state.
+                  await refetch();
+                  await dm.refetch();
+                }
+              }}
+              disabled={combat.isStarting}
+            >
+              {combat.isStarting ? "Starting..." : "Start Combat"}
+            </Button>
+          ) : null}
         </div>
       </div>
 
