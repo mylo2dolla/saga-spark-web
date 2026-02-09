@@ -237,36 +237,6 @@ export default function DashboardScreen() {
     return data as T;
   }, []);
 
-  const restSelectSingle = useCallback(async <T,>(
-    table: string,
-    filter: string,
-    accessToken: string,
-  ) => {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-    if (!supabaseUrl || !supabaseAnonKey) {
-      throw new Error("Supabase env is not configured");
-    }
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${filter}`, {
-      method: "GET",
-      headers: {
-        apikey: supabaseAnonKey,
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(tid);
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`REST select ${table} failed: ${res.status} ${text}`);
-    }
-    const data = await res.json();
-    if (Array.isArray(data)) return (data[0] ?? null) as T;
-    return data as T;
-  }, []);
 
   const withTimeout = useCallback(async <T,>(
     promise: Promise<T>,
@@ -464,67 +434,21 @@ export default function DashboardScreen() {
 
     let createdCampaignId: string | null = null;
     try {
-      const inviteCodeValue = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const insertPayload = {
-        name: trimmedName,
-        description: trimmedDescription,
-        owner_id: activeUser.id,
-        invite_code: inviteCodeValue,
-        is_active: true,
-      };
-      let insertResult;
-      try {
-        insertResult = await withTimeout(
-          supabase
-            .from("campaigns")
-            .insert(insertPayload)
-            .select("id, name, description, invite_code, owner_id, is_active, updated_at")
-            .single(),
-          8000,
-          "Create campaign"
-        );
-      } catch (err) {
-        if (!activeAccessToken) throw err;
-        const data = await restInsert("campaigns", insertPayload, activeAccessToken, true);
-        insertResult = { data, error: null };
+      const edgeResult = await callEdgeFunction<{ ok: boolean; campaign: Campaign }>(
+        "mythic-create-campaign",
+        {
+          body: { name: trimmedName, description: trimmedDescription },
+          requireAuth: true,
+        }
+      );
+      if (edgeResult.error || !edgeResult.data?.ok || !edgeResult.data?.campaign) {
+        throw edgeResult.error ?? new Error(edgeResult.data?.error ?? "Failed to create campaign");
       }
 
-      if (insertResult.error) {
-        console.error("[createCampaign] supabase error", {
-          message: insertResult.error.message,
-          code: insertResult.error.code,
-          details: insertResult.error.details,
-          hint: insertResult.error.hint,
-          status: insertResult.error.status,
-        });
-        throw insertResult.error;
-      }
-
-      const createdCampaign = Array.isArray(insertResult.data)
-        ? insertResult.data[0]
-        : insertResult.data;
+      const createdCampaign = edgeResult.data.campaign;
       if (!createdCampaign?.id) {
         throw new Error("Campaign insert returned no id");
       }
-
-      if (!activeAccessToken) {
-        throw new Error("Missing access token for REST follow-up inserts");
-      }
-
-      await restInsert("campaign_members", {
-        campaign_id: createdCampaign.id,
-        user_id: activeUser.id,
-        is_dm: true,
-      }, activeAccessToken, false);
-
-      await restInsert("combat_state", { campaign_id: createdCampaign.id }, activeAccessToken, false);
-
-      // Read back the newly created campaign row to avoid array/empty response edge-cases.
-      const freshCampaign = await restSelectSingle<Campaign>(
-        "campaigns",
-        `id=eq.${createdCampaign.id}`,
-        activeAccessToken
-      );
       createdCampaignId = createdCampaign.id;
 
       const generatedWorld = await generateInitialWorld({
@@ -603,32 +527,20 @@ export default function DashboardScreen() {
       if (resolvedStartingId) {
         const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
         if (sceneName) {
-          const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-          const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-          const controller = new AbortController();
-          const tid = setTimeout(() => controller.abort(), 8000);
-          const res = await fetch(`${supabaseUrl}/rest/v1/campaigns?id=eq.${createdCampaign.id}`, {
-            method: "PATCH",
-            headers: {
-              apikey: supabaseAnonKey,
-              Authorization: `Bearer ${activeAccessToken}`,
-              "Content-Type": "application/json",
-              Prefer: "return=minimal",
-            },
-            body: JSON.stringify({ current_scene: sceneName }),
-            signal: controller.signal,
-          });
-          clearTimeout(tid);
-          if (!res.ok) {
-            const text = await res.text();
-            throw new Error(`REST update campaigns failed: ${res.status} ${text}`);
+          try {
+            await supabase
+              .from("campaigns")
+              .update({ current_scene: sceneName })
+              .eq("id", createdCampaign.id);
+          } catch {
+            // Non-blocking: scene update can be patched later.
           }
         }
       }
 
       toast({
         title: "Campaign created",
-        description: `${(freshCampaign?.name ?? createdCampaign.name)} is ready.`,
+        description: `${createdCampaign.name} is ready.`,
       });
 
       if (isMountedRef.current) {
@@ -637,10 +549,10 @@ export default function DashboardScreen() {
         setNameTouched(false);
         setDescriptionTouched(false);
         setSubmitAttempted(false);
-        setCampaigns(prev => [((freshCampaign ?? createdCampaign) as Campaign), ...prev]);
+        setCampaigns(prev => [createdCampaign as Campaign, ...prev]);
       }
       fetchCampaigns();
-      navigate(`/game/${(freshCampaign?.id ?? createdCampaign.id)}/create-character`);
+      navigate(`/game/${createdCampaign.id}/create-character`);
     } catch (err) {
       if (createdCampaignId) {
         await supabase.from("campaigns").delete().eq("id", createdCampaignId);
