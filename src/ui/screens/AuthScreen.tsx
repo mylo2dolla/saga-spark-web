@@ -20,7 +20,9 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingSince, setPendingSince] = useState<number | null>(null);
   const submitLockRef = useRef(false);
+  const submitAttemptRef = useRef(0);
   const [didCopyError, setDidCopyError] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<{
@@ -56,6 +58,9 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     }
     submitLockRef.current = true;
     setIsSubmitting(true);
+    setPendingSince(Date.now());
+    submitAttemptRef.current += 1;
+    const attemptId = submitAttemptRef.current;
     setLastError(null);
     setAuthDebug(null);
     console.info("[auth] log", { step: "login_submit" });
@@ -73,7 +78,16 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           },
         });
 
-      const result = await action();
+      const timeoutMs = 12000;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Auth request timed out")), timeoutMs);
+      });
+
+      const result = await Promise.race([action(), timeoutPromise]);
+      if (attemptId !== submitAttemptRef.current) {
+        console.info("[auth] log", { step: "login_result_ignored", attemptId });
+        return;
+      }
       console.info("[auth] log", { step: "login_signin_end" });
       if (result.error) throw result.error;
       const session = result.data?.session ?? null;
@@ -133,10 +147,13 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         },
       });
     } finally {
-      setIsSubmitting(false);
-      submitLockRef.current = false;
-      (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = false;
-      console.info("[auth] log", { step: "login_submit_unlock" });
+      if (attemptId === submitAttemptRef.current) {
+        setIsSubmitting(false);
+        submitLockRef.current = false;
+        setPendingSince(null);
+        (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = false;
+        console.info("[auth] log", { step: "login_submit_unlock" });
+      }
     }
   };
 
@@ -184,6 +201,24 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         <Button className="w-full" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Working..." : mode === "login" ? "Login" : "Sign up"}
         </Button>
+        {isSubmitting && pendingSince ? (
+          <div className="flex items-center justify-between rounded-lg border border-border bg-background/30 p-3 text-xs text-muted-foreground">
+            <div>Auth request pending for {Math.max(1, Math.floor((Date.now() - pendingSince) / 1000))}s</div>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                submitAttemptRef.current += 1;
+                setIsSubmitting(false);
+                submitLockRef.current = false;
+                setPendingSince(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        ) : null}
         {lastError ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
             <div className="flex items-start justify-between gap-3">
