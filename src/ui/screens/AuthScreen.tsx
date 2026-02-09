@@ -29,6 +29,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     authStatus?: string;
     restStatus?: string;
     error?: string;
+    authDetail?: string;
   } | null>(null);
   const [authDebug, setAuthDebug] = useState<{
     message?: string;
@@ -38,6 +39,8 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   } | null>(null);
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+  const [authTestResult, setAuthTestResult] = useState<string | null>(null);
+  const [isAuthTesting, setIsAuthTesting] = useState(false);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -292,6 +295,42 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
             >
               {isChecking ? "Checking..." : "Run Check"}
             </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={isAuthTesting || !supabaseUrl || !supabaseAnonKey || !email.trim() || !password.trim()}
+              onClick={async () => {
+                if (!supabaseUrl || !supabaseAnonKey) return;
+                setIsAuthTesting(true);
+                setAuthTestResult(null);
+                try {
+                  const timeout = (ms: number) =>
+                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out")), ms));
+                  const res = await Promise.race([
+                    fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+                      method: "POST",
+                      headers: {
+                        apikey: supabaseAnonKey,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({ email, password }),
+                    }),
+                    timeout(8000),
+                  ]);
+                  const text = await res.text();
+                  const snippet = text.length > 200 ? `${text.slice(0, 200)}...` : text;
+                  setAuthTestResult(`status ${res.status} ${res.statusText} :: ${snippet || "(empty body)"}`);
+                  setCheckResult((prev) => ({ ...(prev ?? {}), authDetail: `token ${res.status}` }));
+                } catch (e) {
+                  setAuthTestResult(e instanceof Error ? e.message : "Auth test failed");
+                } finally {
+                  setIsAuthTesting(false);
+                }
+              }}
+            >
+              {isAuthTesting ? "Testing..." : "Auth Test"}
+            </Button>
             {checkResult?.error ? (
               <span className="text-destructive">{checkResult.error}</span>
             ) : checkResult ? (
@@ -300,6 +339,11 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
               </span>
             ) : null}
           </div>
+          {authTestResult ? (
+            <div className="mt-2 rounded border border-border bg-background/40 p-2 text-[11px] text-muted-foreground">
+              Auth test: {authTestResult}
+            </div>
+          ) : null}
           <div className="mt-2 text-[11px] text-muted-foreground">
             If this fails, it’s usually DNS/router blocking `supabase.co` or a captive network. This check tells us whether the router is the problem.
           </div>
