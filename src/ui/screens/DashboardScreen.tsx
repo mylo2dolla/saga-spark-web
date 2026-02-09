@@ -197,6 +197,40 @@ export default function DashboardScreen() {
     }
   }, [activeAccessToken]);
 
+  const restInsert = useCallback(async <T,>(
+    table: string,
+    payload: T,
+    accessToken: string,
+    single = true,
+  ) => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error("Supabase env is not configured");
+    }
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${supabaseUrl}/rest/v1/${table}`, {
+      method: "POST",
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Prefer: single ? "return=representation" : "return=minimal",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`REST insert ${table} failed: ${res.status} ${text}`);
+    }
+    if (!single) return null as unknown as T;
+    const data = await res.json();
+    return data as T;
+  }, []);
+
   const withTimeout = useCallback(async <T,>(
     promise: Promise<T>,
     ms: number,
@@ -394,17 +428,29 @@ export default function DashboardScreen() {
     let createdCampaignId: string | null = null;
     try {
       const inviteCodeValue = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const insertResult = await supabase
-        .from("campaigns")
-        .insert({
-          name: trimmedName,
-          description: trimmedDescription,
-          owner_id: activeUser.id,
-          invite_code: inviteCodeValue,
-          is_active: true,
-        })
-        .select("id, name, description, invite_code, owner_id, is_active, updated_at")
-        .single();
+      const insertPayload = {
+        name: trimmedName,
+        description: trimmedDescription,
+        owner_id: activeUser.id,
+        invite_code: inviteCodeValue,
+        is_active: true,
+      };
+      let insertResult;
+      try {
+        insertResult = await withTimeout(
+          supabase
+            .from("campaigns")
+            .insert(insertPayload)
+            .select("id, name, description, invite_code, owner_id, is_active, updated_at")
+            .single(),
+          8000,
+          "Create campaign"
+        );
+      } catch (err) {
+        if (!activeAccessToken) throw err;
+        const data = await restInsert("campaigns", insertPayload, activeAccessToken, true);
+        insertResult = { data, error: null };
+      }
 
       if (insertResult.error) {
         console.error("[createCampaign] supabase error", {
@@ -417,13 +463,35 @@ export default function DashboardScreen() {
         throw insertResult.error;
       }
 
-      await supabase.from("campaign_members").insert({
-        campaign_id: insertResult.data.id,
-        user_id: activeUser.id,
-        is_dm: true,
-      });
+      try {
+        await withTimeout(
+          supabase.from("campaign_members").insert({
+            campaign_id: insertResult.data.id,
+            user_id: activeUser.id,
+            is_dm: true,
+          }),
+          8000,
+          "Create campaign member"
+        );
+      } catch (err) {
+        if (!activeAccessToken) throw err;
+        await restInsert("campaign_members", {
+          campaign_id: insertResult.data.id,
+          user_id: activeUser.id,
+          is_dm: true,
+        }, activeAccessToken, false);
+      }
 
-      await supabase.from("combat_state").insert({ campaign_id: insertResult.data.id });
+      try {
+        await withTimeout(
+          supabase.from("combat_state").insert({ campaign_id: insertResult.data.id }),
+          8000,
+          "Create combat_state"
+        );
+      } catch (err) {
+        if (!activeAccessToken) throw err;
+        await restInsert("combat_state", { campaign_id: insertResult.data.id }, activeAccessToken, false);
+      }
       createdCampaignId = insertResult.data.id;
 
       const generatedWorld = await generateInitialWorld({
