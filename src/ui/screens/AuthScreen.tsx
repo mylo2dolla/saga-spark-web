@@ -72,7 +72,34 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = true;
       console.info("[auth] log", { step: "login_signin_call" });
       const action = mode === "login"
-        ? () => supabase.auth.signInWithPassword({ email, password })
+        ? async () => {
+          if (!supabaseUrl || !supabaseAnonKey) {
+            throw new Error("Supabase env is not configured");
+          }
+          const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+            method: "POST",
+            headers: {
+              apikey: supabaseAnonKey,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ email, password }),
+          });
+          const json = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const msg = (json as { error_description?: string; error?: string })?.error_description
+              ?? (json as { error?: string })?.error
+              ?? "Login failed";
+            throw new Error(msg);
+          }
+          const access_token = (json as { access_token?: string })?.access_token ?? null;
+          const refresh_token = (json as { refresh_token?: string })?.refresh_token ?? null;
+          if (!access_token || !refresh_token) {
+            throw new Error("Auth tokens missing from response");
+          }
+          const { error: setErr } = await supabase.auth.setSession({ access_token, refresh_token });
+          if (setErr) throw setErr;
+          return { data: { session: { access_token }, user: (json as { user?: unknown })?.user ?? null }, error: null } as const;
+        }
         : () => supabase.auth.signUp({
           email,
           password,
