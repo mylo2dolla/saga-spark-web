@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { aiChatCompletions } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -212,7 +212,6 @@ serve(async (req) => {
     "AI_GATEWAY_API_KEY",
     "GROQ_API_KEY",
     "GROQ_BASE_URL",
-    "GROQ_MODEL",
   ];
   const envStatus = expectedEnvKeys.reduce<Record<string, "set" | "missing">>((acc, key) => {
     acc[key] = Deno.env.get(key) ? "set" : "missing";
@@ -314,12 +313,9 @@ serve(async (req) => {
       campaignTitle: campaignSeed.title,
     });
 
-    const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
     let data;
     try {
-      console.log("Groq model:", GROQ_MODEL);
-      data = await groqChatCompletions({
-        model: GROQ_MODEL,
+      data = await aiChatCompletions({
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },

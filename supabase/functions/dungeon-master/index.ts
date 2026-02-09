@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { groqChatCompletionsStream } from "../_shared/groq.ts";
+import { aiChatCompletionsStream } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -227,10 +227,7 @@ Use these EXACT values in your narration. Do not invent or alter any numbers.`;
       }
     }
 
-    const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
-    console.log("Groq model:", GROQ_MODEL);
-    const response = await groqChatCompletionsStream({
-      model: GROQ_MODEL,
+    const response = await aiChatCompletionsStream({
       messages: [
         { role: "system", content: systemPrompt },
         ...messages,
