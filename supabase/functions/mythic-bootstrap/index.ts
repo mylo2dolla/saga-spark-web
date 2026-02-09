@@ -94,12 +94,13 @@ serve(async (req) => {
     }
 
     // Ensure DM state rows exist.
-    await svc.from("mythic.dm_campaign_state").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
-    await svc.from("mythic.dm_world_tension").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
+    await svc.schema("mythic").from("dm_campaign_state").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
+    await svc.schema("mythic").from("dm_world_tension").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
 
     // Ensure there is an active board.
     const { data: activeBoard, error: boardError } = await svc
-      .from("mythic.boards")
+      .schema("mythic")
+      .from("boards")
       .select("id, board_type, status")
       .eq("campaign_id", campaignId)
       .eq("status", "active")
@@ -125,7 +126,7 @@ serve(async (req) => {
         consequence_flags: {},
       };
 
-      const { error: insertBoardError } = await svc.from("mythic.boards").insert({
+      const { error: insertBoardError } = await svc.schema("mythic").from("boards").insert({
         campaign_id: campaignId,
         board_type: "town",
         status: "active",
@@ -135,7 +136,7 @@ serve(async (req) => {
 
       if (insertBoardError) throw insertBoardError;
 
-      await svc.from("mythic.factions").upsert(
+      await svc.schema("mythic").from("factions").upsert(
         {
           campaign_id: campaignId,
           name: "Town Watch",

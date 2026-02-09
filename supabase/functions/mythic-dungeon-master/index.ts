@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { groqChatCompletionsStream } from "../_shared/groq.ts";
+import { aiChatCompletionsStream } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -181,10 +181,7 @@ RULES YOU MUST OBEY
 ${jsonOnlyContract()}
 `;
 
-    const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
-
-    const response = await groqChatCompletionsStream({
-      model: GROQ_MODEL,
+    const response = await aiChatCompletionsStream({
       messages: [
         { role: "system", content: systemPrompt },
         ...messages,

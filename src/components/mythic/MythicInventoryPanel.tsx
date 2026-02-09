@@ -30,7 +30,8 @@ export function MythicInventoryPanel(props: {
         const equippedSameSlot = equipment.filter((e) => e.item?.slot === itemSlot);
         if (equippedSameSlot.length > 0) {
           const { error: uneqErr } = await supabase
-            .from("mythic.inventory")
+            .schema("mythic")
+            .from("inventory")
             .update({ container: "backpack", equip_slot: null, equipped_at: null })
             .in("id", equippedSameSlot.map((e) => e.id));
           if (uneqErr) throw uneqErr;
@@ -38,7 +39,8 @@ export function MythicInventoryPanel(props: {
       }
 
       const { error: eqErr } = await supabase
-        .from("mythic.inventory")
+        .schema("mythic")
+        .from("inventory")
         .update({ container: "equipment", equip_slot: itemSlot, equipped_at: new Date().toISOString() })
         .eq("id", row.id);
       if (eqErr) throw eqErr;
@@ -55,7 +57,8 @@ export function MythicInventoryPanel(props: {
     setError(null);
     try {
       const { error: uneqErr } = await supabase
-        .from("mythic.inventory")
+        .schema("mythic")
+        .from("inventory")
         .update({ container: "backpack", equip_slot: null, equipped_at: null })
         .eq("id", row.id);
       if (uneqErr) throw uneqErr;
@@ -143,4 +146,3 @@ export function MythicInventoryPanel(props: {
     </div>
   );
 }
-

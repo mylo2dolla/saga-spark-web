@@ -237,6 +237,35 @@ export default function DashboardScreen() {
     return data as T;
   }, []);
 
+  const restSelect = useCallback(async <T,>(
+    table: string,
+    query: string,
+    accessToken: string | null,
+    label: string,
+  ): Promise<T[]> => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error("Supabase env is not configured");
+    }
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${query}`, {
+      method: "GET",
+      headers: {
+        apikey: supabaseAnonKey,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${label} REST failed: ${res.status} ${text}`);
+    }
+    return (await res.json()) as T[];
+  }, []);
+
 
   const withTimeout = useCallback(async <T,>(
     promise: Promise<T>,
@@ -283,10 +312,35 @@ export default function DashboardScreen() {
     }
 
     try {
-      const { data: ownedData, error: ownedError } = await supabase
-        .from("campaigns")
-        .select("*")
-        .eq("owner_id", loadUserId);
+      let ownedData: Campaign[] = [];
+      let ownedError: Error | null = null;
+      try {
+        const result = await withTimeout(
+          supabase
+            .from("campaigns")
+            .select("*")
+            .eq("owner_id", loadUserId),
+          8000,
+          "Owned campaigns fetch"
+        );
+        ownedData = (result.data ?? []) as Campaign[];
+        if (result.error) throw result.error;
+      } catch (err) {
+        ownedError = err as Error;
+        try {
+          const { data } = await supabase.auth.getSession();
+          const accessToken = data.session?.access_token ?? null;
+          ownedData = await restSelect<Campaign>(
+            "campaigns",
+            `select=*&owner_id=eq.${loadUserId}`,
+            accessToken,
+            "Owned campaigns"
+          );
+          ownedError = null;
+        } catch (fallbackErr) {
+          ownedError = fallbackErr as Error;
+        }
+      }
 
       if (fetchRequestIdRef.current !== requestId) return;
       if (ownedError) {
@@ -310,26 +364,57 @@ export default function DashboardScreen() {
         if (memberError) throw memberError;
         memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
       } catch (memberErr) {
-        const message = formatError(memberErr, "Failed to load campaign membership");
-        if (isMountedRef.current) {
-          setMembersError(message);
+        try {
+          const { data } = await supabase.auth.getSession();
+          const accessToken = data.session?.access_token ?? null;
+          const rows = await restSelect<{ campaign_id: string }>(
+            "campaign_members",
+            `select=campaign_id&user_id=eq.${loadUserId}`,
+            accessToken,
+            "Campaign membership"
+          );
+          memberCampaignIds = rows.map(r => r.campaign_id).filter(Boolean);
+        } catch (fallbackErr) {
+          const message = formatError(fallbackErr, "Failed to load campaign membership");
+          if (isMountedRef.current) {
+            setMembersError(message);
+          }
         }
       }
       if (fetchRequestIdRef.current !== requestId) return;
 
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
-        const { data, error: memberCampaignsError } = await withTimeout(
-          supabase
-            .from("campaigns")
-            .select("*")
-            .in("id", memberCampaignIds),
-          8000,
-          "Member campaigns fetch"
-        );
+        try {
+          const { data, error: memberCampaignsError } = await withTimeout(
+            supabase
+              .from("campaigns")
+              .select("*")
+              .in("id", memberCampaignIds),
+            8000,
+            "Member campaigns fetch"
+          );
 
-        if (memberCampaignsError) throw memberCampaignsError;
-        memberCampaigns = data ?? [];
+          if (memberCampaignsError) throw memberCampaignsError;
+          memberCampaigns = data ?? [];
+        } catch (memberCampaignErr) {
+          try {
+            const { data } = await supabase.auth.getSession();
+            const accessToken = data.session?.access_token ?? null;
+            const ids = memberCampaignIds.map(id => `"${id}"`).join(",");
+            memberCampaigns = await restSelect<Campaign>(
+              "campaigns",
+              `select=*&id=in.(${ids})`,
+              accessToken,
+              "Member campaigns"
+            );
+          } catch (fallbackErr) {
+            const message = formatError(fallbackErr, "Failed to load member campaigns");
+            if (isMountedRef.current) {
+              setMembersError(message);
+            }
+          }
+        }
       }
 
       const combined = new Map<string, Campaign>();
@@ -434,12 +519,16 @@ export default function DashboardScreen() {
 
     let createdCampaignId: string | null = null;
     try {
-      const edgeResult = await callEdgeFunction<{ ok: boolean; campaign: Campaign }>(
-        "mythic-create-campaign",
-        {
-          body: { name: trimmedName, description: trimmedDescription },
-          requireAuth: true,
-        }
+      const edgeResult = await withTimeout(
+        callEdgeFunction<{ ok: boolean; campaign: Campaign }>(
+          "mythic-create-campaign",
+          {
+            body: { name: trimmedName, description: trimmedDescription },
+            requireAuth: true,
+          }
+        ),
+        12000,
+        "Campaign creation"
       );
       if (edgeResult.error || !edgeResult.data?.ok || !edgeResult.data?.campaign) {
         throw edgeResult.error ?? new Error(edgeResult.data?.error ?? "Failed to create campaign");
@@ -545,10 +634,14 @@ export default function DashboardScreen() {
         const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
         if (sceneName) {
           try {
-            await supabase
-              .from("campaigns")
-              .update({ current_scene: sceneName })
-              .eq("id", createdCampaign.id);
+            await withTimeout(
+              supabase
+                .from("campaigns")
+                .update({ current_scene: sceneName })
+                .eq("id", createdCampaign.id),
+              6000,
+              "Scene update"
+            );
           } catch {
             // Non-blocking: scene update can be patched later.
           }
