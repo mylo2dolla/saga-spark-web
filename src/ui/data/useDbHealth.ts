@@ -5,6 +5,12 @@ import { formatError } from "@/ui/data/async";
 export function useDbHealth(enabled = true) {
   const [status, setStatus] = useState<"ok" | "error" | "loading">("loading");
   const [lastError, setLastError] = useState<string | null>(null);
+  const [lastProbe, setLastProbe] = useState<{
+    status: number | null;
+    timedOut: boolean;
+    elapsedMs: number;
+    at: number;
+  } | null>(null);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -23,6 +29,7 @@ export function useDbHealth(enabled = true) {
       setLastError(null);
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       let didTimeout = false;
+      const startedAt = Date.now();
       try {
         const timeoutPromise = new Promise<never>((_, reject) => {
           timeoutId = setTimeout(() => {
@@ -34,15 +41,22 @@ export function useDbHealth(enabled = true) {
           .from("campaigns")
           .select("id", { head: true, count: "exact" })
           .limit(1);
-        const { error } = await Promise.race([probePromise, timeoutPromise]);
+        const { error, status } = await Promise.race([probePromise, timeoutPromise]);
         if (error) throw error;
         if (isMounted && requestIdRef.current === requestId && !didTimeout) {
           setStatus("ok");
+          setLastProbe({ status: status ?? null, timedOut: false, elapsedMs: Date.now() - startedAt, at: Date.now() });
         }
       } catch (error) {
         if (isMounted && requestIdRef.current === requestId) {
           setStatus("error");
           setLastError(formatError(error));
+          setLastProbe({
+            status: null,
+            timedOut: didTimeout,
+            elapsedMs: Date.now() - startedAt,
+            at: Date.now(),
+          });
         }
       } finally {
         if (timeoutId) clearTimeout(timeoutId);
@@ -58,5 +72,5 @@ export function useDbHealth(enabled = true) {
     };
   }, [enabled]);
 
-  return { status, lastError };
+  return { status, lastError, lastProbe };
 }
