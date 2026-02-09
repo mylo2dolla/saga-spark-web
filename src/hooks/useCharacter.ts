@@ -82,8 +82,17 @@ export function useCharacter(campaignId: string | undefined) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
+  const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
   const fetchCharacter = useCallback(async () => {
+    if (E2E_BYPASS_AUTH) {
+      if (isMountedRef.current) {
+        setIsLoading(false);
+        setError(null);
+        setCharacter(null);
+      }
+      return;
+    }
     if (!campaignId) {
       if (isMountedRef.current) {
         setIsLoading(false);
@@ -164,7 +173,7 @@ export function useCharacter(campaignId: string | undefined) {
         setIsLoading(false);
       }
     }
-  }, [campaignId]);
+  }, [E2E_BYPASS_AUTH, campaignId]);
 
   const updateCharacter = useCallback(async (updates: Partial<Character>) => {
     if (!character) throw new Error("No character loaded");

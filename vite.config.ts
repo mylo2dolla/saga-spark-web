@@ -11,6 +11,19 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            if (id.includes("react")) return "react";
+            if (id.includes("@radix-ui")) return "radix";
+            if (id.includes("supabase")) return "supabase";
+            if (id.includes("recharts")) return "charts";
+            return "vendor";
+          }
+        },
+      },
+    },
   },
   plugins: [react()],
   resolve: {

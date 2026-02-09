@@ -5,11 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { formatError, isAbortError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
+import { useDbHealth } from "@/ui/data/useDbHealth";
 import { recordCampaignsRead } from "@/ui/data/networkHealth";
 import { callEdgeFunction } from "@/lib/edge";
 import type { Json } from "@/integrations/supabase/types";
@@ -26,20 +26,20 @@ interface Campaign {
 }
 
 export default function DashboardScreen() {
-  const { user, session, isLoading: authLoading } = useAuth();
+  const { user, session } = useAuth();
   const { generateInitialWorld, isGenerating } = useWorldGenerator();
   const { toast } = useToast();
   const navigate = useNavigate();
   const { setLastError } = useDiagnostics();
 
-  const [authSession, setAuthSession] = useState<Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"] | null>(null);
-  const [authUser, setAuthUser] = useState<Awaited<ReturnType<typeof supabase.auth.getUser>>["data"]["user"] | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [membersByCampaign, setMembersByCampaign] = useState<Record<string, number>>({});
+  const [membersError, setMembersError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [newCampaignName, setNewCampaignName] = useState("");
@@ -53,14 +53,18 @@ export default function DashboardScreen() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const fetchInFlightRef = useRef(false);
+  const fetchRequestIdRef = useRef(0);
+  const lastLoadedUserIdRef = useRef<string | null>(null);
   const creatingRef = useRef(false);
   const isMountedRef = useRef(true);
 
-  const activeSession = session ?? authSession;
-  const activeUser = user ?? authUser;
-  const activeUserId = session?.user?.id ?? user?.id ?? authUser?.id ?? null;
-  const isAuthReady = !authLoading || Boolean(activeSession);
+  const activeSession = session ?? null;
+  const activeUser = user ?? null;
+  const activeUserId = session?.user?.id ?? user?.id ?? null;
   const activeAccessToken = activeSession?.access_token ?? null;
+  const loadUserId = session?.user?.id ?? null;
+  const dbEnabled = Boolean(activeUserId);
+  const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled);
 
   const toKebab = (value: string): string =>
     value
@@ -192,6 +196,24 @@ export default function DashboardScreen() {
     }
   }, [activeAccessToken]);
 
+  const withTimeout = useCallback(async <T,>(
+    promise: Promise<T>,
+    ms: number,
+    label: string
+  ): Promise<T> => {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`${label} timed out after ${ms}ms`));
+      }, ms);
+    });
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
+  }, []);
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -200,43 +222,69 @@ export default function DashboardScreen() {
   }, []);
 
   const fetchCampaigns = useCallback(async () => {
-    if (!activeUserId) {
+    if (!loadUserId) {
       if (isMountedRef.current) {
         setIsLoading(false);
       }
       return;
     }
     if (fetchInFlightRef.current) return;
+    if (lastLoadedUserIdRef.current === loadUserId) return;
     fetchInFlightRef.current = true;
+    const requestId = fetchRequestIdRef.current + 1;
+    fetchRequestIdRef.current = requestId;
     if (isMountedRef.current) {
       setIsLoading(true);
       setError(null);
       setLastError(null);
+      setMembersError(null);
     }
 
     try {
-      const { data: memberData, error: memberError } = await supabase
-        .from("campaign_members")
-        .select("campaign_id")
-        .eq("user_id", activeUserId);
-
-      if (memberError) throw memberError;
-
-      const memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
-
       const { data: ownedData, error: ownedError } = await supabase
         .from("campaigns")
         .select("*")
-        .eq("owner_id", activeUserId);
+        .eq("owner_id", loadUserId);
 
-      if (ownedError) throw ownedError;
+      if (fetchRequestIdRef.current !== requestId) return;
+      if (ownedError) {
+        const message = formatError(ownedError, "Failed to load owned campaigns");
+        if (isMountedRef.current) {
+          setError(message);
+          setLastError(message);
+        }
+      }
+
+      let memberCampaignIds: string[] = [];
+      try {
+        const { data: memberData, error: memberError } = await withTimeout(
+          supabase
+            .from("campaign_members")
+            .select("campaign_id")
+            .eq("user_id", loadUserId),
+          8000,
+          "Campaign members fetch"
+        );
+        if (memberError) throw memberError;
+        memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
+      } catch (memberErr) {
+        const message = formatError(memberErr, "Failed to load campaign membership");
+        if (isMountedRef.current) {
+          setMembersError(message);
+        }
+      }
+      if (fetchRequestIdRef.current !== requestId) return;
 
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
-        const { data, error: memberCampaignsError } = await supabase
-          .from("campaigns")
-          .select("*")
-          .in("id", memberCampaignIds);
+        const { data, error: memberCampaignsError } = await withTimeout(
+          supabase
+            .from("campaigns")
+            .select("*")
+            .in("id", memberCampaignIds),
+          8000,
+          "Member campaigns fetch"
+        );
 
         if (memberCampaignsError) throw memberCampaignsError;
         memberCampaigns = data ?? [];
@@ -248,8 +296,39 @@ export default function DashboardScreen() {
       });
 
       recordCampaignsRead();
-      if (isMountedRef.current) {
-        setCampaigns(Array.from(combined.values()));
+      const campaignsList = Array.from(combined.values());
+      if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
+        setCampaigns(campaignsList);
+      }
+
+      if (campaignsList.length > 0) {
+        void (async () => {
+          try {
+            const ids = campaignsList.map(campaign => campaign.id);
+            const { data, error: membersFetchError } = await withTimeout(
+              supabase
+                .from("campaign_members")
+                .select("campaign_id")
+                .in("campaign_id", ids),
+              8000,
+              "Campaign members batch fetch"
+            );
+            if (membersFetchError) throw membersFetchError;
+            const grouped: Record<string, number> = {};
+            (data ?? []).forEach(member => {
+              const id = member.campaign_id;
+              grouped[id] = (grouped[id] ?? 0) + 1;
+            });
+            if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
+              setMembersByCampaign(grouped);
+            }
+          } catch (membersErr) {
+            const message = formatError(membersErr, "Failed to load campaign members");
+            if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
+              setMembersError(message);
+            }
+          }
+        })();
       }
     } catch (err) {
       if (isAbortError(err)) {
@@ -257,63 +336,35 @@ export default function DashboardScreen() {
       }
       console.error("Failed to load campaigns", err);
       const message = formatError(err, "Failed to load campaigns");
-      if (isMountedRef.current) {
+      if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
         setError(message);
         setLastError(message);
       }
     } finally {
-      if (isMountedRef.current) {
+      if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
         setIsLoading(false);
       }
-      fetchInFlightRef.current = false;
+      if (fetchRequestIdRef.current === requestId) {
+        fetchInFlightRef.current = false;
+        lastLoadedUserIdRef.current = loadUserId;
+      }
     }
-  }, [activeUserId, setLastError]);
+  }, [loadUserId, setLastError, withTimeout]);
+
+  const handleRetry = useCallback(() => {
+    lastLoadedUserIdRef.current = null;
+    fetchCampaigns();
+  }, [fetchCampaigns]);
 
   useEffect(() => {
-    if (!isAuthReady) return;
-    if (!activeUserId) {
+    if (!loadUserId) {
       setCampaigns([]);
       setIsLoading(false);
       setError(null);
       return;
     }
     fetchCampaigns();
-  }, [activeUserId, fetchCampaigns, isAuthReady]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadSession = async () => {
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) {
-          if (!cancelled) setAuthError(error.message);
-          return;
-        }
-        if (!cancelled) {
-          setAuthSession(data.session);
-          setAuthUser(data.session?.user ?? null);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          const message = formatError(err, "Failed to load session");
-          setAuthError(message);
-        }
-      }
-    };
-
-    loadSession();
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (cancelled) return;
-      setAuthSession(nextSession);
-      setAuthUser(nextSession?.user ?? null);
-    });
-
-    return () => {
-      cancelled = true;
-      subscription.subscription.unsubscribe();
-    };
-  }, []);
+  }, [fetchCampaigns]);
 
   const trimmedName = newCampaignName.trim();
   const trimmedDescription = newCampaignDescription.trim();
@@ -646,7 +697,7 @@ export default function DashboardScreen() {
       return (
         <div className="space-y-2 text-sm">
           <div className="text-destructive">{error}</div>
-          <Button variant="outline" onClick={fetchCampaigns}>Retry</Button>
+          <Button variant="outline" onClick={handleRetry}>Retry</Button>
         </div>
       );
     }
@@ -656,12 +707,22 @@ export default function DashboardScreen() {
 
     return (
       <div className="space-y-3">
+        {membersError ? (
+          <div className="text-xs text-muted-foreground">
+            Members unavailable: <span className="text-destructive">{membersError}</span>
+          </div>
+        ) : null}
         {campaigns.map(campaign => (
           <Card key={campaign.id} className="border border-border">
             <CardContent className="flex items-center justify-between p-4">
               <div>
                 <div className="text-sm font-semibold">{campaign.name}</div>
                 <div className="text-xs text-muted-foreground">Invite: {campaign.invite_code}</div>
+                {membersByCampaign[campaign.id] != null ? (
+                  <div className="text-xs text-muted-foreground">
+                    Members: {membersByCampaign[campaign.id]}
+                  </div>
+                ) : null}
               </div>
               <Button size="sm" onClick={() => navigate(`/game/${campaign.id}`)}>Open</Button>
             </CardContent>
@@ -669,9 +730,9 @@ export default function DashboardScreen() {
         ))}
       </div>
     );
-  }, [campaigns, error, fetchCampaigns, isLoading, navigate]);
+  }, [campaigns, error, handleRetry, isLoading, membersByCampaign, membersError, navigate]);
 
-  const dbStatus = isLoading ? "loading" : error ? "error" : "ok";
+  const dbStatusLabel = dbEnabled ? dbStatus : "paused";
 
   return (
     <div className="space-y-6">
@@ -679,8 +740,11 @@ export default function DashboardScreen() {
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">Your campaigns and access codes.</p>
         <div className="mt-2 text-xs text-muted-foreground">
-          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatus}
+          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
         </div>
+        {dbError ? (
+          <div className="mt-1 text-xs text-destructive">DB Error: {dbError}</div>
+        ) : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">

@@ -183,7 +183,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       return String((error as { message?: string }).message ?? "");
     }
     return "";
-  }, []);
+  }, [normalizeWorldMaps]);
 
   const stringifyError = useCallback((error: unknown) => {
     try {
@@ -301,11 +301,20 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     travel: TravelState | null
   ) => {
     if (!DEV_DEBUG) return;
-    const locations = Array.from(world.locations.values()) as EnhancedLocation[];
+    const rawLocations = world.locations as unknown;
+    const locationsMap =
+      rawLocations instanceof Map
+        ? (rawLocations as Map<string, EnhancedLocation>)
+        : new Map(
+            Array.isArray(rawLocations)
+              ? (rawLocations as Array<[string, EnhancedLocation]>)
+              : Object.entries((rawLocations as Record<string, EnhancedLocation>) ?? {})
+          );
+    const locations = Array.from(locationsMap.values()) as EnhancedLocation[];
     const currentLocationId = travel?.currentLocationId ?? null;
-    const currentLocation = currentLocationId ? world.locations.get(currentLocationId) : undefined;
+    const currentLocation = currentLocationId ? locationsMap.get(currentLocationId) : undefined;
     console.info(label, {
-      locationsSize: world.locations.size,
+      locationsSize: locationsMap.size,
       locationIds: locations.slice(0, 10).map(location => location.id),
       locationPositions: locations.slice(0, 3).map(location => ({
         id: location.id,
@@ -337,6 +346,27 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is string => typeof item === "string");
   }, []);
+
+  const normalizeMap = useCallback(<T,>(value: unknown): Map<string, T> => {
+    if (value instanceof Map) return value as Map<string, T>;
+    if (Array.isArray(value)) return new Map(value as Array<[string, T]>);
+    if (value && typeof value === "object") {
+      return new Map(Object.entries(value as Record<string, T>));
+    }
+    return new Map<string, T>();
+  }, []);
+
+  const normalizeWorldMaps = useCallback((world: UnifiedState["world"]) => {
+    return {
+      ...world,
+      npcs: normalizeMap(world.npcs),
+      quests: normalizeMap(world.quests),
+      items: normalizeMap(world.items),
+      locations: normalizeMap(world.locations),
+      storyFlags: normalizeMap(world.storyFlags),
+      playerProgression: normalizeMap(world.playerProgression),
+    };
+  }, [normalizeMap]);
 
   const normalizeDeltaLocation = useCallback((raw: Record<string, unknown>) => {
     const id = typeof raw.id === "string" ? raw.id.trim() : "";
@@ -491,7 +521,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     travel: TravelState | null,
     worldContentLocationsCount: number
   ): { unified: UnifiedState; travel: TravelState | null } => {
-    let nextWorld = unified.world;
+    let nextWorld = normalizeWorldMaps(unified.world);
     const locations = new Map(nextWorld.locations);
     const locationIds = Array.from(locations.keys());
     const firstLocationId = locationIds[0];
@@ -1198,21 +1228,22 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       
       initializingRef.current = false;
       if (DEV_DEBUG && unifiedState && travelState) {
-        const currentLocation = unifiedState.world.locations.get(travelState.currentLocationId);
+        const normalizedWorld = normalizeWorldMaps(unifiedState.world);
+        const currentLocation = normalizedWorld.locations.get(travelState.currentLocationId);
         console.info("DEV_DEBUG gameSession initialized", {
           source: loadedFromSupabase ? "db" : "fresh",
           loadedFromSupabase,
           preMergeLocationsSize,
-          postMergeLocationsSize: unifiedState.world.locations.size,
-          locationsSize: unifiedState.world.locations.size,
+          postMergeLocationsSize: normalizedWorld.locations.size,
+          locationsSize: normalizedWorld.locations.size,
           currentLocationId: travelState.currentLocationId,
           currentLocationName: currentLocation?.name ?? null,
           connectedToCount: currentLocation?.connectedTo?.length ?? 0,
-          npcsCount: unifiedState.world.npcs.size,
-          questsCount: unifiedState.world.quests.size,
-          itemsCount: unifiedState.world.items.size,
-          locationIds: Array.from(unifiedState.world.locations.keys()).slice(0, 10),
-          locationPositions: Array.from(unifiedState.world.locations.values()).slice(0, 3).map(location => ({
+          npcsCount: normalizedWorld.npcs.size,
+          questsCount: normalizedWorld.quests.size,
+          itemsCount: normalizedWorld.items.size,
+          locationIds: Array.from(normalizedWorld.locations.keys()).slice(0, 10),
+          locationPositions: Array.from(normalizedWorld.locations.values()).slice(0, 3).map(location => ({
             id: location.id,
             x: location.position.x,
             y: location.position.y,
@@ -1240,6 +1271,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     mergeIntoWorldState,
     persistence,
     ensureWorldInvariants,
+    normalizeWorldMaps,
     logSupabaseError,
     logWorldSnapshot,
     computeFingerprint,
@@ -1264,11 +1296,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       toast.error("World state is not ready");
       return null;
     }
+    const normalizedWorld = normalizeWorldMaps(unifiedState.world);
     const normalizedAction = actionText.trim();
     if (!normalizedAction) return null;
 
     const currentLocationId = travelState.currentLocationId;
-    const currentLocation = unifiedState.world.locations.get(currentLocationId);
+    const currentLocation = normalizedWorld.locations.get(currentLocationId);
     const actionHash = computeActionHash(normalizedAction, currentLocationId ?? null);
     const now = Date.now();
     for (const [hash, ts] of recentActionHashesRef.current.entries()) {
@@ -1290,22 +1323,22 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     }
 
     const context: ActionContextPayload = {
-      locations: Array.from(unifiedState.world.locations.values()).map(location => ({
+      locations: Array.from(normalizedWorld.locations.values()).map(location => ({
         id: location.id,
         name: location.name,
         type: location.type,
         connectedTo: Array.from(location.connectedTo ?? []),
       })),
-      npcs: Array.from(unifiedState.world.npcs.values()).map(npc => ({
+      npcs: Array.from(normalizedWorld.npcs.values()).map(npc => ({
         id: npc.id,
         name: npc.name,
       })),
-      quests: Array.from(unifiedState.world.quests.values()).map(quest => ({
+      quests: Array.from(normalizedWorld.quests.values()).map(quest => ({
         id: quest.id,
         title: quest.title,
         status: quest.status,
       })),
-      storyFlags: Array.from(unifiedState.world.storyFlags.values()).map(flag => ({
+      storyFlags: Array.from(normalizedWorld.storyFlags.values()).map(flag => ({
         id: flag.id,
         value: flag.value,
         source: flag.source,
@@ -1438,6 +1471,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     fetchContent,
     fetchWorldEvents,
     getErrorMessage,
+    normalizeWorldMaps,
   ]);
 
   // Update unified state

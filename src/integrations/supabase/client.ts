@@ -4,9 +4,16 @@ import type { Database } from './types';
 import { recordNetworkRequest } from "@/ui/data/networkHealth";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-const SUPABASE_KEY = SUPABASE_PUBLISHABLE_KEY ?? SUPABASE_ANON_KEY;
+const RAW_SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+const RAW_SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SUPABASE_PUBLISHABLE_KEY = RAW_SUPABASE_PUBLISHABLE_KEY?.trim() || undefined;
+const SUPABASE_ANON_KEY = RAW_SUPABASE_ANON_KEY?.trim() || undefined;
+const SUPABASE_KEY = SUPABASE_ANON_KEY ?? SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_KEY_SOURCE = SUPABASE_ANON_KEY
+  ? (import.meta.env.VITE_SUPABASE_ANON_KEY ? "VITE_SUPABASE_ANON_KEY" : "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+  : SUPABASE_PUBLISHABLE_KEY
+    ? (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ? "VITE_SUPABASE_PUBLISHABLE_KEY" : "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
+    : null;
 const DEV_DEBUG = import.meta.env.DEV;
 
 // Import the supabase client like this:
@@ -14,17 +21,38 @@ const DEV_DEBUG = import.meta.env.DEV;
 
 if (DEV_DEBUG) {
   const projectRef = SUPABASE_URL?.replace("https://", "").split(".")[0] ?? null;
+  const keyType = SUPABASE_KEY?.startsWith("eyJ")
+    ? "anon"
+    : SUPABASE_KEY?.startsWith("sb_publishable_")
+      ? "publishable"
+      : "unknown";
+  const keyPrefix = SUPABASE_KEY ? SUPABASE_KEY.slice(0, 8) : null;
+  const keySuffix = SUPABASE_KEY ? SUPABASE_KEY.slice(-6) : null;
   console.info("DEV_DEBUG supabase config", {
     hasUrl: Boolean(SUPABASE_URL),
     hasKey: Boolean(SUPABASE_KEY),
+    keySource: SUPABASE_KEY_SOURCE,
     projectRef,
     url: SUPABASE_URL ?? null,
+    keyType,
+    keyPrefix,
+    keySuffix,
   });
+  if (SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.startsWith("eyJ")) {
+    const anonPrefix = SUPABASE_ANON_KEY.slice(0, 8);
+    const anonSuffix = SUPABASE_ANON_KEY.slice(-6);
+    console.warn("DEV_DEBUG supabase anon key is not a JWT", {
+      keySource: SUPABASE_KEY_SOURCE,
+      keyType: SUPABASE_ANON_KEY.startsWith("sb_publishable_") ? "publishable" : "unknown",
+      keyPrefix: anonPrefix,
+      keySuffix: anonSuffix,
+    });
+  }
 }
 
 if (!SUPABASE_URL || !SUPABASE_KEY) {
   throw new Error(
-    "Missing Supabase configuration. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_ANON_KEY)."
+    "Missing Supabase configuration. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (preferred) or VITE_SUPABASE_PUBLISHABLE_KEY."
   );
 }
 
@@ -45,6 +73,37 @@ const createSafeStorage = () => {
 };
 
 const baseFetch = globalThis.fetch.bind(globalThis);
+
+const withTimeout = (timeoutMs: number) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return { controller, timeoutId };
+};
+
+const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
+  const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (anyFn) return anyFn([a, b]);
+  // Fallback: if init already has a signal, we honor it and still abort on timeout via a manual bridge.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  a.addEventListener("abort", onAbort, { once: true });
+  b.addEventListener("abort", onAbort, { once: true });
+  return controller.signal;
+};
+
+const fetchWithHardTimeout: typeof fetch = async (input, init) => {
+  // Prevent the UI from hanging forever on bad networks/router weirdness.
+  const timeoutMs = 15_000;
+  const { controller, timeoutId } = withTimeout(timeoutMs);
+  const signal = init?.signal ? combineSignals(init.signal, controller.signal) : controller.signal;
+
+  try {
+    return await baseFetch(input, { ...(init ?? {}), signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 const debugFetch: typeof fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input.url;
   const method = init?.method ?? "GET";
@@ -53,7 +112,7 @@ const debugFetch: typeof fetch = async (input, init) => {
   }
 
   try {
-    const response = await baseFetch(input, init);
+    const response = await fetchWithHardTimeout(input, init);
     if (DEV_DEBUG) {
       console.info("DEV_DEBUG supabase fetch response", {
         method,
@@ -79,7 +138,7 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
     autoRefreshToken: true,
   },
   global: {
-    fetch: DEV_DEBUG ? debugFetch : baseFetch,
+    fetch: DEV_DEBUG ? debugFetch : fetchWithHardTimeout,
   },
 });
 
