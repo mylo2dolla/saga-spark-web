@@ -28,6 +28,12 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     restStatus?: string;
     error?: string;
   } | null>(null);
+  const [authDebug, setAuthDebug] = useState<{
+    message?: string;
+    status?: number | null;
+    code?: string | null;
+    name?: string | null;
+  } | null>(null);
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
 
@@ -51,6 +57,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     submitLockRef.current = true;
     setIsSubmitting(true);
     setLastError(null);
+    setAuthDebug(null);
     console.info("[auth] log", { step: "login_submit" });
 
     try {
@@ -84,12 +91,20 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         navigate("/dashboard");
         return;
       }
+      if (result.data?.user) {
+        const note = mode === "signup"
+          ? "Account created. Check your email to confirm and then log in."
+          : "Sign-in succeeded without a session. If email confirmation is required, confirm your email and try again.";
+        setLastError(note);
+        return;
+      }
       throw new Error("No session returned from sign-in");
     } catch (error) {
       if (error instanceof TypeError) {
         const message = error.message || "Failed to fetch";
         const description = import.meta.env.DEV ? `Network/CORS failure — ${message}` : "Network error. Please try again.";
         setLastError(description);
+        setAuthDebug({ message, status: null, code: null, name: "TypeError" });
         console.info("[auth] log", {
           step: "login_result",
           hasSession: false,
@@ -101,6 +116,12 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
 
       const message = formatError(error, "Failed to authenticate");
       setLastError(message);
+      setAuthDebug({
+        message,
+        status: (error as { status?: number })?.status ?? null,
+        code: (error as { code?: string })?.code ?? null,
+        name: (error as { name?: string })?.name ?? null,
+      });
       console.info("[auth] log", {
         step: "login_result",
         hasSession: false,
@@ -169,6 +190,11 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
               <div className="min-w-0">
                 <div className="font-semibold">Auth error</div>
                 <div className="break-words">{lastError}</div>
+                {authDebug ? (
+                  <div className="mt-2 text-xs text-destructive/80">
+                    Debug: {authDebug.name ?? "Error"} | status {authDebug.status ?? "?"} | code {authDebug.code ?? "?"}
+                  </div>
+                ) : null}
                 {lastErrorAt ? (
                   <div className="mt-1 text-xs text-destructive/80">
                     {new Date(lastErrorAt).toLocaleTimeString()}
