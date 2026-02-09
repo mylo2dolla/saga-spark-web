@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useMythicCreator } from "@/hooks/useMythicCreator";
 import { useMythicBoard } from "@/hooks/useMythicBoard";
 import { useMythicCharacter } from "@/hooks/useMythicCharacter";
+import { useMythicDmContext } from "@/hooks/useMythicDmContext";
 
 function prettyJson(value: unknown): string {
   try {
@@ -30,6 +31,7 @@ export default function MythicGameScreen() {
   const { bootstrapCampaign, isBootstrapping } = useMythicCreator();
   const { board, recentTransitions, isLoading: boardLoading, error: boardError, refetch } = useMythicBoard(campaignId);
   const { character, skills, isLoading: charLoading, error: charError } = useMythicCharacter(campaignId);
+  const dm = useMythicDmContext(campaignId);
 
   const [bootstrapped, setBootstrapped] = useState(false);
   const bootstrapOnceRef = useRef(false);
@@ -115,6 +117,7 @@ export default function MythicGameScreen() {
           <Button variant="outline" onClick={() => navigate(`/dashboard`)}>Dashboard</Button>
           <Button variant="outline" onClick={() => navigate(`/game/${campaignId}`)}>Legacy Game</Button>
           <Button variant="outline" onClick={() => refetch()}>Refresh</Button>
+          <Button variant="outline" onClick={() => dm.refetch()}>Refresh DM</Button>
         </div>
       </div>
 
@@ -161,6 +164,20 @@ export default function MythicGameScreen() {
       <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
         <div className="mb-2 text-sm font-semibold">Recent Board Transitions (append-only)</div>
         <pre className="max-h-[280px] overflow-auto text-xs text-muted-foreground">{prettyJson(recentTransitions)}</pre>
+      </div>
+
+      <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-sm font-semibold">DM Context (from mythic.v_*_for_dm + canonical rules/script)</div>
+          <div className="text-xs text-muted-foreground">
+            {dm.isLoading ? "loading..." : dm.error ? "error" : "ok"}
+          </div>
+        </div>
+        {dm.error ? (
+          <div className="text-sm text-destructive">{dm.error}</div>
+        ) : (
+          <pre className="max-h-[360px] overflow-auto text-xs text-muted-foreground">{prettyJson(dm.data)}</pre>
+        )}
       </div>
     </div>
   );
