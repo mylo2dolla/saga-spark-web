@@ -1,12 +1,15 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
+import { DEV_FINGERPRINT } from "./devFingerprint";
 
 const DEV_DEBUG = import.meta.env.DEV;
 const devWindow = window as Window & {
   __devFetchWrapped?: boolean;
   __devFetchBase?: typeof fetch;
 };
+
+console.log("[env] DEV_FINGERPRINT", DEV_FINGERPRINT);
 
 if (DEV_DEBUG && !devWindow.__devFetchWrapped) {
   devWindow.__devFetchWrapped = true;

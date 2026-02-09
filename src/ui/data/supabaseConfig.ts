@@ -7,6 +7,8 @@ export interface SupabaseConfigInfo {
   errors: string[];
 }
 
+const isPublishableKey = (key: string) => key.startsWith("sb_publishable_");
+
 const maskKey = (key: string) => {
   if (key.length <= 12) return `${key.slice(0, 2)}…${key.slice(-2)}`;
   return `${key.slice(0, 6)}…${key.slice(-6)}`;
@@ -37,6 +39,8 @@ export const getSupabaseConfigInfo = (): SupabaseConfigInfo => {
 
   if (!anonKey) {
     errors.push("Missing VITE_SUPABASE_ANON_KEY");
+  } else if (isPublishableKey(anonKey)) {
+    errors.push("VITE_SUPABASE_ANON_KEY is a publishable key. Use the anon key from Supabase settings.");
   }
 
   return {

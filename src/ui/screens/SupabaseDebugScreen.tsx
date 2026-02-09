@@ -25,6 +25,7 @@ export default function SupabaseDebugScreen() {
   const config = getSupabaseConfigInfo();
   const [authHealth, setAuthHealth] = useState<TestResult>({});
   const [restHealth, setRestHealth] = useState<TestResult>({});
+  const [dbProbe, setDbProbe] = useState<TestResult>({});
   const [sessionResult, setSessionResult] = useState<TestResult>({});
   const [signInResult, setSignInResult] = useState<TestResult>({});
   const [email, setEmail] = useState("");
@@ -78,6 +79,22 @@ export default function SupabaseDebugScreen() {
     }
   }, [config.anonKey, config.url]);
 
+  const runDbProbe = useCallback(async () => {
+    try {
+      const { error, count } = await supabase
+        .from("campaigns")
+        .select("id", { head: true, count: "exact" })
+        .limit(1);
+      if (error) {
+        setDbProbe({ ok: false, error: formatError(error) });
+        return;
+      }
+      setDbProbe({ ok: true, text: `count=${count ?? "unknown"}` });
+    } catch (error) {
+      setDbProbe({ error: formatError(error) });
+    }
+  }, []);
+
   const runGetSession = useCallback(async () => {
     try {
       const { data, error } = await supabase.auth.getSession();
@@ -127,9 +144,10 @@ export default function SupabaseDebugScreen() {
     setIsRunning(true);
     await runAuthHealth();
     await runRestHealth();
+    await runDbProbe();
     await runGetSession();
     setIsRunning(false);
-  }, [runAuthHealth, runGetSession, runRestHealth]);
+  }, [runAuthHealth, runDbProbe, runGetSession, runRestHealth]);
 
   if (!DEV_DEBUG) {
     return (
@@ -165,6 +183,9 @@ export default function SupabaseDebugScreen() {
         <Button variant="outline" onClick={runRestHealth} disabled={isRunning}>
           REST HEAD
         </Button>
+        <Button variant="outline" onClick={runDbProbe} disabled={isRunning}>
+          DB probe
+        </Button>
         <Button variant="outline" onClick={runGetSession} disabled={isRunning}>
           getSession
         </Button>
@@ -182,6 +203,10 @@ export default function SupabaseDebugScreen() {
           <div>
             <div className="font-semibold text-foreground">REST HEAD</div>
             <pre className="whitespace-pre-wrap text-xs">{JSON.stringify(restHealth, null, 2)}</pre>
+          </div>
+          <div>
+            <div className="font-semibold text-foreground">DB probe</div>
+            <pre className="whitespace-pre-wrap text-xs">{JSON.stringify(dbProbe, null, 2)}</pre>
           </div>
           <div>
             <div className="font-semibold text-foreground">getSession</div>

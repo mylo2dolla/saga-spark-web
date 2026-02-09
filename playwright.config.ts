@@ -1,0 +1,34 @@
+import { defineConfig } from "@playwright/test";
+
+const PORT = Number(process.env.PLAYWRIGHT_PORT ?? 8080);
+
+export default defineConfig({
+  testDir: "tests",
+  timeout: 30_000,
+  expect: {
+    timeout: 5_000,
+  },
+  reporter: [
+    ["html", { outputFolder: "playwright-report", open: "never" }],
+    ["list"],
+  ],
+  projects: [
+    {
+      name: "chromium",
+      use: { browserName: "chromium" },
+    },
+  ],
+  use: {
+    baseURL: `http://127.0.0.1:${PORT}`,
+    trace: "on-first-retry",
+  },
+  webServer: {
+    command: `npm run dev -- --host 127.0.0.1 --port ${PORT}`,
+    url: `http://127.0.0.1:${PORT}`,
+    reuseExistingServer: !process.env.CI,
+    env: {
+      ...process.env,
+      VITE_E2E_BYPASS_AUTH: "true",
+    },
+  },
+});
