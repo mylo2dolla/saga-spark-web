@@ -11,6 +11,8 @@ import { useMythicDmContext } from "@/hooks/useMythicDmContext";
 import { useMythicDungeonMaster } from "@/hooks/useMythicDungeonMaster";
 import { MythicDMChat } from "@/components/MythicDMChat";
 import { useMythicCombat } from "@/hooks/useMythicCombat";
+import { useMythicCombatState } from "@/hooks/useMythicCombatState";
+import { MythicCombatPanel } from "@/components/mythic/MythicCombatPanel";
 
 function prettyJson(value: unknown): string {
   try {
@@ -105,6 +107,15 @@ export default function MythicGameScreen() {
   }
 
   const lastTransition = recentTransitions[0] ?? null;
+  const combatSessionId =
+    board.combat_session_id
+    ?? (typeof (board.state_json as any)?.combat_session_id === "string" ? String((board.state_json as any).combat_session_id) : null);
+  const combatState = useMythicCombatState(campaignId, board.board_type === "combat" ? combatSessionId : null);
+  const playerCombatantId = useMemo(() => {
+    if (!user) return null;
+    const c = combatState.combatants.find((x) => x.entity_type === "player" && x.player_id === user.id);
+    return c?.id ?? null;
+  }, [combatState.combatants, user]);
 
   return (
     <div className="p-6">
@@ -150,8 +161,8 @@ export default function MythicGameScreen() {
           </div>
           <div className="mt-3 text-xs text-muted-foreground">Skills</div>
           <div className="mt-2 grid gap-2">
-            {skills.slice(0, 6).map((s, i) => (
-              <div key={i} className="rounded-md border border-border bg-background/30 p-2">
+            {skills.slice(0, 6).map((s) => (
+              <div key={s.id} className="rounded-md border border-border bg-background/30 p-2">
                 <div className="text-sm font-medium">{s.name}</div>
                 <div className="text-xs text-muted-foreground">{s.kind} · {s.targeting} · r{s.range_tiles} · cd{s.cooldown_turns}</div>
               </div>
@@ -180,6 +191,49 @@ export default function MythicGameScreen() {
           </div>
         </div>
       </div>
+
+      {board.board_type === "combat" && combatSessionId ? (
+        <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-semibold">Combat Playback (DB is truth)</div>
+            <div className="text-xs text-muted-foreground">
+              {combatState.isLoading ? "loading..." : combatState.error ? "error" : combatState.session?.status ?? "unknown"}
+            </div>
+          </div>
+          {combatState.error ? (
+            <div className="text-sm text-destructive">{combatState.error}</div>
+          ) : (
+            <MythicCombatPanel
+              campaignId={campaignId}
+              combatSessionId={combatSessionId}
+              combatants={combatState.combatants}
+              activeTurnCombatantId={combatState.activeTurnCombatantId}
+              events={combatState.events}
+              playerCombatantId={playerCombatantId}
+              skills={skills.map((s) => ({
+                id: s.id,
+                kind: s.kind,
+                name: s.name,
+                description: s.description,
+                targeting: s.targeting,
+                range_tiles: s.range_tiles,
+                cooldown_turns: s.cooldown_turns,
+              }))}
+              isActing={combat.isActing}
+              onUseSkill={async ({ actorCombatantId, skillId, target }) => {
+                await combat.useSkill({
+                  campaignId,
+                  combatSessionId,
+                  actorCombatantId,
+                  skillId,
+                  target,
+                });
+                await combatState.refetch();
+              }}
+            />
+          )}
+        </div>
+      ) : null}
 
       <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
         <div className="mb-2 text-sm font-semibold">Recent Board Transitions (append-only)</div>
@@ -216,13 +270,11 @@ export default function MythicGameScreen() {
           </div>
         </div>
         <div className="rounded-xl border border-border bg-card/40 p-4">
-          <div className="mb-2 text-sm font-semibold">Next: Combat Playback</div>
+          <div className="mb-2 text-sm font-semibold">System Notes</div>
           <div className="text-sm text-muted-foreground">
-            Next step is binding ability use to <code>mythic.skills</code> and emitting append-only <code>mythic.action_events</code>
-            so the UI animates deterministic turns from DB logs.
-          </div>
-          <div className="mt-3 text-xs text-muted-foreground">
-            You can already verify the DM never invents stats by comparing narration against the DM Context panel above.
+            Combat actions are committed as append-only <code>mythic.action_events</code>. Tokens on the grid render the real
+            <code>mythic.combatants</code> rows (HP/armor/position), and turns advance by updating
+            <code>mythic.combat_sessions.current_turn_index</code>.
           </div>
         </div>
       </div>
