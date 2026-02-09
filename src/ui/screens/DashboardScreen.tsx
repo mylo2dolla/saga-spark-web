@@ -451,11 +451,20 @@ export default function DashboardScreen() {
       }
       createdCampaignId = createdCampaign.id;
 
-      const generatedWorld = await generateInitialWorld({
-        title: trimmedName,
-        description: trimmedDescription,
-        themes: [],
-      });
+      let generatedWorld: GeneratedWorld | null = null;
+      try {
+        generatedWorld = await withTimeout(
+          generateInitialWorld({
+            title: trimmedName,
+            description: trimmedDescription,
+            themes: [],
+          }),
+          15000,
+          "World generation"
+        );
+      } catch (err) {
+        console.warn("[campaigns] world generation timeout/failure, using fallback", err);
+      }
       const fallbackWorld = buildFallbackWorld({
         title: trimmedName,
         description: trimmedDescription,
@@ -522,7 +531,15 @@ export default function DashboardScreen() {
         })),
       ];
 
-      await persistGeneratedContent(createdCampaign.id, contentToStore);
+      try {
+        await withTimeout(
+          persistGeneratedContent(createdCampaign.id, contentToStore),
+          15000,
+          "Persist generated content"
+        );
+      } catch (err) {
+        console.warn("[campaigns] persistGeneratedContent failed, continuing", err);
+      }
 
       if (resolvedStartingId) {
         const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
