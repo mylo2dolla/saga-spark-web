@@ -38,7 +38,7 @@ export default function MythicGameScreen() {
 
   const { bootstrapCampaign, isBootstrapping } = useMythicCreator();
   const { board, recentTransitions, isLoading: boardLoading, error: boardError, refetch } = useMythicBoard(campaignId);
-  const { character, skills, items, isLoading: charLoading, error: charError } = useMythicCharacter(campaignId);
+  const { character, skills, items, isLoading: charLoading, error: charError, refetch: refetchCharacter } = useMythicCharacter(campaignId);
   const dm = useMythicDmContext(campaignId);
   const mythicDm = useMythicDungeonMaster(campaignId);
   const combat = useMythicCombat();
@@ -155,6 +155,15 @@ export default function MythicGameScreen() {
     }
   };
 
+  const recomputeCharacter = async () => {
+    if (!campaignId || !character) return;
+    await callEdgeFunction("mythic-recompute-character", {
+      requireAuth: true,
+      body: { campaignId, characterId: character.id },
+    });
+    await refetchCharacter();
+  };
+
   return (
     <div className="p-6">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -252,6 +261,67 @@ export default function MythicGameScreen() {
         </div>
       </div>
 
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-2 text-sm font-semibold">Board Summary</div>
+          {board.board_type === "town" ? (
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <div>Vendors: {Array.isArray((board.state_json as any)?.vendors) ? (board.state_json as any).vendors.length : 0}</div>
+              <div>Services: {Array.isArray((board.state_json as any)?.services) ? (board.state_json as any).services.join(", ") : "-"}</div>
+              <div>Factions: {Array.isArray((board.state_json as any)?.factions_present) ? (board.state_json as any).factions_present.join(", ") : "-"}</div>
+              <div>Rumors: {Array.isArray((board.state_json as any)?.rumors) ? (board.state_json as any).rumors.join(" · ") : "-"}</div>
+            </div>
+          ) : null}
+          {board.board_type === "travel" ? (
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <div>Weather: {String((board.state_json as any)?.weather ?? "-")}</div>
+              <div>Hazard: {String((board.state_json as any)?.hazard_meter ?? "-")}</div>
+              <div>Segments: {Array.isArray((board.state_json as any)?.route_segments) ? (board.state_json as any).route_segments.length : 0}</div>
+            </div>
+          ) : null}
+          {board.board_type === "dungeon" ? (
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <div>Rooms: {Array.isArray((board.state_json as any)?.room_graph?.rooms) ? (board.state_json as any).room_graph.rooms.length : 0}</div>
+              <div>Loot nodes: {String((board.state_json as any)?.loot_nodes ?? "-")}</div>
+              <div>Trap signals: {String((board.state_json as any)?.trap_signals ?? "-")}</div>
+              <div>Faction presence: {Array.isArray((board.state_json as any)?.faction_presence) ? (board.state_json as any).faction_presence.join(", ") : "-"}</div>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-2 text-sm font-semibold">Board Actions</div>
+          <div className="flex flex-wrap gap-2">
+            {board.board_type === "travel" ? (
+              <>
+                <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("town", "arrival")}>
+                  Arrive Town
+                </Button>
+                <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("dungeon", "arrival")}>
+                  Arrive Dungeon
+                </Button>
+              </>
+            ) : null}
+            {board.board_type === "dungeon" ? (
+              <>
+                <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("town", "exit_dungeon")}>
+                  Exit to Town
+                </Button>
+                <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("travel", "exit_dungeon")}>
+                  Exit to Travel
+                </Button>
+              </>
+            ) : null}
+            {board.board_type === "town" ? (
+              <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("travel", "depart")}>
+                Depart Travel
+              </Button>
+            ) : null}
+          </div>
+          {transitionError ? <div className="mt-2 text-xs text-destructive">{transitionError}</div> : null}
+        </div>
+      </div>
+
       {board.board_type === "combat" && combatSessionId ? (
         <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -300,6 +370,7 @@ export default function MythicGameScreen() {
         <MythicInventoryPanel
           rows={invRowsSafe}
           onChanged={async () => {
+            await recomputeCharacter();
             await refetch();
           }}
         />

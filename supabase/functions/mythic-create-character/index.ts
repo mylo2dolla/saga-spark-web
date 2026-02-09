@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 import { clampInt, rngInt, rngPick, weightedPick } from "../_shared/mythic_rng.ts";
 
@@ -481,9 +481,9 @@ serve(async (req) => {
       skills: kit.skills,
     };
 
-    const model = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
+    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
 
-    const completion = await groqChatCompletions({
+    const completion = await aiChatCompletions({
       model,
       temperature: 0.2,
       messages: [

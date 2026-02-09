@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -255,8 +255,8 @@ serve(async (req) => {
         );
       }
 
-      const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
-      console.log("Groq model:", GROQ_MODEL);
+      const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
+      console.log("LLM model:", model);
 
       const promptPayload = {
         action: body.action,
@@ -265,8 +265,8 @@ serve(async (req) => {
 
       const prompt = `${SYSTEM_PROMPT}\n\nPlayer action:\n${body.action.text}\n\nCurrent context:\n${JSON.stringify(promptPayload, null, 2)}`;
 
-      const data = await groqChatCompletions({
-        model: GROQ_MODEL,
+      const data = await aiChatCompletions({
+        model,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },

@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -198,8 +198,9 @@ You MUST respond with ONLY a valid JSON object matching this structure:
   "baseAC": 12
 }`;
 
-    const data = await groqChatCompletions({
-      model: "llama-3.1-8b-instant",
+    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.1-8b-instant" });
+    const data = await aiChatCompletions({
+      model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: `Create a class based on this description: "${classDescription}"` },
