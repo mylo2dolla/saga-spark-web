@@ -1,9 +1,7 @@
-import { Md5 } from "https://deno.land/std@0.168.0/hash/md5.ts";
+import md5 from "npm:md5@2.3.0";
 
 export function md5Hex(input: string): string {
-  const md5 = new Md5();
-  md5.update(input);
-  return md5.toString();
+  return md5(input);
 }
 
 // Mirrors mythic.rng01(seed,label) in Postgres.
