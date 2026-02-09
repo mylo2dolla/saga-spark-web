@@ -10,7 +10,8 @@ const corsHeaders = {
 };
 
 const RequestSchema = z.object({
-  campaignId: z.string().uuid(),
+  name: z.string().min(2).max(80),
+  description: z.string().min(2).max(2000),
 });
 
 const syllableA = [
@@ -63,7 +64,7 @@ const makeTownState = (seed: number) => {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+    return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), {
       status: 405,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -72,124 +73,96 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Authentication required" }), {
+      return new Response(JSON.stringify({ ok: false, error: "Authentication required" }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-
     if (!supabaseUrl || !anonKey || !serviceRoleKey) {
       throw new Error("Supabase env is not configured (SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY)");
     }
 
-    const authClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const parsed = RequestSchema.safeParse(await req.json().catch(() => null));
+    const body = await req.json().catch(() => null);
+    const parsed = RequestSchema.safeParse(body);
     if (!parsed.success) {
-      return new Response(JSON.stringify({ error: "Invalid request", details: parsed.error.flatten() }), {
+      return new Response(JSON.stringify({ ok: false, error: "Invalid request", details: parsed.error.flatten() }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const { campaignId } = parsed.data;
+    const authClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    if (userError || !user) {
+      return new Response(JSON.stringify({ ok: false, error: "Invalid or expired authentication token" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    // Service role client for mythic schema writes (no RLS yet, but schema grants may still be restrictive).
     const svc = createClient(supabaseUrl, serviceRoleKey);
-
-    // Ensure the campaign exists and the user is a member/owner.
     const { data: campaign, error: campaignError } = await svc
       .from("campaigns")
-      .select("id, owner_id")
-      .eq("id", campaignId)
-      .maybeSingle();
+      .insert({
+        name: parsed.data.name.trim(),
+        description: parsed.data.description.trim(),
+        owner_id: user.id,
+        is_active: true,
+      })
+      .select("id,name,description,invite_code,owner_id,is_active,updated_at")
+      .single();
 
-    if (campaignError) throw campaignError;
-    if (!campaign) {
-      return new Response(JSON.stringify({ error: "Campaign not found" }), {
-        status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+    if (campaignError || !campaign) {
+      throw campaignError ?? new Error("Campaign insert failed");
     }
 
-    const { data: member, error: memberError } = await svc
+    const campaignId = campaign.id;
+
+    const { error: memberError } = await svc
       .from("campaign_members")
-      .select("id")
-      .eq("campaign_id", campaignId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
+      .insert({ campaign_id: campaignId, user_id: user.id, is_dm: true });
     if (memberError) throw memberError;
-    if (!member && campaign.owner_id !== user.id) {
-      return new Response(JSON.stringify({ error: "Not authorized for this campaign" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
 
-    // Ensure DM state rows exist.
+    await svc.from("combat_state").insert({ campaign_id: campaignId }).throwOnError();
+
+    const seedBase = hashSeed(`${campaignId}:${user.id}`);
     await svc.from("mythic.dm_campaign_state").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
     await svc.from("mythic.dm_world_tension").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
 
-    // Ensure there is an active board.
     const { data: activeBoard, error: boardError } = await svc
       .from("mythic.boards")
-      .select("id, board_type, status")
+      .select("id")
       .eq("campaign_id", campaignId)
       .eq("status", "active")
-      .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-
     if (boardError) throw boardError;
 
     if (!activeBoard) {
-      const seedBase = hashSeed(`bootstrap:${campaignId}`);
       const townState = makeTownState(seedBase);
-
-      const { error: insertBoardError } = await svc.from("mythic.boards").insert({
+      await svc.from("mythic.boards").insert({
         campaign_id: campaignId,
         board_type: "town",
         status: "active",
         state_json: townState,
         ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
-      });
-
-      if (insertBoardError) throw insertBoardError;
-
-      await svc.from("mythic.factions").upsert(
-        {
-          campaign_id: campaignId,
-          name: makeName(seedBase, "faction"),
-          description: "A local power bloc with interests in keeping order and collecting leverage.",
-          tags: ["order", "influence", "watchers"],
-        },
-        { onConflict: "campaign_id,name" },
-      );
+      }).throwOnError();
     }
 
-    return new Response(JSON.stringify({ ok: true }), {
+    return new Response(JSON.stringify({ ok: true, campaign }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("mythic-bootstrap error:", error);
+    console.error("mythic-create-campaign error:", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Failed to bootstrap campaign" }),
+      JSON.stringify({ ok: false, error: error instanceof Error ? error.message : "Failed to create campaign" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }

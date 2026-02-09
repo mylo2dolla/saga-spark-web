@@ -119,6 +119,43 @@ function hasLineOfSight(
   return true;
 }
 
+function advanceAlongLine(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  steps: number,
+  blocked: Set<string>,
+): { x: number; y: number } {
+  const line = bresenhamLine(startX, startY, endX, endY);
+  if (line.length <= 1) return { x: startX, y: startY };
+  const maxIdx = Math.min(line.length - 1, Math.max(0, Math.floor(steps)));
+  let last = line[0]!;
+  for (let i = 1; i <= maxIdx; i++) {
+    const p = line[i]!;
+    if (blocked.has(`${p.x},${p.y}`)) break;
+    last = p;
+  }
+  return { x: last.x, y: last.y };
+}
+
+function stepAway(
+  fromX: number,
+  fromY: number,
+  targetX: number,
+  targetY: number,
+  steps: number,
+  blocked: Set<string>,
+): { x: number; y: number } {
+  const dx = targetX - fromX;
+  const dy = targetY - fromY;
+  const stepX = dx === 0 ? 0 : dx / Math.abs(dx);
+  const stepY = dy === 0 ? 0 : dy / Math.abs(dy);
+  const endX = targetX + stepX * Math.max(0, Math.floor(steps));
+  const endY = targetY + stepY * Math.max(0, Math.floor(steps));
+  return advanceAlongLine(targetX, targetY, endX, endY, steps, blocked);
+}
+
 function getTargetsForShape(args: {
   shape: string;
   metric: Metric;
@@ -202,6 +239,14 @@ function setSimpleStatus(statuses: StatusEntry[], id: string, expiresTurn: numbe
   const next = statuses.filter((s) => s.id !== id);
   next.push({ id, expires_turn: expiresTurn, stacks: 1, data });
   return next;
+}
+
+function stripStatuses(statuses: StatusEntry[], removeIds: string[] | null): StatusEntry[] {
+  if (!removeIds || removeIds.length === 0) {
+    return statuses.filter((s) => !s.id.startsWith("cd:"));
+  }
+  const toRemove = new Set(removeIds);
+  return statuses.filter((s) => !toRemove.has(s.id));
 }
 
 function effectiveAttackerStats(c: CombatantRow): { offense: number; mobility: number; utility: number } {
@@ -507,6 +552,70 @@ serve(async (req) => {
       });
     }
 
+    // Teleport actor to targeted tile.
+    const teleport = asObject(effects.teleport);
+    if (Object.keys(teleport).length > 0) {
+      const tx = resolved.tx;
+      const ty = resolved.ty;
+      if (!blockedSet.has(`${tx},${ty}`)) {
+        updates.x = tx;
+        updates.y = ty;
+        events.push({
+          event_type: "moved",
+          payload: { from: { x: actor.x, y: actor.y }, to: { x: tx, y: ty }, teleport: true },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
+      }
+    }
+
+    // Forced movement (pull/push) on targets.
+    const pull = asObject(effects.pull);
+    if (Object.keys(pull).length > 0 && typeof pull.tiles === "number") {
+      const tiles = Math.max(0, Math.floor(Number(pull.tiles)));
+      const targets = filteredTargets.filter((t) => t.id !== actor.id);
+      for (const target of targets) {
+        const next = advanceAlongLine(target.x, target.y, actor.x, actor.y, tiles, blockedSet);
+        if (next.x === target.x && next.y === target.y) continue;
+        const { error: moveErr } = await svc
+          .schema("mythic")
+          .from("combatants")
+          .update({ x: next.x, y: next.y, updated_at: new Date().toISOString() })
+          .eq("id", target.id)
+          .eq("combat_session_id", combatSessionId);
+        if (moveErr) throw moveErr;
+        events.push({
+          event_type: "moved",
+          payload: { target_combatant_id: target.id, from: { x: target.x, y: target.y }, to: next, forced: "pull" },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
+      }
+    }
+
+    const push = asObject(effects.push);
+    if (Object.keys(push).length > 0 && typeof push.tiles === "number") {
+      const tiles = Math.max(0, Math.floor(Number(push.tiles)));
+      const targets = filteredTargets.filter((t) => t.id !== actor.id);
+      for (const target of targets) {
+        const next = stepAway(actor.x, actor.y, target.x, target.y, tiles, blockedSet);
+        if (next.x === target.x && next.y === target.y) continue;
+        const { error: moveErr } = await svc
+          .schema("mythic")
+          .from("combatants")
+          .update({ x: next.x, y: next.y, updated_at: new Date().toISOString() })
+          .eq("id", target.id)
+          .eq("combat_session_id", combatSessionId);
+        if (moveErr) throw moveErr;
+        events.push({
+          event_type: "moved",
+          payload: { target_combatant_id: target.id, from: { x: target.x, y: target.y }, to: next, forced: "push" },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
+      }
+    }
+
     // Barrier -> armor shield.
     const barrier = asObject(effects.barrier);
     if (Object.keys(barrier).length > 0 && typeof barrier.amount === "number" && typeof barrier.duration_turns === "number") {
@@ -549,6 +658,29 @@ serve(async (req) => {
         actor_id: actor.id,
         turn_index: turnIndex,
       });
+    }
+
+    // Armor shred.
+    const shred = asObject(effects.armor_shred);
+    if (Object.keys(shred).length > 0 && typeof shred.amount === "number") {
+      const amount = Math.max(0, Math.floor(Number(shred.amount)));
+      const targets = filteredTargets.filter((t) => t.id !== actor.id || shape === "self");
+      for (const target of targets) {
+        const newArmor = Math.max(0, Math.floor(Number(target.armor ?? 0) - amount));
+        const { error: shredErr } = await svc
+          .schema("mythic")
+          .from("combatants")
+          .update({ armor: newArmor, updated_at: new Date().toISOString() })
+          .eq("id", target.id)
+          .eq("combat_session_id", combatSessionId);
+        if (shredErr) throw shredErr;
+        events.push({
+          event_type: "armor_shred",
+          payload: { target_combatant_id: target.id, amount, armor_after: newArmor },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
+      }
     }
 
     // Damage (supports area/line/cone targeting).
@@ -680,6 +812,43 @@ serve(async (req) => {
       }
     }
 
+    // Power drain (steal).
+    const drain = asObject(effects.power_drain);
+    if (Object.keys(drain).length > 0 && typeof drain.amount === "number") {
+      const amount = Math.max(0, Math.floor(Number(drain.amount)));
+      let totalDrained = 0;
+      const targets = filteredTargets.filter((t) => t.id !== actor.id || shape === "self");
+      for (const target of targets) {
+        const cur = Math.max(0, Math.floor(Number(target.power ?? 0)));
+        const drained = Math.min(cur, amount);
+        totalDrained += drained;
+        const nextTargetPower = cur - drained;
+        const { error: drainErr } = await svc
+          .schema("mythic")
+          .from("combatants")
+          .update({ power: nextTargetPower, updated_at: new Date().toISOString() })
+          .eq("id", target.id)
+          .eq("combat_session_id", combatSessionId);
+        if (drainErr) throw drainErr;
+        events.push({
+          event_type: "power_drain",
+          payload: { target_combatant_id: target.id, amount: drained, power_after: nextTargetPower },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
+      }
+      if (totalDrained > 0) {
+        const newPower = Math.min(actor.power_max, nextPower + totalDrained);
+        updates.power = newPower;
+        events.push({
+          event_type: "power_gain",
+          payload: { target_combatant_id: actor.id, amount: totalDrained, power_after: newPower },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
+      }
+    }
+
     // Healing (single or area).
     const heal = asObject(effects.heal);
     if (Object.keys(heal).length > 0) {
@@ -705,11 +874,63 @@ serve(async (req) => {
       }
     }
 
+    // Cleanse statuses.
+    const cleanse = asObject(effects.cleanse);
+    if (Object.keys(cleanse).length > 0) {
+      const targets = shape === "self"
+        ? [actor]
+        : allTargets.filter((t) => isAlly(actor, t) || t.id === actor.id);
+      const ids = Array.isArray((cleanse as any).ids)
+        ? (cleanse as any).ids.map((x: unknown) => String(x))
+        : null;
+      for (const target of targets) {
+        const targetStatuses = nowStatuses(target.statuses);
+        const nextTargetStatuses = stripStatuses(targetStatuses, ids);
+        const { error: cleanseErr } = await svc
+          .schema("mythic")
+          .from("combatants")
+          .update({ statuses: nextTargetStatuses, updated_at: new Date().toISOString() })
+          .eq("id", target.id)
+          .eq("combat_session_id", combatSessionId);
+        if (cleanseErr) throw cleanseErr;
+        events.push({
+          event_type: "cleanse",
+          payload: { target_combatant_id: target.id, ids: ids ?? "all_non_cd" },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
+      }
+    }
+
+    // Revive (single target).
+    const revive = asObject(effects.revive);
+    if (Object.keys(revive).length > 0 && typeof revive.amount === "number") {
+      const amount = Math.max(1, Math.floor(Number(revive.amount)));
+      const targets = allTargets.filter((t) => !t.is_alive);
+      for (const target of targets) {
+        const newHp = Math.min(target.hp_max, amount);
+        const { error: reviveErr } = await svc
+          .schema("mythic")
+          .from("combatants")
+          .update({ is_alive: true, hp: newHp, updated_at: new Date().toISOString() })
+          .eq("id", target.id)
+          .eq("combat_session_id", combatSessionId);
+        if (reviveErr) throw reviveErr;
+        events.push({
+          event_type: "revive",
+          payload: { target_combatant_id: target.id, hp_after: newHp },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
+      }
+    }
+
     // Power gain.
     const powerGain = asObject(effects.power_gain);
     if (Object.keys(powerGain).length > 0) {
       const amount = Math.max(0, Math.floor(Number((powerGain as any).amount ?? 0)));
-      const newPower = Math.min(actor.power_max, nextPower + amount);
+      const basePower = typeof updates.power === "number" ? updates.power : nextPower;
+      const newPower = Math.min(actor.power_max, basePower + amount);
       updates.power = newPower;
       events.push({
         event_type: "power_gain",
