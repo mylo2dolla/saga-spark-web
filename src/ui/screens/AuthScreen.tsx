@@ -4,11 +4,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useAuth } from "@/hooks/useAuth";
-import SupabaseStatusIndicator from "@/ui/components/SupabaseStatusIndicator";
 
 interface AuthScreenProps {
   mode: "login" | "signup";
@@ -16,15 +14,14 @@ interface AuthScreenProps {
 
 export default function AuthScreen({ mode }: AuthScreenProps) {
   const navigate = useNavigate();
-  const { toast } = useToast();
-  const { setLastError } = useDiagnostics();
+  const { lastError, setLastError, lastErrorAt } = useDiagnostics();
   useAuth(); // ensure auth subscription is active on the login screen
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitLockRef = useRef(false);
-  const DEV_DEBUG = import.meta.env.DEV;
+  const [didCopyError, setDidCopyError] = useState(false);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -35,7 +32,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       return;
     }
     if (!email.trim() || !password.trim()) {
-      toast({ title: "Missing info", description: "Email and password are required", variant: "destructive" });
+      setLastError("Email and password are required.");
       return;
     }
 
@@ -83,9 +80,8 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     } catch (error) {
       if (error instanceof TypeError) {
         const message = error.message || "Failed to fetch";
-        const description = DEV_DEBUG ? `Network/CORS failure — ${message}` : "Network error. Please try again.";
+        const description = import.meta.env.DEV ? `Network/CORS failure — ${message}` : "Network error. Please try again.";
         setLastError(description);
-        toast({ title: "Authentication failed", description, variant: "destructive" });
         console.info("[auth] log", {
           step: "login_result",
           hasSession: false,
@@ -97,7 +93,6 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
 
       const message = formatError(error, "Failed to authenticate");
       setLastError(message);
-      toast({ title: "Authentication failed", description: message, variant: "destructive" });
       console.info("[auth] log", {
         step: "login_result",
         hasSession: false,
@@ -160,6 +155,38 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         <Button className="w-full" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Working..." : mode === "login" ? "Login" : "Sign up"}
         </Button>
+        {lastError ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-semibold">Auth error</div>
+                <div className="break-words">{lastError}</div>
+                {lastErrorAt ? (
+                  <div className="mt-1 text-xs text-destructive/80">
+                    {new Date(lastErrorAt).toLocaleTimeString()}
+                  </div>
+                ) : null}
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  setDidCopyError(false);
+                  try {
+                    await navigator.clipboard.writeText(lastError);
+                    setDidCopyError(true);
+                    setTimeout(() => setDidCopyError(false), 1500);
+                  } catch {
+                    // Clipboard permission denied; no-op.
+                  }
+                }}
+              >
+                {didCopyError ? "Copied" : "Copy"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </form>
 
       <div className="mt-4 text-xs text-muted-foreground">
@@ -173,7 +200,6 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           </span>
         )}
       </div>
-      {DEV_DEBUG ? <SupabaseStatusIndicator /> : null}
     </div>
   );
 }
