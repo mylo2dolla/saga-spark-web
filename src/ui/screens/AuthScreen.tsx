@@ -22,6 +22,13 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitLockRef = useRef(false);
   const [didCopyError, setDidCopyError] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+  const [checkResult, setCheckResult] = useState<{
+    authStatus?: string;
+    restStatus?: string;
+    error?: string;
+  } | null>(null);
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -187,6 +194,53 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
             </div>
           </div>
         ) : null}
+        <div className="rounded-lg border border-border bg-background/30 p-3 text-xs text-muted-foreground">
+          <div className="mb-2 font-semibold text-foreground">Connectivity Check</div>
+          <div className="mb-2">Supabase URL: <span className="font-mono">{supabaseUrl || "(missing)"}</span></div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={isChecking || !supabaseUrl}
+              onClick={async () => {
+                if (!supabaseUrl) return;
+                setIsChecking(true);
+                setCheckResult(null);
+                try {
+                  const timeout = (ms: number) =>
+                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out")), ms));
+                  const authReq = fetch(`${supabaseUrl}/auth/v1/health`, { method: "GET" });
+                  const restReq = fetch(`${supabaseUrl}/rest/v1/`, { method: "GET" });
+                  const [authRes, restRes] = await Promise.all([
+                    Promise.race([authReq, timeout(6000)]),
+                    Promise.race([restReq, timeout(6000)]),
+                  ]);
+                  setCheckResult({
+                    authStatus: `auth ${authRes.status}`,
+                    restStatus: `rest ${restRes.status}`,
+                  });
+                } catch (e) {
+                  setCheckResult({ error: e instanceof Error ? e.message : "Connectivity check failed" });
+                } finally {
+                  setIsChecking(false);
+                }
+              }}
+            >
+              {isChecking ? "Checking..." : "Run Check"}
+            </Button>
+            {checkResult?.error ? (
+              <span className="text-destructive">{checkResult.error}</span>
+            ) : checkResult ? (
+              <span className="text-muted-foreground">
+                {checkResult.authStatus ?? "auth ?"} · {checkResult.restStatus ?? "rest ?"}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-2 text-[11px] text-muted-foreground">
+            If this fails, it’s usually DNS/router blocking `supabase.co` or a captive network. This check tells us whether the router is the problem.
+          </div>
+        </div>
       </form>
 
       <div className="mt-4 text-xs text-muted-foreground">

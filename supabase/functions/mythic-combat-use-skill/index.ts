@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { distanceTiles, type Metric } from "../_shared/mythic_grid.ts";
+import { bresenhamLine, distanceTiles, type Metric } from "../_shared/mythic_grid.ts";
 import { rng01 } from "../_shared/mythic_rng.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 
@@ -98,6 +98,81 @@ function metricFromTargetingJson(targetingJson: Record<string, unknown>): Metric
   const metric = targetingJson.metric;
   if (metric === "chebyshev" || metric === "euclidean" || metric === "manhattan") return metric;
   return "manhattan";
+}
+
+function toBlockedSet(blocked: Array<{ x: number; y: number }>) {
+  return new Set(blocked.map((t) => `${t.x},${t.y}`));
+}
+
+function hasLineOfSight(
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  blocked: Set<string>,
+): boolean {
+  const points = bresenhamLine(ax, ay, bx, by);
+  for (let i = 1; i < points.length; i++) {
+    const p = points[i]!;
+    if (blocked.has(`${p.x},${p.y}`)) return false;
+  }
+  return true;
+}
+
+function getTargetsForShape(args: {
+  shape: string;
+  metric: Metric;
+  actor: CombatantRow;
+  targetX: number;
+  targetY: number;
+  radius: number;
+  length: number;
+  width: number;
+  combatants: CombatantRow[];
+}): CombatantRow[] {
+  const { shape, metric, actor, targetX, targetY, radius, length, width, combatants } = args;
+  if (shape === "self") return [actor];
+  if (shape === "single") {
+    const t = combatants.find((c) => c.x === targetX && c.y === targetY);
+    return t ? [t] : [];
+  }
+  if (shape === "tile") {
+    const t = combatants.find((c) => c.x === targetX && c.y === targetY);
+    return t ? [t] : [];
+  }
+  if (shape === "area") {
+    const r = Math.max(0, radius);
+    return combatants.filter((c) => distanceTiles(metric, c.x, c.y, targetX, targetY) <= r);
+  }
+  if (shape === "line") {
+    const len = Math.max(1, length);
+    const w = Math.max(1, width);
+    const linePoints = bresenhamLine(actor.x, actor.y, targetX, targetY).slice(0, len + 1);
+    return combatants.filter((c) => {
+      const onLine = linePoints.find((p) => p.x === c.x && p.y === c.y);
+      if (onLine) return true;
+      // Allow width around the line.
+      return linePoints.some((p) => Math.max(Math.abs(p.x - c.x), Math.abs(p.y - c.y)) <= Math.floor(w / 2));
+    });
+  }
+  if (shape === "cone") {
+    const len = Math.max(1, length);
+    const w = Math.max(1, width);
+    const dirX = targetX - actor.x;
+    const dirY = targetY - actor.y;
+    return combatants.filter((c) => {
+      const dx = c.x - actor.x;
+      const dy = c.y - actor.y;
+      const dist = distanceTiles(metric, actor.x, actor.y, c.x, c.y);
+      if (dist > len) return false;
+      // Same general direction.
+      if (dirX !== 0 && Math.sign(dx) !== Math.sign(dirX)) return false;
+      if (dirY !== 0 && Math.sign(dy) !== Math.sign(dirY)) return false;
+      // Width constraint: roughly keep within a cone.
+      return Math.abs(Math.abs(dx) - Math.abs(dy)) <= w;
+    });
+  }
+  return [];
 }
 
 function getFlatCost(costJson: Record<string, unknown>): { amount: number; resource_id: string | null } {
@@ -294,6 +369,13 @@ serve(async (req) => {
 
     const targetingJson = asObject(skill.targeting_json);
     const metric = metricFromTargetingJson(targetingJson);
+    const shape = String((targetingJson as any).shape ?? skill.targeting ?? "single");
+    const radius = Math.max(0, Math.floor(Number((targetingJson as any).radius ?? 1)));
+    const length = Math.max(1, Math.floor(Number((targetingJson as any).length ?? skill.range_tiles ?? 1)));
+    const width = Math.max(1, Math.floor(Number((targetingJson as any).width ?? 1)));
+    const requiresLos = Boolean((targetingJson as any).requires_los ?? false);
+    const blocksOnWalls = Boolean((targetingJson as any).blocks_on_walls ?? true);
+    const friendlyFire = Boolean((targetingJson as any).friendly_fire ?? false);
 
     const resolveTarget = async (target: z.infer<typeof TargetSchema>) => {
       if (target.kind === "self") {
@@ -333,8 +415,49 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "Target out of range" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
+    // Fetch blocked tiles for LOS checks (combat board state_json.blocked_tiles).
+    const { data: boardRow } = await svc
+      .schema("mythic")
+      .from("boards")
+      .select("state_json")
+      .eq("combat_session_id", combatSessionId)
+      .eq("status", "active")
+      .maybeSingle();
+    const blockedTiles = Array.isArray((boardRow as any)?.state_json?.blocked_tiles)
+      ? ((boardRow as any).state_json.blocked_tiles as Array<{ x: number; y: number }>)
+      : [];
+    const blockedSet = toBlockedSet(blockedTiles);
+
+    if (requiresLos && blocksOnWalls) {
+      const los = hasLineOfSight(actor.x, actor.y, resolved.tx, resolved.ty, blockedSet);
+      if (!los) {
+        return new Response(JSON.stringify({ error: "Line of sight blocked" }), { status: 409, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
     const effects = asObject(skill.effects_json);
     const labelBase = `turn:${turnIndex}:actor:${actor.id}:skill:${skill.id}`;
+
+    const { data: allCombatants, error: allCombatantsErr } = await svc
+      .schema("mythic")
+      .from("combatants")
+      .select("*")
+      .eq("combat_session_id", combatSessionId);
+    if (allCombatantsErr) throw allCombatantsErr;
+    const allTargets = getTargetsForShape({
+      shape,
+      metric,
+      actor,
+      targetX: resolved.tx,
+      targetY: resolved.ty,
+      radius,
+      length,
+      width,
+      combatants: (allCombatants ?? []) as CombatantRow[],
+    }).filter((c) => c.is_alive);
+
+    const isAlly = (a: CombatantRow, b: CombatantRow) => a.entity_type === b.entity_type && a.player_id === b.player_id;
+    const filteredTargets = friendlyFire ? allTargets : allTargets.filter((t) => !isAlly(actor, t) || t.id === actor.id);
 
     // Spend resource.
     const nextPower = Math.max(0, Math.floor(actor.power - cost.amount));
@@ -428,137 +551,172 @@ serve(async (req) => {
       });
     }
 
-    // Damage (single-target for now; area targeting expands later via tile queries).
+    // Damage (supports area/line/cone targeting).
     const dmg = asObject(effects.damage);
     if (Object.keys(dmg).length > 0) {
-      if (!resolved.combatant) {
-        return new Response(JSON.stringify({ error: "Damage skill requires an entity target" }), {
+      const targets = filteredTargets.filter((t) => t.id !== actor.id || shape === "self");
+      if (targets.length === 0) {
+        return new Response(JSON.stringify({ error: "No valid targets in area" }), {
           status: 409,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const target = resolved.combatant;
-      if (!target.is_alive) {
-        return new Response(JSON.stringify({ error: "Target is already dead" }), {
-          status: 409,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
       const skillMult = Number((dmg as any).skill_mult ?? 1);
       const attacker = effectiveAttackerStats(actor);
 
-      const { data: dmgJson, error: dmgErr } = await svc.schema("mythic").rpc("compute_damage", {
-        seed,
-        label: `${labelBase}:t:${target.id}`,
-        lvl: actor.lvl,
-        offense: attacker.offense,
-        mobility: attacker.mobility,
-        utility: attacker.utility,
-        weapon_power: actor.weapon_power ?? 0,
-        skill_mult: Number.isFinite(skillMult) ? skillMult : 1,
-        resist: (target.resist ?? 0) + (target.armor ?? 0),
-        spread_pct: 0.10,
-      });
-      if (dmgErr) throw dmgErr;
-      const dmgObj = asObject(dmgJson);
-      const finalDamage = Number((dmgObj as any).final_damage ?? 0);
-      const raw = Number.isFinite(finalDamage) ? Math.max(0, finalDamage) : 0;
+      for (const target of targets) {
+        const { data: dmgJson, error: dmgErr } = await svc.schema("mythic").rpc("compute_damage", {
+          seed,
+          label: `${labelBase}:t:${target.id}`,
+          lvl: actor.lvl,
+          offense: attacker.offense,
+          mobility: attacker.mobility,
+          utility: attacker.utility,
+          weapon_power: actor.weapon_power ?? 0,
+          skill_mult: Number.isFinite(skillMult) ? skillMult : 1,
+          resist: (target.resist ?? 0) + (target.armor ?? 0),
+          spread_pct: 0.10,
+        });
+        if (dmgErr) throw dmgErr;
+        const dmgObj = asObject(dmgJson);
+        const finalDamage = Number((dmgObj as any).final_damage ?? 0);
+        const raw = Number.isFinite(finalDamage) ? Math.max(0, finalDamage) : 0;
 
-      const shield = Math.max(0, Number(target.armor ?? 0));
-      const absorbed = Math.min(shield, raw);
-      const remaining = raw - absorbed;
-      const newArmor = shield - absorbed;
-      const newHp = Math.max(0, Number(target.hp ?? 0) - remaining);
-      const died = newHp <= 0.0001;
+        const shield = Math.max(0, Number(target.armor ?? 0));
+        const absorbed = Math.min(shield, raw);
+        const remaining = raw - absorbed;
+        const newArmor = shield - absorbed;
+        const newHp = Math.max(0, Number(target.hp ?? 0) - remaining);
+        const died = newHp <= 0.0001;
 
-      // Persist target update.
-      const { error: targetUpdateErr } = await svc
-        .schema("mythic")
-        .from("combatants")
-        .update({
-          armor: newArmor,
-          hp: newHp,
-          is_alive: died ? false : target.is_alive,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", target.id)
-        .eq("combat_session_id", combatSessionId);
-      if (targetUpdateErr) throw targetUpdateErr;
+        const { error: targetUpdateErr } = await svc
+          .schema("mythic")
+          .from("combatants")
+          .update({
+            armor: newArmor,
+            hp: newHp,
+            is_alive: died ? false : target.is_alive,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", target.id)
+          .eq("combat_session_id", combatSessionId);
+        if (targetUpdateErr) throw targetUpdateErr;
 
-      events.push({
-        event_type: "damage",
-        payload: {
-          source_combatant_id: actor.id,
-          target_combatant_id: target.id,
-          skill_id: skill.id,
-          roll: dmgObj,
-          shield_absorbed: absorbed,
-          damage_to_hp: remaining,
-          hp_after: newHp,
-          armor_after: newArmor,
-          onomatopoeia: effects.onomatopoeia ?? null,
-        },
-        actor_id: actor.id,
-        turn_index: turnIndex,
-      });
-
-      if (died) {
         events.push({
-          event_type: "death",
-          payload: { target_combatant_id: target.id, by: { combatant_id: actor.id, skill_id: skill.id } },
+          event_type: "damage",
+          payload: {
+            source_combatant_id: actor.id,
+            target_combatant_id: target.id,
+            skill_id: skill.id,
+            roll: dmgObj,
+            shield_absorbed: absorbed,
+            damage_to_hp: remaining,
+            hp_after: newHp,
+            armor_after: newArmor,
+            onomatopoeia: effects.onomatopoeia ?? null,
+          },
           actor_id: actor.id,
           turn_index: turnIndex,
         });
+
+        if (died) {
+          events.push({
+            event_type: "death",
+            payload: { target_combatant_id: target.id, by: { combatant_id: actor.id, skill_id: skill.id } },
+            actor_id: actor.id,
+            turn_index: turnIndex,
+          });
+        }
       }
     }
 
     // Status application to a target (stun/root/etc) via deterministic chance.
     const status = asObject(effects.status);
     if (Object.keys(status).length > 0 && typeof status.id === "string" && typeof status.duration_turns === "number") {
-      if (!resolved.combatant) {
-        return new Response(JSON.stringify({ error: "Status skill requires an entity target" }), {
+      const targets = filteredTargets.filter((t) => t.id !== actor.id || shape === "self");
+      if (targets.length === 0) {
+        return new Response(JSON.stringify({ error: "No valid targets in area" }), {
           status: 409,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const target = resolved.combatant;
       const duration = Math.max(0, Math.floor(Number((status as any).duration_turns)));
       const statusId = String((status as any).id);
-      const { data: chance, error: chanceErr } = await svc.schema("mythic").rpc("status_apply_chance", {
-        control: actor.control,
-        utility: actor.utility,
-        target_resolve: Math.floor(Number(target.resist ?? 0)),
-      });
-      if (chanceErr) throw chanceErr;
-      const ch = typeof chance === "number" ? chance : Number(chance ?? 0);
-      const roll = rng01(seed, `${labelBase}:status:${statusId}:t:${target.id}`);
-      const applied = roll < ch;
+      for (const target of targets) {
+        const { data: chance, error: chanceErr } = await svc.schema("mythic").rpc("status_apply_chance", {
+          control: actor.control,
+          utility: actor.utility,
+          target_resolve: Math.floor(Number(target.resist ?? 0)),
+        });
+        if (chanceErr) throw chanceErr;
+        const ch = typeof chance === "number" ? chance : Number(chance ?? 0);
+        const roll = rng01(seed, `${labelBase}:status:${statusId}:t:${target.id}`);
+        const applied = roll < ch;
 
-      events.push({
-        event_type: "status_roll",
-        payload: { target_combatant_id: target.id, status_id: statusId, chance: ch, roll, applied },
-        actor_id: actor.id,
-        turn_index: turnIndex,
-      });
+        events.push({
+          event_type: "status_roll",
+          payload: { target_combatant_id: target.id, status_id: statusId, chance: ch, roll, applied },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
 
-      if (applied) {
-        const targetStatuses = nowStatuses(target.statuses);
-        const nextTargetStatuses = setSimpleStatus(targetStatuses, statusId, turnIndex + duration, { source_skill_id: skill.id });
-        const { error: statusUpdateErr } = await svc
+        if (applied) {
+          const targetStatuses = nowStatuses(target.statuses);
+          const nextTargetStatuses = setSimpleStatus(targetStatuses, statusId, turnIndex + duration, { source_skill_id: skill.id });
+          const { error: statusUpdateErr } = await svc
+            .schema("mythic")
+            .from("combatants")
+            .update({ statuses: nextTargetStatuses, updated_at: new Date().toISOString() })
+            .eq("id", target.id)
+            .eq("combat_session_id", combatSessionId);
+          if (statusUpdateErr) throw statusUpdateErr;
+          events.push({
+            event_type: "status_applied",
+            payload: { target_combatant_id: target.id, status: { id: statusId, duration_turns: duration } },
+            actor_id: actor.id,
+            turn_index: turnIndex,
+          });
+        }
+      }
+    }
+
+    // Healing (single or area).
+    const heal = asObject(effects.heal);
+    if (Object.keys(heal).length > 0) {
+      const targets = shape === "self"
+        ? [actor]
+        : allTargets.filter((t) => isAlly(actor, t) || t.id === actor.id);
+      const amount = Math.max(0, Math.floor(Number((heal as any).amount ?? 0)));
+      for (const target of targets) {
+        const newHp = Math.min(target.hp_max, Number(target.hp ?? 0) + amount);
+        const { error: healErr } = await svc
           .schema("mythic")
           .from("combatants")
-          .update({ statuses: nextTargetStatuses, updated_at: new Date().toISOString() })
+          .update({ hp: newHp, updated_at: new Date().toISOString() })
           .eq("id", target.id)
           .eq("combat_session_id", combatSessionId);
-        if (statusUpdateErr) throw statusUpdateErr;
+        if (healErr) throw healErr;
         events.push({
-          event_type: "status_applied",
-          payload: { target_combatant_id: target.id, status: { id: statusId, duration_turns: duration } },
+          event_type: "healed",
+          payload: { target_combatant_id: target.id, amount, hp_after: newHp },
           actor_id: actor.id,
           turn_index: turnIndex,
         });
       }
+    }
+
+    // Power gain.
+    const powerGain = asObject(effects.power_gain);
+    if (Object.keys(powerGain).length > 0) {
+      const amount = Math.max(0, Math.floor(Number((powerGain as any).amount ?? 0)));
+      const newPower = Math.min(actor.power_max, nextPower + amount);
+      updates.power = newPower;
+      events.push({
+        event_type: "power_gain",
+        payload: { target_combatant_id: actor.id, amount, power_after: newPower },
+        actor_id: actor.id,
+        turn_index: turnIndex,
+      });
     }
 
     // Persist actor update (power, move, armor for barrier, statuses/cooldowns).
@@ -626,6 +784,28 @@ serve(async (req) => {
         p_combat_session_id: combatSessionId,
         p_outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs },
       });
+      // Reactivate the most recent non-combat board and log a page-turn transition.
+      const { data: lastBoard } = await svc
+        .schema("mythic")
+        .from("boards")
+        .select("id, board_type")
+        .eq("campaign_id", campaignId)
+        .neq("board_type", "combat")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (lastBoard) {
+        await svc.schema("mythic").from("boards").update({ status: "active", updated_at: new Date().toISOString() }).eq("id", (lastBoard as any).id);
+        await svc.schema("mythic").from("boards").update({ status: "archived", updated_at: new Date().toISOString() }).eq("combat_session_id", combatSessionId);
+        await svc.schema("mythic").from("board_transitions").insert({
+          campaign_id: campaignId,
+          from_board_type: "combat",
+          to_board_type: (lastBoard as any).board_type,
+          reason: "combat_end",
+          animation: "page_turn",
+          payload_json: { combat_session_id: combatSessionId, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } },
+        });
+      }
       return new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },

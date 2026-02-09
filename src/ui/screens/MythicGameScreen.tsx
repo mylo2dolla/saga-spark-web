@@ -13,6 +13,9 @@ import { MythicDMChat } from "@/components/MythicDMChat";
 import { useMythicCombat } from "@/hooks/useMythicCombat";
 import { useMythicCombatState } from "@/hooks/useMythicCombatState";
 import { MythicCombatPanel } from "@/components/mythic/MythicCombatPanel";
+import { MythicInventoryPanel } from "@/components/mythic/MythicInventoryPanel";
+import { callEdgeFunction } from "@/lib/edge";
+import { sumStatMods, splitInventory, type MythicInventoryRow } from "@/lib/mythicEquipment";
 
 function prettyJson(value: unknown): string {
   try {
@@ -35,10 +38,12 @@ export default function MythicGameScreen() {
 
   const { bootstrapCampaign, isBootstrapping } = useMythicCreator();
   const { board, recentTransitions, isLoading: boardLoading, error: boardError, refetch } = useMythicBoard(campaignId);
-  const { character, skills, isLoading: charLoading, error: charError } = useMythicCharacter(campaignId);
+  const { character, skills, items, isLoading: charLoading, error: charError } = useMythicCharacter(campaignId);
   const dm = useMythicDmContext(campaignId);
   const mythicDm = useMythicDungeonMaster(campaignId);
   const combat = useMythicCombat();
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [transitionError, setTransitionError] = useState<string | null>(null);
 
   const [bootstrapped, setBootstrapped] = useState(false);
   const bootstrapOnceRef = useRef(false);
@@ -117,6 +122,39 @@ export default function MythicGameScreen() {
     return c?.id ?? null;
   }, [combatState.combatants, user]);
 
+  const invRowsSafe = useMemo(
+    () => (Array.isArray(items) ? (items as MythicInventoryRow[]) : []),
+    [items],
+  );
+  const { equipment } = splitInventory(invRowsSafe);
+  const equipBonuses = sumStatMods(equipment.map((r) => r.item));
+  const derivedStats = {
+    offense: Math.min(100, Math.max(0, Math.floor(character.offense + (equipBonuses.offense ?? 0)))),
+    defense: Math.min(100, Math.max(0, Math.floor(character.defense + (equipBonuses.defense ?? 0)))),
+    control: Math.min(100, Math.max(0, Math.floor(character.control + (equipBonuses.control ?? 0)))),
+    support: Math.min(100, Math.max(0, Math.floor(character.support + (equipBonuses.support ?? 0)))),
+    mobility: Math.min(100, Math.max(0, Math.floor(character.mobility + (equipBonuses.mobility ?? 0)))),
+    utility: Math.min(100, Math.max(0, Math.floor(character.utility + (equipBonuses.utility ?? 0)))),
+  };
+
+  const transitionBoard = async (toBoardType: "town" | "travel" | "dungeon", reason: string) => {
+    if (!campaignId) return;
+    setIsTransitioning(true);
+    setTransitionError(null);
+    try {
+      const { error } = await callEdgeFunction("mythic-board-transition", {
+        requireAuth: true,
+        body: { campaignId, toBoardType, reason },
+      });
+      if (error) throw error;
+      await refetch();
+    } catch (e) {
+      setTransitionError(e instanceof Error ? e.message : "Failed to transition board");
+    } finally {
+      setIsTransitioning(false);
+    }
+  };
+
   return (
     <div className="p-6">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
@@ -134,6 +172,19 @@ export default function MythicGameScreen() {
           <Button variant="outline" onClick={() => navigate(`/game/${campaignId}`)}>Legacy Game</Button>
           <Button variant="outline" onClick={() => refetch()}>Refresh</Button>
           <Button variant="outline" onClick={() => dm.refetch()}>Refresh DM</Button>
+          {board.board_type !== "combat" ? (
+            <>
+              <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("town", "return")}>
+                Town
+              </Button>
+              <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("travel", "travel")}>
+                Travel
+              </Button>
+              <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("dungeon", "enter_dungeon")}>
+                Dungeon
+              </Button>
+            </>
+          ) : null}
           {board.board_type !== "combat" ? (
             <Button
               onClick={async () => {
@@ -158,6 +209,15 @@ export default function MythicGameScreen() {
           <div className="text-sm">
             <div className="font-medium">{character.name}</div>
             <div className="text-muted-foreground">{String((character.class_json as any)?.class_name ?? "(class)")}</div>
+          </div>
+          <div className="mt-3 text-xs text-muted-foreground">Derived Stats (equipment applied)</div>
+          <div className="mt-1 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+            <div>Offense: {derivedStats.offense}</div>
+            <div>Defense: {derivedStats.defense}</div>
+            <div>Control: {derivedStats.control}</div>
+            <div>Support: {derivedStats.support}</div>
+            <div>Mobility: {derivedStats.mobility}</div>
+            <div>Utility: {derivedStats.utility}</div>
           </div>
           <div className="mt-3 text-xs text-muted-foreground">Skills</div>
           <div className="mt-2 grid gap-2">
@@ -210,6 +270,7 @@ export default function MythicGameScreen() {
               activeTurnCombatantId={combatState.activeTurnCombatantId}
               events={combatState.events}
               playerCombatantId={playerCombatantId}
+              currentTurnIndex={combatState.session?.current_turn_index ?? 0}
               skills={skills.map((s) => ({
                 id: s.id,
                 kind: s.kind,
@@ -235,9 +296,19 @@ export default function MythicGameScreen() {
         </div>
       ) : null}
 
+      <div className="mt-6">
+        <MythicInventoryPanel
+          rows={invRowsSafe}
+          onChanged={async () => {
+            await refetch();
+          }}
+        />
+      </div>
+
       <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
         <div className="mb-2 text-sm font-semibold">Recent Board Transitions (append-only)</div>
         <pre className="max-h-[280px] overflow-auto text-xs text-muted-foreground">{prettyJson(recentTransitions)}</pre>
+        {transitionError ? <div className="mt-2 text-xs text-destructive">{transitionError}</div> : null}
       </div>
 
       <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
