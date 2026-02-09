@@ -14,7 +14,7 @@ export default function AppShell() {
   const { user, isProfileCreating } = useAuth();
   const isLoginRoute = location.pathname === "/login" || location.pathname === "/signup";
   const shouldPollDb = Boolean(user) && !isLoginRoute;
-  const { status, lastError } = useDbHealth(shouldPollDb);
+  const { status, lastError, lastProbe } = useDbHealth(shouldPollDb);
   const { lastError: lastApiError, lastErrorAt, engineSnapshot } = useDiagnostics();
   const navLinks = [
     { to: "/dashboard", label: "Dashboard" },
@@ -84,6 +84,11 @@ export default function AppShell() {
               {isProfileCreating ? <span>Profile: creating...</span> : null}
               <span>DB: {shouldPollDb ? (status === "ok" ? "ok" : status) : "paused"}</span>
               {lastError ? <span className="text-destructive">DB Error: {lastError}</span> : null}
+              {lastProbe ? (
+                <span className="text-muted-foreground">
+                  DB probe: {lastProbe.timedOut ? "timeout" : lastProbe.status ?? "?"} · {lastProbe.elapsedMs}ms
+                </span>
+              ) : null}
             </div>
             <div className="hidden text-muted-foreground md:block">{location.pathname}</div>
           </div>
