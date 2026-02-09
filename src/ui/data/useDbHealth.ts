@@ -49,8 +49,48 @@ export function useDbHealth(enabled = true) {
         }
       } catch (error) {
         if (isMounted && requestIdRef.current === requestId) {
+          const baseError = formatError(error);
+          // Fallback direct REST probe (bypass supabase-js) to confirm project connectivity.
+          try {
+            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+            const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+            const { data } = await supabase.auth.getSession();
+            const accessToken = data.session?.access_token ?? null;
+            if (supabaseUrl && supabaseAnonKey) {
+              const controller = new AbortController();
+              const tid = setTimeout(() => controller.abort(), 4000);
+              const res = await fetch(`${supabaseUrl}/rest/v1/campaigns?select=id&limit=1`, {
+                method: "GET",
+                headers: {
+                  apikey: supabaseAnonKey,
+                  ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+                },
+                signal: controller.signal,
+              });
+              clearTimeout(tid);
+              if (res.ok) {
+                setStatus("ok");
+                setLastError(null);
+                setLastProbe({ status: res.status, timedOut: false, elapsedMs: Date.now() - startedAt, at: Date.now() });
+                return;
+              }
+              setLastError(`DB probe failed (supabase-js): ${baseError}. REST status ${res.status}`);
+            } else {
+              setLastError(baseError);
+            }
+          } catch (fallbackErr) {
+            setStatus("error");
+            setLastError(`${baseError}. REST probe failed: ${formatError(fallbackErr)}`);
+            setLastProbe({
+              status: null,
+              timedOut: didTimeout,
+              elapsedMs: Date.now() - startedAt,
+              at: Date.now(),
+            });
+            return;
+          }
+
           setStatus("error");
-          setLastError(formatError(error));
           setLastProbe({
             status: null,
             timedOut: didTimeout,
