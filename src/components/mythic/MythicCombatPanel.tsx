@@ -36,6 +36,7 @@ export function MythicCombatPanel(props: {
   activeTurnCombatantId: string | null;
   events: MythicActionEventRow[];
   playerCombatantId: string | null;
+  currentTurnIndex: number;
   skills: MythicSkillLite[];
   onUseSkill: (args: { actorCombatantId: string; skillId: string; target: Target }) => Promise<void>;
   isActing: boolean;
@@ -43,11 +44,13 @@ export function MythicCombatPanel(props: {
   const { combatants, activeTurnCombatantId, events, playerCombatantId } = props;
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
+  const [selectedTile, setSelectedTile] = useState<{ x: number; y: number } | null>(null);
 
   const selectedSkill = useMemo(
     () => props.skills.find((s) => s.id === selectedSkillId) ?? null,
     [props.skills, selectedSkillId],
   );
+  const selectedCooldown = selectedSkill ? (cooldowns.get(selectedSkill.id) ?? 0) : 0;
 
   const byId = useMemo(() => {
     const m = new Map<string, MythicCombatantRow>();
@@ -56,6 +59,23 @@ export function MythicCombatPanel(props: {
   }, [combatants]);
 
   const activeActor = activeTurnCombatantId ? byId.get(activeTurnCombatantId) ?? null : null;
+  const playerActor = props.playerCombatantId ? byId.get(props.playerCombatantId) ?? null : null;
+
+  const cooldowns = useMemo(() => {
+    if (!playerActor) return new Map<string, number>();
+    const raw = Array.isArray((playerActor as any).statuses) ? (playerActor as any).statuses : [];
+    const map = new Map<string, number>();
+    for (const s of raw) {
+      if (!s || typeof s !== "object") continue;
+      const id = String((s as any).id ?? "");
+      if (!id.startsWith("cd:")) continue;
+      const expires = Number((s as any).expires_turn ?? 0);
+      const skillId = id.replace("cd:", "");
+      const remaining = Math.max(0, Math.floor(expires - props.currentTurnIndex));
+      map.set(skillId, remaining);
+    }
+    return map;
+  }, [playerActor, props.currentTurnIndex]);
 
   const gridSize = useMemo(() => {
     const maxX = Math.max(9, ...combatants.map((c) => c.x));
@@ -109,9 +129,9 @@ export function MythicCombatPanel(props: {
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium">{c.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {c.entity_type} · ({c.x},{c.y}) · armor {Math.floor(c.armor)}
-                    </div>
+                <div className="text-xs text-muted-foreground">
+                  {c.entity_type} · ({c.x},{c.y}) · armor {Math.floor(c.armor)}
+                </div>
                   </div>
                   <div className="w-28 shrink-0">
                     <div className="h-2 w-full overflow-hidden rounded bg-muted">
@@ -159,9 +179,10 @@ export function MythicCombatPanel(props: {
                     className={[
                       "aspect-square rounded border text-[10px] leading-none",
                       tokens.length ? "border-primary/40 bg-primary/10 text-foreground" : "border-border bg-background/10 text-muted-foreground",
-                      isHereSelected ? "ring-2 ring-primary/40" : "",
+                      isHereSelected || (selectedTile && selectedTile.x === x && selectedTile.y === y) ? "ring-2 ring-primary/40" : "",
                     ].join(" ")}
                     onClick={() => {
+                      setSelectedTile({ x, y });
                       if (tokens.length === 1) setSelectedTargetId(tokens[0]!.id);
                     }}
                     title={tokens.map((t) => t.name).join(", ")}
@@ -180,6 +201,7 @@ export function MythicCombatPanel(props: {
             .filter((s) => s.kind === "active" || s.kind === "ultimate")
             .map((s) => {
               const active = s.id === selectedSkillId;
+              const cd = cooldowns.get(s.id) ?? 0;
               return (
                 <button
                   key={s.id}
@@ -187,12 +209,14 @@ export function MythicCombatPanel(props: {
                   className={[
                     "rounded-lg border bg-background/30 p-2 text-left transition",
                     active ? "border-primary ring-2 ring-primary/30" : "border-border",
+                    cd > 0 ? "opacity-60" : "",
                   ].join(" ")}
                   onClick={() => setSelectedSkillId(s.id)}
                 >
                   <div className="text-sm font-medium">{s.name}</div>
                   <div className="text-xs text-muted-foreground">
                     {s.kind} · {s.targeting} · r{s.range_tiles} · cd{s.cooldown_turns}
+                    {cd > 0 ? ` · cooldown ${cd}` : ""}
                   </div>
                 </button>
               );
@@ -201,7 +225,7 @@ export function MythicCombatPanel(props: {
 
         <div className="mt-3 flex flex-wrap gap-2">
           <Button
-            disabled={!canAct || !selectedSkill || !playerCombatantId || props.isActing}
+            disabled={!canAct || !selectedSkill || !playerCombatantId || props.isActing || selectedCooldown > 0}
             onClick={async () => {
               if (!selectedSkill || !playerCombatantId) return;
               const targeting = selectedSkill.targeting;
@@ -212,9 +236,13 @@ export function MythicCombatPanel(props: {
               } else if (targeting === "self") {
                 target = { kind: "self" };
               } else {
-                // tile/area: if a combatant is selected, target that tile
-                const t = selectedTargetId ? byId.get(selectedTargetId) ?? null : null;
-                target = t ? { kind: "tile", x: t.x, y: t.y } : { kind: "tile", x: 0, y: 0 };
+                // tile/area/cone/line: use selected tile if available, else fall back to selected combatant tile.
+                if (selectedTile) {
+                  target = { kind: "tile", x: selectedTile.x, y: selectedTile.y };
+                } else {
+                  const t = selectedTargetId ? byId.get(selectedTargetId) ?? null : null;
+                  target = t ? { kind: "tile", x: t.x, y: t.y } : { kind: "tile", x: 0, y: 0 };
+                }
               }
 
               await props.onUseSkill({
@@ -231,6 +259,7 @@ export function MythicCombatPanel(props: {
             onClick={() => {
               setSelectedSkillId(null);
               setSelectedTargetId(null);
+              setSelectedTile(null);
             }}
           >
             Clear
@@ -244,4 +273,3 @@ export function MythicCombatPanel(props: {
     </div>
   );
 }
-

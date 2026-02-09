@@ -16,6 +16,36 @@ const RequestSchema = z.object({
 });
 
 type MythicBoardType = "town" | "dungeon" | "travel" | "combat";
+type StatKey = "offense" | "defense" | "control" | "support" | "mobility" | "utility";
+
+const STAT_KEYS: StatKey[] = ["offense", "defense", "control", "support", "mobility", "utility"];
+
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function num(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function clampStat(n: number): number {
+  return Math.min(100, Math.max(0, Math.floor(n)));
+}
+
+function sumEquipmentBonuses(rows: Array<{ item?: { stat_mods?: unknown; slot?: string } | null }>) {
+  const totals: Record<string, number> = {};
+  for (const row of rows) {
+    const statMods = asObject(row?.item?.stat_mods);
+    for (const [k, v] of Object.entries(statMods)) {
+      const add = num(v, 0);
+      if (!Number.isFinite(add)) continue;
+      totals[k] = (totals[k] ?? 0) + add;
+    }
+  }
+  return totals;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
@@ -119,6 +149,32 @@ serve(async (req) => {
       });
     }
 
+    // Pull equipped items for stat bonuses.
+    const { data: equippedItems, error: equipError } = await svc
+      .schema("mythic")
+      .from("inventory")
+      .select("id, container, item:items(stat_mods, slot)")
+      .eq("character_id", character.id)
+      .eq("container", "equipment");
+
+    if (equipError) throw equipError;
+
+    const equipBonuses = sumEquipmentBonuses((equippedItems ?? []) as Array<{ item?: { stat_mods?: unknown } | null }>);
+
+    const derivedStats = STAT_KEYS.reduce((acc, key) => {
+      const base = num((character as any)[key], 0);
+      const bonus = num(equipBonuses[key], 0);
+      acc[key] = clampStat(base + bonus);
+      return acc;
+    }, {} as Record<StatKey, number>);
+
+    const weaponPower = Math.max(0, num(equipBonuses.weapon_power, 0));
+    const armorPower = Math.max(0, num(equipBonuses.armor_power, 0));
+    const resistBonus = Math.max(0, num(equipBonuses.resist, 0));
+    const armorBonus = Math.max(0, num(equipBonuses.armor, 0));
+    const hpBonus = Math.max(0, num(equipBonuses.hp_max, 0));
+    const powerBonus = Math.max(0, num(equipBonuses.power_max, 0));
+
     // Start combat session + activate combat board + transition + combat_start event.
     const { data: combatId, error: startError } = await svc
       .schema("mythic")
@@ -138,11 +194,13 @@ serve(async (req) => {
     const lvl = character.level as number;
 
     const [{ data: hpMax }, { data: powerMax }] = await Promise.all([
-      svc.schema("mythic").rpc("max_hp", { lvl, defense: character.defense, support: character.support }),
-      svc.schema("mythic").rpc("max_power_bar", { lvl, utility: character.utility, support: character.support }),
+      svc.schema("mythic").rpc("max_hp", { lvl, defense: derivedStats.defense, support: derivedStats.support }),
+      svc.schema("mythic").rpc("max_power_bar", { lvl, utility: derivedStats.utility, support: derivedStats.support }),
     ]);
 
-    const playerInit = clampInt((character.mobility as number) + rngInt(seed, `init:player:${character.id}`, 0, 25), 0, 999);
+    const playerInit = clampInt((derivedStats.mobility as number) + rngInt(seed, `init:player:${character.id}`, 0, 25), 0, 999);
+    const hpMaxFinal = Math.max(1, Math.floor((hpMax ?? 100) + hpBonus));
+    const powerMaxFinal = Math.max(0, Math.floor((powerMax ?? 50) + powerBonus));
 
     const playerCombatant = {
       combat_session_id: combatId,
@@ -153,20 +211,20 @@ serve(async (req) => {
       x: 1,
       y: 1,
       lvl,
-      offense: character.offense,
-      defense: character.defense,
-      control: character.control,
-      support: character.support,
-      mobility: character.mobility,
-      utility: character.utility,
-      weapon_power: 0,
-      armor_power: 0,
-      hp: hpMax ?? 100,
-      hp_max: hpMax ?? 100,
-      power: powerMax ?? 50,
-      power_max: powerMax ?? 50,
-      armor: 0,
-      resist: 0,
+      offense: derivedStats.offense,
+      defense: derivedStats.defense,
+      control: derivedStats.control,
+      support: derivedStats.support,
+      mobility: derivedStats.mobility,
+      utility: derivedStats.utility,
+      weapon_power: weaponPower,
+      armor_power: armorPower,
+      hp: hpMaxFinal,
+      hp_max: hpMaxFinal,
+      power: powerMaxFinal,
+      power_max: powerMaxFinal,
+      armor: armorBonus,
+      resist: resistBonus,
       statuses: [],
       initiative: playerInit,
       is_alive: true,
@@ -244,6 +302,27 @@ serve(async (req) => {
     if (turnError) throw turnError;
 
     const initiativeSnapshot = sorted.map((c: any) => ({ combatant_id: c.id, name: c.name, initiative: c.initiative }));
+
+    // Add a simple deterministic combat grid with blocked tiles for LOS checks.
+    const blockedTiles = Array.from({ length: rngInt(seed, "walls:count", 3, 6) }).map((_, i) => ({
+      x: rngInt(seed, `walls:x:${i}`, 2, 7),
+      y: rngInt(seed, `walls:y:${i}`, 1, 4),
+    }));
+
+    await svc
+      .schema("mythic")
+      .from("boards")
+      .update({
+        state_json: {
+          combat_session_id: combatId,
+          grid: { width: 12, height: 8 },
+          blocked_tiles: blockedTiles,
+          seed,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("combat_session_id", combatId)
+      .eq("status", "active");
 
     await svc.schema("mythic").rpc("append_action_event", {
       p_combat_session_id: combatId,
