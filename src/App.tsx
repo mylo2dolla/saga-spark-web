@@ -13,6 +13,7 @@ import AuthScreen from "@/ui/screens/AuthScreen";
 import DashboardScreen from "@/ui/screens/DashboardScreen";
 import CharacterScreen from "@/ui/screens/CharacterScreen";
 import GameScreen from "@/ui/screens/GameScreen";
+import MythicGameScreen from "@/ui/screens/MythicGameScreen";
 import ServerAdminScreen from "@/ui/screens/ServerAdminScreen";
 import SupabaseDebugScreen from "@/ui/screens/SupabaseDebugScreen";
 import LandingScreen from "@/ui/screens/LandingScreen";
@@ -52,6 +53,7 @@ const App = () => (
                     <Route path="/servers" element={<ServerAdminScreen />} />
                     <Route path="/admin" element={<ServerAdminScreen />} />
                     <Route path="/debug/supabase" element={<SupabaseDebugScreen />} />
+                    <Route path="/mythic/:campaignId" element={<MythicGameScreen />} />
                     <Route path="/game/:campaignId" element={<GameSessionRoute />}>
                       <Route index element={<GameScreen />} />
                       <Route path="create-character" element={<CharacterScreen />} />
