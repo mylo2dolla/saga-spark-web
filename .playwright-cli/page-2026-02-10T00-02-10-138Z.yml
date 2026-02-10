@@ -1,0 +1,74 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "runId: ab5a4e51-fe7f-4670-911d-b93f38f582c6"
+    - generic [ref=e6]: "now: 2026-02-09T23:58:31.621Z"
+    - generic [ref=e7]: "base: /"
+    - generic [ref=e8]: "href: http://localhost:8080/login"
+  - generic [ref=e32]:
+    - complementary [ref=e33]:
+      - generic [ref=e34]: Saga Spark
+      - navigation [ref=e35]:
+        - link "Dashboard" [ref=e36] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e37] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Game" [ref=e38] [cursor=pointer]:
+          - /url: /game
+        - link "Servers/Admin" [ref=e39] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e40]:
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]: "Auth: psylus13@gmail.com"
+          - generic [ref=e44]: "DB: loading"
+        - generic [ref=e45]: /dashboard
+      - generic [ref=e47]:
+        - generic [ref=e48]:
+          - heading "Dashboard" [level=1] [ref=e49]
+          - paragraph [ref=e50]: Your campaigns and access codes.
+          - generic [ref=e51]: "Auth: session | userId: f04e2fc9-f2ff-488a-8164-5d018d3b229b | DB: loading"
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - heading "Campaigns" [level=3] [ref=e55]
+            - generic [ref=e57]: Loading campaigns...
+          - generic [ref=e58]:
+            - generic [ref=e59]:
+              - heading "Auth" [level=3] [ref=e61]
+              - generic [ref=e63]:
+                - generic [ref=e64]: Signed in as
+                - generic [ref=e65]: psylus13@gmail.com
+                - generic [ref=e66]: f04e2fc9-f2ff-488a-8164-5d018d3b229b
+                - button "Sign out" [ref=e67] [cursor=pointer]
+            - generic [ref=e68]:
+              - heading "Create campaign" [level=3] [ref=e70]
+              - generic [ref=e71]:
+                - textbox "Campaign name" [ref=e72]: Playwright Seed or
+                - textbox "Campaign description" [ref=e73]: Smoke test campaign from playwright
+                - button "Creating..." [disabled]
+            - generic [ref=e74]:
+              - heading "Join campaign" [level=3] [ref=e76]
+              - generic [ref=e77]:
+                - textbox "Invite code" [ref=e78]
+                - button "Join" [disabled]
+      - generic [ref=e80]:
+        - generic [ref=e81]: "Build: unknown"
+        - generic [ref=e82]: "Route: /dashboard"
+        - generic [ref=e83]: "Last API Error: none"
+      - generic [ref=e84]:
+        - generic [ref=e85]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e86]: "Anon key present: yes"
+        - generic [ref=e87]: "Session exists: no"
+        - generic [ref=e88]: "Access token exists: no"
+        - generic [ref=e89]: "Last status: -"
+        - generic [ref=e90]: "Last body: -"
+        - button "Test generate-class" [ref=e91] [cursor=pointer]
+  - generic [ref=e92]:
+    - generic [ref=e93]: "session: yes"
+    - generic [ref=e94]: "userId: f04e2fc9-f2ff-488a-8164-5d018d3b229b"
+    - generic [ref=e95]: "authLoading: true"
+    - generic [ref=e96]: "route: /dashboard"
+    - generic [ref=e97]: "lastAuthError: none"

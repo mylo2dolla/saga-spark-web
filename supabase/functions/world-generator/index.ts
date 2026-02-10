@@ -275,10 +275,9 @@ serve(async (req) => {
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     let userId: string | null = null;
     if (supabaseUrl && anonKey && authHeader) {
-      const supabase = createClient(supabaseUrl, anonKey, {
-        global: { headers: { Authorization: authHeader } },
-      });
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      const authToken = authHeader.replace("Bearer ", "");
+      const supabase = createClient(supabaseUrl, anonKey);
+      const { data: { user }, error: userError } = await supabase.auth.getUser(authToken);
       if (userError) {
         console.error("world-generator auth lookup failed", { requestId, error: userError.message });
       } else {

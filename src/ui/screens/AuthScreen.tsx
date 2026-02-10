@@ -42,6 +42,85 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const [authTestResult, setAuthTestResult] = useState<string | null>(null);
   const [isAuthTesting, setIsAuthTesting] = useState(false);
 
+  const signInWithPassword = async () => {
+    const timeoutMs = 12000;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("Auth request timed out")), timeoutMs);
+    });
+    const signInPromise = supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    return await Promise.race([signInPromise, timeoutPromise]);
+  };
+
+  const signInWithManualToken = async () => {
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error("Supabase env is not configured");
+    }
+    const controller = new AbortController();
+    const tokenTimeoutMs = 12000;
+    const tokenTimeout = setTimeout(() => controller.abort(), tokenTimeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+        method: "POST",
+        headers: {
+          apikey: supabaseAnonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error("Auth request timed out");
+      }
+      throw err;
+    } finally {
+      clearTimeout(tokenTimeout);
+    }
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = (json as { error_description?: string; error?: string })?.error_description
+        ?? (json as { error?: string })?.error
+        ?? "Login failed";
+      throw new Error(msg);
+    }
+    const access_token = (json as { access_token?: string })?.access_token ?? null;
+    const refresh_token = (json as { refresh_token?: string })?.refresh_token ?? null;
+    const expires_in = Number((json as { expires_in?: number })?.expires_in ?? 3600);
+    const expires_at = Number((json as { expires_at?: number })?.expires_at ?? (Math.floor(Date.now() / 1000) + expires_in));
+    if (!access_token || !refresh_token) {
+      throw new Error("Auth tokens missing from response");
+    }
+
+    const sessionPayload = {
+      access_token,
+      refresh_token,
+      token_type: (json as { token_type?: string })?.token_type ?? "bearer",
+      expires_in,
+      expires_at,
+      user: (json as { user?: unknown })?.user ?? null,
+    };
+
+    try {
+      const { error: setErr } = await supabase.auth.setSession({ access_token, refresh_token });
+      if (setErr) throw setErr;
+    } catch {
+      const projectRef = supabaseUrl.replace("https://", "").split(".")[0] ?? "supabase";
+      const storageKey = `sb-${projectRef}-auth-token`;
+      try {
+        window.localStorage.setItem(storageKey, JSON.stringify(sessionPayload));
+      } catch {
+        // Ignore storage failures; user will see session error if not persisted.
+      }
+    }
+
+    return { data: { session: { access_token }, user: sessionPayload.user }, error: null } as const;
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -73,79 +152,15 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       console.info("[auth] log", { step: "login_signin_call" });
       const action = mode === "login"
         ? async () => {
-          if (!supabaseUrl || !supabaseAnonKey) {
-            throw new Error("Supabase env is not configured");
-          }
-          const controller = new AbortController();
-          const tokenTimeoutMs = 12000;
-          const tokenTimeout = setTimeout(() => controller.abort(), tokenTimeoutMs);
-          let res: Response;
           try {
-            res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-              method: "POST",
-              headers: {
-                apikey: supabaseAnonKey,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ email, password }),
-              signal: controller.signal,
-            });
+            return await signInWithPassword();
           } catch (err) {
-            if (controller.signal.aborted) {
-              throw new Error("Auth request timed out");
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.toLowerCase().includes("timed out") || err instanceof TypeError) {
+              return await signInWithManualToken();
             }
             throw err;
-          } finally {
-            clearTimeout(tokenTimeout);
           }
-
-          const json = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            const msg = (json as { error_description?: string; error?: string })?.error_description
-              ?? (json as { error?: string })?.error
-              ?? "Login failed";
-            throw new Error(msg);
-          }
-          const access_token = (json as { access_token?: string })?.access_token ?? null;
-          const refresh_token = (json as { refresh_token?: string })?.refresh_token ?? null;
-          const expires_in = Number((json as { expires_in?: number })?.expires_in ?? 3600);
-          const expires_at = Number((json as { expires_at?: number })?.expires_at ?? (Math.floor(Date.now() / 1000) + expires_in));
-          if (!access_token || !refresh_token) {
-            throw new Error("Auth tokens missing from response");
-          }
-
-          const sessionPayload = {
-            access_token,
-            refresh_token,
-            token_type: (json as { token_type?: string })?.token_type ?? "bearer",
-            expires_in,
-            expires_at,
-            user: (json as { user?: unknown })?.user ?? null,
-          };
-
-          const setSessionWithTimeout = async () => {
-            const timeoutMs = 2000;
-            const timeoutPromise = new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error("setSession timed out")), timeoutMs)
-            );
-            const setPromise = supabase.auth.setSession({ access_token, refresh_token });
-            return await Promise.race([setPromise, timeoutPromise]);
-          };
-
-          try {
-            const { error: setErr } = await setSessionWithTimeout();
-            if (setErr) throw setErr;
-          } catch {
-            const projectRef = supabaseUrl.replace("https://", "").split(".")[0] ?? "supabase";
-            const storageKey = `sb-${projectRef}-auth-token`;
-            try {
-              window.localStorage.setItem(storageKey, JSON.stringify(sessionPayload));
-            } catch {
-              // Ignore storage failures; user will see session error if not persisted.
-            }
-          }
-
-          return { data: { session: { access_token }, user: sessionPayload.user }, error: null } as const;
         }
         : () => supabase.auth.signUp({
           email,

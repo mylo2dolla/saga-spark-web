@@ -51,6 +51,7 @@ export default function DashboardScreen() {
   const [inviteCode, setInviteCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const fetchInFlightRef = useRef(false);
@@ -814,6 +815,84 @@ export default function DashboardScreen() {
     }
   };
 
+  const handleDeleteCampaign = async (campaign: Campaign) => {
+    if (!activeUserId) {
+      toast({ title: "Sign in required", description: "You must be signed in to delete campaigns.", variant: "destructive" });
+      return;
+    }
+    if (campaign.owner_id !== activeUserId) {
+      toast({ title: "Not allowed", description: "Only the campaign owner can delete this campaign.", variant: "destructive" });
+      return;
+    }
+    const confirmed = window.confirm(`Delete campaign \"${campaign.name}\"? This cannot be undone.`);
+    if (!confirmed) return;
+    if (isDeleting) return;
+    setIsDeleting(true);
+    setLastError(null);
+    try {
+      const { error: deleteError } = await supabase
+        .from("campaigns")
+        .delete()
+        .eq("id", campaign.id);
+      if (deleteError) throw deleteError;
+      if (isMountedRef.current) {
+        setCampaigns(prev => prev.filter(c => c.id !== campaign.id));
+      }
+      toast({ title: "Campaign deleted", description: campaign.name });
+      fetchCampaigns();
+    } catch (err) {
+      const message = formatError(err, "Failed to delete campaign");
+      if (isMountedRef.current) {
+        setLastError(message);
+      }
+      toast({ title: "Failed to delete campaign", description: message, variant: "destructive" });
+    } finally {
+      if (isMountedRef.current) {
+        setIsDeleting(false);
+      }
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!activeUserId) {
+      toast({ title: "Sign in required", description: "You must be signed in to delete campaigns.", variant: "destructive" });
+      return;
+    }
+    const owned = campaigns.filter(c => c.owner_id === activeUserId);
+    if (owned.length === 0) {
+      toast({ title: "No owned campaigns", description: "You don't own any campaigns to delete." });
+      return;
+    }
+    const confirmed = window.confirm(`Delete all ${owned.length} owned campaign(s)? This cannot be undone.`);
+    if (!confirmed) return;
+    if (isDeleting) return;
+    setIsDeleting(true);
+    setLastError(null);
+    try {
+      const ids = owned.map(c => c.id);
+      const { error: deleteError } = await supabase
+        .from("campaigns")
+        .delete()
+        .in("id", ids);
+      if (deleteError) throw deleteError;
+      if (isMountedRef.current) {
+        setCampaigns(prev => prev.filter(c => !ids.includes(c.id)));
+      }
+      toast({ title: "Campaigns deleted", description: `Deleted ${owned.length} campaign(s).` });
+      fetchCampaigns();
+    } catch (err) {
+      const message = formatError(err, "Failed to delete campaigns");
+      if (isMountedRef.current) {
+        setLastError(message);
+      }
+      toast({ title: "Failed to delete campaigns", description: message, variant: "destructive" });
+    } finally {
+      if (isMountedRef.current) {
+        setIsDeleting(false);
+      }
+    }
+  };
+
   const content = useMemo(() => {
     if (isLoading) {
       return <div className="text-sm text-muted-foreground">Loading campaigns...</div>;
@@ -839,7 +918,7 @@ export default function DashboardScreen() {
         ) : null}
         {campaigns.map(campaign => (
           <Card key={campaign.id} className="border border-border">
-            <CardContent className="flex items-center justify-between p-4">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div>
                 <div className="text-sm font-semibold">{campaign.name}</div>
                 <div className="text-xs text-muted-foreground">Invite: {campaign.invite_code}</div>
@@ -849,13 +928,36 @@ export default function DashboardScreen() {
                   </div>
                 ) : null}
               </div>
-              <Button size="sm" onClick={() => navigate(`/game/${campaign.id}`)}>Open</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => navigate(`/game/${campaign.id}`)}>Open</Button>
+                {campaign.owner_id === activeUserId ? (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => handleDeleteCampaign(campaign)}
+                    disabled={isDeleting}
+                  >
+                    Delete
+                  </Button>
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         ))}
       </div>
     );
-  }, [campaigns, error, handleRetry, isLoading, membersByCampaign, membersError, navigate]);
+  }, [
+    activeUserId,
+    campaigns,
+    error,
+    handleDeleteCampaign,
+    handleRetry,
+    isDeleting,
+    isLoading,
+    membersByCampaign,
+    membersError,
+    navigate,
+  ]);
 
   const dbStatusLabel = dbEnabled ? dbStatus : "paused";
 
@@ -874,8 +976,16 @@ export default function DashboardScreen() {
 
       <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="text-base">Campaigns</CardTitle>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={handleDeleteAll}
+              disabled={isDeleting || campaigns.length === 0}
+            >
+              {isDeleting ? "Deleting..." : "Delete All"}
+            </Button>
           </CardHeader>
           <CardContent>{content}</CardContent>
         </Card>

@@ -86,11 +86,9 @@ serve(async (req) => {
       throw new Error("Supabase env is not configured (SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY)");
     }
 
-    const authClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    const authToken = authHeader.replace("Bearer ", "");
+    const authClient = createClient(supabaseUrl, anonKey);
+    const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
       return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
         status: 401,
@@ -142,12 +140,13 @@ serve(async (req) => {
     }
 
     // Ensure DM state rows exist.
-    await svc.from("mythic.dm_campaign_state").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
-    await svc.from("mythic.dm_world_tension").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
+    await svc.schema("mythic").from("dm_campaign_state").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
+    await svc.schema("mythic").from("dm_world_tension").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
 
     // Ensure there is an active board.
     const { data: activeBoard, error: boardError } = await svc
-      .from("mythic.boards")
+      .schema("mythic")
+      .from("boards")
       .select("id, board_type, status")
       .eq("campaign_id", campaignId)
       .eq("status", "active")
@@ -161,7 +160,7 @@ serve(async (req) => {
       const seedBase = hashSeed(`bootstrap:${campaignId}`);
       const townState = makeTownState(seedBase);
 
-      const { error: insertBoardError } = await svc.from("mythic.boards").insert({
+      const { error: insertBoardError } = await svc.schema("mythic").from("boards").insert({
         campaign_id: campaignId,
         board_type: "town",
         status: "active",
@@ -171,7 +170,7 @@ serve(async (req) => {
 
       if (insertBoardError) throw insertBoardError;
 
-      await svc.from("mythic.factions").upsert(
+      await svc.schema("mythic").from("factions").upsert(
         {
           campaign_id: campaignId,
           name: makeName(seedBase, "faction"),

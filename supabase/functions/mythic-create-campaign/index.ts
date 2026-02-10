@@ -95,10 +95,9 @@ serve(async (req) => {
       });
     }
 
-    const authClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    const authToken = authHeader.replace("Bearer ", "");
+    const authClient = createClient(supabaseUrl, anonKey);
+    const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
       return new Response(JSON.stringify({ ok: false, error: "Invalid or expired authentication token" }), {
         status: 401,
@@ -119,7 +118,14 @@ serve(async (req) => {
       .single();
 
     if (campaignError || !campaign) {
-      throw campaignError ?? new Error("Campaign insert failed");
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "Campaign insert failed",
+        details: campaignError ?? null,
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const campaignId = campaign.id;
@@ -127,32 +133,98 @@ serve(async (req) => {
     const { error: memberError } = await svc
       .from("campaign_members")
       .insert({ campaign_id: campaignId, user_id: user.id, is_dm: true });
-    if (memberError) throw memberError;
+    if (memberError) {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "Campaign member insert failed",
+        details: memberError,
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    await svc.from("combat_state").insert({ campaign_id: campaignId }).throwOnError();
+    const { error: combatError } = await svc.from("combat_state").insert({ campaign_id: campaignId });
+    if (combatError) {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "Combat state insert failed",
+        details: combatError,
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const seedBase = hashSeed(`${campaignId}:${user.id}`);
-    await svc.from("mythic.dm_campaign_state").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
-    await svc.from("mythic.dm_world_tension").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
+    const { error: dmStateError } = await svc
+      .schema("mythic")
+      .from("dm_campaign_state")
+      .upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
+    if (dmStateError) {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "DM campaign state upsert failed",
+        details: dmStateError,
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { error: dmTensionError } = await svc
+      .schema("mythic")
+      .from("dm_world_tension")
+      .upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
+    if (dmTensionError) {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "DM world tension upsert failed",
+        details: dmTensionError,
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const { data: activeBoard, error: boardError } = await svc
-      .from("mythic.boards")
+      .schema("mythic")
+      .from("boards")
       .select("id")
       .eq("campaign_id", campaignId)
       .eq("status", "active")
       .limit(1)
       .maybeSingle();
-    if (boardError) throw boardError;
+    if (boardError) {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "Board lookup failed",
+        details: boardError,
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     if (!activeBoard) {
       const townState = makeTownState(seedBase);
-      await svc.from("mythic.boards").insert({
+      const { error: boardInsertError } = await svc.schema("mythic").from("boards").insert({
         campaign_id: campaignId,
         board_type: "town",
         status: "active",
         state_json: townState,
         ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
-      }).throwOnError();
+      });
+      if (boardInsertError) {
+        return new Response(JSON.stringify({
+          ok: false,
+          error: "Board insert failed",
+          details: boardInsertError,
+        }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     return new Response(JSON.stringify({ ok: true, campaign }), {
@@ -161,8 +233,10 @@ serve(async (req) => {
     });
   } catch (error) {
     console.error("mythic-create-campaign error:", error);
+    const message = error instanceof Error ? error.message : "Failed to create campaign";
+    const details = error instanceof Error ? { name: error.name, message: error.message } : error;
     return new Response(
-      JSON.stringify({ ok: false, error: error instanceof Error ? error.message : "Failed to create campaign" }),
+      JSON.stringify({ ok: false, error: message, details }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }

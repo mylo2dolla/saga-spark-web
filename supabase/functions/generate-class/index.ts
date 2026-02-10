@@ -89,7 +89,8 @@ serve(async (req) => {
     );
 
     if (!isAnonMode) {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      const authToken = bearerToken;
+      const { data: { user }, error: userError } = await supabase.auth.getUser(authToken);
       if (userError || !user) {
         return new Response(
           JSON.stringify({ error: "Invalid authentication token" }),
