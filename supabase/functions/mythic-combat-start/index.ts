@@ -73,11 +73,9 @@ serve(async (req) => {
       throw new Error("Supabase env is not configured (SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY)");
     }
 
-    const authClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    const authToken = authHeader.replace("Bearer ", "");
+    const authClient = createClient(supabaseUrl, anonKey);
+    const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
       return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
         status: 401,

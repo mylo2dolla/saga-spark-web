@@ -144,10 +144,9 @@ serve(async (req) => {
       });
     }
 
-    const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    const authToken = authHeader.replace("Bearer ", "");
+    const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
       return errorResponse(401, "invalid_token", "Invalid authentication token", userError?.message);
     }
@@ -180,13 +179,15 @@ serve(async (req) => {
       }
     }
 
-    const { data: campaign, error: campaignError } = await authClient
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const { data: campaign, error: campaignError } = await serviceClient
       .from("campaigns")
       .select("id, owner_id")
       .eq("id", body.campaignId)
       .maybeSingle();
 
-    const { data: member, error: memberError } = await authClient
+    const { data: member, error: memberError } = await serviceClient
       .from("campaign_members")
       .select("id")
       .eq("campaign_id", body.campaignId)
@@ -203,7 +204,6 @@ serve(async (req) => {
       return errorResponse(403, "access_denied", "Access denied");
     }
 
-    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     let insertedCount = 0;
 
     if (Array.isArray(body.content) && body.content.length > 0) {

@@ -42,6 +42,7 @@ export default function GameScreen() {
 
   useEffect(() => {
     if (!campaignId) return;
+    if (E2E_BYPASS_AUTH) return;
     if (authLoading) {
       console.info("[auth] log", {
         step: "auth_guard",
