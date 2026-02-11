@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatError } from "@/ui/data/async";
+import { formatError, withTimeout } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -43,18 +43,20 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const [isAuthTesting, setIsAuthTesting] = useState(false);
 
   const signInWithPassword = async () => {
+    const trimmedEmail = email.trim();
     const timeoutMs = 12000;
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error("Auth request timed out")), timeoutMs);
     });
     const signInPromise = supabase.auth.signInWithPassword({
-      email,
+      email: trimmedEmail,
       password,
     });
     return await Promise.race([signInPromise, timeoutPromise]);
   };
 
   const signInWithManualToken = async () => {
+    const trimmedEmail = email.trim();
     if (!supabaseUrl || !supabaseAnonKey) {
       throw new Error("Supabase env is not configured");
     }
@@ -69,7 +71,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           apikey: supabaseAnonKey,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: trimmedEmail, password }),
         signal: controller.signal,
       });
     } catch (err) {
@@ -106,7 +108,10 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     };
 
     try {
-      const { error: setErr } = await supabase.auth.setSession({ access_token, refresh_token });
+      const { error: setErr } = await withTimeout(
+        supabase.auth.setSession({ access_token, refresh_token }),
+        3000,
+      );
       if (setErr) throw setErr;
     } catch {
       const projectRef = supabaseUrl.replace("https://", "").split(".")[0] ?? "supabase";
@@ -129,8 +134,14 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       console.info("[auth] log", { step: "login_submit_blocked_untrusted" });
       return;
     }
-    if (!email.trim() || !password.trim()) {
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password.trim();
+    if (!trimmedEmail || !trimmedPassword) {
       setLastError("Email and password are required.");
+      return;
+    }
+    if (!/^\S+@\S+\.\S+$/.test(trimmedEmail)) {
+      setLastError("Enter a valid email address.");
       return;
     }
 

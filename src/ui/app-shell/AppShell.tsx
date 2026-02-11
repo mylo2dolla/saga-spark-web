@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
 import ApiDebugPanel from "../components/ApiDebugPanel";
+import PerfHud from "../components/PerfHud";
 import { useDbHealth } from "@/ui/data/useDbHealth";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 
@@ -108,6 +109,7 @@ export default function AppShell() {
             </div>
           ) : null}
           {DEV_DEBUG ? <ApiDebugPanel /> : null}
+          {DEV_DEBUG ? <PerfHud /> : null}
         </main>
       </div>
     </div>

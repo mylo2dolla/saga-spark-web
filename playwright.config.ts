@@ -1,6 +1,6 @@
 import { defineConfig } from "@playwright/test";
 
-const PORT = Number(process.env.PLAYWRIGHT_PORT ?? 8080);
+const PORT = Number(process.env.PLAYWRIGHT_PORT ?? 8082);
 
 export default defineConfig({
   testDir: "tests",
@@ -25,7 +25,7 @@ export default defineConfig({
   webServer: {
     command: `npm run dev -- --host 127.0.0.1 --port ${PORT}`,
     url: `http://127.0.0.1:${PORT}`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     env: {
       ...process.env,
       VITE_E2E_BYPASS_AUTH: "true",
