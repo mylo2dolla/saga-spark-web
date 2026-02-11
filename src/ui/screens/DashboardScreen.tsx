@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
@@ -50,6 +51,7 @@ export default function DashboardScreen() {
   const [inviteCode, setInviteCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const fetchInFlightRef = useRef(false);
@@ -214,6 +216,70 @@ export default function DashboardScreen() {
     }
   }, []);
 
+  const restSelect = useCallback(async <T,>(
+    table: string,
+    query: string,
+    accessToken: string | null,
+    label: string,
+  ): Promise<T[]> => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error("Supabase env is not configured");
+    }
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${query}`, {
+      method: "GET",
+      headers: {
+        apikey: supabaseAnonKey,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${label} REST failed: ${res.status} ${text}`);
+    }
+    return (await res.json()) as T[];
+  }, []);
+
+  const callEdgeDirect = useCallback(async <T,>(
+    name: string,
+    body: unknown,
+    accessToken: string | null,
+    timeoutMs: number,
+  ): Promise<T> => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error("Supabase env is not configured");
+    }
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(`${supabaseUrl}/functions/v1/${name}`, {
+      method: "POST",
+      headers: {
+        apikey: supabaseAnonKey,
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Edge ${name} failed: ${res.status} ${text}`);
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error(`Edge ${name} returned invalid JSON`);
+    }
+  }, []);
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -241,10 +307,35 @@ export default function DashboardScreen() {
     }
 
     try {
-      const { data: ownedData, error: ownedError } = await supabase
-        .from("campaigns")
-        .select("*")
-        .eq("owner_id", loadUserId);
+      let ownedData: Campaign[] = [];
+      let ownedError: Error | null = null;
+      try {
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token ?? null;
+        ownedData = await restSelect<Campaign>(
+          "campaigns",
+          `select=*&owner_id=eq.${loadUserId}`,
+          accessToken,
+          "Owned campaigns"
+        );
+      } catch (err) {
+        ownedError = err as Error;
+        try {
+          const result = await withTimeout(
+            supabase
+              .from("campaigns")
+              .select("*")
+              .eq("owner_id", loadUserId),
+            8000,
+            "Owned campaigns fetch"
+          );
+          ownedData = (result.data ?? []) as Campaign[];
+          if (result.error) throw result.error;
+          ownedError = null;
+        } catch (fallbackErr) {
+          ownedError = fallbackErr as Error;
+        }
+      }
 
       if (fetchRequestIdRef.current !== requestId) return;
       if (ownedError) {
@@ -257,37 +348,68 @@ export default function DashboardScreen() {
 
       let memberCampaignIds: string[] = [];
       try {
-        const { data: memberData, error: memberError } = await withTimeout(
-          supabase
-            .from("campaign_members")
-            .select("campaign_id")
-            .eq("user_id", loadUserId),
-          8000,
-          "Campaign members fetch"
+        const { data } = await supabase.auth.getSession();
+        const accessToken = data.session?.access_token ?? null;
+        const rows = await restSelect<{ campaign_id: string }>(
+          "campaign_members",
+          `select=campaign_id&user_id=eq.${loadUserId}`,
+          accessToken,
+          "Campaign membership"
         );
-        if (memberError) throw memberError;
-        memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
+        memberCampaignIds = rows.map(r => r.campaign_id).filter(Boolean);
       } catch (memberErr) {
-        const message = formatError(memberErr, "Failed to load campaign membership");
-        if (isMountedRef.current) {
-          setMembersError(message);
+        try {
+          const { data: memberData, error: memberError } = await withTimeout(
+            supabase
+              .from("campaign_members")
+              .select("campaign_id")
+              .eq("user_id", loadUserId),
+            8000,
+            "Campaign members fetch"
+          );
+          if (memberError) throw memberError;
+          memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
+        } catch (fallbackErr) {
+          const message = formatError(fallbackErr, "Failed to load campaign membership");
+          if (isMountedRef.current) {
+            setMembersError(message);
+          }
         }
       }
       if (fetchRequestIdRef.current !== requestId) return;
 
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
-        const { data, error: memberCampaignsError } = await withTimeout(
-          supabase
-            .from("campaigns")
-            .select("*")
-            .in("id", memberCampaignIds),
-          8000,
-          "Member campaigns fetch"
-        );
+        try {
+          const { data } = await supabase.auth.getSession();
+          const accessToken = data.session?.access_token ?? null;
+          const ids = memberCampaignIds.map(id => `\"${id}\"`).join(",");
+          memberCampaigns = await restSelect<Campaign>(
+            "campaigns",
+            `select=*&id=in.(${ids})`,
+            accessToken,
+            "Member campaigns"
+          );
+        } catch (memberCampaignErr) {
+          try {
+            const { data, error: memberCampaignsError } = await withTimeout(
+              supabase
+                .from("campaigns")
+                .select("*")
+                .in("id", memberCampaignIds),
+              8000,
+              "Member campaigns fetch"
+            );
 
-        if (memberCampaignsError) throw memberCampaignsError;
-        memberCampaigns = data ?? [];
+            if (memberCampaignsError) throw memberCampaignsError;
+            memberCampaigns = data ?? [];
+          } catch (fallbackErr) {
+            const message = formatError(fallbackErr, "Failed to load member campaigns");
+            if (isMountedRef.current) {
+              setMembersError(message);
+            }
+          }
+        }
       }
 
       const combined = new Map<string, Campaign>();
@@ -392,44 +514,38 @@ export default function DashboardScreen() {
 
     let createdCampaignId: string | null = null;
     try {
-      const inviteCodeValue = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const insertResult = await supabase
-        .from("campaigns")
-        .insert({
-          name: trimmedName,
-          description: trimmedDescription,
-          owner_id: activeUser.id,
-          invite_code: inviteCodeValue,
-          is_active: true,
-        })
-        .select("id, name, description, invite_code, owner_id, is_active, updated_at")
-        .single();
-
-      if (insertResult.error) {
-        console.error("[createCampaign] supabase error", {
-          message: insertResult.error.message,
-          code: insertResult.error.code,
-          details: insertResult.error.details,
-          hint: insertResult.error.hint,
-          status: insertResult.error.status,
-        });
-        throw insertResult.error;
+      const { data } = await supabase.auth.getSession();
+      const accessToken = data.session?.access_token ?? null;
+      const edgePayload = await callEdgeDirect<{ ok: boolean; campaign: Campaign; error?: string }>(
+        "mythic-create-campaign",
+        { name: trimmedName, description: trimmedDescription },
+        accessToken,
+        12000,
+      );
+      if (!edgePayload.ok || !edgePayload.campaign) {
+        throw new Error(edgePayload.error ?? "Failed to create campaign");
       }
 
-      await supabase.from("campaign_members").insert({
-        campaign_id: insertResult.data.id,
-        user_id: activeUser.id,
-        is_dm: true,
-      });
+      const createdCampaign = edgePayload.campaign;
+      if (!createdCampaign?.id) {
+        throw new Error("Campaign insert returned no id");
+      }
+      createdCampaignId = createdCampaign.id;
 
-      await supabase.from("combat_state").insert({ campaign_id: insertResult.data.id });
-      createdCampaignId = insertResult.data.id;
-
-      const generatedWorld = await generateInitialWorld({
-        title: trimmedName,
-        description: trimmedDescription,
-        themes: [],
-      });
+      let generatedWorld: GeneratedWorld | null = null;
+      try {
+        generatedWorld = await withTimeout(
+          generateInitialWorld({
+            title: trimmedName,
+            description: trimmedDescription,
+            themes: [],
+          }),
+          15000,
+          "World generation"
+        );
+      } catch (err) {
+        console.warn("[campaigns] world generation timeout/failure, using fallback", err);
+      }
       const fallbackWorld = buildFallbackWorld({
         title: trimmedName,
         description: trimmedDescription,
@@ -458,14 +574,14 @@ export default function DashboardScreen() {
 
       const contentToStore = [
         ...factions.map(f => ({
-          campaign_id: insertResult.data.id,
+          campaign_id: createdCampaign.id,
           content_type: "faction",
           content_id: f.id,
           content: JSON.parse(JSON.stringify(f)) as Json,
           generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         })),
         ...npcs.map((npc, i) => ({
-          campaign_id: insertResult.data.id,
+          campaign_id: createdCampaign.id,
           content_type: "npc",
           content_id: `npc_initial_${i}`,
           content: JSON.parse(JSON.stringify(npc)) as Json,
@@ -473,7 +589,7 @@ export default function DashboardScreen() {
         })),
         ...(initialQuest
           ? [{
-            campaign_id: insertResult.data.id,
+            campaign_id: createdCampaign.id,
             content_type: "quest",
             content_id: "initial_quest",
             content: JSON.parse(JSON.stringify(initialQuest)) as Json,
@@ -481,14 +597,14 @@ export default function DashboardScreen() {
           }]
           : []),
         ...normalizedLocations.map((location) => ({
-          campaign_id: insertResult.data.id,
+          campaign_id: createdCampaign.id,
           content_type: "location",
           content_id: location.id,
           content: JSON.parse(JSON.stringify(location)) as Json,
           generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
         })),
         ...worldHooks.map((hook, index) => ({
-          campaign_id: insertResult.data.id,
+          campaign_id: createdCampaign.id,
           content_type: "world_hooks",
           content_id: `world_hook_${index}`,
           content: JSON.parse(JSON.stringify([hook])) as Json,
@@ -496,22 +612,37 @@ export default function DashboardScreen() {
         })),
       ];
 
-      await persistGeneratedContent(insertResult.data.id, contentToStore);
+      try {
+        await withTimeout(
+          persistGeneratedContent(createdCampaign.id, contentToStore),
+          15000,
+          "Persist generated content"
+        );
+      } catch (err) {
+        console.warn("[campaigns] persistGeneratedContent failed, continuing", err);
+      }
 
       if (resolvedStartingId) {
         const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
         if (sceneName) {
-          const sceneResult = await supabase
-            .from("campaigns")
-            .update({ current_scene: sceneName })
-            .eq("id", insertResult.data.id);
-          if (sceneResult.error) throw sceneResult.error;
+          try {
+            await withTimeout(
+              supabase
+                .from("campaigns")
+                .update({ current_scene: sceneName })
+                .eq("id", createdCampaign.id),
+              6000,
+              "Scene update"
+            );
+          } catch {
+            // Non-blocking: scene update can be patched later.
+          }
         }
       }
 
       toast({
         title: "Campaign created",
-        description: `${insertResult.data.name} is ready.`,
+        description: `${createdCampaign.name} is ready.`,
       });
 
       if (isMountedRef.current) {
@@ -520,13 +651,17 @@ export default function DashboardScreen() {
         setNameTouched(false);
         setDescriptionTouched(false);
         setSubmitAttempted(false);
-        setCampaigns(prev => [insertResult.data as Campaign, ...prev]);
+        setCampaigns(prev => [createdCampaign as Campaign, ...prev]);
       }
       fetchCampaigns();
-      navigate(`/game/${insertResult.data.id}/create-character`);
+      navigate(`/game/${createdCampaign.id}/create-character`);
     } catch (err) {
       if (createdCampaignId) {
-        await supabase.from("campaigns").delete().eq("id", createdCampaignId);
+        try {
+          await supabase.from("campaigns").delete().eq("id", createdCampaignId);
+        } catch {
+          // Best effort only.
+        }
       }
       const message = formatError(err, "Failed to create campaign");
       if (isMountedRef.current) {
@@ -558,10 +693,7 @@ export default function DashboardScreen() {
         password: authPassword,
       });
       if (error) throw error;
-      if (isMountedRef.current) {
-        setAuthSession(data.session);
-        setAuthUser(data.user ?? null);
-      }
+      // Auth state is managed by useAuth() subscription.
     } catch (err) {
       const message = formatError(err, "Sign in failed");
       if (isMountedRef.current) {
@@ -590,10 +722,7 @@ export default function DashboardScreen() {
         password: authPassword,
       });
       if (error) throw error;
-      if (isMountedRef.current) {
-        setAuthSession(data.session);
-        setAuthUser(data.user ?? null);
-      }
+      // Auth state is managed by useAuth() subscription.
     } catch (err) {
       const message = formatError(err, "Sign up failed");
       if (isMountedRef.current) {
@@ -615,10 +744,7 @@ export default function DashboardScreen() {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      if (isMountedRef.current) {
-        setAuthSession(null);
-        setAuthUser(null);
-      }
+      // Auth state is managed by useAuth() subscription.
     } catch (err) {
       const message = formatError(err, "Sign out failed");
       if (isMountedRef.current) {
@@ -689,6 +815,84 @@ export default function DashboardScreen() {
     }
   };
 
+  const handleDeleteCampaign = async (campaign: Campaign) => {
+    if (!activeUserId) {
+      toast({ title: "Sign in required", description: "You must be signed in to delete campaigns.", variant: "destructive" });
+      return;
+    }
+    if (campaign.owner_id !== activeUserId) {
+      toast({ title: "Not allowed", description: "Only the campaign owner can delete this campaign.", variant: "destructive" });
+      return;
+    }
+    const confirmed = window.confirm(`Delete campaign \"${campaign.name}\"? This cannot be undone.`);
+    if (!confirmed) return;
+    if (isDeleting) return;
+    setIsDeleting(true);
+    setLastError(null);
+    try {
+      const { error: deleteError } = await supabase
+        .from("campaigns")
+        .delete()
+        .eq("id", campaign.id);
+      if (deleteError) throw deleteError;
+      if (isMountedRef.current) {
+        setCampaigns(prev => prev.filter(c => c.id !== campaign.id));
+      }
+      toast({ title: "Campaign deleted", description: campaign.name });
+      fetchCampaigns();
+    } catch (err) {
+      const message = formatError(err, "Failed to delete campaign");
+      if (isMountedRef.current) {
+        setLastError(message);
+      }
+      toast({ title: "Failed to delete campaign", description: message, variant: "destructive" });
+    } finally {
+      if (isMountedRef.current) {
+        setIsDeleting(false);
+      }
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (!activeUserId) {
+      toast({ title: "Sign in required", description: "You must be signed in to delete campaigns.", variant: "destructive" });
+      return;
+    }
+    const owned = campaigns.filter(c => c.owner_id === activeUserId);
+    if (owned.length === 0) {
+      toast({ title: "No owned campaigns", description: "You don't own any campaigns to delete." });
+      return;
+    }
+    const confirmed = window.confirm(`Delete all ${owned.length} owned campaign(s)? This cannot be undone.`);
+    if (!confirmed) return;
+    if (isDeleting) return;
+    setIsDeleting(true);
+    setLastError(null);
+    try {
+      const ids = owned.map(c => c.id);
+      const { error: deleteError } = await supabase
+        .from("campaigns")
+        .delete()
+        .in("id", ids);
+      if (deleteError) throw deleteError;
+      if (isMountedRef.current) {
+        setCampaigns(prev => prev.filter(c => !ids.includes(c.id)));
+      }
+      toast({ title: "Campaigns deleted", description: `Deleted ${owned.length} campaign(s).` });
+      fetchCampaigns();
+    } catch (err) {
+      const message = formatError(err, "Failed to delete campaigns");
+      if (isMountedRef.current) {
+        setLastError(message);
+      }
+      toast({ title: "Failed to delete campaigns", description: message, variant: "destructive" });
+    } finally {
+      if (isMountedRef.current) {
+        setIsDeleting(false);
+      }
+    }
+  };
+
   const content = useMemo(() => {
     if (isLoading) {
       return <div className="text-sm text-muted-foreground">Loading campaigns...</div>;
@@ -714,7 +918,7 @@ export default function DashboardScreen() {
         ) : null}
         {campaigns.map(campaign => (
           <Card key={campaign.id} className="border border-border">
-            <CardContent className="flex items-center justify-between p-4">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div>
                 <div className="text-sm font-semibold">{campaign.name}</div>
                 <div className="text-xs text-muted-foreground">Invite: {campaign.invite_code}</div>
@@ -724,13 +928,36 @@ export default function DashboardScreen() {
                   </div>
                 ) : null}
               </div>
-              <Button size="sm" onClick={() => navigate(`/game/${campaign.id}`)}>Open</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" onClick={() => navigate(`/game/${campaign.id}`)}>Open</Button>
+                {campaign.owner_id === activeUserId ? (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => handleDeleteCampaign(campaign)}
+                    disabled={isDeleting}
+                  >
+                    Delete
+                  </Button>
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         ))}
       </div>
     );
-  }, [campaigns, error, handleRetry, isLoading, membersByCampaign, membersError, navigate]);
+  }, [
+    activeUserId,
+    campaigns,
+    error,
+    handleDeleteCampaign,
+    handleRetry,
+    isDeleting,
+    isLoading,
+    membersByCampaign,
+    membersError,
+    navigate,
+  ]);
 
   const dbStatusLabel = dbEnabled ? dbStatus : "paused";
 
@@ -749,8 +976,16 @@ export default function DashboardScreen() {
 
       <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-2">
             <CardTitle className="text-base">Campaigns</CardTitle>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={handleDeleteAll}
+              disabled={isDeleting || campaigns.length === 0}
+            >
+              {isDeleting ? "Deleting..." : "Delete All"}
+            </Button>
           </CardHeader>
           <CardContent>{content}</CardContent>
         </Card>

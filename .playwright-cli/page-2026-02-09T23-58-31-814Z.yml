@@ -1,0 +1,34 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "runId: ab5a4e51-fe7f-4670-911d-b93f38f582c6"
+    - generic [ref=e6]: "now: 2026-02-09T23:58:31.621Z"
+    - generic [ref=e7]: "base: /"
+    - generic [ref=e8]: "href: http://localhost:8080/login"
+  - generic [ref=e9]:
+    - heading "Welcome back" [level=1] [ref=e10]
+    - paragraph [ref=e11]: Sign in to continue.
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - text: Email
+        - textbox "Email" [ref=e14]:
+          - /placeholder: you@example.com
+      - generic [ref=e15]:
+        - text: Password
+        - textbox "Password" [ref=e16]:
+          - /placeholder: ••••••••
+      - button "Login" [ref=e17] [cursor=pointer]
+      - generic [ref=e18]:
+        - generic [ref=e19]: Connectivity Check
+        - generic [ref=e20]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e21]:
+          - button "Run Check" [ref=e22] [cursor=pointer]
+          - button "Auth Test" [disabled]
+        - generic [ref=e23]: "If this fails, it’s usually DNS/router blocking `supabase.co` or a captive network. This check tells us whether the router is the problem."
+    - generic [ref=e25]:
+      - text: Need an account?
+      - link "Sign up" [ref=e26] [cursor=pointer]:
+        - /url: /signup

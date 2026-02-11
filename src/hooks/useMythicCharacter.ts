@@ -40,7 +40,8 @@ export function useMythicCharacter(campaignId: string | undefined) {
       }
 
       const { data: character, error: charError } = await supabase
-        .from("mythic.characters")
+        .schema("mythic")
+        .from("characters")
         .select("*")
         .eq("campaign_id", campaignId)
         .eq("player_id", user.id)
@@ -57,7 +58,8 @@ export function useMythicCharacter(campaignId: string | undefined) {
       }
 
       const { data: skills, error: skillsError } = await supabase
-        .from("mythic.skills")
+        .schema("mythic")
+        .from("skills")
         .select("*")
         .eq("character_id", (character as MythicCharacterRow).id)
         .order("created_at", { ascending: true });
@@ -65,8 +67,9 @@ export function useMythicCharacter(campaignId: string | undefined) {
       if (skillsError) throw skillsError;
 
       const { data: inv, error: invError } = await supabase
-        .from("mythic.inventory")
-        .select("id, container, equip_slot, quantity, equipped_at, item:mythic.items(*)")
+        .schema("mythic")
+        .from("inventory")
+        .select("id, container, equip_slot, quantity, equipped_at, item:items(*)")
         .eq("character_id", (character as MythicCharacterRow).id)
         .order("created_at", { ascending: true });
 

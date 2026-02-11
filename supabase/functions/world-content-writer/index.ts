@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -144,10 +144,9 @@ serve(async (req) => {
       });
     }
 
-    const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    const authToken = authHeader.replace("Bearer ", "");
+    const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
       return errorResponse(401, "invalid_token", "Invalid authentication token", userError?.message);
     }
@@ -180,13 +179,15 @@ serve(async (req) => {
       }
     }
 
-    const { data: campaign, error: campaignError } = await authClient
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const { data: campaign, error: campaignError } = await serviceClient
       .from("campaigns")
       .select("id, owner_id")
       .eq("id", body.campaignId)
       .maybeSingle();
 
-    const { data: member, error: memberError } = await authClient
+    const { data: member, error: memberError } = await serviceClient
       .from("campaign_members")
       .select("id")
       .eq("campaign_id", body.campaignId)
@@ -203,7 +204,6 @@ serve(async (req) => {
       return errorResponse(403, "access_denied", "Access denied");
     }
 
-    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     let insertedCount = 0;
 
     if (Array.isArray(body.content) && body.content.length > 0) {
@@ -255,8 +255,8 @@ serve(async (req) => {
         );
       }
 
-      const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
-      console.log("Groq model:", GROQ_MODEL);
+      const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
+      console.log("LLM model:", model);
 
       const promptPayload = {
         action: body.action,
@@ -265,8 +265,8 @@ serve(async (req) => {
 
       const prompt = `${SYSTEM_PROMPT}\n\nPlayer action:\n${body.action.text}\n\nCurrent context:\n${JSON.stringify(promptPayload, null, 2)}`;
 
-      const data = await groqChatCompletions({
-        model: GROQ_MODEL,
+      const data = await aiChatCompletions({
+        model,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },

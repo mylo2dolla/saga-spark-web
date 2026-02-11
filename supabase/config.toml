@@ -1,4 +1,4 @@
-project_id = "noypvqheloeqkfbjckee"
+project_id = "othlyxwtigxzczeffzee"
 
 [functions.dungeon-master]
 verify_jwt = false
@@ -7,6 +7,36 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.world-generator]
+verify_jwt = false
+
+[functions.world-content-writer]
+verify_jwt = false
+
+[functions.mythic-create-campaign]
+verify_jwt = false
+
+[functions.mythic-bootstrap]
+verify_jwt = false
+
+[functions.mythic-create-character]
+verify_jwt = false
+
+[functions.mythic-dungeon-master]
+verify_jwt = false
+
+[functions.mythic-board-transition]
+verify_jwt = false
+
+[functions.mythic-combat-use-skill]
+verify_jwt = false
+
+[functions.mythic-combat-start]
+verify_jwt = false
+
+[functions.mythic-recompute-character]
+verify_jwt = false
+
+[functions.mythic-dm-context]
 verify_jwt = false
 
 [functions.dm]

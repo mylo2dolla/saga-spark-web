@@ -1,0 +1,74 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "runId: 09858c39-bf41-4212-b6d6-56acdac38306"
+    - generic [ref=e6]: "now: 2026-02-10T00:03:26.047Z"
+    - generic [ref=e7]: "base: /"
+    - generic [ref=e8]: "href: http://localhost:8080/dashboard"
+  - generic [ref=e10]:
+    - complementary [ref=e11]:
+      - generic [ref=e12]: Saga Spark
+      - navigation [ref=e13]:
+        - link "Dashboard" [ref=e14] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e15] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Game" [ref=e16] [cursor=pointer]:
+          - /url: /game
+        - link "Servers/Admin" [ref=e17] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e18]:
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - generic [ref=e21]: "Auth: psylus13@gmail.com"
+          - generic [ref=e22]: "DB: loading"
+        - generic [ref=e23]: /dashboard
+      - generic [ref=e25]:
+        - generic [ref=e26]:
+          - heading "Dashboard" [level=1] [ref=e27]
+          - paragraph [ref=e28]: Your campaigns and access codes.
+          - generic [ref=e29]: "Auth: session | userId: f04e2fc9-f2ff-488a-8164-5d018d3b229b | DB: loading"
+        - generic [ref=e30]:
+          - generic [ref=e31]:
+            - heading "Campaigns" [level=3] [ref=e33]
+            - generic [ref=e35]: Loading campaigns...
+          - generic [ref=e36]:
+            - generic [ref=e37]:
+              - heading "Auth" [level=3] [ref=e39]
+              - generic [ref=e41]:
+                - generic [ref=e42]: Signed in as
+                - generic [ref=e43]: psylus13@gmail.com
+                - generic [ref=e44]: f04e2fc9-f2ff-488a-8164-5d018d3b229b
+                - button "Sign out" [ref=e45] [cursor=pointer]
+            - generic [ref=e46]:
+              - heading "Create campaign" [level=3] [ref=e48]
+              - generic [ref=e49]:
+                - textbox "Campaign name" [ref=e50]
+                - textbox "Campaign description" [ref=e51]
+                - button "Create" [disabled]
+            - generic [ref=e52]:
+              - heading "Join campaign" [level=3] [ref=e54]
+              - generic [ref=e55]:
+                - textbox "Invite code" [ref=e56]
+                - button "Join" [disabled]
+      - generic [ref=e58]:
+        - generic [ref=e59]: "Build: unknown"
+        - generic [ref=e60]: "Route: /dashboard"
+        - generic [ref=e61]: "Last API Error: none"
+      - generic [ref=e62]:
+        - generic [ref=e63]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e64]: "Anon key present: yes"
+        - generic [ref=e65]: "Session exists: no"
+        - generic [ref=e66]: "Access token exists: no"
+        - generic [ref=e67]: "Last status: -"
+        - generic [ref=e68]: "Last body: -"
+        - button "Test generate-class" [ref=e69] [cursor=pointer]
+  - generic [ref=e70]:
+    - generic [ref=e71]: "session: yes"
+    - generic [ref=e72]: "userId: f04e2fc9-f2ff-488a-8164-5d018d3b229b"
+    - generic [ref=e73]: "authLoading: true"
+    - generic [ref=e74]: "route: /dashboard"
+    - generic [ref=e75]: "lastAuthError: none"

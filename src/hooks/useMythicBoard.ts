@@ -51,7 +51,8 @@ export function useMythicBoard(campaignId: string | undefined) {
       }
 
       const { data: b, error: bErr } = await supabase
-        .from("mythic.boards")
+        .schema("mythic")
+        .from("boards")
         .select("*")
         .eq("campaign_id", campaignId)
         .eq("status", "active")
@@ -62,7 +63,8 @@ export function useMythicBoard(campaignId: string | undefined) {
       if (bErr) throw bErr;
 
       const { data: t, error: tErr } = await supabase
-        .from("mythic.board_transitions")
+        .schema("mythic")
+        .from("board_transitions")
         .select("*")
         .eq("campaign_id", campaignId)
         .order("created_at", { ascending: false })

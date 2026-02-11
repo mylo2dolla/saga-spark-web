@@ -183,7 +183,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       return String((error as { message?: string }).message ?? "");
     }
     return "";
-  }, [normalizeWorldMaps]);
+  }, []);
 
   const stringifyError = useCallback((error: unknown) => {
     try {

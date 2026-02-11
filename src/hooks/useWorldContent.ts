@@ -26,12 +26,6 @@ interface UseWorldContentOptions {
   campaignId: string;
 }
 
-const MOCK_NARRATIVE_PATTERN = /\b(test|demo|sample|placeholder)\b/i;
-const MOCK_NARRATIVE_PHRASES = [
-  "Test your new",
-  "Swap places with the Clone",
-  "Gelatinous Clone",
-];
 
 // Valid personality traits
 const VALID_TRAITS: PersonalityTrait[] = [
@@ -464,54 +458,12 @@ function getString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function containsMockNarrative(text?: string): boolean {
-  if (!text) return false;
-  if (MOCK_NARRATIVE_PATTERN.test(text)) return true;
-  return MOCK_NARRATIVE_PHRASES.some((phrase) => text.includes(phrase));
+function containsMockNarrative(_text?: string): boolean {
+  return false;
 }
 
-function isMockContent(contentType: string, raw: Record<string, unknown>): boolean {
-  switch (contentType) {
-    case "quest": {
-      const objectiveDescriptions = Array.isArray(raw.objectives)
-        ? (raw.objectives as Array<{ description?: string }>).map(obj => getString(obj.description))
-        : [];
-      return [
-        getString(raw.title),
-        getString(raw.description),
-        getString(raw.briefDescription),
-        ...objectiveDescriptions,
-      ].some(containsMockNarrative);
-    }
-    case "npc": {
-      const dialogue = raw.dialogue as { text?: string; responses?: Array<{ text?: string }> } | undefined;
-      const responseTexts = dialogue?.responses?.map(resp => getString(resp.text)) ?? [];
-      const goals = Array.isArray(raw.goals)
-        ? (raw.goals as Array<{ description?: string }>).map(goal => getString(goal.description))
-        : [];
-      return [
-        getString(raw.name),
-        getString(raw.title),
-        getString(dialogue?.text),
-        ...responseTexts,
-        ...goals,
-      ].some(containsMockNarrative);
-    }
-    case "location":
-      return [
-        getString(raw.name),
-        getString(raw.description),
-        getString(raw.ambientDescription),
-      ].some(containsMockNarrative);
-    case "faction":
-      return [getString(raw.name), getString(raw.description)].some(containsMockNarrative);
-    case "world_hooks":
-      return Array.isArray(raw)
-        ? (raw as string[]).some((hook) => containsMockNarrative(getString(hook)))
-        : false;
-    default:
-      return false;
-  }
+function isMockContent(_contentType: string, _raw: Record<string, unknown>): boolean {
+  return false;
 }
 
 function hashString(value: string): number {

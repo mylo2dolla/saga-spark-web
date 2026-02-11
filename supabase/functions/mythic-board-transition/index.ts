@@ -20,19 +20,40 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+const syllableA = [
+  "Ash", "Iron", "Dus", "Grim", "Stone", "Glen", "Oath", "Hex", "Rift", "Wolf", "Black", "Silver",
+];
+const syllableB = [
+  "hold", "bridge", "hollow", "reach", "mark", "port", "spire", "vale", "cross", "ford", "fall", "gate",
+];
+
+const makeName = (seed: number, label: string): string => {
+  const a = rngPick(seed, `${label}:a`, syllableA);
+  const b = rngPick(seed, `${label}:b`, syllableB);
+  return `${a}${b}`;
+};
+
 function mkTownState(seed: number) {
+  const vendorCount = rngInt(seed, "town:vendors", 1, 3);
+  const vendors = Array.from({ length: vendorCount }).map((_, idx) => ({
+    id: `vendor_${idx + 1}`,
+    name: makeName(seed, `town:vendor:${idx}`),
+    services: rngPick(seed, `town:vendor:svc:${idx}`, [
+      ["repair", "craft"],
+      ["potions", "bombs"],
+      ["trade", "bank"],
+      ["heal", "enchant"],
+    ]),
+  }));
   return {
     seed,
-    vendors: [
-      { id: "vendor_blacksmith", name: "Grinbolt the Anvil", services: ["repair", "craft"] },
-      { id: "vendor_alchemist", name: 'Mira "Boom" Vell', services: ["potions", "bombs"] },
-    ],
+    vendors,
     services: ["inn", "healer", "notice_board"],
-    gossip: ["A bounty poster has fresh ink.", "Something under the well keeps laughing."],
-    factions_present: ["Town Watch", "Coin-Eaters Guild"],
+    gossip: [],
+    factions_present: [],
     guard_alertness: rngInt(seed, "town:guard", 0, 100) / 100,
     bounties: [],
-    rumors: ["A caravan vanished on the south road."],
+    rumors: [],
     consequence_flags: {},
   };
 }
@@ -100,8 +121,9 @@ serve(async (req) => {
       throw new Error("Supabase env is not configured (SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY)");
     }
 
-    const authClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authHeader } } });
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    const authToken = authHeader.replace("Bearer ", "");
+    const authClient = createClient(supabaseUrl, anonKey);
+    const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
       return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
         status: 401,
@@ -204,4 +226,3 @@ serve(async (req) => {
     });
   }
 });
-
