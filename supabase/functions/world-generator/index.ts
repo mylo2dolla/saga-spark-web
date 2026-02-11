@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -210,9 +210,14 @@ serve(async (req) => {
     "SUPABASE_ANON_KEY",
     "SUPABASE_SERVICE_ROLE_KEY",
     "AI_GATEWAY_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_MODEL",
     "GROQ_API_KEY",
     "GROQ_BASE_URL",
     "GROQ_MODEL",
+    "LLM_PROVIDER",
+    "LLM_MODEL",
   ];
   const envStatus = expectedEnvKeys.reduce<Record<string, "set" | "missing">>((acc, key) => {
     acc[key] = Deno.env.get(key) ? "set" : "missing";
@@ -270,10 +275,9 @@ serve(async (req) => {
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     let userId: string | null = null;
     if (supabaseUrl && anonKey && authHeader) {
-      const supabase = createClient(supabaseUrl, anonKey, {
-        global: { headers: { Authorization: authHeader } },
-      });
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      const authToken = authHeader.replace("Bearer ", "");
+      const supabase = createClient(supabaseUrl, anonKey);
+      const { data: { user }, error: userError } = await supabase.auth.getUser(authToken);
       if (userError) {
         console.error("world-generator auth lookup failed", { requestId, error: userError.message });
       } else {
@@ -314,12 +318,12 @@ serve(async (req) => {
       campaignTitle: campaignSeed.title,
     });
 
-    const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
+    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
     let data;
     try {
-      console.log("Groq model:", GROQ_MODEL);
-      data = await groqChatCompletions({
-        model: GROQ_MODEL,
+      console.log("LLM model:", model);
+      data = await aiChatCompletions({
+        model,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },
@@ -335,7 +339,7 @@ serve(async (req) => {
         error: error instanceof Error ? error.message : error,
         stack: error instanceof Error ? error.stack : undefined,
       });
-      return errorResponse(500, "groq_error", "AI generation failed", {
+      return errorResponse(500, "llm_error", "AI generation failed", {
         message: error instanceof Error ? error.message : error,
       });
     }

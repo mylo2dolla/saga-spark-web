@@ -1,0 +1,13 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "runId: 1b5cf923-b196-4b27-84f3-b9c0de1239c6"
+    - generic [ref=e6]: "now: 2026-02-10T00:07:20.147Z"
+    - generic [ref=e7]: "base: /"
+    - generic [ref=e8]: "href: http://localhost:8081/login"
+  - generic [ref=e147]:
+    - generic [ref=e148]: Something went wrong
+    - paragraph [ref=e149]: Cannot access 'normalizeWorldMaps' before initialization

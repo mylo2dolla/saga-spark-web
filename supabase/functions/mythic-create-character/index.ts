@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 import { clampInt, rngInt, rngPick, weightedPick } from "../_shared/mythic_rng.ts";
 
@@ -390,11 +390,9 @@ serve(async (req) => {
       throw new Error("Supabase env is not configured (SUPABASE_URL/ANON_KEY/SERVICE_ROLE_KEY)");
     }
 
-    const authClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    const authToken = authHeader.replace("Bearer ", "");
+    const authClient = createClient(supabaseUrl, anonKey);
+    const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
       return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
         status: 401,
@@ -448,14 +446,16 @@ serve(async (req) => {
 
     // Fetch canonical rules/script for prompt grounding.
     const { data: rulesRow, error: rulesError } = await svc
-      .from("mythic.game_rules")
+      .schema("mythic")
+      .from("game_rules")
       .select("rules")
       .eq("name", "mythic-weave-rules-v1")
       .maybeSingle();
     if (rulesError) throw rulesError;
 
     const { data: scriptRow, error: scriptError } = await svc
-      .from("mythic.generator_scripts")
+      .schema("mythic")
+      .from("generator_scripts")
       .select("content")
       .eq("name", "mythic-weave-core")
       .eq("is_active", true)
@@ -481,9 +481,9 @@ serve(async (req) => {
       skills: kit.skills,
     };
 
-    const model = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
+    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
 
-    const completion = await groqChatCompletions({
+    const completion = await aiChatCompletions({
       model,
       temperature: 0.2,
       messages: [
@@ -538,7 +538,8 @@ serve(async (req) => {
 
     // Upsert by (campaign_id, player_id, name) isn't unique; so create new or update existing by player+campaign+name.
     const { data: existingChars, error: existingError } = await svc
-      .from("mythic.characters")
+      .schema("mythic")
+      .from("characters")
       .select("id")
       .eq("campaign_id", campaignId)
       .eq("player_id", user.id)
@@ -550,7 +551,8 @@ serve(async (req) => {
     if (existingChars && existingChars.length > 0) {
       characterId = existingChars[0]!.id as string;
       const { error: updErr } = await svc
-        .from("mythic.characters")
+        .schema("mythic")
+        .from("characters")
         .update({
           level: 1,
           offense: refined.data.base_stats.offense,
@@ -568,13 +570,15 @@ serve(async (req) => {
 
       // Delete old skills for this character (skills are not append-only; safe to rebuild kit).
       const { error: delSkillsErr } = await svc
-        .from("mythic.skills")
+        .schema("mythic")
+        .from("skills")
         .delete()
         .eq("character_id", characterId);
       if (delSkillsErr) throw delSkillsErr;
     } else {
       const { data: inserted, error: insErr } = await svc
-        .from("mythic.characters")
+        .schema("mythic")
+        .from("characters")
         .insert({
           campaign_id: campaignId,
           player_id: user.id,
@@ -614,7 +618,8 @@ serve(async (req) => {
     }));
 
     const { data: insertedSkills, error: insSkillsErr } = await svc
-      .from("mythic.skills")
+      .schema("mythic")
+      .from("skills")
       .insert(skillRows)
       .select("id");
     if (insSkillsErr) throw insSkillsErr;

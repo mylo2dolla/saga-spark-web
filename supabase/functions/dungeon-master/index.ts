@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { groqChatCompletionsStream } from "../_shared/groq.ts";
+import { aiChatCompletionsStream, resolveModel } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -151,14 +151,14 @@ serve(async (req) => {
       );
     }
 
+    const authToken = authHeader.replace("Bearer ", "");
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_ANON_KEY") ?? "",
-      { global: { headers: { Authorization: authHeader } } }
+      Deno.env.get("SUPABASE_ANON_KEY") ?? ""
     );
 
     // Verify the user's JWT token
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    const { data: { user }, error: userError } = await supabase.auth.getUser(authToken);
     
     if (userError || !user) {
       return new Response(
@@ -227,10 +227,10 @@ Use these EXACT values in your narration. Do not invent or alter any numbers.`;
       }
     }
 
-    const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
-    console.log("Groq model:", GROQ_MODEL);
-    const response = await groqChatCompletionsStream({
-      model: GROQ_MODEL,
+    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
+    console.log("LLM model:", model);
+    const response = await aiChatCompletionsStream({
+      model,
       messages: [
         { role: "system", content: systemPrompt },
         ...messages,

@@ -86,24 +86,28 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
       const [{ data: s, error: sErr }, { data: c, error: cErr }, { data: t, error: tErr }, { data: e, error: eErr }] =
         await Promise.all([
           supabase
-            .from("mythic.combat_sessions")
+            .schema("mythic")
+            .from("combat_sessions")
             .select("id,campaign_id,seed,status,current_turn_index,scene_json,updated_at")
             .eq("id", combatSessionId)
             .eq("campaign_id", campaignId)
             .maybeSingle(),
           supabase
-            .from("mythic.combatants")
+            .schema("mythic")
+            .from("combatants")
             .select("*")
             .eq("combat_session_id", combatSessionId)
             .order("initiative", { ascending: false })
             .order("name", { ascending: true }),
           supabase
-            .from("mythic.turn_order")
+            .schema("mythic")
+            .from("turn_order")
             .select("*")
             .eq("combat_session_id", combatSessionId)
             .order("turn_index", { ascending: true }),
           supabase
-            .from("mythic.action_events")
+            .schema("mythic")
+            .from("action_events")
             .select("*")
             .eq("combat_session_id", combatSessionId)
             .order("created_at", { ascending: true })
@@ -154,4 +158,3 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
     refetch: fetchState,
   };
 }
-
