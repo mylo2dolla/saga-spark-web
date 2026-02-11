@@ -53,6 +53,7 @@ export default function DashboardScreen() {
   const [isJoining, setIsJoining] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createStatus, setCreateStatus] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const fetchInFlightRef = useRef(false);
   const fetchRequestIdRef = useRef(0);
@@ -294,8 +295,15 @@ export default function DashboardScreen() {
       }
       return;
     }
-    if (fetchInFlightRef.current) return;
-    if (lastLoadedUserIdRef.current === loadUserId) return;
+    if (fetchInFlightRef.current) {
+      return;
+    }
+    if (lastLoadedUserIdRef.current === loadUserId) {
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
+      return;
+    }
     fetchInFlightRef.current = true;
     const requestId = fetchRequestIdRef.current + 1;
     fetchRequestIdRef.current = requestId;
@@ -310,7 +318,7 @@ export default function DashboardScreen() {
       let ownedData: Campaign[] = [];
       let ownedError: Error | null = null;
       try {
-        const { data } = await supabase.auth.getSession();
+        const { data } = await withTimeout(supabase.auth.getSession(), 6000, "Session fetch");
         const accessToken = data.session?.access_token ?? null;
         ownedData = await restSelect<Campaign>(
           "campaigns",
@@ -348,7 +356,7 @@ export default function DashboardScreen() {
 
       let memberCampaignIds: string[] = [];
       try {
-        const { data } = await supabase.auth.getSession();
+        const { data } = await withTimeout(supabase.auth.getSession(), 6000, "Session fetch");
         const accessToken = data.session?.access_token ?? null;
         const rows = await restSelect<{ campaign_id: string }>(
           "campaign_members",
@@ -381,7 +389,7 @@ export default function DashboardScreen() {
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
         try {
-          const { data } = await supabase.auth.getSession();
+          const { data } = await withTimeout(supabase.auth.getSession(), 6000, "Session fetch");
           const accessToken = data.session?.access_token ?? null;
           const ids = memberCampaignIds.map(id => `\"${id}\"`).join(",");
           memberCampaigns = await restSelect<Campaign>(
@@ -478,6 +486,13 @@ export default function DashboardScreen() {
     fetchCampaigns();
   }, [fetchCampaigns]);
 
+  const handleForceRefresh = useCallback(() => {
+    lastLoadedUserIdRef.current = null;
+    fetchRequestIdRef.current += 1;
+    fetchInFlightRef.current = false;
+    fetchCampaigns();
+  }, [fetchCampaigns]);
+
   useEffect(() => {
     if (!loadUserId) {
       setCampaigns([]);
@@ -487,6 +502,16 @@ export default function DashboardScreen() {
     }
     fetchCampaigns();
   }, [fetchCampaigns]);
+
+  useEffect(() => {
+    if (!isLoading) return;
+    const timeoutId = setTimeout(() => {
+      if (!isMountedRef.current) return;
+      setIsLoading(false);
+      setError(prev => prev ?? "Campaigns load timed out. Use Retry to try again.");
+    }, 15000);
+    return () => clearTimeout(timeoutId);
+  }, [isLoading]);
 
   const trimmedName = newCampaignName.trim();
   const trimmedDescription = newCampaignDescription.trim();
@@ -510,28 +535,83 @@ export default function DashboardScreen() {
       setIsCreating(true);
       setLastError(null);
       setCreateError(null);
+      setCreateStatus("Starting campaign creation...");
     }
 
     let createdCampaignId: string | null = null;
+    const createTimeoutId = setTimeout(() => {
+      if (!creatingRef.current || !isMountedRef.current) return;
+      creatingRef.current = false;
+      setIsCreating(false);
+      setCreateError("Campaign creation timed out. Try again.");
+      setCreateStatus(null);
+    }, 20000);
     try {
-      const { data } = await supabase.auth.getSession();
+      setCreateStatus("Checking session...");
+      const { data } = await withTimeout(supabase.auth.getSession(), 6000, "Session fetch");
       const accessToken = data.session?.access_token ?? null;
-      const edgePayload = await callEdgeDirect<{ ok: boolean; campaign: Campaign; error?: string }>(
-        "mythic-create-campaign",
-        { name: trimmedName, description: trimmedDescription },
-        accessToken,
-        12000,
-      );
-      if (!edgePayload.ok || !edgePayload.campaign) {
-        throw new Error(edgePayload.error ?? "Failed to create campaign");
+      setCreateStatus("Creating campaign record...");
+      let createdCampaign: Campaign | null = null;
+      try {
+        const edgePayload = await callEdgeDirect<{ ok: boolean; campaign: Campaign; error?: string }>(
+          "mythic-create-campaign",
+          { name: trimmedName, description: trimmedDescription },
+          accessToken,
+          12000,
+        );
+        if (edgePayload.ok && edgePayload.campaign?.id) {
+          createdCampaign = edgePayload.campaign;
+        } else {
+          throw new Error(edgePayload.error ?? "Failed to create campaign");
+        }
+      } catch (edgeErr) {
+        console.warn("[campaigns] edge create failed, falling back to direct insert", edgeErr);
       }
 
-      const createdCampaign = edgePayload.campaign;
+      if (!createdCampaign) {
+        setCreateStatus("Creating campaign record (direct)...");
+        const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const { data: directCampaign, error: directError } = await withTimeout(
+          supabase
+            .from("campaigns")
+            .insert({
+              name: trimmedName,
+              description: trimmedDescription,
+              owner_id: activeUser.id,
+              invite_code: inviteCode,
+              is_active: true,
+            })
+            .select()
+            .single(),
+          8000,
+          "Direct campaign insert"
+        );
+        if (directError) throw directError;
+        createdCampaign = directCampaign as Campaign;
+
+        await withTimeout(
+          supabase.from("campaign_members").insert({
+            campaign_id: createdCampaign.id,
+            user_id: activeUser.id,
+            is_dm: true,
+          }),
+          6000,
+          "Direct campaign member insert"
+        );
+
+        await withTimeout(
+          supabase.from("combat_state").insert({ campaign_id: createdCampaign.id }),
+          6000,
+          "Direct combat state insert"
+        );
+      }
+
       if (!createdCampaign?.id) {
         throw new Error("Campaign insert returned no id");
       }
       createdCampaignId = createdCampaign.id;
 
+      setCreateStatus("Generating world...");
       let generatedWorld: GeneratedWorld | null = null;
       try {
         generatedWorld = await withTimeout(
@@ -613,6 +693,7 @@ export default function DashboardScreen() {
       ];
 
       try {
+        setCreateStatus("Saving world content...");
         await withTimeout(
           persistGeneratedContent(createdCampaign.id, contentToStore),
           15000,
@@ -626,6 +707,7 @@ export default function DashboardScreen() {
         const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
         if (sceneName) {
           try {
+            setCreateStatus("Finalizing scene...");
             await withTimeout(
               supabase
                 .from("campaigns")
@@ -640,6 +722,7 @@ export default function DashboardScreen() {
         }
       }
 
+      setCreateStatus("Campaign ready.");
       toast({
         title: "Campaign created",
         description: `${createdCampaign.name} is ready.`,
@@ -668,12 +751,15 @@ export default function DashboardScreen() {
         setLastError(message);
         setCreateError(message);
       }
+      setCreateStatus(null);
       toast({ title: "Failed to create campaign", description: message, variant: "destructive" });
     } finally {
+      clearTimeout(createTimeoutId);
       if (isMountedRef.current) {
         setIsCreating(false);
       }
       creatingRef.current = false;
+      setCreateStatus(null);
     }
   };
 
@@ -895,7 +981,14 @@ export default function DashboardScreen() {
 
   const content = useMemo(() => {
     if (isLoading) {
-      return <div className="text-sm text-muted-foreground">Loading campaigns...</div>;
+      return (
+        <div className="space-y-2 text-sm text-muted-foreground">
+          <div>Loading campaigns...</div>
+          <Button size="sm" variant="outline" onClick={handleForceRefresh}>
+            Force Refresh
+          </Button>
+        </div>
+      );
     }
     if (error) {
       return (
@@ -971,6 +1064,13 @@ export default function DashboardScreen() {
         </div>
         {dbError ? (
           <div className="mt-1 text-xs text-destructive">DB Error: {dbError}</div>
+        ) : null}
+        {dbStatusLabel === "error" ? (
+          <div className="mt-2">
+            <Button size="sm" variant="outline" onClick={handleForceRefresh}>
+              Force Refresh Campaigns
+            </Button>
+          </div>
         ) : null}
       </div>
 
@@ -1062,6 +1162,9 @@ export default function DashboardScreen() {
               ) : null}
               {createError ? (
                 <div className="text-xs text-destructive">{createError}</div>
+              ) : null}
+              {createStatus ? (
+                <div className="text-xs text-muted-foreground">{createStatus}</div>
               ) : null}
               <Button onClick={handleCreate} disabled={isCreating || isGenerating || !isCreateValid}>
                 {isCreating || isGenerating ? "Creating..." : "Create"}
