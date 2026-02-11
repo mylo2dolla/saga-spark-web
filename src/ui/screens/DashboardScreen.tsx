@@ -29,6 +29,8 @@ interface Campaign {
 export default function DashboardScreen() {
   const NETWORK_TIMEOUT_MS = 15000;
   const CREATE_TIMEOUT_MS = 30000;
+  const WORLD_GENERATION_TIMEOUT_MS = 8000;
+  const CONTENT_PERSIST_TIMEOUT_MS = 8000;
 
   const { user, session, isLoading: authLoading } = useAuth();
   const { generateInitialWorld, isGenerating } = useWorldGenerator();
@@ -488,7 +490,7 @@ export default function DashboardScreen() {
         lastLoadedUserIdRef.current = loadUserId;
       }
     }
-  }, [activeAccessToken, authLoading, loadUserId, setLastError, withTimeout]);
+  }, [activeAccessToken, authLoading, loadUserId, restSelect, setLastError, withTimeout]);
 
   const handleRetry = useCallback(() => {
     lastLoadedUserIdRef.current = null;
@@ -654,7 +656,7 @@ export default function DashboardScreen() {
             description: trimmedDescription,
             themes: [],
           }),
-          15000,
+          WORLD_GENERATION_TIMEOUT_MS,
           "World generation"
         );
       } catch (err) {
@@ -665,6 +667,7 @@ export default function DashboardScreen() {
         description: trimmedDescription,
       });
       if (!generatedWorld) {
+        setCreateStatus("Using starter world fallback...");
         toast({
           title: "Using fallback world",
           description: "World generation failed, so a starter world was created instead.",
@@ -730,7 +733,7 @@ export default function DashboardScreen() {
         setCreateStatus("Saving world content...");
         await withTimeout(
           persistGeneratedContent(createdCampaign.id, contentToStore),
-          15000,
+          CONTENT_PERSIST_TIMEOUT_MS,
           "Persist generated content"
         );
       } catch (err) {
@@ -935,7 +938,7 @@ export default function DashboardScreen() {
     }
   };
 
-  const handleDeleteCampaign = async (campaign: Campaign) => {
+  const handleDeleteCampaign = useCallback(async (campaign: Campaign) => {
     if (!activeUserId) {
       toast({ title: "Sign in required", description: "You must be signed in to delete campaigns.", variant: "destructive" });
       return;
@@ -971,7 +974,7 @@ export default function DashboardScreen() {
         setIsDeleting(false);
       }
     }
-  };
+  }, [activeUserId, fetchCampaigns, isDeleting, setLastError, toast]);
 
   const handleDeleteAll = async () => {
     if (!activeUserId) {
@@ -1078,6 +1081,7 @@ export default function DashboardScreen() {
     campaigns,
     error,
     handleDeleteCampaign,
+    handleForceRefresh,
     handleRetry,
     isDeleting,
     isLoading,
