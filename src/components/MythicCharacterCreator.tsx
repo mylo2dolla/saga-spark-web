@@ -2,12 +2,11 @@ import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Loader2 } from "lucide-react";
 import { useMythicCreator } from "@/hooks/useMythicCreator";
 import type { MythicCreateCharacterResponse } from "@/types/mythic";
+import { PromptAssistField } from "@/components/PromptAssistField";
 
 type Step = "concept" | "review";
 
@@ -74,16 +73,28 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
             <div className="grid gap-4">
               <div className="grid gap-2">
                 <Label htmlFor="name">Character Name</Label>
-                <Input id="name" value={characterName} onChange={(e) => setCharacterName(e.target.value)} placeholder="e.g. Nyx" />
+                <PromptAssistField
+                  inputId="name"
+                  value={characterName}
+                  onChange={setCharacterName}
+                  fieldType="character_name"
+                  campaignId={campaignId}
+                  placeholder="e.g. Nyx"
+                  disabled={isBusy}
+                />
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="concept">Class Concept</Label>
-                <Textarea
-                  id="concept"
+                <PromptAssistField
+                  inputId="concept"
                   value={classDescription}
-                  onChange={(e) => setClassDescription(e.target.value)}
+                  onChange={setClassDescription}
+                  fieldType="class_concept"
+                  campaignId={campaignId}
                   placeholder='e.g. "werewolf ninja pyromancer" or "goblin priest of broken vending machines"'
-                  className="min-h-[140px]"
+                  multiline
+                  minRows={6}
+                  disabled={isBusy}
                 />
                 <div className="text-xs text-muted-foreground">
                   Violence/gore allowed. Sexual content forbidden.

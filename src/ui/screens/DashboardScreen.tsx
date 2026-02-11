@@ -774,7 +774,7 @@ export default function DashboardScreen() {
         setCampaigns(prev => [createdCampaign as Campaign, ...prev]);
       }
       fetchCampaigns();
-      navigate(`/game/${createdCampaign.id}/create-character`);
+      navigate(`/mythic/${createdCampaign.id}/create-character`);
     } catch (err) {
       if (createdCampaignId) {
         try {
@@ -1059,7 +1059,7 @@ export default function DashboardScreen() {
                 ) : null}
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => navigate(`/game/${campaign.id}`)}>Open</Button>
+                <Button size="sm" onClick={() => navigate(`/mythic/${campaign.id}`)}>Open</Button>
                 {campaign.owner_id === activeUserId ? (
                   <Button
                     size="sm"
