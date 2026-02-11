@@ -3,7 +3,7 @@ import { DEV_FINGERPRINT } from "./devFingerprint";
 const DevBanner = () => {
   if (!import.meta.env.DEV) return null;
 
-  const { runId, now, mode, base, href } = DEV_FINGERPRINT;
+  const { runId, now, mode, base, href, appVersion, buildTime, gitSha } = DEV_FINGERPRINT;
 
   return (
     <div
@@ -27,6 +27,9 @@ const DevBanner = () => {
       }}
     >
       <div>Runtime: DEV ({mode})</div>
+      <div>version: {appVersion}</div>
+      <div>build: {buildTime}</div>
+      <div>git: {gitSha}</div>
       <div>runId: {runId}</div>
       <div>now: {now}</div>
       <div>base: {base}</div>
