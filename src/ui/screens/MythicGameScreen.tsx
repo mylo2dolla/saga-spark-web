@@ -39,7 +39,7 @@ export default function MythicGameScreen() {
   const { bootstrapCampaign, isBootstrapping } = useMythicCreator();
   const { board, recentTransitions, isLoading: boardLoading, error: boardError, refetch } = useMythicBoard(campaignId);
   const { character, skills, items, isLoading: charLoading, error: charError, refetch: refetchCharacter } = useMythicCharacter(campaignId);
-  const dm = useMythicDmContext(campaignId);
+  const dm = useMythicDmContext(campaignId, Boolean(campaignId && board && character));
   const mythicDm = useMythicDungeonMaster(campaignId);
   const combat = useMythicCombat();
   const [isTransitioning, setIsTransitioning] = useState(false);
@@ -68,6 +68,37 @@ export default function MythicGameScreen() {
   const modeKey = useMemo(() => {
     return board ? `${board.board_type}:${board.id}:${board.updated_at}` : "none";
   }, [board]);
+
+  const combatSessionId = useMemo(() => {
+    if (!board) return null;
+    const stateSessionId =
+      typeof (board.state_json as any)?.combat_session_id === "string"
+        ? String((board.state_json as any).combat_session_id)
+        : null;
+    return board.combat_session_id ?? stateSessionId;
+  }, [board]);
+
+  const combatState = useMythicCombatState(campaignId, board?.board_type === "combat" ? combatSessionId : null);
+  const playerCombatantId = useMemo(() => {
+    if (!user) return null;
+    const c = combatState.combatants.find((x) => x.entity_type === "player" && x.player_id === user.id);
+    return c?.id ?? null;
+  }, [combatState.combatants, user]);
+
+  const invRowsSafe = useMemo(
+    () => (Array.isArray(items) ? (items as MythicInventoryRow[]) : []),
+    [items],
+  );
+  const { equipment } = splitInventory(invRowsSafe);
+  const equipBonuses = sumStatMods(equipment.map((r) => r.item));
+  const derivedStats = {
+    offense: Math.min(100, Math.max(0, Math.floor((character?.offense ?? 0) + (equipBonuses.offense ?? 0)))),
+    defense: Math.min(100, Math.max(0, Math.floor((character?.defense ?? 0) + (equipBonuses.defense ?? 0)))),
+    control: Math.min(100, Math.max(0, Math.floor((character?.control ?? 0) + (equipBonuses.control ?? 0)))),
+    support: Math.min(100, Math.max(0, Math.floor((character?.support ?? 0) + (equipBonuses.support ?? 0)))),
+    mobility: Math.min(100, Math.max(0, Math.floor((character?.mobility ?? 0) + (equipBonuses.mobility ?? 0)))),
+    utility: Math.min(100, Math.max(0, Math.floor((character?.utility ?? 0) + (equipBonuses.utility ?? 0)))),
+  };
 
   if (!campaignId) {
     return <div className="p-6 text-sm text-muted-foreground">Campaign not found.</div>;
@@ -112,30 +143,6 @@ export default function MythicGameScreen() {
   }
 
   const lastTransition = recentTransitions[0] ?? null;
-  const combatSessionId =
-    board.combat_session_id
-    ?? (typeof (board.state_json as any)?.combat_session_id === "string" ? String((board.state_json as any).combat_session_id) : null);
-  const combatState = useMythicCombatState(campaignId, board.board_type === "combat" ? combatSessionId : null);
-  const playerCombatantId = useMemo(() => {
-    if (!user) return null;
-    const c = combatState.combatants.find((x) => x.entity_type === "player" && x.player_id === user.id);
-    return c?.id ?? null;
-  }, [combatState.combatants, user]);
-
-  const invRowsSafe = useMemo(
-    () => (Array.isArray(items) ? (items as MythicInventoryRow[]) : []),
-    [items],
-  );
-  const { equipment } = splitInventory(invRowsSafe);
-  const equipBonuses = sumStatMods(equipment.map((r) => r.item));
-  const derivedStats = {
-    offense: Math.min(100, Math.max(0, Math.floor(character.offense + (equipBonuses.offense ?? 0)))),
-    defense: Math.min(100, Math.max(0, Math.floor(character.defense + (equipBonuses.defense ?? 0)))),
-    control: Math.min(100, Math.max(0, Math.floor(character.control + (equipBonuses.control ?? 0)))),
-    support: Math.min(100, Math.max(0, Math.floor(character.support + (equipBonuses.support ?? 0)))),
-    mobility: Math.min(100, Math.max(0, Math.floor(character.mobility + (equipBonuses.mobility ?? 0)))),
-    utility: Math.min(100, Math.max(0, Math.floor(character.utility + (equipBonuses.utility ?? 0)))),
-  };
 
   const transitionBoard = async (toBoardType: "town" | "travel" | "dungeon", reason: string) => {
     if (!campaignId) return;

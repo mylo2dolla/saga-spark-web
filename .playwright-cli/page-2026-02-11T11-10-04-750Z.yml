@@ -1,0 +1,16 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "version: 0.0.0"
+    - generic [ref=e6]: "build: 2026-02-11T10:43:56.581Z"
+    - generic [ref=e7]: "git: b134c35"
+    - generic [ref=e8]: "runId: a82bb964-823f-43e0-acc3-2cb2b941ab56"
+    - generic [ref=e9]: "now: 2026-02-11T11:01:17.600Z"
+    - generic [ref=e10]: "base: /"
+    - generic [ref=e11]: "href: http://localhost:8080/dashboard"
+  - generic [ref=e96]:
+    - generic [ref=e97]: Something went wrong
+    - paragraph [ref=e98]: Rendered more hooks than during the previous render.

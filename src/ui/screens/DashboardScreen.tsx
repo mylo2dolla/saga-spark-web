@@ -27,7 +27,10 @@ interface Campaign {
 }
 
 export default function DashboardScreen() {
-  const { user, session } = useAuth();
+  const NETWORK_TIMEOUT_MS = 15000;
+  const CREATE_TIMEOUT_MS = 30000;
+
+  const { user, session, isLoading: authLoading } = useAuth();
   const { generateInitialWorld, isGenerating } = useWorldGenerator();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -65,9 +68,9 @@ export default function DashboardScreen() {
   const activeUser = user ?? null;
   const activeUserId = session?.user?.id ?? user?.id ?? null;
   const activeAccessToken = activeSession?.access_token ?? null;
-  const loadUserId = session?.user?.id ?? null;
-  const dbEnabled = Boolean(activeUserId);
-  const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled);
+  const loadUserId = authLoading ? null : (session?.user?.id ?? null);
+  const dbEnabled = !authLoading && Boolean(activeUserId);
+  const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled, activeAccessToken);
 
   const toKebab = (value: string): string =>
     value
@@ -229,7 +232,7 @@ export default function DashboardScreen() {
       throw new Error("Supabase env is not configured");
     }
     const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 8000);
+    const tid = setTimeout(() => controller.abort(), NETWORK_TIMEOUT_MS);
     const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${query}`, {
       method: "GET",
       headers: {
@@ -289,7 +292,7 @@ export default function DashboardScreen() {
   }, []);
 
   const fetchCampaigns = useCallback(async () => {
-    if (!loadUserId) {
+    if (authLoading || !loadUserId) {
       if (isMountedRef.current) {
         setIsLoading(false);
       }
@@ -318,14 +321,16 @@ export default function DashboardScreen() {
       let ownedData: Campaign[] = [];
       let ownedError: Error | null = null;
       try {
-        const { data } = await withTimeout(supabase.auth.getSession(), 6000, "Session fetch");
-        const accessToken = data.session?.access_token ?? null;
-        ownedData = await restSelect<Campaign>(
-          "campaigns",
-          `select=*&owner_id=eq.${loadUserId}`,
-          accessToken,
-          "Owned campaigns"
-        );
+        if (activeAccessToken) {
+          ownedData = await restSelect<Campaign>(
+            "campaigns",
+            `select=*&owner_id=eq.${loadUserId}`,
+            activeAccessToken,
+            "Owned campaigns"
+          );
+        } else {
+          throw new Error("Missing access token for REST fetch");
+        }
       } catch (err) {
         ownedError = err as Error;
         try {
@@ -334,7 +339,7 @@ export default function DashboardScreen() {
               .from("campaigns")
               .select("*")
               .eq("owner_id", loadUserId),
-            8000,
+            NETWORK_TIMEOUT_MS,
             "Owned campaigns fetch"
           );
           ownedData = (result.data ?? []) as Campaign[];
@@ -356,15 +361,17 @@ export default function DashboardScreen() {
 
       let memberCampaignIds: string[] = [];
       try {
-        const { data } = await withTimeout(supabase.auth.getSession(), 6000, "Session fetch");
-        const accessToken = data.session?.access_token ?? null;
-        const rows = await restSelect<{ campaign_id: string }>(
-          "campaign_members",
-          `select=campaign_id&user_id=eq.${loadUserId}`,
-          accessToken,
-          "Campaign membership"
-        );
-        memberCampaignIds = rows.map(r => r.campaign_id).filter(Boolean);
+        if (activeAccessToken) {
+          const rows = await restSelect<{ campaign_id: string }>(
+            "campaign_members",
+            `select=campaign_id&user_id=eq.${loadUserId}`,
+            activeAccessToken,
+            "Campaign membership"
+          );
+          memberCampaignIds = rows.map(r => r.campaign_id).filter(Boolean);
+        } else {
+          throw new Error("Missing access token for membership fetch");
+        }
       } catch (memberErr) {
         try {
           const { data: memberData, error: memberError } = await withTimeout(
@@ -372,7 +379,7 @@ export default function DashboardScreen() {
               .from("campaign_members")
               .select("campaign_id")
               .eq("user_id", loadUserId),
-            8000,
+            NETWORK_TIMEOUT_MS,
             "Campaign members fetch"
           );
           if (memberError) throw memberError;
@@ -389,15 +396,17 @@ export default function DashboardScreen() {
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
         try {
-          const { data } = await withTimeout(supabase.auth.getSession(), 6000, "Session fetch");
-          const accessToken = data.session?.access_token ?? null;
-          const ids = memberCampaignIds.map(id => `\"${id}\"`).join(",");
-          memberCampaigns = await restSelect<Campaign>(
-            "campaigns",
-            `select=*&id=in.(${ids})`,
-            accessToken,
-            "Member campaigns"
-          );
+          if (activeAccessToken) {
+            const ids = memberCampaignIds.map(id => `"${id}"`).join(",");
+            memberCampaigns = await restSelect<Campaign>(
+              "campaigns",
+              `select=*&id=in.(${ids})`,
+              activeAccessToken,
+              "Member campaigns"
+            );
+          } else {
+            throw new Error("Missing access token for member campaign fetch");
+          }
         } catch (memberCampaignErr) {
           try {
             const { data, error: memberCampaignsError } = await withTimeout(
@@ -405,7 +414,7 @@ export default function DashboardScreen() {
                 .from("campaigns")
                 .select("*")
                 .in("id", memberCampaignIds),
-              8000,
+              NETWORK_TIMEOUT_MS,
               "Member campaigns fetch"
             );
 
@@ -440,7 +449,7 @@ export default function DashboardScreen() {
                 .from("campaign_members")
                 .select("campaign_id")
                 .in("campaign_id", ids),
-              8000,
+              NETWORK_TIMEOUT_MS,
               "Campaign members batch fetch"
             );
             if (membersFetchError) throw membersFetchError;
@@ -479,7 +488,7 @@ export default function DashboardScreen() {
         lastLoadedUserIdRef.current = loadUserId;
       }
     }
-  }, [loadUserId, setLastError, withTimeout]);
+  }, [activeAccessToken, authLoading, loadUserId, setLastError, withTimeout]);
 
   const handleRetry = useCallback(() => {
     lastLoadedUserIdRef.current = null;
@@ -494,14 +503,14 @@ export default function DashboardScreen() {
   }, [fetchCampaigns]);
 
   useEffect(() => {
-    if (!loadUserId) {
+    if (authLoading || !loadUserId) {
       setCampaigns([]);
       setIsLoading(false);
       setError(null);
       return;
     }
     fetchCampaigns();
-  }, [fetchCampaigns]);
+  }, [authLoading, fetchCampaigns, loadUserId]);
 
   useEffect(() => {
     if (!isLoading) return;
@@ -545,11 +554,10 @@ export default function DashboardScreen() {
       setIsCreating(false);
       setCreateError("Campaign creation timed out. Try again.");
       setCreateStatus(null);
-    }, 20000);
+    }, CREATE_TIMEOUT_MS);
     try {
       setCreateStatus("Checking session...");
-      const { data } = await withTimeout(supabase.auth.getSession(), 6000, "Session fetch");
-      const accessToken = data.session?.access_token ?? null;
+      const accessToken = activeAccessToken;
       setCreateStatus("Creating campaign record...");
       let createdCampaign: Campaign | null = null;
       try {
@@ -583,7 +591,7 @@ export default function DashboardScreen() {
             })
             .select()
             .single(),
-          8000,
+          NETWORK_TIMEOUT_MS,
           "Direct campaign insert"
         );
         if (directError) throw directError;
@@ -595,13 +603,13 @@ export default function DashboardScreen() {
             user_id: activeUser.id,
             is_dm: true,
           }),
-          6000,
+          NETWORK_TIMEOUT_MS,
           "Direct campaign member insert"
         );
 
         await withTimeout(
           supabase.from("combat_state").insert({ campaign_id: createdCampaign.id }),
-          6000,
+          NETWORK_TIMEOUT_MS,
           "Direct combat state insert"
         );
       }
@@ -610,6 +618,32 @@ export default function DashboardScreen() {
         throw new Error("Campaign insert returned no id");
       }
       createdCampaignId = createdCampaign.id;
+
+      setCreateStatus("Ensuring campaign access...");
+      const { error: memberEnsureError } = await withTimeout(
+        supabase
+          .from("campaign_members")
+          .upsert(
+            {
+              campaign_id: createdCampaign.id,
+              user_id: activeUser.id,
+              is_dm: true,
+            },
+            { onConflict: "campaign_id,user_id", ignoreDuplicates: true },
+          ),
+        NETWORK_TIMEOUT_MS,
+        "Ensure campaign membership",
+      );
+      if (memberEnsureError) throw memberEnsureError;
+
+      const { error: combatEnsureError } = await withTimeout(
+        supabase
+          .from("combat_state")
+          .upsert({ campaign_id: createdCampaign.id }, { onConflict: "campaign_id", ignoreDuplicates: true }),
+        NETWORK_TIMEOUT_MS,
+        "Ensure combat state",
+      );
+      if (combatEnsureError) throw combatEnsureError;
 
       setCreateStatus("Generating world...");
       let generatedWorld: GeneratedWorld | null = null;
@@ -713,7 +747,7 @@ export default function DashboardScreen() {
                 .from("campaigns")
                 .update({ current_scene: sceneName })
                 .eq("id", createdCampaign.id),
-              6000,
+              NETWORK_TIMEOUT_MS,
               "Scene update"
             );
           } catch {
@@ -910,7 +944,7 @@ export default function DashboardScreen() {
       toast({ title: "Not allowed", description: "Only the campaign owner can delete this campaign.", variant: "destructive" });
       return;
     }
-    const confirmed = window.confirm(`Delete campaign \"${campaign.name}\"? This cannot be undone.`);
+    const confirmed = window.confirm(`Delete campaign "${campaign.name}"? This cannot be undone.`);
     if (!confirmed) return;
     if (isDeleting) return;
     setIsDeleting(true);
@@ -1060,7 +1094,7 @@ export default function DashboardScreen() {
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">Your campaigns and access codes.</p>
         <div className="mt-2 text-xs text-muted-foreground">
-          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
+          Auth: {authLoading ? "loading" : (activeSession ? "session" : "guest")} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
         </div>
         {dbError ? (
           <div className="mt-1 text-xs text-destructive">DB Error: {dbError}</div>
@@ -1166,7 +1200,7 @@ export default function DashboardScreen() {
               {createStatus ? (
                 <div className="text-xs text-muted-foreground">{createStatus}</div>
               ) : null}
-              <Button onClick={handleCreate} disabled={isCreating || isGenerating || !isCreateValid}>
+              <Button onClick={handleCreate} disabled={authLoading || isCreating || isGenerating || !isCreateValid}>
                 {isCreating || isGenerating ? "Creating..." : "Create"}
               </Button>
             </CardContent>
