@@ -1,0 +1,86 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "version: 0.0.0"
+    - generic [ref=e6]: "build: 2026-02-11T10:43:56.581Z"
+    - generic [ref=e7]: "git: b134c35"
+    - generic [ref=e8]: "runId: 1a975053-e73f-44e3-b047-4b59ce3a82d9"
+    - generic [ref=e9]: "now: 2026-02-11T10:54:41.683Z"
+    - generic [ref=e10]: "base: /"
+    - generic [ref=e11]: "href: http://localhost:8080/dashboard"
+  - generic [ref=e13]:
+    - complementary [ref=e14]:
+      - generic [ref=e15]: Saga Spark
+      - navigation [ref=e16]:
+        - link "Dashboard" [ref=e17] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e18] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Game" [ref=e19] [cursor=pointer]:
+          - /url: /game
+        - link "Servers/Admin" [ref=e20] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e21]:
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]: "Auth: psylus13@gmail.com"
+          - generic [ref=e25]: "DB: loading"
+        - generic [ref=e26]: /dashboard
+      - generic [ref=e28]:
+        - generic [ref=e29]:
+          - heading "Dashboard" [level=1] [ref=e30]
+          - paragraph [ref=e31]: Your campaigns and access codes.
+          - generic [ref=e32]: "Auth: session | userId: 316225c3-b052-4e4b-bb01-991ff577c037 | DB: loading"
+        - generic [ref=e33]:
+          - generic [ref=e34]:
+            - generic [ref=e35]:
+              - heading "Campaigns" [level=3] [ref=e36]
+              - button "Delete All" [disabled]
+            - generic [ref=e38]:
+              - generic [ref=e39]: Owned campaigns fetch timed out after 15000ms
+              - button "Retry" [ref=e85] [cursor=pointer]
+          - generic [ref=e41]:
+            - generic [ref=e42]:
+              - heading "Auth" [level=3] [ref=e44]
+              - generic [ref=e46]:
+                - generic [ref=e47]: Signed in as
+                - generic [ref=e48]: psylus13@gmail.com
+                - generic [ref=e49]: 316225c3-b052-4e4b-bb01-991ff577c037
+                - button "Sign out" [ref=e50] [cursor=pointer]
+            - generic [ref=e51]:
+              - heading "Create campaign" [level=3] [ref=e53]
+              - generic [ref=e54]:
+                - textbox "Campaign name" [ref=e55]
+                - textbox "Campaign description" [ref=e56]
+                - button "Create" [disabled]
+            - generic [ref=e57]:
+              - heading "Join campaign" [level=3] [ref=e59]
+              - generic [ref=e60]:
+                - textbox "Invite code" [ref=e61]
+                - button "Join" [disabled]
+      - generic [ref=e63]:
+        - generic [ref=e64]: "Build: unknown"
+        - generic [ref=e65]: "Route: /dashboard"
+        - generic [ref=e66]: "Last API Error: Owned campaigns fetch timed out after 15000ms"
+        - generic [ref=e86]: "At: 3:55:06 AM"
+      - generic [ref=e67]:
+        - generic [ref=e68]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e69]: "Anon key present: yes"
+        - generic [ref=e70]: "Session exists: no"
+        - generic [ref=e71]: "Access token exists: no"
+        - generic [ref=e72]: "Last status: -"
+        - generic [ref=e73]: "Last body: -"
+        - button "Test generate-class" [ref=e74] [cursor=pointer]
+      - generic [ref=e75]:
+        - generic [ref=e76]: "FPS: 60"
+        - generic [ref=e77]: "Heap: 19 MB"
+        - generic [ref=e78]: "Long tasks: 2"
+  - generic [ref=e79]:
+    - generic [ref=e80]: "session: yes"
+    - generic [ref=e81]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e82]: "authLoading: true"
+    - generic [ref=e83]: "route: /dashboard"
+    - generic [ref=e84]: "lastAuthError: none"

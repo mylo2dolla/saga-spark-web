@@ -15,14 +15,14 @@ export interface MythicDmContextPayload {
   dm_world_tension: unknown;
 }
 
-export function useMythicDmContext(campaignId: string | undefined) {
+export function useMythicDmContext(campaignId: string | undefined, enabled = true) {
   const [data, setData] = useState<MythicDmContextPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
 
   const fetchOnce = useCallback(async () => {
-    if (!campaignId) {
+    if (!campaignId || !enabled) {
       if (isMountedRef.current) {
         setData(null);
         setIsLoading(false);
@@ -51,7 +51,7 @@ export function useMythicDmContext(campaignId: string | undefined) {
     } finally {
       if (isMountedRef.current) setIsLoading(false);
     }
-  }, [campaignId]);
+  }, [campaignId, enabled]);
 
   useEffect(() => {
     isMountedRef.current = true;

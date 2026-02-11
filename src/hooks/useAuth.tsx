@@ -7,8 +7,20 @@ const DEV_DEBUG = import.meta.env.DEV;
 const AUTH_DEBUG = DEV_DEBUG && import.meta.env.VITE_DEBUG_AUTH === "true";
 const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 const PROFILE_TTL_MS = 60000;
+const AUTH_TIMEOUT_MS = 20000;
+const AUTH_FAILSAFE_MS = 30000;
 const profileCache = new Map<string, { data: Profile | null; fetchedAt: number }>();
 const profileInFlight = new Map<string, Promise<Profile | null>>();
+
+const isProfileFetchTimeout = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  return error.message.toLowerCase().includes("profile fetch timed out");
+};
+
+const isSessionFetchTimeout = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  return error.message.toLowerCase().includes("auth session fetch timed out");
+};
 
 interface AuthState {
   session: Session | null;
@@ -45,6 +57,18 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const logAuthDebug = (payload: Record<string, unknown>) => {
   if (!AUTH_DEBUG) return;
   console.debug("[auth] log", payload);
+};
+
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -138,6 +162,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let isActive = true;
+    const failsafeId = setTimeout(() => {
+      if (!isActive) return;
+      updateState({ isLoading: false, isProfileCreating: false });
+      notifyAuthError({ message: "Auth bootstrap timed out", status: null });
+    }, AUTH_FAILSAFE_MS);
 
     if (E2E_BYPASS_AUTH) {
       const fakeUser = {
@@ -157,6 +186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isProfileCreating: false,
         lastAuthError: null,
       });
+      clearTimeout(failsafeId);
       return () => {
         isActive = false;
       };
@@ -171,7 +201,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!isActive) return;
         updateState({ session: session ?? null, user: session?.user ?? null });
         if (session?.user) {
-          await fetchProfileInternal(session.user.id);
+          try {
+            await withTimeout(fetchProfileInternal(session.user.id), AUTH_TIMEOUT_MS, "Profile fetch");
+          } catch (error) {
+            if (!isProfileFetchTimeout(error)) {
+              notifyAuthError(error as { message?: string; status?: number });
+            }
+            updateState({ isLoading: false, isProfileCreating: false });
+          }
         } else {
           updateState({ profile: null, isProfileCreating: false, isLoading: false });
         }
@@ -183,25 +220,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.count("[auth] getSession");
       }
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const { data: { session }, error } = await withTimeout(
+          supabase.auth.getSession(),
+          AUTH_TIMEOUT_MS,
+          "Auth session fetch"
+        );
         if (!isActive) return;
         if (error) {
           notifyAuthError(error);
         }
         updateState({ session: session ?? null, user: session?.user ?? null });
         if (session?.user) {
-          await fetchProfileInternal(session.user.id);
+          await withTimeout(fetchProfileInternal(session.user.id), AUTH_TIMEOUT_MS, "Profile fetch");
         } else {
           updateState({ profile: null });
         }
       } catch (error) {
         if (isActive) {
-          notifyAuthError(error as { message?: string; status?: number });
+          if (!isProfileFetchTimeout(error) && !isSessionFetchTimeout(error)) {
+            notifyAuthError(error as { message?: string; status?: number });
+          }
         }
       } finally {
         if (isActive) {
           updateState({ isLoading: false });
         }
+        clearTimeout(failsafeId);
       }
     };
 
@@ -209,6 +253,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       isActive = false;
+      clearTimeout(failsafeId);
       subscription?.unsubscribe();
     };
   }, [fetchProfileInternal, notifyAuthError, updateState]);

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
 
-export function useDbHealth(enabled = true) {
+export function useDbHealth(enabled = true, accessTokenOverride?: string | null) {
   const [status, setStatus] = useState<"ok" | "error" | "loading">("loading");
   const [lastError, setLastError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
@@ -26,8 +26,11 @@ export function useDbHealth(enabled = true) {
       try {
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
         const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-        const { data } = await supabase.auth.getSession();
-        const accessToken = data.session?.access_token ?? null;
+        let accessToken = accessTokenOverride ?? null;
+        if (accessTokenOverride === undefined) {
+          const { data } = await supabase.auth.getSession();
+          accessToken = data.session?.access_token ?? null;
+        }
         if (!supabaseUrl || !supabaseAnonKey) {
           throw new Error("Supabase env is not configured");
         }
@@ -67,7 +70,7 @@ export function useDbHealth(enabled = true) {
       isMounted = false;
       if (interval) clearInterval(interval);
     };
-  }, [enabled]);
+  }, [accessTokenOverride, enabled]);
 
   return { status, lastError };
 }
