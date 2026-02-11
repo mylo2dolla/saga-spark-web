@@ -65,7 +65,7 @@ export default function GameScreen() {
       });
       navigate("/login");
     }
-  }, [authLoading, campaignId, navigate, user]);
+  }, [E2E_BYPASS_AUTH, authLoading, campaignId, navigate, user]);
 
   const locations = useMemo(() => {
     const raw = gameSession.unifiedState?.world?.locations as unknown;

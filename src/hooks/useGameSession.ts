@@ -602,7 +602,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       },
       travel: nextTravel,
     };
-  }, []);
+  }, [normalizeWorldMaps]);
 
   const toKebab = useCallback((value: string): string =>
     value

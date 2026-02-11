@@ -1,0 +1,37 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "version: 0.0.0"
+    - generic [ref=e6]: "build: 2026-02-11T12:15:22.225Z"
+    - generic [ref=e7]: "git: 982608b"
+    - generic [ref=e8]: "runId: f41e5e79-a917-4477-b644-a7a93e9621a2"
+    - generic [ref=e9]: "now: 2026-02-11T12:30:57.151Z"
+    - generic [ref=e10]: "base: /"
+    - generic [ref=e11]: "href: http://localhost:8080/login"
+  - generic [ref=e12]:
+    - heading "Welcome back" [level=1] [ref=e13]
+    - paragraph [ref=e14]: Sign in to continue.
+    - generic [ref=e15]:
+      - generic [ref=e16]:
+        - text: Email
+        - textbox "Email" [ref=e17]:
+          - /placeholder: you@example.com
+      - generic [ref=e18]:
+        - text: Password
+        - textbox "Password" [ref=e19]:
+          - /placeholder: ••••••••
+      - button "Login" [ref=e20] [cursor=pointer]
+      - generic [ref=e21]:
+        - generic [ref=e22]: Connectivity Check
+        - generic [ref=e23]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e24]:
+          - button "Run Check" [ref=e25] [cursor=pointer]
+          - button "Auth Test" [disabled]
+        - generic [ref=e26]: "If this fails, it’s usually DNS/router blocking `supabase.co` or a captive network. This check tells us whether the router is the problem."
+    - generic [ref=e28]:
+      - text: Need an account?
+      - link "Sign up" [ref=e29] [cursor=pointer]:
+        - /url: /signup
