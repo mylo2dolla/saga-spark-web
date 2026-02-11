@@ -185,7 +185,6 @@ export default function MythicGameScreen() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => navigate(`/dashboard`)}>Dashboard</Button>
-          <Button variant="outline" onClick={() => navigate(`/game/${campaignId}`)}>Legacy Game</Button>
           <Button variant="outline" onClick={() => refetch()}>Refresh</Button>
           <Button variant="outline" onClick={() => dm.refetch()}>Refresh DM</Button>
           {board.board_type !== "combat" ? (
@@ -408,6 +407,7 @@ export default function MythicGameScreen() {
           <div className="mb-2 text-sm font-semibold">Mythic DM (DB-driven narration)</div>
           <div className="h-[520px] overflow-hidden rounded-lg border border-border bg-background/30">
             <MythicDMChat
+              campaignId={campaignId}
               messages={mythicDm.messages}
               isLoading={mythicDm.isLoading}
               currentResponse={mythicDm.currentResponse}

@@ -159,13 +159,6 @@ export default function CharacterScreen() {
           <button
             type="button"
             className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
-            onClick={() => navigate(`/game/${campaignId}`)}
-          >
-            Continue (Legacy)
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
             onClick={() => setShowCreator(true)}
           >
             Regenerate Mythic Kit

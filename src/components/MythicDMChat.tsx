@@ -2,11 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { MythicDMMessage } from "@/hooks/useMythicDungeonMaster";
+import { PromptAssistField } from "@/components/PromptAssistField";
 
 interface Props {
+  campaignId?: string;
   messages: MythicDMMessage[];
   isLoading: boolean;
   currentResponse: string;
@@ -14,7 +15,7 @@ interface Props {
   error?: string | null;
 }
 
-export function MythicDMChat({ messages, isLoading, currentResponse, onSendMessage, error }: Props) {
+export function MythicDMChat({ campaignId, messages, isLoading, currentResponse, onSendMessage, error }: Props) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -86,15 +87,19 @@ export function MythicDMChat({ messages, isLoading, currentResponse, onSendMessa
 
       <div className="border-t border-border p-3">
         <div className="flex gap-2">
-          <Input
+          <PromptAssistField
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={setInput}
+            fieldType="dm_action"
+            campaignId={campaignId}
+            context={{ recent_messages: messages.slice(-6).map((m) => ({ role: m.role, content: m.content })) }}
             placeholder="Say something to the DM..."
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSend();
-            }}
+            className="w-full"
+            disabled={isLoading}
           />
-          <Button onClick={handleSend} disabled={isLoading}>
+        </div>
+        <div className="mt-2">
+          <Button onClick={handleSend} disabled={isLoading || !input.trim()}>
             Send
           </Button>
         </div>
