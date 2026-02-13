@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PromptAssistField } from "@/components/PromptAssistField";
 import { useAuth } from "@/hooks/useAuth";
 import { useMythicCreator } from "@/hooks/useMythicCreator";
 import { useMythicBoard } from "@/hooks/useMythicBoard";
@@ -16,6 +17,7 @@ import { MythicCombatPanel } from "@/components/mythic/MythicCombatPanel";
 import { MythicInventoryPanel } from "@/components/mythic/MythicInventoryPanel";
 import { callEdgeFunction } from "@/lib/edge";
 import { sumStatMods, splitInventory, type MythicInventoryRow } from "@/lib/mythicEquipment";
+import { toast } from "sonner";
 
 function prettyJson(value: unknown): string {
   try {
@@ -38,7 +40,17 @@ export default function MythicGameScreen() {
 
   const { bootstrapCampaign, isBootstrapping } = useMythicCreator();
   const { board, recentTransitions, isLoading: boardLoading, error: boardError, refetch } = useMythicBoard(campaignId);
-  const { character, skills, items, isLoading: charLoading, error: charError, refetch: refetchCharacter } = useMythicCharacter(campaignId);
+  const {
+    character,
+    skills,
+    items,
+    loadouts,
+    progressionEvents,
+    loadoutSlotCap,
+    isLoading: charLoading,
+    error: charError,
+    refetch: refetchCharacter,
+  } = useMythicCharacter(campaignId);
   const dm = useMythicDmContext(campaignId, Boolean(campaignId && board && character));
   const mythicDm = useMythicDungeonMaster(campaignId);
   const combat = useMythicCombat();
@@ -99,48 +111,51 @@ export default function MythicGameScreen() {
     mobility: Math.min(100, Math.max(0, Math.floor((character?.mobility ?? 0) + (equipBonuses.mobility ?? 0)))),
     utility: Math.min(100, Math.max(0, Math.floor((character?.utility ?? 0) + (equipBonuses.utility ?? 0)))),
   };
+  const activeSkillPool = useMemo(
+    () => skills.filter((s) => s.kind === "active" || s.kind === "ultimate"),
+    [skills],
+  );
+  const activeLoadout = useMemo(
+    () => loadouts.find((l) => l.is_active) ?? loadouts[0] ?? null,
+    [loadouts],
+  );
+  const [loadoutName, setLoadoutName] = useState("Default");
+  const [selectedLoadoutSkillIds, setSelectedLoadoutSkillIds] = useState<string[]>([]);
+  const [isSavingLoadout, setIsSavingLoadout] = useState(false);
+  const [isApplyingXp, setIsApplyingXp] = useState(false);
+  const [isRollingLoot, setIsRollingLoot] = useState(false);
+  const [isAdvancingTurn, setIsAdvancingTurn] = useState(false);
+  const autoTickKeyRef = useRef<string | null>(null);
 
-  if (!campaignId) {
-    return <div className="p-6 text-sm text-muted-foreground">Campaign not found.</div>;
-  }
-
-  if (authLoading || boardLoading || charLoading || isBootstrapping) {
-    return (
-      <div className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
-        <Loader2 className="h-5 w-5 animate-spin" />
-        <span>Loading Mythic Weave state...</span>
-      </div>
-    );
-  }
-
-  if (boardError || charError) {
-    return (
-      <div className="space-y-3 p-6 text-sm text-muted-foreground">
-        <div className="text-destructive">{boardError ?? charError}</div>
-        <Button variant="outline" onClick={() => refetch()}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
-  if (!character) {
-    return (
-      <div className="space-y-3 p-6 text-sm text-muted-foreground">
-        <div>No Mythic character found for this campaign.</div>
-        <Button onClick={() => navigate(`/game/${campaignId}/create-character`)}>Create Character</Button>
-      </div>
-    );
-  }
-
-  if (!board) {
-    return (
-      <div className="space-y-3 p-6 text-sm text-muted-foreground">
-        <div>No active Mythic board found.</div>
-        <Button onClick={() => refetch()}>Refresh</Button>
-      </div>
-    );
-  }
+  useEffect(() => {
+    const currentCap = Math.max(1, loadoutSlotCap);
+    if (!activeLoadout) {
+      const fallback = activeSkillPool
+        .slice(0, currentCap)
+        .map((s) => s.id ?? "")
+        .filter(Boolean);
+      setSelectedLoadoutSkillIds((prev) => {
+        if (prev.length === fallback.length && prev.every((id, idx) => id === fallback[idx])) {
+          return prev;
+        }
+        return fallback;
+      });
+      setLoadoutName((prev) => (prev === "Default" ? prev : "Default"));
+      return;
+    }
+    const next = Array.isArray(activeLoadout.slots_json) ? activeLoadout.slots_json : [];
+    const normalizedNext = next.slice(0, currentCap);
+    setSelectedLoadoutSkillIds((prev) => {
+      if (prev.length === normalizedNext.length && prev.every((id, idx) => id === normalizedNext[idx])) {
+        return prev;
+      }
+      return normalizedNext;
+    });
+    setLoadoutName((prev) => {
+      const targetName = activeLoadout.name ?? "Default";
+      return prev === targetName ? prev : targetName;
+    });
+  }, [activeLoadout, activeSkillPool, loadoutSlotCap]);
 
   const lastTransition = recentTransitions[0] ?? null;
 
@@ -170,6 +185,210 @@ export default function MythicGameScreen() {
     });
     await refetchCharacter();
   };
+
+  const saveLoadout = async () => {
+    if (!campaignId || !character) return;
+    const normalized = Array.from(new Set(selectedLoadoutSkillIds)).slice(0, Math.max(1, loadoutSlotCap));
+    setIsSavingLoadout(true);
+    try {
+      const { data, error } = await callEdgeFunction<{
+        ok: boolean;
+        slot_cap: number;
+        truncated?: boolean;
+      }>("mythic-set-loadout", {
+        requireAuth: true,
+        body: {
+          campaignId,
+          characterId: character.id,
+          name: (loadoutName || "Default").trim().slice(0, 60),
+          skillIds: normalized,
+          activate: true,
+        },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error("Failed to save loadout");
+      if (data.truncated) {
+        toast("Loadout trimmed to slot cap.");
+      } else {
+        toast.success("Loadout saved.");
+      }
+      await refetchCharacter();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to save loadout");
+    } finally {
+      setIsSavingLoadout(false);
+    }
+  };
+
+  const activateLoadout = async (loadoutId: string) => {
+    if (!campaignId || !character) return;
+    const selected = loadouts.find((l) => l.id === loadoutId);
+    if (!selected) return;
+    setIsSavingLoadout(true);
+    try {
+      const { data, error } = await callEdgeFunction<{ ok: boolean }>("mythic-set-loadout", {
+        requireAuth: true,
+        body: {
+          campaignId,
+          characterId: character.id,
+          name: selected.name,
+          skillIds: selected.slots_json,
+          activate: true,
+        },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error("Failed to activate loadout");
+      setLoadoutName(selected.name);
+      setSelectedLoadoutSkillIds(selected.slots_json.slice(0, Math.max(1, loadoutSlotCap)));
+      await refetchCharacter();
+      toast.success(`Activated ${selected.name}`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to activate loadout");
+    } finally {
+      setIsSavingLoadout(false);
+    }
+  };
+
+  const applyXp = async (amount: number) => {
+    if (!campaignId || !character) return;
+    setIsApplyingXp(true);
+    try {
+      const { data, error } = await callEdgeFunction<{ ok: boolean }>("mythic-apply-xp", {
+        requireAuth: true,
+        body: {
+          campaignId,
+          characterId: character.id,
+          amount,
+          reason: "manual_progression",
+          metadata: { source: "mythic_screen_quick_action" },
+        },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error("Failed to apply XP");
+      await refetchCharacter();
+      toast.success(`Applied ${amount} XP`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to apply XP");
+    } finally {
+      setIsApplyingXp(false);
+    }
+  };
+
+  const generateLoot = async () => {
+    if (!campaignId || !character) return;
+    setIsRollingLoot(true);
+    try {
+      const { data, error } = await callEdgeFunction<{ ok: boolean; count: number }>("mythic-generate-loot", {
+        requireAuth: true,
+        body: {
+          campaignId,
+          characterId: character.id,
+          count: 1,
+          source: "manual_debug_drop",
+        },
+      });
+      if (error) throw error;
+      if (!data?.ok) throw new Error("Failed to generate loot");
+      await refetchCharacter();
+      toast.success("Loot generated.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to generate loot");
+    } finally {
+      setIsRollingLoot(false);
+    }
+  };
+
+  const activeTurnCombatant = useMemo(
+    () => combatState.combatants.find((c) => c.id === combatState.activeTurnCombatantId) ?? null,
+    [combatState.activeTurnCombatantId, combatState.combatants],
+  );
+  const canAdvanceNpcTurn = Boolean(
+    board?.board_type === "combat" &&
+    combatSessionId &&
+    combatState.session?.status === "active" &&
+    activeTurnCombatant &&
+    activeTurnCombatant.entity_type !== "player",
+  );
+  const tickCombat = combat.tickCombat;
+  const refetchCombatState = combatState.refetch;
+  const refetchDm = dm.refetch;
+
+  const advanceNpcTurn = useCallback(async () => {
+    if (!campaignId || !combatSessionId || !canAdvanceNpcTurn) return;
+    setIsAdvancingTurn(true);
+    try {
+      await tickCombat({ campaignId, combatSessionId, maxSteps: 1 });
+      await Promise.all([refetchCombatState(), refetch()]);
+    } finally {
+      setIsAdvancingTurn(false);
+    }
+  }, [campaignId, canAdvanceNpcTurn, combatSessionId, refetch, refetchCombatState, tickCombat]);
+
+  const bossPhaseLabel = useMemo(() => {
+    if (!combatState.events.length) return null;
+    const phaseShift = [...combatState.events].reverse().find((e) => e.event_type === "phase_shift");
+    if (!phaseShift) return null;
+    const phase = Number((phaseShift.payload as Record<string, unknown>)?.phase ?? 0);
+    return phase > 0 ? `Boss Phase ${phase}` : "Boss Phase";
+  }, [combatState.events]);
+
+  useEffect(() => {
+    if (!canAdvanceNpcTurn || isAdvancingTurn || combat.isTicking) return;
+    const key = `${combatSessionId}:${combatState.session?.current_turn_index ?? -1}:${activeTurnCombatant?.id ?? "none"}`;
+    if (autoTickKeyRef.current === key) return;
+    autoTickKeyRef.current = key;
+    void advanceNpcTurn();
+  }, [
+    advanceNpcTurn,
+    activeTurnCombatant?.id,
+    canAdvanceNpcTurn,
+    combat.isTicking,
+    combatSessionId,
+    combatState.session?.current_turn_index,
+    isAdvancingTurn,
+  ]);
+
+  if (!campaignId) {
+    return <div className="p-6 text-sm text-muted-foreground">Campaign not found.</div>;
+  }
+
+  if (authLoading || boardLoading || charLoading || isBootstrapping) {
+    return (
+      <div className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin" />
+        <span>Loading Mythic Weave state...</span>
+      </div>
+    );
+  }
+
+  if (boardError || charError) {
+    return (
+      <div className="space-y-3 p-6 text-sm text-muted-foreground">
+        <div className="text-destructive">{boardError ?? charError}</div>
+        <Button variant="outline" onClick={() => refetch()}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (!character) {
+    return (
+      <div className="space-y-3 p-6 text-sm text-muted-foreground">
+        <div>No Mythic character found for this campaign.</div>
+        <Button onClick={() => navigate(`/mythic/${campaignId}/create-character`)}>Create Character</Button>
+      </div>
+    );
+  }
+
+  if (!board) {
+    return (
+      <div className="space-y-3 p-6 text-sm text-muted-foreground">
+        <div>No active Mythic board found.</div>
+        <Button onClick={() => refetch()}>Refresh</Button>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6">
@@ -269,6 +488,114 @@ export default function MythicGameScreen() {
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-2 text-sm font-semibold">Progression</div>
+          <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+            <div>Level: {character.level}</div>
+            <div>Unspent Points: {character.unspent_points ?? 0}</div>
+            <div>XP: {character.xp ?? 0}</div>
+            <div>XP to Next: {character.xp_to_next ?? 0}</div>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => void applyXp(250)} disabled={isApplyingXp}>
+              {isApplyingXp ? "Applying XP..." : "+250 XP"}
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => void generateLoot()} disabled={isRollingLoot}>
+              {isRollingLoot ? "Rolling..." : "Generate Loot"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => void recomputeCharacter()}>
+              Recompute
+            </Button>
+          </div>
+          <div className="mt-3 text-xs font-semibold text-muted-foreground">Recent Progression Events</div>
+          <div className="mt-2 max-h-[180px] overflow-auto space-y-1 text-xs text-muted-foreground">
+            {progressionEvents.length === 0 ? (
+              <div>No progression events yet.</div>
+            ) : (
+              progressionEvents.map((event) => (
+                <div key={event.id} className="rounded border border-border bg-background/20 px-2 py-1">
+                  <div className="font-medium text-foreground">{event.event_type}</div>
+                  <div>{new Date(event.created_at).toLocaleTimeString()}</div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-2 text-sm font-semibold">Skill Loadout</div>
+          <div className="mb-2 text-xs text-muted-foreground">
+            Slots unlocked: {Math.max(1, loadoutSlotCap)} · Selected: {selectedLoadoutSkillIds.length}
+          </div>
+          <PromptAssistField
+            value={loadoutName}
+            onChange={setLoadoutName}
+            fieldType="generic"
+            campaignId={campaignId}
+            context={{
+              kind: "loadout_name",
+              character_name: character.name,
+              class_name: String((character.class_json as any)?.class_name ?? ""),
+              selected_skill_names: activeSkillPool
+                .filter((skill) => selectedLoadoutSkillIds.includes(skill.id ?? ""))
+                .map((skill) => skill.name),
+            }}
+            placeholder="Loadout name"
+            maxLength={60}
+            className="mb-2"
+            disabled={isSavingLoadout}
+          />
+          <div className="mb-3 flex flex-wrap gap-2">
+            {activeSkillPool.map((skill) => {
+              const id = skill.id ?? "";
+              const isSelected = selectedLoadoutSkillIds.includes(id);
+              return (
+                <Button
+                  key={id}
+                  size="sm"
+                  variant={isSelected ? "default" : "secondary"}
+                  onClick={() => {
+                    setSelectedLoadoutSkillIds((prev) => {
+                      if (prev.includes(id)) return prev.filter((x) => x !== id);
+                      if (prev.length >= Math.max(1, loadoutSlotCap)) return prev;
+                      return [...prev, id];
+                    });
+                  }}
+                >
+                  {skill.name}
+                </Button>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => void saveLoadout()} disabled={isSavingLoadout}>
+              {isSavingLoadout ? "Saving..." : "Save + Activate"}
+            </Button>
+          </div>
+          <div className="mt-3 text-xs font-semibold text-muted-foreground">Saved Loadouts</div>
+          <div className="mt-2 space-y-1">
+            {loadouts.length === 0 ? (
+              <div className="text-xs text-muted-foreground">No saved loadouts.</div>
+            ) : (
+              loadouts.map((loadout) => (
+                <div key={loadout.id} className="flex items-center justify-between rounded border border-border bg-background/20 px-2 py-1">
+                  <div className="text-xs">
+                    <span className="font-medium">{loadout.name}</span>
+                    {loadout.is_active ? <span className="ml-2 text-primary">(active)</span> : null}
+                  </div>
+                  {!loadout.is_active ? (
+                    <Button size="sm" variant="outline" onClick={() => void activateLoadout(loadout.id)} disabled={isSavingLoadout}>
+                      Activate
+                    </Button>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-border bg-card/40 p-4">
           <div className="mb-2 text-sm font-semibold">Board Summary</div>
           {board.board_type === "town" ? (
             <div className="space-y-2 text-xs text-muted-foreground">
@@ -357,6 +684,12 @@ export default function MythicGameScreen() {
                 cooldown_turns: s.cooldown_turns,
               }))}
               isActing={combat.isActing}
+              isTicking={isAdvancingTurn || combat.isTicking}
+              canTick={canAdvanceNpcTurn}
+              bossPhaseLabel={bossPhaseLabel}
+              onTickTurn={async () => {
+                await advanceNpcTurn();
+              }}
               onUseSkill={async ({ actorCombatantId, skillId, target }) => {
                 await combat.useSkill({
                   campaignId,

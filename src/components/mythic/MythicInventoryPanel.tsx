@@ -7,7 +7,8 @@ import { getGrantedAbilities, splitInventory, sumStatMods, type MythicInventoryR
 function itemSummary(row: MythicInventoryRow) {
   const item = row.item;
   if (!item) return "(missing item)";
-  return `${item.name} · ${item.slot} · ${item.rarity}`;
+  const label = item.name && item.name.trim().length > 0 ? item.name : "Unnamed Item";
+  return `${label} · ${item.slot} · ${item.rarity}`;
 }
 
 export function MythicInventoryPanel(props: {

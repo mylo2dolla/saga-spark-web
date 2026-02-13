@@ -44,15 +44,10 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
 
   const signInWithPassword = async () => {
     const trimmedEmail = email.trim();
-    const timeoutMs = 12000;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error("Auth request timed out")), timeoutMs);
-    });
-    const signInPromise = supabase.auth.signInWithPassword({
+    return await supabase.auth.signInWithPassword({
       email: trimmedEmail,
       password,
     });
-    return await Promise.race([signInPromise, timeoutPromise]);
   };
 
   const signInWithManualToken = async () => {
@@ -164,13 +159,11 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       const action = mode === "login"
         ? async () => {
           try {
-            return await signInWithPassword();
+            // Prefer direct token exchange because it is abortable and deterministic on flaky networks.
+            return await signInWithManualToken();
           } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (msg.toLowerCase().includes("timed out") || err instanceof TypeError) {
-              return await signInWithManualToken();
-            }
-            throw err;
+            // Keep SDK sign-in as a fallback path for odd provider-side edge cases.
+            return await signInWithPassword();
           }
         }
         : () => supabase.auth.signUp({

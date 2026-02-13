@@ -20,6 +20,7 @@ export function useMythicDmContext(campaignId: string | undefined, enabled = tru
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
+  const inFlightRef = useRef(false);
 
   const fetchOnce = useCallback(async () => {
     if (!campaignId || !enabled) {
@@ -31,7 +32,9 @@ export function useMythicDmContext(campaignId: string | undefined, enabled = tru
       return;
     }
 
+    if (inFlightRef.current) return;
     try {
+      inFlightRef.current = true;
       if (isMountedRef.current) {
         setIsLoading(true);
         setError(null);
@@ -49,6 +52,7 @@ export function useMythicDmContext(campaignId: string | undefined, enabled = tru
     } catch (e) {
       if (isMountedRef.current) setError(formatError(e, "Failed to load mythic DM context"));
     } finally {
+      inFlightRef.current = false;
       if (isMountedRef.current) setIsLoading(false);
     }
   }, [campaignId, enabled]);

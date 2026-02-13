@@ -52,6 +52,7 @@ function DevDebugOverlayAuthedStats() {
 
   const [persistenceReport, setPersistenceReport] = useState<string | null>(null);
   const [connectivityReport, setConnectivityReport] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const buildSnapshot = useCallback((label: string) => {
     if (!world) {
@@ -206,12 +207,34 @@ function DevDebugOverlayAuthedStats() {
 
   if (!DEV_DEBUG) return null;
 
+  if (!expanded) {
+    return (
+      <button
+        id="dev-debug-toggle"
+        type="button"
+        onClick={() => setExpanded(true)}
+        className="fixed bottom-4 right-4 z-[9999] rounded-md border border-border bg-card/95 px-3 py-2 text-[11px] font-semibold text-foreground shadow-xl hover:bg-accent"
+      >
+        DEV_DEBUG
+      </button>
+    );
+  }
+
   return (
     <div
       id="dev-debug-overlay"
       className="fixed bottom-4 right-4 z-[9999] max-h-[70vh] w-[360px] overflow-auto rounded-lg border border-border bg-card/95 p-3 text-xs shadow-xl"
     >
-      <div className="mb-2 font-semibold text-foreground">DEV_DEBUG Overlay</div>
+      <div className="mb-2 flex items-center justify-between">
+        <div className="font-semibold text-foreground">DEV_DEBUG Overlay</div>
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="rounded-md border border-border bg-background px-2 py-1 text-[10px] font-medium text-foreground hover:bg-accent"
+        >
+          Hide
+        </button>
+      </div>
       <div className="mb-2 flex gap-2">
         <button
           type="button"
@@ -262,6 +285,7 @@ export default function DevDebugOverlay() {
   const location = useLocation();
   const { user, isLoading } = useAuth();
   const isLoginRoute = location.pathname === "/login" || location.pathname === "/signup";
+  const hasGameSessionProvider = /^\/game\/[^/]+$/.test(location.pathname);
 
   useEffect(() => {
     if (!DEV_DEBUG) return;
@@ -277,6 +301,9 @@ export default function DevDebugOverlay() {
 
   if (!DEV_DEBUG) return null;
   if (isLoading || !user || isLoginRoute) {
+    return null;
+  }
+  if (!hasGameSessionProvider) {
     return null;
   }
 

@@ -11,7 +11,7 @@ import { DiagnosticsProvider } from "@/ui/data/diagnostics";
 import { AuthProvider } from "@/contexts/AuthContext";
 import AuthScreen from "@/ui/screens/AuthScreen";
 import DashboardScreen from "@/ui/screens/DashboardScreen";
-import CharacterScreen from "@/ui/screens/CharacterScreen";
+import MythicCharacterScreen from "@/ui/screens/MythicCharacterScreen";
 import MythicGameScreen from "@/ui/screens/MythicGameScreen";
 import ServerAdminScreen from "@/ui/screens/ServerAdminScreen";
 import SupabaseDebugScreen from "@/ui/screens/SupabaseDebugScreen";
@@ -70,7 +70,7 @@ const App = () => (
                     <Route path="/debug/supabase" element={<SupabaseDebugScreen />} />
                     <Route path="/mythic/:campaignId" element={<GameSessionRoute />}>
                       <Route index element={<MythicGameScreen />} />
-                      <Route path="create-character" element={<CharacterScreen />} />
+                      <Route path="create-character" element={<MythicCharacterScreen />} />
                     </Route>
                     <Route path="/game/:campaignId" element={<LegacyGameRedirect />} />
                     <Route path="/game/:campaignId/create-character" element={<LegacyCharacterRedirect />} />

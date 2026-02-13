@@ -81,6 +81,7 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
                   campaignId={campaignId}
                   placeholder="e.g. Nyx"
                   disabled={isBusy}
+                  maxLength={60}
                 />
               </div>
               <div className="grid gap-2">
@@ -95,6 +96,7 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
                   multiline
                   minRows={6}
                   disabled={isBusy}
+                  maxLength={2000}
                 />
                 <div className="text-xs text-muted-foreground">
                   Violence/gore allowed. Sexual content forbidden.

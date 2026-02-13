@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
+import { aiChatCompletionsWithFallback } from "../_shared/llm_fallback.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 
 const corsHeaders = {
@@ -45,6 +45,93 @@ function fieldDirective(fieldType: z.infer<typeof RequestSchema>["fieldType"]): 
       return "Output one compelling quest hook paragraph with stakes and immediate objective.";
     default:
       return "Output concise, useful text for this game field.";
+  }
+}
+
+function maxLengthForField(fieldType: z.infer<typeof RequestSchema>["fieldType"]): number {
+  switch (fieldType) {
+    case "campaign_name":
+      return 80;
+    case "campaign_description":
+      return 2000;
+    case "class_concept":
+      return 2000;
+    case "character_name":
+      return 60;
+    case "dm_action":
+      return 1000;
+    case "npc_name":
+      return 120;
+    case "quest_hook":
+      return 1200;
+    default:
+      return 2000;
+  }
+}
+
+const trimTo = (text: string, max: number) => (text.length > max ? text.slice(0, max).trimEnd() : text);
+
+function deterministicFieldText(input: {
+  mode: "random" | "expand";
+  fieldType: z.infer<typeof RequestSchema>["fieldType"];
+  currentText: string;
+  worldProfile: Record<string, unknown>;
+}): string {
+  const worldTitle = String(input.worldProfile.seed_title ?? "").trim();
+  const worldDescription = String(input.worldProfile.seed_description ?? "").trim();
+  const template = String(input.worldProfile.template_key ?? "custom").trim();
+  const seedBasis = `${worldTitle}|${worldDescription}|${template}|${input.currentText}|${input.fieldType}|${input.mode}`.toLowerCase();
+
+  const pick = <T,>(arr: T[], offset: number): T => {
+    let hash = 0;
+    for (let i = 0; i < seedBasis.length; i += 1) hash = (hash * 31 + seedBasis.charCodeAt(i) + offset) >>> 0;
+    return arr[hash % arr.length]!;
+  };
+
+  if (input.mode === "expand" && input.currentText.trim().length > 0) {
+    const suffix = pick([
+      "Add pressure points, rival factions, and one immediate objective.",
+      "Add one concrete risk, one tactical opportunity, and one compelling hook.",
+      "Add environmental detail, stakes, and an actionable first move.",
+      "Add conflict escalation and a clear short-term win condition.",
+    ], 17);
+    return `${input.currentText.trim()} ${suffix}`.trim();
+  }
+
+  const theme = worldTitle || pick(["Iron Wastes", "Moonlit Ruins", "Fracture City", "Ashwild Frontier"], 3);
+  const premise = worldDescription || pick([
+    "Power blocs carve up the map while survivors trade blood for breathing room.",
+    "Ancient engines are waking up and every faction wants the core keys.",
+    "Stormfront anomalies keep mutating the battlefield and nobody controls the fallout.",
+    "The old order collapsed and now brutal city-states weaponize relic tech.",
+  ], 5);
+
+  switch (input.fieldType) {
+    case "campaign_name":
+      return pick(
+        [
+          `${theme} Uprising`,
+          `${theme} Blackout`,
+          `${theme} Reckoning`,
+          `${theme} Aftermath`,
+          `${theme} Siege`,
+        ],
+        11,
+      );
+    case "campaign_description":
+      return `${premise} Start in ${theme} and secure a foothold before the first strike force arrives.`;
+    case "class_concept":
+      return `A relentless skirmisher forged in ${theme}, blending improvised tech, brutal close-quarters discipline, and high-risk burst windows to outplay stronger enemies in collapsing terrain.`;
+    case "character_name":
+      return pick(["Kael Voss", "Nyx Calder", "Ira Stone", "Mara Hex", "Jax Riven"], 19);
+    case "dm_action":
+      return `I scout the nearest threat route, mark priority targets, and set up a hard engage from cover before we commit.`;
+    case "npc_name":
+      return pick(["Vera Lockjaw", "Tamsin Gravewire", "Rook Emberline", "Nox Gallow", "Silas Thorn"], 23);
+    case "quest_hook":
+      return `A convoy carrying reactor cores vanished outside ${theme}. Track the raiders, recover at least one core intact, and decide whether to return it to the council or sell it to the highest bidder before nightfall.`;
+    default:
+      return `${premise} ${theme} is unstable, dangerous, and worth fighting over.`;
   }
 }
 
@@ -112,8 +199,6 @@ serve(async (req) => {
       }
     }
 
-    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
-
     const directive = fieldDirective(fieldType);
     const modeRules = mode === "random"
       ? "If currentText is empty, generate from world/campaign context. If not empty, you may still use it as optional hint."
@@ -137,22 +222,45 @@ serve(async (req) => {
       "Return exactly one text value.",
     ].join("\n");
 
-    const completion = await aiChatCompletions({
-      model,
-      temperature: mode === "random" ? 0.8 : 0.45,
-      max_tokens: 350,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: userPrompt },
-      ],
-    });
+    let text = "";
+    try {
+      const completion = await aiChatCompletionsWithFallback(
+        {
+          temperature: mode === "random" ? 0.8 : 0.45,
+          max_tokens: 350,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: userPrompt },
+          ],
+        },
+        { openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" },
+      );
+      const completionData = completion.data as { choices?: Array<{ message?: { content?: string } }> };
+      text = String(completionData?.choices?.[0]?.message?.content ?? "").trim();
+    } catch (error) {
+      console.warn("mythic-field-generate llm fallback to deterministic text:", error);
+      text = deterministicFieldText({
+        mode,
+        fieldType,
+        currentText,
+        worldProfile,
+      });
+    }
+    if (!text) {
+      text = deterministicFieldText({
+        mode,
+        fieldType,
+        currentText,
+        worldProfile,
+      });
+    }
 
-    const text = completion?.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error("No text generated");
+    const fieldMax = maxLengthForField(fieldType);
+    const finalText = trimTo(text, fieldMax);
 
-    assertContentAllowed([{ path: "generated_text", value: text }]);
+    assertContentAllowed([{ path: "generated_text", value: finalText }]);
 
-    return new Response(JSON.stringify({ ok: true, text }), {
+    return new Response(JSON.stringify({ ok: true, text: finalText }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

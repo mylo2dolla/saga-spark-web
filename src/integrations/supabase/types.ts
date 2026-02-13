@@ -665,6 +665,95 @@ export type Database = {
         Args: { _campaign_id: string; _user_id: string }
         Returns: boolean
       }
+      mythic_append_action_event: {
+        Args: {
+          combat_session_id: string
+          turn_index: number
+          actor_combatant_id: string | null
+          event_type: string
+          payload: Json
+        }
+        Returns: string
+      }
+      mythic_apply_xp: {
+        Args: {
+          character_id: string
+          amount: number
+          reason?: string
+          metadata?: Json
+        }
+        Returns: Json
+      }
+      mythic_compute_damage: {
+        Args: {
+          seed: number
+          label: string
+          lvl: number
+          offense: number
+          mobility: number
+          utility: number
+          weapon_power: number
+          skill_mult: number
+          resist: number
+          spread_pct?: number
+        }
+        Returns: Json
+      }
+      mythic_end_combat_session: {
+        Args: {
+          combat_session_id: string
+          outcome?: Json
+        }
+        Returns: undefined
+      }
+      mythic_loadout_slots_for_level: {
+        Args: {
+          lvl: number
+        }
+        Returns: number
+      }
+      mythic_max_hp: {
+        Args: {
+          lvl: number
+          defense: number
+          support: number
+        }
+        Returns: number
+      }
+      mythic_max_power_bar: {
+        Args: {
+          lvl: number
+          utility: number
+          support: number
+        }
+        Returns: number
+      }
+      mythic_resolve_status_tick: {
+        Args: {
+          combat_session_id: string
+          combatant_id: string
+          turn_index: number
+          phase?: string
+        }
+        Returns: Json
+      }
+      mythic_start_combat_session: {
+        Args: {
+          campaign_id: string
+          seed: number
+          scene_json: Json
+          reason?: string
+        }
+        Returns: string
+      }
+      mythic_status_apply_chance: {
+        Args: {
+          control: number
+          utility: number
+          target_resolve: number
+        }
+        Returns: number
+      }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"

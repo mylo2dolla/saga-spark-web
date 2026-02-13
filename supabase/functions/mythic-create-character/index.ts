@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
+import { aiChatCompletionsWithFallback } from "../_shared/llm_fallback.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 import { clampInt, rngInt, rngPick, weightedPick } from "../_shared/mythic_rng.ts";
 
@@ -70,7 +70,7 @@ const ResponseSchema = z.object({
 const RequestSchema = z.object({
   campaignId: z.string().uuid(),
   characterName: z.string().min(2).max(60),
-  classDescription: z.string().min(3).max(500),
+  classDescription: z.string().min(3).max(2000),
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
 });
 
@@ -364,6 +364,91 @@ function generateMechanicalKit(input: {
   };
 }
 
+function toTitleCase(value: string): string {
+  return value
+    .split(/\s+/g)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function trimText(value: string, max: number): string {
+  const text = value.trim();
+  return text.length > max ? text.slice(0, max).trimEnd() : text;
+}
+
+function deterministicRefineNarrative(input: {
+  classDescription: string;
+  kit: ReturnType<typeof generateMechanicalKit>;
+}): z.infer<typeof ResponseSchema> {
+  const normalized = normalizeConcept(input.classDescription);
+  const meaningfulWords = normalized
+    .split(" ")
+    .filter((word) => word.length >= 4 && !["with", "from", "that", "this", "into", "over", "under", "about"].includes(word));
+  const anchor = meaningfulWords[0] ?? "mythic";
+  const roleLabel = toTitleCase(input.kit.role);
+  const className = trimText(toTitleCase(`${anchor} ${roleLabel}`), 60);
+  const classDescription = trimText(
+    `A ${input.kit.role} built for dirty fights and hard momentum swings. This class weaponizes ${input.kit.weaponFamily} pressure, punishes bad positioning, and accepts controlled self-risk to force advantage windows.`,
+    2000,
+  );
+
+  const passiveNames = ["Predator's Instinct", "Steel Nerve", "Battle Rhythm", "Cold Focus"];
+  const activeNames = ["Razor Dash", "Guard Break", "Shatter Line", "Killer Angle", "Pressure Step", "Control Spike"];
+  const ultimateNames = ["Ruin Engine", "Cataclysm Vector", "Last Light Protocol", "Execution Storm"];
+
+  let passiveCursor = 0;
+  let activeCursor = 0;
+  let ultimateCursor = 0;
+
+  const skills = input.kit.skills.map((skill) => {
+    let name = skill.name;
+    if (skill.kind === "passive") {
+      name = passiveNames[passiveCursor % passiveNames.length]!;
+      passiveCursor += 1;
+    } else if (skill.kind === "ultimate") {
+      name = ultimateNames[ultimateCursor % ultimateNames.length]!;
+      ultimateCursor += 1;
+    } else {
+      name = activeNames[activeCursor % activeNames.length]!;
+      activeCursor += 1;
+    }
+
+    const description = trimText(
+      skill.kind === "passive"
+        ? `${name} passively reinforces your core loop and keeps pressure on during neutral turns.`
+        : skill.kind === "ultimate"
+          ? `${name} detonates your finisher window with high upside and a built-in drawback. KRAK-BOOM.`
+          : `${name} executes your tactical loop: force movement, crack defense, and convert openings into damage.`,
+      2000,
+    );
+
+    return {
+      ...skill,
+      name,
+      description,
+    };
+  });
+
+  return {
+    class_name: className,
+    class_description: classDescription,
+    weapon_identity: {
+      family: input.kit.weaponFamily,
+      notes: `Prefers ${input.kit.weaponFamily} engagements and tempo control over passive trading.`,
+    },
+    role: input.kit.role,
+    base_stats: input.kit.baseStats,
+    resources: input.kit.resources,
+    weakness: {
+      id: input.kit.weakness.id,
+      description: trimText(input.kit.weakness.description, 2000),
+      counterplay: trimText(input.kit.weakness.counterplay, 2000),
+    },
+    skills,
+  };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") {
@@ -481,45 +566,61 @@ serve(async (req) => {
       skills: kit.skills,
     };
 
-    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
-
-    const completion = await aiChatCompletions({
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `CLASS CONCEPT: ${classDescription}\nSEED: ${seed}\n\nMECHANICS SKELETON (do not change numbers):\n${JSON.stringify(skeleton)}`,
-        },
-      ],
-    });
-
-    const content = completion?.choices?.[0]?.message?.content;
-    if (!content) throw new Error("No response from AI");
-
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("AI response was not valid JSON");
-
-    let parsedJson: unknown;
+    let refinedData: z.infer<typeof ResponseSchema> | null = null;
+    const warnings: string[] = [];
     try {
-      parsedJson = JSON.parse(jsonMatch[0]);
-    } catch {
-      throw new Error("AI returned malformed JSON");
-    }
+      const completion = await aiChatCompletionsWithFallback(
+        {
+          temperature: 0.2,
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: `CLASS CONCEPT: ${classDescription}\nSEED: ${seed}\n\nMECHANICS SKELETON (do not change numbers):\n${JSON.stringify(skeleton)}`,
+            },
+          ],
+        },
+        { openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" },
+      );
+      if (completion.attempts.length > 1) {
+        warnings.push(`llm_fallback_attempts:${completion.attempts.join(" | ")}`);
+      }
+      const completionData = completion.data as { choices?: Array<{ message?: { content?: string } }> };
+      const content = completionData?.choices?.[0]?.message?.content;
+      if (!content) throw new Error("No response from AI");
 
-    const refined = ResponseSchema.safeParse(parsedJson);
-    if (!refined.success) {
-      throw new Error(`AI output failed schema validation: ${JSON.stringify(refined.error.flatten())}`);
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error("AI response was not valid JSON");
+
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(jsonMatch[0]);
+      } catch {
+        throw new Error("AI returned malformed JSON");
+      }
+
+      const refined = ResponseSchema.safeParse(parsedJson);
+      if (!refined.success) {
+        throw new Error(`AI output failed schema validation: ${JSON.stringify(refined.error.flatten())}`);
+      }
+      refinedData = refined.data;
+    } catch (llmError) {
+      console.warn("mythic-create-character llm fallback to deterministic narrative:", llmError);
+      warnings.push(`llm_unavailable:${llmError instanceof Error ? llmError.message : String(llmError)}`);
+      refinedData = deterministicRefineNarrative({ classDescription, kit });
+    }
+    if (!refinedData) {
+      refinedData = deterministicRefineNarrative({ classDescription, kit });
+      warnings.push("llm_unavailable:fallback_without_exception");
     }
 
     // Enforce content policy on stored text fields.
     assertContentAllowed([
-      { path: "class_name", value: refined.data.class_name },
-      { path: "class_description", value: refined.data.class_description },
-      { path: "weakness.description", value: refined.data.weakness.description },
-      { path: "weakness.counterplay", value: refined.data.weakness.counterplay },
-      ...refined.data.skills.flatMap((s, idx) => [
+      { path: "class_name", value: refinedData.class_name },
+      { path: "class_description", value: refinedData.class_description },
+      { path: "weakness.description", value: refinedData.weakness.description },
+      { path: "weakness.counterplay", value: refinedData.weakness.counterplay },
+      ...refinedData.skills.flatMap((s, idx) => [
         { path: `skills[${idx}].name`, value: s.name },
         { path: `skills[${idx}].description`, value: s.description },
       ]),
@@ -527,11 +628,11 @@ serve(async (req) => {
 
     // Persist character and skills.
     const classJson = {
-      class_name: refined.data.class_name,
-      class_description: refined.data.class_description,
-      role: refined.data.role,
-      weapon_identity: refined.data.weapon_identity,
-      weakness: refined.data.weakness,
+      class_name: refinedData.class_name,
+      class_description: refinedData.class_description,
+      role: refinedData.role,
+      weapon_identity: refinedData.weapon_identity,
+      weakness: refinedData.weakness,
       seed,
       concept: classDescription,
     };
@@ -555,14 +656,14 @@ serve(async (req) => {
         .from("characters")
         .update({
           level: 1,
-          offense: refined.data.base_stats.offense,
-          defense: refined.data.base_stats.defense,
-          control: refined.data.base_stats.control,
-          support: refined.data.base_stats.support,
-          mobility: refined.data.base_stats.mobility,
-          utility: refined.data.base_stats.utility,
+          offense: refinedData.base_stats.offense,
+          defense: refinedData.base_stats.defense,
+          control: refinedData.base_stats.control,
+          support: refinedData.base_stats.support,
+          mobility: refinedData.base_stats.mobility,
+          utility: refinedData.base_stats.utility,
           class_json: classJson,
-          resources: refined.data.resources,
+          resources: refinedData.resources,
           updated_at: new Date().toISOString(),
         })
         .eq("id", characterId);
@@ -584,14 +685,14 @@ serve(async (req) => {
           player_id: user.id,
           name: characterName,
           level: 1,
-          offense: refined.data.base_stats.offense,
-          defense: refined.data.base_stats.defense,
-          control: refined.data.base_stats.control,
-          support: refined.data.base_stats.support,
-          mobility: refined.data.base_stats.mobility,
-          utility: refined.data.base_stats.utility,
+          offense: refinedData.base_stats.offense,
+          defense: refinedData.base_stats.defense,
+          control: refinedData.base_stats.control,
+          support: refinedData.base_stats.support,
+          mobility: refinedData.base_stats.mobility,
+          utility: refinedData.base_stats.utility,
           class_json: classJson,
-          resources: refined.data.resources,
+          resources: refinedData.resources,
           derived_json: {},
         })
         .select("id")
@@ -600,7 +701,7 @@ serve(async (req) => {
       characterId = inserted.id as string;
     }
 
-    const skillRows = refined.data.skills.map((s) => ({
+    const skillRows = refinedData.skills.map((s) => ({
       campaign_id: campaignId,
       character_id: characterId,
       kind: s.kind,
@@ -629,16 +730,17 @@ serve(async (req) => {
         character_id: characterId,
         seed,
         class: {
-          class_name: refined.data.class_name,
-          class_description: refined.data.class_description,
-          role: refined.data.role,
-          weapon_identity: refined.data.weapon_identity,
-          weakness: refined.data.weakness,
-          base_stats: refined.data.base_stats,
-          resources: refined.data.resources,
+          class_name: refinedData.class_name,
+          class_description: refinedData.class_description,
+          role: refinedData.role,
+          weapon_identity: refinedData.weapon_identity,
+          weakness: refinedData.weakness,
+          base_stats: refinedData.base_stats,
+          resources: refinedData.resources,
         },
-        skills: refined.data.skills,
+        skills: refinedData.skills,
         skill_ids: insertedSkills?.map((r) => r.id) ?? [],
+        warnings,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

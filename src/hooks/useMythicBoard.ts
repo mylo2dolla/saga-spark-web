@@ -32,6 +32,7 @@ export function useMythicBoard(campaignId: string | undefined) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
+  const inFlightRef = useRef(false);
 
   const fetchState = useCallback(async () => {
     if (!campaignId) {
@@ -44,7 +45,9 @@ export function useMythicBoard(campaignId: string | undefined) {
       return;
     }
 
+    if (inFlightRef.current) return;
     try {
+      inFlightRef.current = true;
       if (isMountedRef.current) {
         setIsLoading(true);
         setError(null);
@@ -80,6 +83,7 @@ export function useMythicBoard(campaignId: string | undefined) {
       const msg = formatError(e, "Failed to load mythic board");
       if (isMountedRef.current) setError(msg);
     } finally {
+      inFlightRef.current = false;
       if (isMountedRef.current) setIsLoading(false);
     }
   }, [campaignId]);

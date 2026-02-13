@@ -57,6 +57,7 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
+  const inFlightRef = useRef(false);
 
   const activeTurnCombatantId = useMemo(() => {
     if (!session) return null;
@@ -77,7 +78,9 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
       return;
     }
 
+    if (inFlightRef.current) return;
     try {
+      inFlightRef.current = true;
       if (isMountedRef.current) {
         setIsLoading(true);
         setError(null);
@@ -129,6 +132,7 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
       const msg = formatError(e, "Failed to load combat state");
       if (isMountedRef.current) setError(msg);
     } finally {
+      inFlightRef.current = false;
       if (isMountedRef.current) setIsLoading(false);
     }
   }, [campaignId, combatSessionId]);
@@ -143,7 +147,12 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
 
   useEffect(() => {
     if (!campaignId || !combatSessionId) return;
-    const interval = setInterval(fetchState, 1200);
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      void fetchState();
+    }, 1800);
     return () => clearInterval(interval);
   }, [campaignId, combatSessionId, fetchState]);
 

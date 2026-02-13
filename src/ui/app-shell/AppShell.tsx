@@ -20,7 +20,7 @@ export default function AppShell() {
   const navLinks = [
     { to: "/dashboard", label: "Dashboard" },
     { to: "/dashboard#create", label: "Create/Join" },
-    { to: "/game", label: "Game" },
+    { to: "/dashboard#campaigns", label: "Mythic" },
     { to: "/servers", label: "Servers/Admin" },
   ];
   useEffect(() => {

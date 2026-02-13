@@ -112,7 +112,7 @@ serve(async (req) => {
     // Ensure the campaign exists and the user is a member/owner.
     const { data: campaign, error: campaignError } = await svc
       .from("campaigns")
-      .select("id, owner_id")
+      .select("id, owner_id, name, description")
       .eq("id", campaignId)
       .maybeSingle();
 
@@ -142,6 +142,8 @@ serve(async (req) => {
     // Ensure DM state rows exist.
     await svc.schema("mythic").from("dm_campaign_state").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
     await svc.schema("mythic").from("dm_world_tension").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
+
+    const warnings: string[] = [];
 
     // Ensure there is an active board.
     const { data: activeBoard, error: boardError } = await svc
@@ -181,7 +183,31 @@ serve(async (req) => {
       );
     }
 
-    return new Response(JSON.stringify({ ok: true }), {
+    const profileTitle = String((campaign as { name?: string | null })?.name ?? "").trim();
+    const profileDescription = String((campaign as { description?: string | null })?.description ?? "").trim();
+    const { error: profileErr } = await svc
+      .schema("mythic")
+      .from("campaign_world_profiles")
+      .upsert(
+        {
+          campaign_id: campaignId,
+          seed_title: profileTitle.length > 0 ? profileTitle : `Campaign ${campaignId.slice(0, 8)}`,
+          seed_description: profileDescription.length > 0 ? profileDescription : "World seed generated from campaign bootstrap.",
+          template_key: "custom",
+          world_profile_json: {
+            source: "mythic-bootstrap",
+            campaign_name: profileTitle,
+            campaign_description: profileDescription,
+          },
+        },
+        { onConflict: "campaign_id" },
+      );
+    if (profileErr) {
+      console.warn("mythic-bootstrap world profile warning:", profileErr);
+      warnings.push(`world_profile_unavailable:${profileErr.message}`);
+    }
+
+    return new Response(JSON.stringify({ ok: true, warnings }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
