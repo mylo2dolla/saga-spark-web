@@ -13,6 +13,7 @@ const DevBanner = () => {
         right: 12,
         bottom: 12,
         zIndex: 9999,
+        pointerEvents: "none",
         maxWidth: 360,
         fontSize: 12,
         fontFamily:

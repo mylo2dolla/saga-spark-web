@@ -258,9 +258,14 @@ serve(async (req) => {
       );
     }
 
-    const missingRequired = ["SUPABASE_URL", "SUPABASE_ANON_KEY", "GROQ_API_KEY"].filter(
+    const missingRequired = ["SUPABASE_URL", "SUPABASE_ANON_KEY"].filter(
       key => !Deno.env.get(key)
     );
+    const hasOpenAI = Boolean(Deno.env.get("OPENAI_API_KEY"));
+    const hasGroq = Boolean(Deno.env.get("GROQ_API_KEY"));
+    if (!hasOpenAI && !hasGroq) {
+      missingRequired.push("OPENAI_API_KEY|GROQ_API_KEY");
+    }
     if (missingRequired.length > 0) {
       return errorResponse(
         500,

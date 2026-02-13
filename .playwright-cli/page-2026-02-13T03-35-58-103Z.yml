@@ -1,0 +1,153 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic:
+    - generic: "Runtime: DEV (development)"
+    - generic: "version: 0.0.0"
+    - generic: "build: 2026-02-13T03:25:41.607Z"
+    - generic: "git: cd67b24"
+    - generic: "runId: 752867bb-301c-4df4-9608-ab1067c23d0f"
+    - generic: "now: 2026-02-13T03:28:15.813Z"
+    - generic: "base: /"
+    - generic: "href: http://localhost:8081/login"
+  - generic [ref=e26]:
+    - complementary [ref=e27]:
+      - generic [ref=e28]: Saga Spark
+      - navigation [ref=e29]:
+        - link "Dashboard" [ref=e30] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e31] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Mythic" [ref=e32] [cursor=pointer]:
+          - /url: /dashboard#campaigns
+        - link "Servers/Admin" [ref=e33] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: "Auth: psylus13@gmail.com"
+          - generic [ref=e38]: "DB: ok"
+        - generic [ref=e39]: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59/create-character
+      - generic [ref=e40]:
+        - generic [ref=e383]:
+          - generic [ref=e384]:
+            - generic [ref=e385]:
+              - generic [ref=e386]: Mythic Class Forge
+              - generic [ref=e387]: Describe your class. The system generates a real kit in Supabase (mythic schema).
+            - button "Cancel" [ref=e388] [cursor=pointer]
+          - generic [ref=e419]:
+            - generic [ref=e420]:
+              - generic [ref=e421]: Time Reaver
+              - generic [ref=e422]: A chrono witch gunslinger who weaves time and space to outmaneuver foes, dealing devastating ranged attacks and manipulating the battlefield with cunning and magical prowess. *BAM* *WHOOSH*
+              - generic [ref=e423]:
+                - generic [ref=e424]:
+                  - generic [ref=e425]: Role
+                  - generic [ref=e426]: controller
+                - generic [ref=e427]:
+                  - generic [ref=e428]: Weapon Family
+                  - generic [ref=e429]: ranged
+              - generic [ref=e430]:
+                - generic [ref=e431]: Base Stats
+                - generic [ref=e432]:
+                  - generic [ref=e433]:
+                    - generic [ref=e434]: "53"
+                    - generic [ref=e435]: offense
+                  - generic [ref=e436]:
+                    - generic [ref=e437]: "43"
+                    - generic [ref=e438]: defense
+                  - generic [ref=e439]:
+                    - generic [ref=e440]: "72"
+                    - generic [ref=e441]: control
+                  - generic [ref=e442]:
+                    - generic [ref=e443]: "52"
+                    - generic [ref=e444]: support
+                  - generic [ref=e445]:
+                    - generic [ref=e446]: "39"
+                    - generic [ref=e447]: mobility
+                  - generic [ref=e448]:
+                    - generic [ref=e449]: "48"
+                    - generic [ref=e450]: utility
+              - generic [ref=e451]:
+                - generic [ref=e452]: Weakness (by design)
+                - generic [ref=e453]: Your time-bending attacks are flashy and attention-grabbing, making them easy to anticipate and counter. Enemies can dodge or punish you if you're too predictable.
+                - generic [ref=e454]: Counterplay
+                - generic [ref=e455]: Lure enemies into a trap, then strike when they least expect it. *CLICK-CLACK*
+            - generic [ref=e456]:
+              - generic [ref=e457]: Abilities
+              - generic [ref=e461]:
+                - generic [ref=e462]:
+                  - generic [ref=e464]:
+                    - generic [ref=e465]: Chrono Acceleration
+                    - generic [ref=e466]: passive · self · range 0 · cd 0
+                  - generic [ref=e467]: Your temporal magic accelerates your offense, granting a consistent damage boost. *ZZT*
+                - generic [ref=e468]:
+                  - generic [ref=e470]:
+                    - generic [ref=e471]: Temporal Feedback
+                    - generic [ref=e472]: passive · self · range 0 · cd 0
+                  - generic [ref=e473]: Your time magic reacts to critical hits, kills, and blocks, granting a weakness hook that can be exploited by enemies. *FWIP*
+                - generic [ref=e474]:
+                  - generic [ref=e476]:
+                    - generic [ref=e477]: Time Warp
+                    - generic [ref=e478]: active · tile · range 4 · cd 2
+                  - generic [ref=e479]: Dash through time and space, repositioning yourself quickly and avoiding attacks. *WHOOSH*
+                - generic [ref=e480]:
+                  - generic [ref=e482]:
+                    - generic [ref=e483]: Chrono Shield
+                    - generic [ref=e484]: active · self · range 0 · cd 3
+                  - generic [ref=e485]: Summon a temporal barrier, absorbing damage and protecting yourself from harm. *THUD*
+                - generic [ref=e486]:
+                  - generic [ref=e488]:
+                    - generic [ref=e489]: Time Bomb
+                    - generic [ref=e490]: active · single · range 5 · cd 1
+                  - generic [ref=e491]: Unleash a burst of temporal energy, dealing massive damage to a single target. *KABOOM*
+                - generic [ref=e492]:
+                  - generic [ref=e494]:
+                    - generic [ref=e495]: Temporal Distortion
+                    - generic [ref=e496]: active · area · range 4 · cd 3
+                  - generic [ref=e497]: Create a localized temporal distortion, stunning enemies and disrupting their actions. *ZZT*
+                - generic [ref=e498]:
+                  - generic [ref=e500]:
+                    - generic [ref=e501]: Weakness Exploit
+                    - generic [ref=e502]: active · single · range 3 · cd 2
+                  - generic [ref=e503]: Exploit the enemy's weakness, dealing bonus damage and increasing your critical hit chance. *CLICK-CLACK*
+                - generic [ref=e504]:
+                  - generic [ref=e506]:
+                    - generic [ref=e507]: Temporal Reckoning
+                    - generic [ref=e508]: ultimate · area · range 5 · cd 5
+                  - generic [ref=e509]: Unleash a devastating temporal blast, dealing massive damage to all enemies in the area and applying a weakness debuff. *KRA-KADOOM!!*
+            - generic [ref=e510]:
+              - button "Regenerate" [ref=e511] [cursor=pointer]
+              - button "Confirm Character" [ref=e512] [cursor=pointer]
+        - generic [ref=e405]:
+          - generic [ref=e406]: "route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59/create-character"
+          - generic [ref=e407]: "campaignId: 17496eb8-3ed1-4a9a-ab0d-059bdff54e59"
+          - generic [ref=e408]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+          - generic [ref=e409]: "hasSession: yes"
+          - generic [ref=e410]: "authLoading: false"
+          - generic [ref=e411]: "characterLoading: false"
+          - generic [ref=e412]: "characterExists: no"
+          - generic [ref=e413]: "characterError: none"
+          - generic [ref=e414]: "lastAction: none"
+      - generic [ref=e348]:
+        - generic [ref=e349]: "Build: unknown"
+        - generic [ref=e350]: "Route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59/create-character"
+        - generic [ref=e351]: "Last API Error: none"
+      - generic [ref=e352]:
+        - generic [ref=e353]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e354]: "Anon key present: yes"
+        - generic [ref=e355]: "Session exists: yes"
+        - generic [ref=e356]: "Access token exists: yes"
+        - generic [ref=e357]: "Last status: -"
+        - generic [ref=e358]: "Last body: -"
+        - button "Test generate-class" [ref=e359] [cursor=pointer]
+      - generic:
+        - generic: "FPS: 60"
+        - generic: "Heap: 19 MB"
+        - generic: "Long tasks: 4"
+  - generic [ref=e360]:
+    - generic [ref=e361]: "session: yes"
+    - generic [ref=e362]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e363]: "authLoading: false"
+    - generic [ref=e364]: "route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59/create-character"
+    - generic [ref=e365]: "lastAuthError: none"

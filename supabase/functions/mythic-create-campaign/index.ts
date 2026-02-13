@@ -12,6 +12,13 @@ const corsHeaders = {
 const RequestSchema = z.object({
   name: z.string().min(2).max(80),
   description: z.string().min(2).max(2000),
+  templateKey: z.enum([
+    "custom",
+    "graphic_novel_fantasy",
+    "sci_fi_ruins",
+    "dark_mythic_horror",
+    "post_apocalypse",
+  ]).default("custom"),
 });
 
 const syllableA = [
@@ -106,11 +113,15 @@ serve(async (req) => {
     }
 
     const svc = createClient(supabaseUrl, serviceRoleKey);
+    const campaignName = parsed.data.name.trim();
+    const campaignDescription = parsed.data.description.trim();
+    const templateKey = parsed.data.templateKey;
+
     const { data: campaign, error: campaignError } = await svc
       .from("campaigns")
       .insert({
-        name: parsed.data.name.trim(),
-        description: parsed.data.description.trim(),
+        name: campaignName,
+        description: campaignDescription,
         owner_id: user.id,
         is_active: true,
       })
@@ -227,7 +238,28 @@ serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, campaign }), {
+    const warnings: string[] = [];
+    const { error: worldProfileError } = await svc
+      .schema("mythic")
+      .from("campaign_world_profiles")
+      .upsert({
+        campaign_id: campaignId,
+        seed_title: campaignName,
+        seed_description: campaignDescription,
+        template_key: templateKey,
+        world_profile_json: {
+          source: "mythic-create-campaign",
+          template: templateKey,
+          title: campaignName,
+          description: campaignDescription,
+        },
+      }, { onConflict: "campaign_id" });
+    if (worldProfileError) {
+      console.warn("mythic-create-campaign world profile warning:", worldProfileError);
+      warnings.push(`world_profile_unavailable:${worldProfileError.message}`);
+    }
+
+    return new Response(JSON.stringify({ ok: true, campaign, warnings }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

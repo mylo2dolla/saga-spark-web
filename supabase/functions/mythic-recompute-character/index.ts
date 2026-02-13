@@ -159,8 +159,8 @@ serve(async (req) => {
 
     const lvl = Number((character as any).level ?? 1);
     const [{ data: hpMax }, { data: powerMax }] = await Promise.all([
-      svc.schema("mythic").rpc("max_hp", { lvl, defense: derivedStats.defense, support: derivedStats.support }),
-      svc.schema("mythic").rpc("max_power_bar", { lvl, utility: derivedStats.utility, support: derivedStats.support }),
+      svc.rpc("mythic_max_hp", { lvl, defense: derivedStats.defense, support: derivedStats.support }),
+      svc.rpc("mythic_max_power_bar", { lvl, utility: derivedStats.utility, support: derivedStats.support }),
     ]);
 
     const hpMaxFinal = Math.max(1, Math.floor((hpMax ?? 100) + hpBonus));

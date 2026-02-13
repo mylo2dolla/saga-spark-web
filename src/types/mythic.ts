@@ -58,6 +58,9 @@ export interface MythicCharacterRow {
   player_id: string | null;
   name: string;
   level: number;
+  xp: number;
+  xp_to_next: number;
+  unspent_points: number;
   offense: number;
   defense: number;
   control: number;
@@ -66,15 +69,40 @@ export interface MythicCharacterRow {
   utility: number;
   class_json: Record<string, unknown>;
   derived_json: Record<string, unknown>;
+  progression_json: Record<string, unknown>;
   resources: Record<string, unknown>;
+  last_level_up_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface MythicCharacterLoadoutRow {
+  id: string;
+  character_id: string;
+  campaign_id: string;
+  name: string;
+  is_active: boolean;
+  slots_json: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MythicProgressionEventRow {
+  id: string;
+  campaign_id: string;
+  character_id: string;
+  event_type: "xp_applied" | "level_up" | "points_spent" | "loadout_changed" | "gear_progression" | string;
+  payload: Record<string, unknown>;
+  created_at: string;
 }
 
 export interface MythicCharacterBundle {
   character: MythicCharacterRow;
   skills: MythicSkill[];
   items: Array<Record<string, unknown>>;
+  loadouts: MythicCharacterLoadoutRow[];
+  progressionEvents: MythicProgressionEventRow[];
+  loadoutSlotCap: number;
 }
 
 export interface MythicCreateCharacterRequest {

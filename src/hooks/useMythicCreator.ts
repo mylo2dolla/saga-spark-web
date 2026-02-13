@@ -28,12 +28,23 @@ export function useMythicCreator() {
   }, []);
 
   const createCharacter = useCallback(async (req: MythicCreateCharacterRequest) => {
-    if (!req.characterName.trim()) {
+    const characterName = req.characterName.trim();
+    const classDescription = req.classDescription.trim();
+
+    if (!characterName) {
       toast.error("Enter a character name");
       return null;
     }
-    if (!req.classDescription.trim()) {
+    if (!classDescription) {
       toast.error("Enter a class concept");
+      return null;
+    }
+    if (characterName.length > 60) {
+      toast.error("Character name must be 60 characters or fewer.");
+      return null;
+    }
+    if (classDescription.length > 2000) {
+      toast.error("Class concept must be 2000 characters or fewer.");
       return null;
     }
 
@@ -41,7 +52,11 @@ export function useMythicCreator() {
     try {
       const { data, error } = await callEdgeFunction<MythicCreateCharacterResponse>("mythic-create-character", {
         requireAuth: true,
-        body: req,
+        body: {
+          ...req,
+          characterName,
+          classDescription,
+        },
       });
       if (error) throw error;
       if (!data) throw new Error("Empty response");

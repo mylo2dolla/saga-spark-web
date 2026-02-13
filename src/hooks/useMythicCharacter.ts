@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
-import type { MythicCharacterBundle, MythicCharacterRow, MythicSkill } from "@/types/mythic";
+import type {
+  MythicCharacterBundle,
+  MythicCharacterLoadoutRow,
+  MythicCharacterRow,
+  MythicProgressionEventRow,
+  MythicSkill,
+} from "@/types/mythic";
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -12,6 +18,7 @@ export function useMythicCharacter(campaignId: string | undefined) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
+  const inFlightRef = useRef(false);
 
   const fetchBundle = useCallback(async () => {
     if (!campaignId || !isUuid(campaignId)) {
@@ -23,7 +30,9 @@ export function useMythicCharacter(campaignId: string | undefined) {
       return;
     }
 
+    if (inFlightRef.current) return;
     try {
+      inFlightRef.current = true;
       if (isMountedRef.current) {
         setIsLoading(true);
         setError(null);
@@ -75,19 +84,52 @@ export function useMythicCharacter(campaignId: string | undefined) {
 
       if (invError) throw invError;
 
-      const items = (inv ?? []).map((row) => row);
+      const [{ data: loadouts, error: loadoutsError }, { data: progressionEvents, error: progressionError }] =
+        await Promise.all([
+          supabase
+            .schema("mythic")
+            .from("character_loadouts")
+            .select("*")
+            .eq("character_id", (character as MythicCharacterRow).id)
+            .order("updated_at", { ascending: false }),
+          supabase
+            .schema("mythic")
+            .from("progression_events")
+            .select("id,campaign_id,character_id,event_type,payload,created_at")
+            .eq("character_id", (character as MythicCharacterRow).id)
+            .order("created_at", { ascending: false })
+            .limit(20),
+        ]);
+
+      if (loadoutsError) throw loadoutsError;
+      if (progressionError) throw progressionError;
+
+      let loadoutSlotCap = 2;
+      try {
+        const { data: slotCapData, error: slotCapError } = await supabase
+          .rpc("mythic_loadout_slots_for_level", { lvl: (character as MythicCharacterRow).level });
+        if (!slotCapError && Number.isFinite(Number(slotCapData))) {
+          loadoutSlotCap = Math.max(1, Number(slotCapData));
+        }
+      } catch {
+        // Keep fallback when function is missing in out-of-date environments.
+      }
 
       if (isMountedRef.current) {
         setBundle({
           character: character as MythicCharacterRow,
           skills: (skills ?? []) as unknown as MythicSkill[],
-          items: items as unknown as Array<Record<string, unknown>>,
+          items: ((inv ?? []).map((row) => row)) as unknown as Array<Record<string, unknown>>,
+          loadouts: (loadouts ?? []) as unknown as MythicCharacterLoadoutRow[],
+          progressionEvents: (progressionEvents ?? []) as unknown as MythicProgressionEventRow[],
+          loadoutSlotCap,
         });
       }
     } catch (e) {
       const msg = formatError(e, "Failed to load mythic character");
       if (isMountedRef.current) setError(msg);
     } finally {
+      inFlightRef.current = false;
       if (isMountedRef.current) setIsLoading(false);
     }
   }, [campaignId]);
@@ -105,6 +147,9 @@ export function useMythicCharacter(campaignId: string | undefined) {
     character: bundle?.character ?? null,
     skills: bundle?.skills ?? [],
     items: bundle?.items ?? [],
+    loadouts: bundle?.loadouts ?? [],
+    progressionEvents: bundle?.progressionEvents ?? [],
+    loadoutSlotCap: bundle?.loadoutSlotCap ?? 2,
     isLoading,
     error,
     refetch: fetchBundle,

@@ -34,6 +34,25 @@ function clampStat(n: number): number {
   return Math.min(100, Math.max(0, Math.floor(n)));
 }
 
+function toErrorMessage(error: unknown, context: string): string {
+  if (!error) return `${context} failed`;
+  if (error instanceof Error) return `${context}: ${error.message}`;
+  if (typeof error === "object") {
+    const anyErr = error as Record<string, unknown>;
+    const message = typeof anyErr.message === "string" ? anyErr.message : "unknown error";
+    const code = typeof anyErr.code === "string" ? ` code=${anyErr.code}` : "";
+    const hint = typeof anyErr.hint === "string" && anyErr.hint ? ` hint=${anyErr.hint}` : "";
+    const details = typeof anyErr.details === "string" && anyErr.details ? ` details=${anyErr.details}` : "";
+    return `${context}: ${message}${code}${hint}${details}`;
+  }
+  return `${context}: ${String(error)}`;
+}
+
+function throwIfError(error: unknown, context: string): void {
+  if (!error) return;
+  throw new Error(toErrorMessage(error, context));
+}
+
 function sumEquipmentBonuses(rows: Array<{ item?: { stat_mods?: unknown; slot?: string } | null }>) {
   const totals: Record<string, number> = {};
   for (const row of rows) {
@@ -102,7 +121,7 @@ serve(async (req) => {
       .select("id")
       .eq("id", campaignId)
       .maybeSingle();
-    if (campaignError) throw campaignError;
+    throwIfError(campaignError, "campaign lookup");
     if (!campaign) {
       return new Response(JSON.stringify({ error: "Campaign not found" }), {
         status: 404,
@@ -139,7 +158,7 @@ serve(async (req) => {
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (charError) throw charError;
+    throwIfError(charError, "character lookup");
     if (!character) {
       return new Response(JSON.stringify({ error: "No mythic character found for this campaign" }), {
         status: 400,
@@ -155,7 +174,7 @@ serve(async (req) => {
       .eq("character_id", character.id)
       .eq("container", "equipment");
 
-    if (equipError) throw equipError;
+    throwIfError(equipError, "equipment lookup");
 
     const equipBonuses = sumEquipmentBonuses((equippedItems ?? []) as Array<{ item?: { stat_mods?: unknown } | null }>);
 
@@ -174,31 +193,34 @@ serve(async (req) => {
     const powerBonus = Math.max(0, num(equipBonuses.power_max, 0));
 
     // Start combat session + activate combat board + transition + combat_start event.
-    const { data: combatId, error: startError } = await svc
-      .schema("mythic")
-      .rpc("start_combat_session", {
-        p_campaign_id: campaignId,
-        p_seed: seed,
-        p_scene_json: {
-          kind: "encounter",
-          started_from: (activeBoard as { board_type?: MythicBoardType } | null)?.board_type ?? null,
-        },
-        p_reason: reason,
-      });
+    const sceneJson = {
+      kind: "encounter",
+      started_from: (activeBoard as { board_type?: MythicBoardType } | null)?.board_type ?? null,
+    };
 
-    if (startError) throw startError;
+    const startRes = await svc.rpc("mythic_start_combat_session", {
+      campaign_id: campaignId,
+      seed,
+      scene_json: sceneJson,
+      reason,
+    });
+    const combatId = typeof startRes.data === "string" ? startRes.data : null;
+    const startError = startRes.error;
+    throwIfError(startError, "start_combat_session");
     if (!combatId || typeof combatId !== "string") throw new Error("start_combat_session returned no id");
 
     const lvl = character.level as number;
 
-    const [{ data: hpMax }, { data: powerMax }] = await Promise.all([
-      svc.schema("mythic").rpc("max_hp", { lvl, defense: derivedStats.defense, support: derivedStats.support }),
-      svc.schema("mythic").rpc("max_power_bar", { lvl, utility: derivedStats.utility, support: derivedStats.support }),
+    const [hpMaxRes, powerMaxRes] = await Promise.all([
+      svc.rpc("mythic_max_hp", { lvl, defense: derivedStats.defense, support: derivedStats.support }),
+      svc.rpc("mythic_max_power_bar", { lvl, utility: derivedStats.utility, support: derivedStats.support }),
     ]);
+    throwIfError(hpMaxRes.error, "max_hp");
+    throwIfError(powerMaxRes.error, "max_power_bar");
 
     const playerInit = clampInt((derivedStats.mobility as number) + rngInt(seed, `init:player:${character.id}`, 0, 25), 0, 999);
-    const hpMaxFinal = Math.max(1, Math.floor((hpMax ?? 100) + hpBonus));
-    const powerMaxFinal = Math.max(0, Math.floor((powerMax ?? 50) + powerBonus));
+    const hpMaxFinal = Math.max(1, Math.floor(((hpMaxRes.data as number | null) ?? 100) + hpBonus));
+    const powerMaxFinal = Math.max(0, Math.floor(((powerMaxRes.data as number | null) ?? 50) + powerBonus));
 
     const playerCombatant = {
       combat_session_id: combatId,
@@ -277,7 +299,7 @@ serve(async (req) => {
       .insert([playerCombatant, ...enemies])
       .select("id, name, initiative");
 
-    if (combatantsError) throw combatantsError;
+    throwIfError(combatantsError, "combatants insert");
     if (!insertedCombatants || insertedCombatants.length < 2) throw new Error("Failed to insert combatants");
 
     const sorted = [...insertedCombatants].sort((a: any, b: any) => {
@@ -297,7 +319,7 @@ serve(async (req) => {
       .schema("mythic")
       .from("turn_order")
       .insert(turnRows);
-    if (turnError) throw turnError;
+    throwIfError(turnError, "turn_order insert");
 
     const initiativeSnapshot = sorted.map((c: any) => ({ combatant_id: c.id, name: c.name, initiative: c.initiative }));
 
@@ -322,20 +344,20 @@ serve(async (req) => {
       .eq("combat_session_id", combatId)
       .eq("status", "active");
 
-    await svc.schema("mythic").rpc("append_action_event", {
-      p_combat_session_id: combatId,
-      p_turn_index: 0,
-      p_actor_combatant_id: null,
-      p_event_type: "round_start",
-      p_payload: { round_index: 0, initiative_snapshot: initiativeSnapshot },
+    await svc.rpc("mythic_append_action_event", {
+      combat_session_id: combatId,
+      turn_index: 0,
+      actor_combatant_id: null,
+      event_type: "round_start",
+      payload: { round_index: 0, initiative_snapshot: initiativeSnapshot },
     });
 
-    await svc.schema("mythic").rpc("append_action_event", {
-      p_combat_session_id: combatId,
-      p_turn_index: 0,
-      p_actor_combatant_id: sorted[0]!.id,
-      p_event_type: "turn_start",
-      p_payload: { actor_combatant_id: sorted[0]!.id },
+    await svc.rpc("mythic_append_action_event", {
+      combat_session_id: combatId,
+      turn_index: 0,
+      actor_combatant_id: sorted[0]!.id,
+      event_type: "turn_start",
+      payload: { actor_combatant_id: sorted[0]!.id },
     });
 
     return new Response(

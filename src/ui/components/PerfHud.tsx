@@ -62,7 +62,7 @@ export default function PerfHud() {
 
   return (
     <div
-      className="fixed bottom-2 right-2 z-[9999] rounded-md border border-border bg-card/95 px-2 py-1 text-[11px] text-muted-foreground"
+      className="pointer-events-none fixed bottom-2 right-2 z-[9999] rounded-md border border-border bg-card/95 px-2 py-1 text-[11px] text-muted-foreground"
       aria-live="polite"
     >
       <div>FPS: {snapshot.fps}</div>

@@ -97,8 +97,7 @@ serve(async (req) => {
     }
 
     const { data: slotsAllowed, error: slotsErr } = await svc
-      .schema("mythic")
-      .rpc("loadout_slots_for_level", { lvl: character.level });
+      .rpc("mythic_loadout_slots_for_level", { lvl: character.level });
     if (slotsErr) throw slotsErr;
 
     const slotCap = Math.max(1, Number(slotsAllowed ?? 2));

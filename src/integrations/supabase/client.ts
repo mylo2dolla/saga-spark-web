@@ -15,6 +15,7 @@ const SUPABASE_KEY_SOURCE = SUPABASE_ANON_KEY
     ? (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ? "VITE_SUPABASE_PUBLISHABLE_KEY" : "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
     : null;
 const DEV_DEBUG = import.meta.env.DEV;
+const DEV_SUPABASE_FETCH_DEBUG = DEV_DEBUG && import.meta.env.VITE_DEBUG_SUPABASE_FETCH === "true";
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
@@ -107,13 +108,13 @@ const fetchWithHardTimeout: typeof fetch = async (input, init) => {
 const debugFetch: typeof fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input.url;
   const method = init?.method ?? "GET";
-  if (DEV_DEBUG) {
+  if (DEV_SUPABASE_FETCH_DEBUG) {
     console.info("DEV_DEBUG supabase fetch start", { method, url });
   }
 
   try {
     const response = await fetchWithHardTimeout(input, init);
-    if (DEV_DEBUG) {
+    if (DEV_SUPABASE_FETCH_DEBUG) {
       console.info("DEV_DEBUG supabase fetch response", {
         method,
         url,
@@ -123,7 +124,7 @@ const debugFetch: typeof fetch = async (input, init) => {
     recordNetworkRequest();
     return response;
   } catch (error) {
-    if (DEV_DEBUG) {
+    if (DEV_SUPABASE_FETCH_DEBUG) {
       console.error("DEV_DEBUG supabase fetch error", { method, url, error });
     }
     recordNetworkRequest();

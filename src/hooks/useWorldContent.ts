@@ -188,34 +188,39 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     baseWorld: WorldState,
     worldContent: WorldContent
   ): WorldState => {
+    const contentNPCs = Array.isArray(worldContent?.npcs) ? worldContent.npcs : [];
+    const contentQuests = Array.isArray(worldContent?.quests) ? worldContent.quests : [];
+    const contentLocations = Array.isArray(worldContent?.locations) ? worldContent.locations : [];
+    const contentStoryFlags = Array.isArray(worldContent?.storyFlags) ? worldContent.storyFlags : [];
+    const contentFactions = Array.isArray(worldContent?.factions) ? worldContent.factions : [];
+
     const newNPCs = new Map(baseWorld.npcs);
     const newQuests = new Map(baseWorld.quests);
     const newLocations = new Map(baseWorld.locations);
     const newStoryFlags = new Map(baseWorld.storyFlags);
-    const contentLocationIds = new Set(worldContent.locations.map(location => location.id));
-    const hasRealContentLocations = worldContent.locations.some(
+    const hasRealContentLocations = contentLocations.some(
       location => location.id !== "starting_location"
     );
-    if (worldContent.locations.length > 0 && hasRealContentLocations) {
+    if (contentLocations.length > 0 && hasRealContentLocations) {
       newLocations.delete("starting_location");
     }
 
     // Merge NPCs (avoid duplicates by ID)
-    for (const npc of worldContent.npcs) {
+    for (const npc of contentNPCs) {
       if (!newNPCs.has(npc.id)) {
         newNPCs.set(npc.id, npc);
       }
     }
 
     // Merge Quests
-    for (const quest of worldContent.quests) {
+    for (const quest of contentQuests) {
       if (!newQuests.has(quest.id)) {
         newQuests.set(quest.id, quest);
       }
     }
 
     // Merge Locations
-    for (const location of worldContent.locations) {
+    for (const location of contentLocations) {
       if (hasRealContentLocations && location.id === "starting_location") {
         continue;
       }
@@ -223,7 +228,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     }
 
     // Merge Story Flags
-    for (const flag of worldContent.storyFlags) {
+    for (const flag of contentStoryFlags) {
       newStoryFlags.set(flag.id, flag);
     }
 
@@ -233,7 +238,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     const existingFactionIds = new Set(baseWorld.campaignSeed.factions?.map(f => f.id) ?? []);
     const newFactions = [
       ...(baseWorld.campaignSeed.factions ?? []),
-      ...worldContent.factions.filter(f => !existingFactionIds.has(f.id)),
+      ...contentFactions.filter(f => !existingFactionIds.has(f.id)),
     ];
 
     return {

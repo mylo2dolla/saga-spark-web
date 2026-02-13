@@ -28,6 +28,8 @@ interface PromptAssistFieldProps {
   inputId?: string;
   disabled?: boolean;
   className?: string;
+  onBlur?: () => void;
+  maxLength?: number;
 }
 
 export function PromptAssistField(props: PromptAssistFieldProps) {
@@ -43,6 +45,8 @@ export function PromptAssistField(props: PromptAssistFieldProps) {
     inputId,
     disabled = false,
     className,
+    onBlur,
+    maxLength,
   } = props;
 
   const [isRandoming, setIsRandoming] = useState(false);
@@ -75,7 +79,8 @@ export function PromptAssistField(props: PromptAssistFieldProps) {
       if (!data?.ok || !data.text) {
         throw new Error(data?.error ?? "Field generation returned no text");
       }
-      onChange(data.text.trim());
+      const next = data.text.trim();
+      onChange(maxLength && next.length > maxLength ? next.slice(0, maxLength) : next);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to generate text";
       toast.error(message);
@@ -96,6 +101,8 @@ export function PromptAssistField(props: PromptAssistFieldProps) {
           style={{ minHeight: `${Math.max(2, minRows) * 1.4}rem` }}
           rows={minRows}
           disabled={disabled}
+          onBlur={onBlur}
+          maxLength={maxLength}
         />
       ) : (
         <Input
@@ -104,6 +111,8 @@ export function PromptAssistField(props: PromptAssistFieldProps) {
           onChange={(event) => onChange(event.target.value)}
           placeholder={placeholder}
           disabled={disabled}
+          onBlur={onBlur}
+          maxLength={maxLength}
         />
       )}
       <div className="mt-2 flex flex-wrap items-center gap-2">

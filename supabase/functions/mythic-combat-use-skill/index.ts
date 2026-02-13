@@ -698,7 +698,7 @@ serve(async (req) => {
       const attacker = effectiveAttackerStats(actor);
 
       for (const target of targets) {
-        const { data: dmgJson, error: dmgErr } = await svc.schema("mythic").rpc("compute_damage", {
+        const { data: dmgJson, error: dmgErr } = await svc.rpc("mythic_compute_damage", {
           seed,
           label: `${labelBase}:t:${target.id}`,
           lvl: actor.lvl,
@@ -776,7 +776,7 @@ serve(async (req) => {
       const duration = Math.max(0, Math.floor(Number((status as any).duration_turns)));
       const statusId = String((status as any).id);
       for (const target of targets) {
-        const { data: chance, error: chanceErr } = await svc.schema("mythic").rpc("status_apply_chance", {
+        const { data: chance, error: chanceErr } = await svc.rpc("mythic_status_apply_chance", {
           control: actor.control,
           utility: actor.utility,
           target_resolve: Math.floor(Number(target.resist ?? 0)),
@@ -953,12 +953,12 @@ serve(async (req) => {
 
     // Append events in order.
     for (const e of events) {
-      await svc.schema("mythic").rpc("append_action_event", {
-        p_combat_session_id: combatSessionId,
-        p_turn_index: e.turn_index,
-        p_actor_combatant_id: e.actor_id,
-        p_event_type: e.event_type,
-        p_payload: e.payload,
+      await svc.rpc("mythic_append_action_event", {
+        combat_session_id: combatSessionId,
+        turn_index: e.turn_index,
+        actor_combatant_id: e.actor_id,
+        event_type: e.event_type,
+        payload: e.payload,
       });
     }
 
@@ -1002,9 +1002,9 @@ serve(async (req) => {
     const alivePlayers = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "player").length;
     const aliveNpcs = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "npc").length;
     if (alivePlayers === 0 || aliveNpcs === 0) {
-      await svc.schema("mythic").rpc("end_combat_session", {
-        p_combat_session_id: combatSessionId,
-        p_outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs },
+      await svc.rpc("mythic_end_combat_session", {
+        combat_session_id: combatSessionId,
+        outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs },
       });
       // Reactivate the most recent non-combat board and log a page-turn transition.
       const { data: lastBoard } = await svc
@@ -1044,20 +1044,20 @@ serve(async (req) => {
       .eq("campaign_id", campaignId);
     if (advanceErr) throw advanceErr;
 
-    await svc.schema("mythic").rpc("append_action_event", {
-      p_combat_session_id: combatSessionId,
-      p_turn_index: turnIndex,
-      p_actor_combatant_id: actor.id,
-      p_event_type: "turn_end",
-      p_payload: { actor_combatant_id: actor.id },
+    await svc.rpc("mythic_append_action_event", {
+      combat_session_id: combatSessionId,
+      turn_index: turnIndex,
+      actor_combatant_id: actor.id,
+      event_type: "turn_end",
+      payload: { actor_combatant_id: actor.id },
     });
 
-    await svc.schema("mythic").rpc("append_action_event", {
-      p_combat_session_id: combatSessionId,
-      p_turn_index: nextIndex,
-      p_actor_combatant_id: nextCombatantId,
-      p_event_type: "turn_start",
-      p_payload: { actor_combatant_id: nextCombatantId },
+    await svc.rpc("mythic_append_action_event", {
+      combat_session_id: combatSessionId,
+      turn_index: nextIndex,
+      actor_combatant_id: nextCombatantId,
+      event_type: "turn_start",
+      payload: { actor_combatant_id: nextCombatantId },
     });
 
     return new Response(JSON.stringify({ ok: true, next_turn_index: nextIndex, next_actor_combatant_id: nextCombatantId }), {
