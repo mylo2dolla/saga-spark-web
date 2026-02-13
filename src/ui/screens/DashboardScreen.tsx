@@ -2,45 +2,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
-import { formatError } from "@/ui/data/async";
+import { useWorldGenerator } from "@/hooks/useWorldGenerator";
+import { formatError, isAbortError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useDbHealth } from "@/ui/data/useDbHealth";
+import { recordCampaignsRead } from "@/ui/data/networkHealth";
 import { callEdgeFunction } from "@/lib/edge";
-import { PromptAssistField } from "@/components/PromptAssistField";
-import {
-  createMythicCampaign,
-  joinMythicCampaign,
-  listMythicCampaigns,
-  type MythicCampaign,
-} from "@/lib/mythicCampaigns";
+import type { Json } from "@/integrations/supabase/types";
+import type { GeneratedWorld } from "@/hooks/useWorldGenerator";
 
-type Campaign = MythicCampaign;
-
-type CampaignHealthStatus = "ready" | "needs_migration" | "broken";
-
-interface CampaignHealth {
-  status: CampaignHealthStatus;
-  detail?: string;
+interface Campaign {
+  id: string;
+  name: string;
+  description: string | null;
+  invite_code: string;
+  owner_id: string;
+  is_active: boolean;
+  updated_at: string;
 }
 
-const CAMPAIGN_TEMPLATES = [
-  { key: "custom", label: "Custom" },
-  { key: "graphic_novel_fantasy", label: "Graphic Novel Fantasy" },
-  { key: "sci_fi_ruins", label: "Sci-Fi Ruins" },
-  { key: "dark_mythic_horror", label: "Dark Mythic Horror" },
-  { key: "post_apocalypse", label: "Post-Apocalypse" },
-] as const;
-
-type CampaignTemplateKey = typeof CAMPAIGN_TEMPLATES[number]["key"];
-
 export default function DashboardScreen() {
-  const NETWORK_TIMEOUT_MS = 30000;
-
-  const { user, session, isLoading: authLoading } = useAuth();
+  const { user, session } = useAuth();
+  const { generateInitialWorld, isGenerating } = useWorldGenerator();
   const { toast } = useToast();
   const navigate = useNavigate();
   const { setLastError } = useDiagnostics();
@@ -57,19 +45,13 @@ export default function DashboardScreen() {
   const [error, setError] = useState<string | null>(null);
   const [newCampaignName, setNewCampaignName] = useState("");
   const [newCampaignDescription, setNewCampaignDescription] = useState("");
-  const [newCampaignTemplate, setNewCampaignTemplate] = useState<CampaignTemplateKey>("custom");
   const [nameTouched, setNameTouched] = useState(false);
   const [descriptionTouched, setDescriptionTouched] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [repairingCampaignId, setRepairingCampaignId] = useState<string | null>(null);
-  const [isRepairingAll, setIsRepairingAll] = useState(false);
-  const [mythicHealthByCampaign, setMythicHealthByCampaign] = useState<Record<string, CampaignHealth>>({});
   const [createError, setCreateError] = useState<string | null>(null);
-  const [createStatus, setCreateStatus] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const fetchInFlightRef = useRef(false);
   const fetchRequestIdRef = useRef(0);
@@ -81,9 +63,209 @@ export default function DashboardScreen() {
   const activeUser = user ?? null;
   const activeUserId = session?.user?.id ?? user?.id ?? null;
   const activeAccessToken = activeSession?.access_token ?? null;
-  const loadUserId = authLoading ? null : (session?.user?.id ?? null);
-  const dbEnabled = !authLoading && Boolean(activeUserId);
-  const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled, activeAccessToken);
+  const loadUserId = session?.user?.id ?? null;
+  const dbEnabled = Boolean(activeUserId);
+  const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled);
+
+  const toKebab = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+  const hashString = (value: string): number => {
+    let hash = 0;
+    for (let i = 0; i < value.length; i += 1) {
+      hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+    }
+    return hash;
+  };
+
+  const createDeterministicPosition = (seed: string): { x: number; y: number } => {
+    const hashed = hashString(seed);
+    return {
+      x: 50 + (hashed % 400),
+      y: 50 + ((hashed >>> 16) % 400),
+    };
+  };
+
+  const normalizeLocations = (locations: GeneratedWorld["locations"]) => {
+    const seenIds = new Set<string>();
+    return locations.map((location, index) => {
+      const baseName = location.name?.trim() || `location-${index + 1}`;
+      let id = location.id?.trim() || toKebab(baseName);
+      if (!id || id === "starting_location") {
+        id = `location-${index + 1}`;
+      }
+      let uniqueId = id;
+      let suffix = 1;
+      while (seenIds.has(uniqueId)) {
+        uniqueId = `${id}-${suffix}`;
+        suffix += 1;
+      }
+      seenIds.add(uniqueId);
+      const position = location.position?.x !== undefined && location.position?.y !== undefined
+        ? { x: location.position.x, y: location.position.y }
+        : createDeterministicPosition(uniqueId);
+      return {
+        ...location,
+        id: uniqueId,
+        position,
+      };
+    });
+  };
+
+  const buildFallbackWorld = (seed: { title: string; description: string }): GeneratedWorld => ({
+    factions: [],
+    locations: [
+      {
+        id: "starting_location",
+        name: "Town Square",
+        description: `A quiet gathering place that marks the beginning of ${seed.title}.`,
+        type: "settlement",
+      },
+    ],
+    startingLocationId: "starting_location",
+    npcs: [],
+    initialQuest: {
+      title: "A Fresh Start",
+      description: "Gather your bearings and learn about the world around you.",
+      briefDescription: "Explore your surroundings.",
+      importance: "main",
+      objectives: [
+        {
+          type: "explore",
+          description: "Take in the sights and sounds of your starting location.",
+          required: 1,
+        },
+      ],
+      rewards: {
+        xp: 25,
+        gold: 10,
+        items: [],
+        storyFlags: [],
+      },
+    },
+    worldHooks: [],
+  });
+
+  const persistGeneratedContent = useCallback(async (
+    campaignId: string,
+    content: Array<{
+      campaign_id: string;
+      content_type: string;
+      content_id: string;
+      content: Json;
+      generation_context: Json;
+    }>
+  ) => {
+    const edgeResult = await callEdgeFunction<{ error?: string }>(
+      "world-content-writer",
+      {
+        body: {
+          campaignId,
+          content,
+        },
+        requireAuth: true,
+        accessToken: activeAccessToken,
+      }
+    );
+
+    if (!edgeResult.error && !edgeResult.data?.error && !edgeResult.skipped) {
+      return;
+    }
+
+    console.warn("[campaigns] edge writer failed, falling back to direct insert", {
+      campaignId,
+      edgeError: edgeResult.error?.message ?? null,
+      edgeMessage: edgeResult.data?.error ?? null,
+      skipped: edgeResult.skipped,
+    });
+
+    const fallbackResult = await supabase
+      .from("ai_generated_content")
+      .insert(content);
+
+    if (fallbackResult.error) {
+      if (edgeResult.error) {
+        throw edgeResult.error;
+      }
+      if (edgeResult.data?.error) {
+        throw new Error(edgeResult.data.error);
+      }
+      throw fallbackResult.error;
+    }
+  }, [activeAccessToken]);
+
+  const restInsert = useCallback(async <T,>(
+    table: string,
+    payload: T,
+    accessToken: string,
+    single = true,
+  ) => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error("Supabase env is not configured");
+    }
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8000);
+    const url = single
+      ? `${supabaseUrl}/rest/v1/${table}`
+      : `${supabaseUrl}/rest/v1/${table}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+        Prefer: single ? "return=representation" : "return=minimal",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`REST insert ${table} failed: ${res.status} ${text}`);
+    }
+    if (!single) return null as unknown as T;
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      return (data[0] ?? null) as T;
+    }
+    return data as T;
+  }, []);
+
+  const restSelect = useCallback(async <T,>(
+    table: string,
+    query: string,
+    accessToken: string | null,
+    label: string,
+  ): Promise<T[]> => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error("Supabase env is not configured");
+    }
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${supabaseUrl}/rest/v1/${table}?${query}`, {
+      method: "GET",
+      headers: {
+        apikey: supabaseAnonKey,
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(tid);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${label} REST failed: ${res.status} ${text}`);
+    }
+    return (await res.json()) as T[];
+  }, []);
+
 
   const withTimeout = useCallback(async <T,>(
     promise: Promise<T>,
@@ -111,18 +293,14 @@ export default function DashboardScreen() {
   }, []);
 
   const fetchCampaigns = useCallback(async () => {
-    if (authLoading || !loadUserId) {
+    if (!loadUserId) {
       if (isMountedRef.current) {
         setIsLoading(false);
-        setCampaigns([]);
-        setMembersByCampaign({});
-        setMythicHealthByCampaign({});
       }
       return;
     }
-    if (fetchInFlightRef.current) {
-      return;
-    }
+    if (fetchInFlightRef.current) return;
+    if (lastLoadedUserIdRef.current === loadUserId) return;
     fetchInFlightRef.current = true;
     const requestId = fetchRequestIdRef.current + 1;
     fetchRequestIdRef.current = requestId;
@@ -134,36 +312,155 @@ export default function DashboardScreen() {
     }
 
     try {
-      const summaries = await listMythicCampaigns(NETWORK_TIMEOUT_MS);
+      let ownedData: Campaign[] = [];
+      let ownedError: Error | null = null;
+      try {
+        const result = await withTimeout(
+          supabase
+            .from("campaigns")
+            .select("*")
+            .eq("owner_id", loadUserId),
+          8000,
+          "Owned campaigns fetch"
+        );
+        ownedData = (result.data ?? []) as Campaign[];
+        if (result.error) throw result.error;
+      } catch (err) {
+        ownedError = err as Error;
+        try {
+          const { data } = await supabase.auth.getSession();
+          const accessToken = data.session?.access_token ?? null;
+          ownedData = await restSelect<Campaign>(
+            "campaigns",
+            `select=*&owner_id=eq.${loadUserId}`,
+            accessToken,
+            "Owned campaigns"
+          );
+          ownedError = null;
+        } catch (fallbackErr) {
+          ownedError = fallbackErr as Error;
+        }
+      }
+
+      if (fetchRequestIdRef.current !== requestId) return;
+      if (ownedError) {
+        const message = formatError(ownedError, "Failed to load owned campaigns");
+        if (isMountedRef.current) {
+          setError(message);
+          setLastError(message);
+        }
+      }
+
+      let memberCampaignIds: string[] = [];
+      try {
+        const { data: memberData, error: memberError } = await withTimeout(
+          supabase
+            .from("campaign_members")
+            .select("campaign_id")
+            .eq("user_id", loadUserId),
+          8000,
+          "Campaign members fetch"
+        );
+        if (memberError) throw memberError;
+        memberCampaignIds = memberData?.map(member => member.campaign_id).filter(Boolean) ?? [];
+      } catch (memberErr) {
+        try {
+          const { data } = await supabase.auth.getSession();
+          const accessToken = data.session?.access_token ?? null;
+          const rows = await restSelect<{ campaign_id: string }>(
+            "campaign_members",
+            `select=campaign_id&user_id=eq.${loadUserId}`,
+            accessToken,
+            "Campaign membership"
+          );
+          memberCampaignIds = rows.map(r => r.campaign_id).filter(Boolean);
+        } catch (fallbackErr) {
+          const message = formatError(fallbackErr, "Failed to load campaign membership");
+          if (isMountedRef.current) {
+            setMembersError(message);
+          }
+        }
+      }
       if (fetchRequestIdRef.current !== requestId) return;
 
-      const nextCampaigns: Campaign[] = summaries.map((summary) => ({
-        id: summary.id,
-        name: summary.name,
-        description: summary.description,
-        invite_code: summary.invite_code,
-        owner_id: summary.owner_id,
-        is_active: summary.is_active,
-        updated_at: summary.updated_at,
-      }));
+      let memberCampaigns: Campaign[] = [];
+      if (memberCampaignIds.length > 0) {
+        try {
+          const { data, error: memberCampaignsError } = await withTimeout(
+            supabase
+              .from("campaigns")
+              .select("*")
+              .in("id", memberCampaignIds),
+            8000,
+            "Member campaigns fetch"
+          );
 
-      const nextMembers: Record<string, number> = {};
-      const nextHealth: Record<string, CampaignHealth> = {};
-      for (const summary of summaries) {
-        nextMembers[summary.id] = Number.isFinite(summary.member_count) ? Math.max(0, summary.member_count) : 0;
-        nextHealth[summary.id] = {
-          status: summary.health_status,
-          detail: summary.health_detail ?? undefined,
-        };
+          if (memberCampaignsError) throw memberCampaignsError;
+          memberCampaigns = data ?? [];
+        } catch (memberCampaignErr) {
+          try {
+            const { data } = await supabase.auth.getSession();
+            const accessToken = data.session?.access_token ?? null;
+            const ids = memberCampaignIds.map(id => `"${id}"`).join(",");
+            memberCampaigns = await restSelect<Campaign>(
+              "campaigns",
+              `select=*&id=in.(${ids})`,
+              accessToken,
+              "Member campaigns"
+            );
+          } catch (fallbackErr) {
+            const message = formatError(fallbackErr, "Failed to load member campaigns");
+            if (isMountedRef.current) {
+              setMembersError(message);
+            }
+          }
+        }
       }
 
+      const combined = new Map<string, Campaign>();
+      [...(ownedData ?? []), ...memberCampaigns].forEach(campaign => {
+        combined.set(campaign.id, campaign);
+      });
+
+      recordCampaignsRead();
+      const campaignsList = Array.from(combined.values());
       if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
-        setCampaigns(nextCampaigns);
-        setMembersByCampaign(nextMembers);
-        setMythicHealthByCampaign(nextHealth);
-        setMembersError(null);
+        setCampaigns(campaignsList);
+      }
+
+      if (campaignsList.length > 0) {
+        void (async () => {
+          try {
+            const ids = campaignsList.map(campaign => campaign.id);
+            const { data, error: membersFetchError } = await withTimeout(
+              supabase
+                .from("campaign_members")
+                .select("campaign_id")
+                .in("campaign_id", ids),
+              8000,
+              "Campaign members batch fetch"
+            );
+            if (membersFetchError) throw membersFetchError;
+            const grouped: Record<string, number> = {};
+            (data ?? []).forEach(member => {
+              const id = member.campaign_id;
+              grouped[id] = (grouped[id] ?? 0) + 1;
+            });
+            if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
+              setMembersByCampaign(grouped);
+            }
+          } catch (membersErr) {
+            const message = formatError(membersErr, "Failed to load campaign members");
+            if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
+              setMembersError(message);
+            }
+          }
+        })();
       }
     } catch (err) {
+      if (isAbortError(err)) {
+        return;
+      }
       console.error("Failed to load campaigns", err);
       const message = formatError(err, "Failed to load campaigns");
       if (isMountedRef.current && fetchRequestIdRef.current === requestId) {
@@ -179,39 +476,22 @@ export default function DashboardScreen() {
         lastLoadedUserIdRef.current = loadUserId;
       }
     }
-  }, [NETWORK_TIMEOUT_MS, authLoading, loadUserId, setLastError]);
+  }, [loadUserId, setLastError, withTimeout]);
 
   const handleRetry = useCallback(() => {
     lastLoadedUserIdRef.current = null;
     fetchCampaigns();
   }, [fetchCampaigns]);
 
-  const handleForceRefresh = useCallback(() => {
-    lastLoadedUserIdRef.current = null;
-    fetchRequestIdRef.current += 1;
-    fetchInFlightRef.current = false;
-    fetchCampaigns();
-  }, [fetchCampaigns]);
-
   useEffect(() => {
-    if (authLoading || !loadUserId) {
+    if (!loadUserId) {
       setCampaigns([]);
       setIsLoading(false);
       setError(null);
       return;
     }
     fetchCampaigns();
-  }, [authLoading, fetchCampaigns, loadUserId]);
-
-  useEffect(() => {
-    if (!isLoading) return;
-    const timeoutId = setTimeout(() => {
-      if (!isMountedRef.current) return;
-      setIsLoading(false);
-      setError(prev => prev ?? "Campaigns load timed out. Use Retry to try again.");
-    }, 15000);
-    return () => clearTimeout(timeoutId);
-  }, [isLoading]);
+  }, [fetchCampaigns]);
 
   const trimmedName = newCampaignName.trim();
   const trimmedDescription = newCampaignDescription.trim();
@@ -235,28 +515,139 @@ export default function DashboardScreen() {
       setIsCreating(true);
       setLastError(null);
       setCreateError(null);
-      setCreateStatus("Creating campaign...");
     }
 
+    let createdCampaignId: string | null = null;
     try {
-      const { campaign: createdCampaign, warnings } = await createMythicCampaign(
-        {
-          name: trimmedName,
-          description: trimmedDescription,
-          templateKey: newCampaignTemplate,
-        },
-        NETWORK_TIMEOUT_MS,
+      const edgeResult = await withTimeout(
+        callEdgeFunction<{ ok: boolean; campaign: Campaign }>(
+          "mythic-create-campaign",
+          {
+            body: { name: trimmedName, description: trimmedDescription },
+            requireAuth: true,
+          }
+        ),
+        12000,
+        "Campaign creation"
       );
+      if (edgeResult.error || !edgeResult.data?.ok || !edgeResult.data?.campaign) {
+        throw edgeResult.error ?? new Error(edgeResult.data?.error ?? "Failed to create campaign");
+      }
 
-      if (warnings.length > 0) {
+      const createdCampaign = edgeResult.data.campaign;
+      if (!createdCampaign?.id) {
+        throw new Error("Campaign insert returned no id");
+      }
+      createdCampaignId = createdCampaign.id;
+
+      let generatedWorld: GeneratedWorld | null = null;
+      try {
+        generatedWorld = await withTimeout(
+          generateInitialWorld({
+            title: trimmedName,
+            description: trimmedDescription,
+            themes: [],
+          }),
+          15000,
+          "World generation"
+        );
+      } catch (err) {
+        console.warn("[campaigns] world generation timeout/failure, using fallback", err);
+      }
+      const fallbackWorld = buildFallbackWorld({
+        title: trimmedName,
+        description: trimmedDescription,
+      });
+      if (!generatedWorld) {
         toast({
-          title: "Campaign created with warnings",
-          description: warnings.join(" | "),
-          variant: "destructive",
+          title: "Using fallback world",
+          description: "World generation failed, so a starter world was created instead.",
         });
       }
 
-      setCreateStatus("Campaign ready.");
+      const safeWorld = generatedWorld ?? fallbackWorld;
+      const factions = Array.isArray(safeWorld.factions) ? safeWorld.factions : [];
+      const npcs = Array.isArray(safeWorld.npcs) ? safeWorld.npcs : [];
+      const locations = Array.isArray(safeWorld.locations) ? safeWorld.locations : [];
+      const worldHooks = Array.isArray(safeWorld.worldHooks) ? safeWorld.worldHooks : [];
+      const initialQuest = safeWorld.initialQuest ?? fallbackWorld.initialQuest;
+
+      const rawLocations = locations.length > 0 ? locations : fallbackWorld.locations;
+      const normalizedLocations = normalizeLocations(rawLocations);
+      const startingLocationId = safeWorld.startingLocationId ?? fallbackWorld.startingLocationId;
+      const resolvedStartingId =
+        normalizedLocations.find(loc => loc.id === startingLocationId)?.id
+        ?? normalizedLocations[0]?.id
+        ?? null;
+
+      const contentToStore = [
+        ...factions.map(f => ({
+          campaign_id: createdCampaign.id,
+          content_type: "faction",
+          content_id: f.id,
+          content: JSON.parse(JSON.stringify(f)) as Json,
+          generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
+        })),
+        ...npcs.map((npc, i) => ({
+          campaign_id: createdCampaign.id,
+          content_type: "npc",
+          content_id: `npc_initial_${i}`,
+          content: JSON.parse(JSON.stringify(npc)) as Json,
+          generation_context: { title: newCampaignName.trim(), description: newCampaignDescription.trim(), themes: [] } as Json,
+        })),
+        ...(initialQuest
+          ? [{
+            campaign_id: createdCampaign.id,
+            content_type: "quest",
+            content_id: "initial_quest",
+            content: JSON.parse(JSON.stringify(initialQuest)) as Json,
+            generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
+          }]
+          : []),
+        ...normalizedLocations.map((location) => ({
+          campaign_id: createdCampaign.id,
+          content_type: "location",
+          content_id: location.id,
+          content: JSON.parse(JSON.stringify(location)) as Json,
+          generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
+        })),
+        ...worldHooks.map((hook, index) => ({
+          campaign_id: createdCampaign.id,
+          content_type: "world_hooks",
+          content_id: `world_hook_${index}`,
+          content: JSON.parse(JSON.stringify([hook])) as Json,
+          generation_context: { title: trimmedName, description: trimmedDescription, themes: [] } as Json,
+        })),
+      ];
+
+      try {
+        await withTimeout(
+          persistGeneratedContent(createdCampaign.id, contentToStore),
+          15000,
+          "Persist generated content"
+        );
+      } catch (err) {
+        console.warn("[campaigns] persistGeneratedContent failed, continuing", err);
+      }
+
+      if (resolvedStartingId) {
+        const sceneName = normalizedLocations.find(loc => loc.id === resolvedStartingId)?.name ?? normalizedLocations[0]?.name;
+        if (sceneName) {
+          try {
+            await withTimeout(
+              supabase
+                .from("campaigns")
+                .update({ current_scene: sceneName })
+                .eq("id", createdCampaign.id),
+              6000,
+              "Scene update"
+            );
+          } catch {
+            // Non-blocking: scene update can be patched later.
+          }
+        }
+      }
+
       toast({
         title: "Campaign created",
         description: `${createdCampaign.name} is ready.`,
@@ -265,21 +656,22 @@ export default function DashboardScreen() {
       if (isMountedRef.current) {
         setNewCampaignName("");
         setNewCampaignDescription("");
-        setNewCampaignTemplate("custom");
         setNameTouched(false);
         setDescriptionTouched(false);
         setSubmitAttempted(false);
         setCampaigns(prev => [createdCampaign as Campaign, ...prev]);
       }
-      void fetchCampaigns();
-      navigate(`/mythic/${createdCampaign.id}/create-character`);
+      fetchCampaigns();
+      navigate(`/game/${createdCampaign.id}/create-character`);
     } catch (err) {
+      if (createdCampaignId) {
+        await supabase.from("campaigns").delete().eq("id", createdCampaignId);
+      }
       const message = formatError(err, "Failed to create campaign");
       if (isMountedRef.current) {
         setLastError(message);
         setCreateError(message);
       }
-      setCreateStatus(null);
       toast({ title: "Failed to create campaign", description: message, variant: "destructive" });
     } finally {
       if (isMountedRef.current) {
@@ -305,7 +697,10 @@ export default function DashboardScreen() {
         password: authPassword,
       });
       if (error) throw error;
-      // Auth state is managed by useAuth() subscription.
+      if (isMountedRef.current) {
+        setAuthSession(data.session);
+        setAuthUser(data.user ?? null);
+      }
     } catch (err) {
       const message = formatError(err, "Sign in failed");
       if (isMountedRef.current) {
@@ -334,7 +729,10 @@ export default function DashboardScreen() {
         password: authPassword,
       });
       if (error) throw error;
-      // Auth state is managed by useAuth() subscription.
+      if (isMountedRef.current) {
+        setAuthSession(data.session);
+        setAuthUser(data.user ?? null);
+      }
     } catch (err) {
       const message = formatError(err, "Sign up failed");
       if (isMountedRef.current) {
@@ -356,7 +754,10 @@ export default function DashboardScreen() {
     try {
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      // Auth state is managed by useAuth() subscription.
+      if (isMountedRef.current) {
+        setAuthSession(null);
+        setAuthUser(null);
+      }
     } catch (err) {
       const message = formatError(err, "Sign out failed");
       if (isMountedRef.current) {
@@ -383,15 +784,36 @@ export default function DashboardScreen() {
     }
 
     try {
-      const { campaign, already_member } = await joinMythicCampaign(inviteCode.trim(), NETWORK_TIMEOUT_MS);
-      toast({
-        title: already_member ? "Already joined campaign" : "Joined campaign",
-        description: campaign.name,
+      const response = await supabase.rpc("get_campaign_by_invite_code", { _invite_code: inviteCode.trim() });
+
+      if (response.error) {
+        console.error("[campaigns] supabase error", {
+          message: response.error.message,
+          code: response.error.code,
+          details: response.error.details,
+          hint: response.error.hint,
+          status: response.error.status,
+        });
+        throw response.error;
+      }
+
+      if (!response.data || response.data.length === 0) {
+        throw new Error("Invalid invite code");
+      }
+
+      const campaign = response.data[0] as Campaign;
+
+      await supabase.from("campaign_members").insert({
+        campaign_id: campaign.id,
+        user_id: activeUser.id,
+        is_dm: false,
       });
+
+      toast({ title: "Joined campaign", description: campaign.name });
       if (isMountedRef.current) {
         setInviteCode("");
       }
-      await fetchCampaigns();
+      fetchCampaigns();
     } catch (err) {
       const message = formatError(err, "Failed to join campaign");
       if (isMountedRef.current) {
@@ -406,197 +828,9 @@ export default function DashboardScreen() {
     }
   };
 
-  const handleDeleteCampaign = useCallback(async (campaign: Campaign) => {
-    if (!activeUserId) {
-      toast({ title: "Sign in required", description: "You must be signed in to delete campaigns.", variant: "destructive" });
-      return;
-    }
-    if (campaign.owner_id !== activeUserId) {
-      toast({ title: "Not allowed", description: "Only the campaign owner can delete this campaign.", variant: "destructive" });
-      return;
-    }
-    const confirmed = window.confirm(`Delete campaign "${campaign.name}"? This cannot be undone.`);
-    if (!confirmed) return;
-    if (isDeleting) return;
-    setIsDeleting(true);
-    setLastError(null);
-    try {
-      const { error: deleteError } = await supabase
-        .from("campaigns")
-        .delete()
-        .eq("id", campaign.id);
-      if (deleteError) throw deleteError;
-      if (isMountedRef.current) {
-        setCampaigns(prev => prev.filter(c => c.id !== campaign.id));
-      }
-      toast({ title: "Campaign deleted", description: campaign.name });
-      fetchCampaigns();
-    } catch (err) {
-      const message = formatError(err, "Failed to delete campaign");
-      if (isMountedRef.current) {
-        setLastError(message);
-      }
-      toast({ title: "Failed to delete campaign", description: message, variant: "destructive" });
-    } finally {
-      if (isMountedRef.current) {
-        setIsDeleting(false);
-      }
-    }
-  }, [activeUserId, fetchCampaigns, isDeleting, setLastError, toast]);
-
-  const handleDeleteAll = async () => {
-    if (!activeUserId) {
-      toast({ title: "Sign in required", description: "You must be signed in to delete campaigns.", variant: "destructive" });
-      return;
-    }
-    const owned = campaigns.filter(c => c.owner_id === activeUserId);
-    if (owned.length === 0) {
-      toast({ title: "No owned campaigns", description: "You don't own any campaigns to delete." });
-      return;
-    }
-    const confirmed = window.confirm(`Delete all ${owned.length} owned campaign(s)? This cannot be undone.`);
-    if (!confirmed) return;
-    if (isDeleting) return;
-    setIsDeleting(true);
-    setLastError(null);
-    try {
-      const ids = owned.map(c => c.id);
-      const { error: deleteError } = await supabase
-        .from("campaigns")
-        .delete()
-        .in("id", ids);
-      if (deleteError) throw deleteError;
-      if (isMountedRef.current) {
-        setCampaigns(prev => prev.filter(c => !ids.includes(c.id)));
-      }
-      toast({ title: "Campaigns deleted", description: `Deleted ${owned.length} campaign(s).` });
-      fetchCampaigns();
-    } catch (err) {
-      const message = formatError(err, "Failed to delete campaigns");
-      if (isMountedRef.current) {
-        setLastError(message);
-      }
-      toast({ title: "Failed to delete campaigns", description: message, variant: "destructive" });
-    } finally {
-      if (isMountedRef.current) {
-        setIsDeleting(false);
-      }
-    }
-  };
-
-  const handleRepairCampaign = useCallback(async (campaignId: string) => {
-    if (!activeUserId) {
-      toast({ title: "Sign in required", description: "You must be signed in to repair campaigns.", variant: "destructive" });
-      return;
-    }
-    setRepairingCampaignId(campaignId);
-    setLastError(null);
-    try {
-      const { data, error } = await withTimeout(
-        callEdgeFunction<{ ok: boolean; warnings?: string[] }>("mythic-bootstrap", {
-          requireAuth: true,
-          body: { campaignId },
-        }),
-        NETWORK_TIMEOUT_MS,
-        "Campaign repair",
-      );
-      if (error) throw error;
-      if (!data?.ok) throw new Error("Repair failed");
-      if (Array.isArray(data.warnings) && data.warnings.length > 0) {
-        toast({
-          title: "Campaign repaired with warnings",
-          description: data.warnings.join(" | "),
-          variant: "destructive",
-        });
-      } else {
-        toast({ title: "Campaign repaired", description: "Mythic runtime restored." });
-      }
-      await fetchCampaigns();
-    } catch (err) {
-      const message = formatError(err, "Failed to repair campaign");
-      setLastError(message);
-      toast({ title: "Repair failed", description: message, variant: "destructive" });
-    } finally {
-      if (isMountedRef.current) {
-        setRepairingCampaignId(null);
-      }
-    }
-  }, [NETWORK_TIMEOUT_MS, activeUserId, fetchCampaigns, setLastError, toast, withTimeout]);
-
-  const handleRepairAll = useCallback(async () => {
-    if (!activeUserId) {
-      toast({ title: "Sign in required", description: "You must be signed in to repair campaigns.", variant: "destructive" });
-      return;
-    }
-    const pending = campaigns.filter((campaign) => (mythicHealthByCampaign[campaign.id]?.status ?? "needs_migration") !== "ready");
-    if (pending.length === 0) {
-      toast({ title: "All campaigns healthy", description: "No campaigns need migration/repair." });
-      return;
-    }
-    if (isRepairingAll) return;
-
-    setIsRepairingAll(true);
-    setLastError(null);
-    try {
-      let repaired = 0;
-      for (const campaign of pending) {
-        const { data, error } = await withTimeout(
-          callEdgeFunction<{ ok: boolean; warnings?: string[] }>("mythic-bootstrap", {
-            requireAuth: true,
-            body: { campaignId: campaign.id },
-          }),
-          NETWORK_TIMEOUT_MS,
-          "Campaign repair",
-        );
-        if (error || !data?.ok) {
-          throw error ?? new Error(`Repair failed for ${campaign.name}`);
-        }
-        repaired += 1;
-      }
-      toast({ title: "Repair complete", description: `Repaired ${repaired} campaign(s).` });
-      await fetchCampaigns();
-    } catch (err) {
-      const message = formatError(err, "Failed to repair all campaigns");
-      setLastError(message);
-      toast({ title: "Repair failed", description: message, variant: "destructive" });
-    } finally {
-      if (isMountedRef.current) {
-        setIsRepairingAll(false);
-      }
-    }
-  }, [
-    NETWORK_TIMEOUT_MS,
-    activeUserId,
-    campaigns,
-    fetchCampaigns,
-    isRepairingAll,
-    mythicHealthByCampaign,
-    setLastError,
-    toast,
-    withTimeout,
-  ]);
-
-  const healthBadge = useCallback((health: CampaignHealth | undefined) => {
-    const status = health?.status ?? "needs_migration";
-    if (status === "ready") {
-      return { label: "Mythic Ready", className: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40" };
-    }
-    if (status === "broken") {
-      return { label: "Broken (Repair)", className: "bg-red-500/15 text-red-300 border-red-500/40" };
-    }
-    return { label: "Needs Migration", className: "bg-amber-500/15 text-amber-300 border-amber-500/40" };
-  }, []);
-
   const content = useMemo(() => {
     if (isLoading) {
-      return (
-        <div className="space-y-2 text-sm text-muted-foreground">
-          <div>Loading campaigns...</div>
-          <Button size="sm" variant="outline" onClick={handleForceRefresh}>
-            Force Refresh
-          </Button>
-        </div>
-      );
+      return <div className="text-sm text-muted-foreground">Loading campaigns...</div>;
     }
     if (error) {
       return (
@@ -619,7 +853,7 @@ export default function DashboardScreen() {
         ) : null}
         {campaigns.map(campaign => (
           <Card key={campaign.id} className="border border-border">
-            <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <CardContent className="flex items-center justify-between p-4">
               <div>
                 <div className="text-sm font-semibold">{campaign.name}</div>
                 <div className="text-xs text-muted-foreground">Invite: {campaign.invite_code}</div>
@@ -628,66 +862,14 @@ export default function DashboardScreen() {
                     Members: {membersByCampaign[campaign.id]}
                   </div>
                 ) : null}
-                {(() => {
-                  const health = mythicHealthByCampaign[campaign.id];
-                  const badge = healthBadge(health);
-                  return (
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <span className={`inline-flex rounded border px-2 py-1 text-[11px] ${badge.className}`}>
-                        {badge.label}
-                      </span>
-                      {health?.detail ? (
-                        <span className="text-[11px] text-muted-foreground">{health.detail}</span>
-                      ) : null}
-                    </div>
-                  );
-                })()}
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => navigate(`/mythic/${campaign.id}`)}>Open</Button>
-                {mythicHealthByCampaign[campaign.id]?.status !== "ready" ? (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleRepairCampaign(campaign.id)}
-                    disabled={repairingCampaignId === campaign.id}
-                  >
-                    {repairingCampaignId === campaign.id ? "Repairing..." : "Repair"}
-                  </Button>
-                ) : null}
-                {campaign.owner_id === activeUserId ? (
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    onClick={() => handleDeleteCampaign(campaign)}
-                    disabled={isDeleting}
-                  >
-                    Delete
-                  </Button>
-                ) : null}
-              </div>
+              <Button size="sm" onClick={() => navigate(`/game/${campaign.id}`)}>Open</Button>
             </CardContent>
           </Card>
         ))}
       </div>
     );
-  }, [
-    activeUserId,
-    campaigns,
-    error,
-    handleDeleteCampaign,
-    handleForceRefresh,
-    handleRepairCampaign,
-    handleRetry,
-    healthBadge,
-    isDeleting,
-    isLoading,
-    membersByCampaign,
-    membersError,
-    mythicHealthByCampaign,
-    navigate,
-    repairingCampaignId,
-  ]);
+  }, [campaigns, error, handleRetry, isLoading, membersByCampaign, membersError, navigate]);
 
   const dbStatusLabel = dbEnabled ? dbStatus : "paused";
 
@@ -697,42 +879,17 @@ export default function DashboardScreen() {
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">Your campaigns and access codes.</p>
         <div className="mt-2 text-xs text-muted-foreground">
-          Auth: {authLoading ? "loading" : (activeSession ? "session" : "guest")} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
+          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
         </div>
         {dbError ? (
           <div className="mt-1 text-xs text-destructive">DB Error: {dbError}</div>
         ) : null}
-        {dbStatusLabel === "error" ? (
-          <div className="mt-2">
-            <Button size="sm" variant="outline" onClick={handleForceRefresh}>
-              Force Refresh Campaigns
-            </Button>
-          </div>
-        ) : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
-        <Card id="campaigns">
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
+        <Card>
+          <CardHeader>
             <CardTitle className="text-base">Campaigns</CardTitle>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleRepairAll}
-                disabled={isRepairingAll || campaigns.length === 0}
-              >
-                {isRepairingAll ? "Repairing..." : "Migrate All"}
-              </Button>
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={handleDeleteAll}
-                disabled={isDeleting || campaigns.length === 0}
-              >
-                {isDeleting ? "Deleting..." : "Delete All"}
-              </Button>
-            </div>
           </CardHeader>
           <CardContent>{content}</CardContent>
         </Card>
@@ -789,57 +946,29 @@ export default function DashboardScreen() {
               <CardTitle className="text-base">Create campaign</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <PromptAssistField
-                value={newCampaignName}
-                onChange={setNewCampaignName}
-                fieldType="campaign_name"
+              <Input
                 placeholder="Campaign name"
+                value={newCampaignName}
+                onChange={e => setNewCampaignName(e.target.value)}
                 onBlur={() => setNameTouched(true)}
-                disabled={isCreating}
-                maxLength={80}
               />
               {showNameError ? (
                 <div className="text-xs text-destructive">Campaign name is required.</div>
               ) : null}
-              <PromptAssistField
-                value={newCampaignDescription}
-                onChange={setNewCampaignDescription}
-                fieldType="campaign_description"
+              <Textarea
                 placeholder="Campaign description"
-                multiline
-                minRows={5}
-                disabled={isCreating}
+                value={newCampaignDescription}
+                onChange={e => setNewCampaignDescription(e.target.value)}
                 onBlur={() => setDescriptionTouched(true)}
-                maxLength={2000}
               />
-              <div className="space-y-1">
-                <div className="text-xs text-muted-foreground">World template</div>
-                <div className="flex flex-wrap gap-2">
-                  {CAMPAIGN_TEMPLATES.map((template) => (
-                    <Button
-                      key={template.key}
-                      type="button"
-                      size="sm"
-                      variant={newCampaignTemplate === template.key ? "default" : "secondary"}
-                      onClick={() => setNewCampaignTemplate(template.key)}
-                      disabled={isCreating}
-                    >
-                      {template.label}
-                    </Button>
-                  ))}
-                </div>
-              </div>
               {showDescriptionError ? (
                 <div className="text-xs text-destructive">Campaign description is required.</div>
               ) : null}
               {createError ? (
                 <div className="text-xs text-destructive">{createError}</div>
               ) : null}
-              {createStatus ? (
-                <div className="text-xs text-muted-foreground">{createStatus}</div>
-              ) : null}
-              <Button onClick={handleCreate} disabled={authLoading || isCreating || !isCreateValid}>
-                {isCreating ? "Creating..." : "Create"}
+              <Button onClick={handleCreate} disabled={isCreating || isGenerating || !isCreateValid}>
+                {isCreating || isGenerating ? "Creating..." : "Create"}
               </Button>
             </CardContent>
           </Card>
