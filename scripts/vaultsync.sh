@@ -4,11 +4,32 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-BRANCH="${1:-main}"
+BRANCH="main"
 SYNC_ORIGIN="${SYNC_ORIGIN:-0}"
-if [[ "${2:-}" == "--push-origin" ]] || [[ "${1:-}" == "--push-origin" ]]; then
-  SYNC_ORIGIN=1
-fi
+BRANCH_SET=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --push-origin)
+      SYNC_ORIGIN=1
+      shift
+      ;;
+    -h|--help)
+      echo "Usage: scripts/vaultsync.sh [branch] [--push-origin]"
+      exit 0
+      ;;
+    *)
+      if [[ "$BRANCH_SET" -eq 1 ]]; then
+        echo "Unexpected argument: $1"
+        echo "Usage: scripts/vaultsync.sh [branch] [--push-origin]"
+        exit 1
+      fi
+      BRANCH="$1"
+      BRANCH_SET=1
+      shift
+      ;;
+  esac
+done
 
 git fetch --all --prune
 

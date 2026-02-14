@@ -34,6 +34,38 @@ What this script does:
 - fast-forwards from vault when behind
 - fails fast if local is ahead/diverged from vault (so vault stays canonical)
 
+### Nightly auto-sync (macOS launchd)
+
+Install nightly job (default 03:15 local time):
+
+```bash
+scripts/install-vaultsync-launchd.sh
+```
+
+Install with custom time:
+
+```bash
+VAULTSYNC_HOUR=2 VAULTSYNC_MINUTE=30 scripts/install-vaultsync-launchd.sh
+```
+
+Check status:
+
+```bash
+launchctl print "gui/$(id -u)/com.sagaspark.vaultsync" | rg "state =|last exit code =|path ="
+```
+
+Watch logs:
+
+```bash
+tail -f "$HOME/Library/Logs/saga-spark-vaultsync.log"
+```
+
+Remove job:
+
+```bash
+scripts/uninstall-vaultsync-launchd.sh
+```
+
 ## Supabase bootstrap (new project)
 
 1) Update `.env` with the new project URL and anon key (`VITE_SUPABASE_ANON_KEY`).
