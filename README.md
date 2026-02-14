@@ -11,6 +11,29 @@ npm install
 npm run dev
 ```
 
+## Vault source-of-truth sync
+
+This repo is configured so `vault/main` is the canonical upstream.
+
+One-command sync from vault:
+
+```bash
+scripts/vaultsync.sh
+```
+
+Sync and then mirror to GitHub `origin`:
+
+```bash
+scripts/vaultsync.sh --push-origin
+```
+
+What this script does:
+- fetches/prunes all remotes
+- ensures `main` tracks `vault/main`
+- enforces `remote.pushDefault=vault`
+- fast-forwards from vault when behind
+- fails fast if local is ahead/diverged from vault (so vault stays canonical)
+
 ## Supabase bootstrap (new project)
 
 1) Update `.env` with the new project URL and anon key (`VITE_SUPABASE_ANON_KEY`).
