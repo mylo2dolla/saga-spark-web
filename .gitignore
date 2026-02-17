@@ -27,6 +27,8 @@ dist-ssr
 # Supabase local temp
 supabase/.temp/
 .vercel
+.env
+.env.*
 .env*.local
 
 # Playwright CLI snapshots generated during smoke runs
