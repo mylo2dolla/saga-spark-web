@@ -119,21 +119,23 @@ export default function SupabaseDebugScreen() {
     try {
       const result = await supabase.auth.signInWithPassword({ email, password });
       if (result.error) {
+        const authError = result.error;
         setSignInResult({
           error: {
-            name: (result.error as { name?: string })?.name,
-            message: result.error.message,
+            name: authError.name,
+            message: authError.message,
             cause: {
-              status: (result.error as { status?: number })?.status,
-              __isAuthError: (result.error as { __isAuthError?: boolean })?.__isAuthError,
+              status: (authError as { status?: number })?.status,
+              code: (authError as { code?: string })?.code,
             },
           },
         });
         return;
       }
+      const nextSession = result.data.session;
       setSignInResult({
-        ok: Boolean(result.session),
-        text: result.session ? `user ${result.user?.id}` : "no session",
+        ok: Boolean(nextSession),
+        text: nextSession ? `user ${result.data.user?.id ?? nextSession.user?.id}` : "no session",
       });
     } catch (error) {
       setSignInResult({ error: formatError(error) });

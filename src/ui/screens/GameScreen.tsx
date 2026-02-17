@@ -29,6 +29,7 @@ export default function GameScreen() {
   const [combatState, setCombatState] = useState<"idle" | "active">("idle");
   const [combatMessage, setCombatMessage] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [, setUiTick] = useState(0);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const DEV_DEBUG = import.meta.env.DEV;
   const { character } = useCharacter(campaignId);
@@ -214,17 +215,36 @@ export default function GameScreen() {
         {
           title: gameSession.campaignSeed.title,
           description: gameSession.campaignSeed.description ?? "",
-          themes: gameSession.campaignSeed.themes ?? [],
+          themes: [...(gameSession.campaignSeed.themes ?? [])],
         },
         { campaignId, worldState: { currentLocationId: location.id } }
       );
       if (generated) {
         const newId = normalizeId(generated.id || generated.name || `location-${existingIds.size + 1}`);
         newLocations.push({
-          ...generated,
           id: newId,
+          name: generated.name ?? `Location ${newId}`,
+          description: generated.description ?? "",
+          type: (generated.type as EnhancedLocation["type"]) ?? "town",
+          dangerLevel: generated.dangerLevel ?? Math.max(1, location.dangerLevel ?? 1),
+          position: generated.position ?? {
+            x: (location.position?.x ?? 200) + 64 + i * 12,
+            y: (location.position?.y ?? 200) + 44 + i * 8,
+          },
           connectedTo: [location.id],
-        } as EnhancedLocation);
+          radius: 30,
+          discovered: false,
+          items: [],
+          npcs: [],
+          factionControl: null,
+          travelTime: {},
+          questHooks: [],
+          ambientDescription: generated.description ?? location.description ?? "",
+          shops: [],
+          inn: true,
+          services: ["rest", "trade"],
+          currentEvents: [],
+        });
       }
     }
 
@@ -466,7 +486,7 @@ export default function GameScreen() {
       knownLocations: Array.from(safeWorld.locations.keys()),
       storyFlags: Array.from(safeWorld.storyFlags.keys()),
       activeQuests: Array.from(safeWorld.quests.values())
-        .filter(quest => quest.status !== "completed")
+        .filter(quest => quest.state !== "completed")
         .map(quest => quest.title),
       travel: {
         currentLocationId: gameSession.travelState?.currentLocationId ?? null,

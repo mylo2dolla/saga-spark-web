@@ -34,9 +34,6 @@ export function useClassGenerator() {
         console.error("[auth] supabase error", {
           message: sessionError.message,
           code: sessionError.code,
-          details: sessionError.details,
-          hint: sessionError.hint,
-          status: sessionError.status,
         });
       }
       console.info("[generateClass] start", {
