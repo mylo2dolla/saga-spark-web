@@ -36,8 +36,8 @@ export function getConfig(): MythicApiConfig {
 
   const allowedOrigins = splitCsv(process.env.MYTHIC_ALLOWED_ORIGINS);
 
-  const supabaseJwtIssuer = `${supabaseUrl.replace(/\\/$/, "")}/auth/v1`;
-  const supabaseJwksUrl = `${supabaseUrl.replace(/\\/$/, "")}/auth/v1/.well-known/jwks.json`;
+  const supabaseJwtIssuer = `${supabaseUrl.replace(/\/$/, "")}/auth/v1`;
+  const supabaseJwksUrl = `${supabaseUrl.replace(/\/$/, "")}/auth/v1/.well-known/jwks.json`;
 
   const openaiApiKey = (process.env.OPENAI_API_KEY ?? "").trim() || null;
   const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com").trim();
@@ -58,4 +58,3 @@ export function getConfig(): MythicApiConfig {
     openaiBaseUrl,
   };
 }
-
