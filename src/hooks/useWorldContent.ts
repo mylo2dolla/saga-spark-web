@@ -196,7 +196,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
 
     const newNPCs = new Map(baseWorld.npcs);
     const newQuests = new Map(baseWorld.quests);
-    const newLocations = new Map(baseWorld.locations);
+    const newLocations = new Map(baseWorld.locations as ReadonlyMap<string, EnhancedLocation>);
     const newStoryFlags = new Map(baseWorld.storyFlags);
     const hasRealContentLocations = contentLocations.some(
       location => location.id !== "starting_location"
@@ -245,7 +245,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       ...baseWorld,
       npcs: newNPCs,
       quests: newQuests,
-      locations: resolvedLocations,
+      locations: resolvedLocations as unknown as ReadonlyMap<string, Location>,
       storyFlags: newStoryFlags,
       campaignSeed: {
         ...baseWorld.campaignSeed,

@@ -15,9 +15,9 @@ import { useWorldGenerator, type GeneratedWorld } from "@/hooks/useWorldGenerato
 import { useGamePersistence } from "@/hooks/useGamePersistence";
 import { createUnifiedState, serializeUnifiedState, type UnifiedState } from "@/engine/UnifiedState";
 import * as World from "@/engine/narrative/World";
-import { createTravelState, type TravelState, type EnhancedLocation } from "@/engine/narrative/Travel";
+import { createTravelState, type TravelState, type EnhancedLocation, type LocationService, type LocationType } from "@/engine/narrative/Travel";
 import { type TravelWorldState } from "@/engine/narrative/TravelPersistence";
-import type { CampaignSeed } from "@/engine/narrative/types";
+import type { Alignment, CampaignSeed, CharacterProgression, FactionInfo, Item, NPC, Quest as QuestType, StoryFlag } from "@/engine/narrative/types";
 import type { Json } from "@/integrations/supabase/types";
 import { toast } from "sonner";
 import { recordCampaignsRead, recordSavesRead } from "@/ui/data/networkHealth";
@@ -44,7 +44,7 @@ export interface GameSessionState {
   lastActionEvent: WorldEventRecord | null;
   lastActionDelta: unknown | null;
   lastActionAt: number | null;
-  lastActionSource: "loaded" | "generated" | "deduped" | null;
+  lastActionSource: "loaded" | "generated" | "deduped" | "realtime" | null;
   lastActionHash: string | null;
   worldEvents: WorldEventRecord[];
   worldEventsStatus: "idle" | "loading" | "ok" | "error";
@@ -227,7 +227,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         campaignId,
         userId,
         message: error.message,
-        status: error.status,
       });
       return null;
     }
@@ -264,7 +263,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         campaignId,
         userId,
         message: error.message,
-        status: error.status,
       });
       const message = error.message || "Failed to load world events";
       setSessionState(prev => ({
@@ -347,11 +345,13 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     return value.filter((item): item is string => typeof item === "string");
   }, []);
 
-  const normalizeMap = useCallback(<T,>(value: unknown): Map<string, T> => {
-    if (value instanceof Map) return value as Map<string, T>;
-    if (Array.isArray(value)) return new Map(value as Array<[string, T]>);
+  const normalizeMap = useCallback(<T,>(
+    value: ReadonlyMap<string, T> | Map<string, T> | Array<[string, T]> | Record<string, T> | null | undefined,
+  ): Map<string, T> => {
+    if (value instanceof Map) return new Map(value);
+    if (Array.isArray(value)) return new Map(value);
     if (value && typeof value === "object") {
-      return new Map(Object.entries(value as Record<string, T>));
+      return new Map(Object.entries(value));
     }
     return new Map<string, T>();
   }, []);
@@ -359,12 +359,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const normalizeWorldMaps = useCallback((world: UnifiedState["world"]) => {
     return {
       ...world,
-      npcs: normalizeMap(world.npcs),
-      quests: normalizeMap(world.quests),
-      items: normalizeMap(world.items),
-      locations: normalizeMap(world.locations),
-      storyFlags: normalizeMap(world.storyFlags),
-      playerProgression: normalizeMap(world.playerProgression),
+      npcs: normalizeMap<NPC>(world.npcs),
+      quests: normalizeMap<QuestType>(world.quests),
+      items: normalizeMap<Item>(world.items),
+      locations: normalizeMap<EnhancedLocation>(world.locations as unknown as ReadonlyMap<string, EnhancedLocation>),
+      storyFlags: normalizeMap<StoryFlag>(world.storyFlags),
+      playerProgression: normalizeMap<CharacterProgression>(world.playerProgression),
     };
   }, [normalizeMap]);
 
@@ -399,7 +399,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   ): UnifiedState => {
     if (!delta || typeof delta !== "object") return unified;
     const deltaObj = delta as Record<string, unknown>;
-    const nextLocations = new Map(unified.world.locations);
+    const nextLocations = new Map(unified.world.locations as ReadonlyMap<string, EnhancedLocation>);
     const nextFlags = new Map(unified.world.storyFlags);
 
     const rawLocations = Array.isArray(deltaObj.locations) ? deltaObj.locations : [];
@@ -426,7 +426,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         dangerLevel: normalized.dangerLevel ?? existing?.dangerLevel ?? 1,
         factionControl: existing?.factionControl ?? null,
         questHooks: existing?.questHooks ?? [],
-        services: normalized.services.length > 0 ? normalized.services as readonly string[] : (existing?.services ?? ["rest", "trade"]),
+        services: normalized.services.length > 0 ? normalized.services as readonly LocationService[] : (existing?.services ?? ["rest", "trade"]),
         ambientDescription: normalized.ambientDescription ?? existing?.ambientDescription ?? normalized.description ?? existing?.description ?? "",
         shops: existing?.shops ?? [],
         inn: existing?.inn ?? true,
@@ -610,7 +610,61 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, ""), []);
 
-  const normalizeLocations = useCallback((locations: GeneratedWorld["locations"]) => {
+  const toLocationType = useCallback((value: string | undefined): LocationType => {
+    const normalized = (value ?? "").toLowerCase();
+    switch (normalized) {
+      case "town":
+      case "city":
+      case "village":
+      case "dungeon":
+      case "wilderness":
+      case "ruins":
+      case "stronghold":
+      case "temple":
+      case "cave":
+      case "forest":
+      case "mountain":
+      case "coast":
+      case "swamp":
+        return normalized;
+      case "fort":
+        return "stronghold";
+      case "port":
+        return "coast";
+      default:
+        return "town";
+    }
+  }, []);
+
+  const toAlignment = useCallback((value: string | undefined): Alignment => {
+    const normalized = (value ?? "").toLowerCase();
+    const allowed: Alignment[] = [
+      "lawful_good",
+      "neutral_good",
+      "chaotic_good",
+      "lawful_neutral",
+      "true_neutral",
+      "chaotic_neutral",
+      "lawful_evil",
+      "neutral_evil",
+      "chaotic_evil",
+    ];
+    return allowed.includes(normalized as Alignment) ? (normalized as Alignment) : "true_neutral";
+  }, []);
+
+  const normalizeGeneratedFactions = useCallback((factions: GeneratedWorld["factions"] | undefined): FactionInfo[] => {
+    return (factions ?? []).map((faction): FactionInfo => ({
+      id: faction.id,
+      name: faction.name,
+      description: faction.description,
+      alignment: toAlignment(faction.alignment),
+      goals: [...(faction.goals ?? [])],
+      enemies: [...(faction.enemies ?? [])],
+      allies: [...(faction.allies ?? [])],
+    }));
+  }, [toAlignment]);
+
+  const normalizeLocations = useCallback((locations: GeneratedWorld["locations"]): EnhancedLocation[] => {
     const seenIds = new Set<string>();
     return locations.map((location, index) => {
       const baseName = location.name?.trim() || `location-${index + 1}`;
@@ -629,12 +683,28 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         ? { x: location.position.x, y: location.position.y }
         : createDeterministicPosition(uniqueId);
       return {
-        ...location,
         id: uniqueId,
+        name: location.name || baseName,
+        description: location.description || "",
+        type: toLocationType(location.type),
+        dangerLevel: typeof location.dangerLevel === "number" ? location.dangerLevel : 1,
         position,
+        connectedTo: Array.isArray(location.connectedTo) ? location.connectedTo : [],
+        radius: 30,
+        discovered: false,
+        items: [],
+        npcs: [],
+        factionControl: null,
+        travelTime: {},
+        questHooks: [],
+        ambientDescription: location.description || "",
+        shops: [],
+        inn: true,
+        services: ["rest", "trade"],
+        currentEvents: [],
       };
     });
-  }, [createDeterministicPosition, toKebab]);
+  }, [createDeterministicPosition, toKebab, toLocationType]);
 
   const persistGeneratedContent = useCallback(async (
     content: Array<{
@@ -689,14 +759,34 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     const noun = nouns[(hash >>> 8) % nouns.length];
     const name = `${adjective} ${noun}`;
     const id = preferredId ?? `location-${index + 1}`;
+    const locationType = ([
+      "town",
+      "ruins",
+      "forest",
+      "cave",
+      "stronghold",
+      "coast",
+    ] as const)[(hash >>> 4) % 6] ?? "town";
     return {
       id,
       name,
       description: seed.description || `A region tied to ${seed.title}.`,
-      type: (["town", "ruins", "forest", "cave", "fort", "port"][(hash >>> 4) % 6] ?? "town"),
+      type: locationType,
       dangerLevel: 1 + (hash % 6),
       position: createDeterministicPosition(`${seed.id}:${id}`),
       connectedTo: [],
+      radius: 30,
+      discovered: false,
+      items: [],
+      npcs: [],
+      factionControl: null,
+      travelTime: {},
+      questHooks: [],
+      ambientDescription: seed.description || `A region tied to ${seed.title}.`,
+      shops: [],
+      inn: true,
+      services: ["rest", "trade"],
+      currentEvents: [],
     };
   }, [createDeterministicPosition, hashString]);
 
@@ -704,9 +794,9 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     seed: CampaignSeed,
     locations: EnhancedLocation[],
     minimumCount: number
-  ) => {
+  ): EnhancedLocation[] => {
     const existingIds = new Set<string>();
-    const normalized = locations.map(loc => {
+    const normalized: EnhancedLocation[] = locations.map(loc => {
       existingIds.add(loc.id);
       return {
         ...loc,
@@ -778,7 +868,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       addEdge(allIds[1], allIds[3] ?? allIds[0]);
     }
 
-    return normalized.map(loc => ({
+    return normalized.map<EnhancedLocation>(loc => ({
       ...loc,
       connectedTo: Array.from(connectionMap.get(loc.id) ?? []),
     }));
@@ -791,7 +881,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   ) => {
     if (addCount <= 0) return locations;
     const existingIds = new Set(locations.map(loc => loc.id));
-    const expanded = [...locations];
+    const expanded: EnhancedLocation[] = [...locations];
     let index = locations.length;
     const ensureUniqueId = (baseId: string) => {
       let candidate = baseId;
@@ -833,7 +923,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         {
           title: campaignSeed.title,
           description: campaignSeed.description,
-          themes: campaignSeed.themes ?? [],
+          themes: [...(campaignSeed.themes ?? [])],
         },
         { campaignId }
       );
@@ -843,7 +933,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           {
             title: `${campaignSeed.title} (retry)`,
             description: campaignSeed.description,
-            themes: campaignSeed.themes ?? [],
+            themes: [...(campaignSeed.themes ?? [])],
           },
           { campaignId }
         );
@@ -933,11 +1023,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       unifiedState = {
         ...unifiedState,
         world: mergeIntoWorldState(unifiedState.world, {
-          factions: generated?.factions ?? [],
+          factions: normalizeGeneratedFactions(generated?.factions),
           npcs: [],
           quests: [],
           locations: normalizedLocations as unknown as EnhancedLocation[],
           worldHooks: generated?.worldHooks ?? [],
+          storyFlags: [],
         }),
       };
 
@@ -1002,6 +1093,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     lastEdgeError,
     mergeIntoWorldState,
     normalizeLocations,
+    normalizeGeneratedFactions,
     persistence,
     worldContent,
     ensureMinimumWorldGraph,
@@ -1336,7 +1428,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       quests: Array.from(normalizedWorld.quests.values()).map(quest => ({
         id: quest.id,
         title: quest.title,
-        status: quest.status,
+        status: quest.state,
       })),
       storyFlags: Array.from(normalizedWorld.storyFlags.values()).map(flag => ({
         id: flag.id,
@@ -1565,6 +1657,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       quests: [],
       locations: expandedLocations,
       worldHooks: [],
+      storyFlags: [],
     });
     const nextUnified = {
       ...sessionState.unifiedState,

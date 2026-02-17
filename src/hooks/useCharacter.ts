@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { toast } from "sonner";
 import { formatError } from "@/ui/data/async";
 
@@ -69,13 +70,44 @@ export interface CharacterPayload {
   backpack: Record<string, unknown>[];
 }
 
-const mapCharacterRow = (data: Character) => ({
-  ...data,
-  stats: data.stats as unknown as CharacterStats,
-  abilities: (data.abilities as unknown as CharacterAbility[]) ?? [],
-  inventory: (data.inventory as unknown as Record<string, unknown>[]) ?? [],
-  position: data.position as unknown as { x: number; y: number } | null,
-});
+type CharacterRow = Database["public"]["Tables"]["characters"]["Row"];
+
+const DEFAULT_STATS: CharacterStats = {
+  strength: 10,
+  dexterity: 10,
+  constitution: 10,
+  intelligence: 10,
+  wisdom: 10,
+  charisma: 10,
+};
+
+const readObject = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+const mapCharacterRow = (data: CharacterRow): Character => {
+  const statsObj = readObject(data.stats);
+  const positionObj = readObject(data.position);
+  return {
+    ...data,
+    stats: {
+      strength: Number(statsObj.strength ?? DEFAULT_STATS.strength),
+      dexterity: Number(statsObj.dexterity ?? DEFAULT_STATS.dexterity),
+      constitution: Number(statsObj.constitution ?? DEFAULT_STATS.constitution),
+      intelligence: Number(statsObj.intelligence ?? DEFAULT_STATS.intelligence),
+      wisdom: Number(statsObj.wisdom ?? DEFAULT_STATS.wisdom),
+      charisma: Number(statsObj.charisma ?? DEFAULT_STATS.charisma),
+    },
+    abilities: Array.isArray(data.abilities) ? (data.abilities as unknown as CharacterAbility[]) : [],
+    inventory: Array.isArray(data.inventory) ? (data.inventory as unknown as Record<string, unknown>[]) : [],
+    status_effects: Array.isArray(data.status_effects) ? data.status_effects : [],
+    position:
+      typeof positionObj.x === "number" && typeof positionObj.y === "number"
+        ? { x: positionObj.x, y: positionObj.y }
+        : null,
+  };
+};
 
 export function useCharacter(campaignId: string | undefined) {
   const [character, setCharacter] = useState<Character | null>(null);
@@ -110,9 +142,6 @@ export function useCharacter(campaignId: string | undefined) {
         console.error("[character] supabase error", {
           message: userError.message,
           code: userError.code,
-          details: userError.details,
-          hint: userError.hint,
-          status: userError.status,
         });
         throw userError;
       }
@@ -137,7 +166,6 @@ export function useCharacter(campaignId: string | undefined) {
           code: error.code,
           details: error.details,
           hint: error.hint,
-          status: error.status,
         });
         throw error;
       }
@@ -147,7 +175,7 @@ export function useCharacter(campaignId: string | undefined) {
           throw new Error("Character stats missing");
         }
         if (isMountedRef.current) {
-          setCharacter(mapCharacterRow(data as Character));
+          setCharacter(mapCharacterRow(data));
         }
         if (import.meta.env.DEV) {
           console.info("[character]", {
@@ -222,15 +250,15 @@ export function useCharacter(campaignId: string | undefined) {
     };
 
     const query = existingId
-      ? supabase.from("characters").update(dbPayload).eq("id", existingId)
-      : supabase.from("characters").insert([dbPayload]);
+      ? supabase.from("characters").update(dbPayload as Database["public"]["Tables"]["characters"]["Update"]).eq("id", existingId)
+      : supabase.from("characters").insert(dbPayload as Database["public"]["Tables"]["characters"]["Insert"]);
 
     const { data, error } = await query.select("*").maybeSingle();
     if (error) throw error;
     if (!data) {
       throw new Error("Character save returned no data");
     }
-    const next = mapCharacterRow(data as Character);
+    const next = mapCharacterRow(data);
     setCharacter(next);
     return next;
   }, []);
