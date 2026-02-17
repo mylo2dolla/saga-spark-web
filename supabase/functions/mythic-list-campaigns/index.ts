@@ -1,9 +1,12 @@
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { createLogger } from "../_shared/logger.ts";
+import { enforceRateLimit } from "../_shared/request_guard.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -34,6 +37,7 @@ type CampaignSummary = CampaignRow & {
 
 const toIsoDesc = (a: CampaignRow, b: CampaignRow) =>
   new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+const logger = createLogger("mythic-list-campaigns");
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
@@ -43,6 +47,15 @@ serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
+
+  const rateLimited = enforceRateLimit({
+    req,
+    route: "mythic-list-campaigns",
+    limit: 60,
+    windowMs: 60_000,
+    corsHeaders,
+  });
+  if (rateLimited) return rateLimited;
 
   try {
     const authHeader = req.headers.get("Authorization");
@@ -116,18 +129,9 @@ serve(async (req) => {
 
     const ids = campaigns.map((c) => c.id);
 
-    const [
-      { data: allMembers, error: allMembersError },
-      { data: worldProfiles, error: worldProfilesError },
-      { data: activeBoards, error: activeBoardsError },
-    ] = await Promise.all([
+    const [{ data: allMembers, error: allMembersError }, { data: activeBoards, error: activeBoardsError }] = await Promise.all([
       svc
         .from("campaign_members")
-        .select("campaign_id")
-        .in("campaign_id", ids),
-      svc
-        .schema("mythic")
-        .from("campaign_world_profiles")
         .select("campaign_id")
         .in("campaign_id", ids),
       svc
@@ -139,8 +143,27 @@ serve(async (req) => {
     ]);
 
     if (allMembersError) throw allMembersError;
-    if (worldProfilesError) throw worldProfilesError;
     if (activeBoardsError) throw activeBoardsError;
+
+    let worldProfiles: Array<{ campaign_id: string }> = [];
+    {
+      const primary = await svc
+        .schema("mythic")
+        .from("world_profiles")
+        .select("campaign_id")
+        .in("campaign_id", ids);
+      if (primary.error) {
+        const fallback = await svc
+          .schema("mythic")
+          .from("campaign_world_profiles")
+          .select("campaign_id")
+          .in("campaign_id", ids);
+        if (fallback.error) throw fallback.error;
+        worldProfiles = (fallback.data ?? []) as Array<{ campaign_id: string }>;
+      } else {
+        worldProfiles = (primary.data ?? []) as Array<{ campaign_id: string }>;
+      }
+    }
 
     const memberCounts: Record<string, number> = {};
     for (const row of allMembers ?? []) {
@@ -178,13 +201,15 @@ serve(async (req) => {
       };
     });
 
+    logger.info("list_campaigns.success", { user_id: user.id, campaign_count: summaries.length });
     return new Response(JSON.stringify({ ok: true, campaigns: summaries }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("mythic-list-campaigns error:", error);
-    const message = error instanceof Error ? error.message : "Failed to list campaigns";
+    const normalized = sanitizeError(error);
+    logger.error("list_campaigns.failed", error);
+    const message = normalized.message || "Failed to list campaigns";
     return new Response(JSON.stringify({ ok: false, error: message }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

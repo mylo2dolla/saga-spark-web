@@ -2,10 +2,18 @@ import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { rngInt, rngPick } from "../_shared/mythic_rng.ts";
+import { createLogger } from "../_shared/logger.ts";
+import {
+  enforceRateLimit,
+  getIdempotentResponse,
+  idempotencyKeyFromRequest,
+  storeIdempotentResponse,
+} from "../_shared/request_guard.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -43,6 +51,7 @@ type Combatant = {
 };
 
 type TurnRow = { turn_index: number; combatant_id: string };
+const logger = createLogger("mythic-combat-tick");
 
 async function appendEvent(
   svc: ReturnType<typeof createClient>,
@@ -157,6 +166,15 @@ serve(async (req) => {
     });
   }
 
+  const rateLimited = enforceRateLimit({
+    req,
+    route: "mythic-combat-tick",
+    limit: 80,
+    windowMs: 60_000,
+    corsHeaders,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -193,6 +211,15 @@ serve(async (req) => {
 
     const { campaignId, combatSessionId, maxSteps } = parsed.data;
     const svc = createClient(supabaseUrl, serviceRoleKey);
+    const idempotencyHeader = idempotencyKeyFromRequest(req);
+    const idempotencyKey = idempotencyHeader ? `${user.id}:${idempotencyHeader}` : null;
+    if (idempotencyKey) {
+      const cached = getIdempotentResponse(idempotencyKey);
+      if (cached) {
+        logger.info("combat_tick.idempotent_hit", { campaign_id: campaignId, combat_session_id: combatSessionId });
+        return cached;
+      }
+    }
 
     const { data: campaign, error: campaignErr } = await svc
       .from("campaigns")
@@ -567,7 +594,7 @@ serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({
+    const response = new Response(JSON.stringify({
       ok: true,
       ticks,
       ended,
@@ -578,9 +605,21 @@ serve(async (req) => {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+    if (idempotencyKey) {
+      storeIdempotentResponse(idempotencyKey, response, 15_000);
+    }
+    logger.info("combat_tick.success", {
+      campaign_id: campaignId,
+      combat_session_id: combatSessionId,
+      ticks,
+      ended,
+      requires_player_action: requiresPlayerAction,
+    });
+    return response;
   } catch (error) {
-    console.error("mythic-combat-tick error:", error);
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Failed to tick combat" }), {
+    logger.error("combat_tick.failed", error);
+    const normalized = sanitizeError(error);
+    return new Response(JSON.stringify({ error: normalized.message || "Failed to tick combat", code: normalized.code ?? "combat_tick_failed" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

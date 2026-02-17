@@ -2,10 +2,13 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { rngInt, rngPick } from "../_shared/mythic_rng.ts";
+import { createLogger } from "../_shared/logger.ts";
+import { enforceRateLimit } from "../_shared/request_guard.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -19,6 +22,7 @@ const syllableA = [
 const syllableB = [
   "hold", "bridge", "hollow", "reach", "mark", "port", "spire", "vale", "cross", "ford", "fall", "gate",
 ];
+const logger = createLogger("mythic-bootstrap");
 
 const hashSeed = (input: string): number => {
   let hash = 0;
@@ -69,6 +73,15 @@ serve(async (req) => {
     });
   }
 
+  const rateLimited = enforceRateLimit({
+    req,
+    route: "mythic-bootstrap",
+    limit: 30,
+    windowMs: 60_000,
+    corsHeaders,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -105,6 +118,7 @@ serve(async (req) => {
     }
 
     const { campaignId } = parsed.data;
+    logger.info("bootstrap.start", { campaign_id: campaignId });
 
     // Service role client for mythic schema writes (no RLS yet, but schema grants may still be restrictive).
     const svc = createClient(supabaseUrl, serviceRoleKey);
@@ -185,36 +199,44 @@ serve(async (req) => {
 
     const profileTitle = String((campaign as { name?: string | null })?.name ?? "").trim();
     const profileDescription = String((campaign as { description?: string | null })?.description ?? "").trim();
+    const profilePayload = {
+      campaign_id: campaignId,
+      seed_title: profileTitle.length > 0 ? profileTitle : `Campaign ${campaignId.slice(0, 8)}`,
+      seed_description: profileDescription.length > 0 ? profileDescription : "World seed generated from campaign bootstrap.",
+      template_key: "custom",
+      world_profile_json: {
+        source: "mythic-bootstrap",
+        campaign_name: profileTitle,
+        campaign_description: profileDescription,
+      },
+    };
+
     const { error: profileErr } = await svc
       .schema("mythic")
-      .from("campaign_world_profiles")
+      .from("world_profiles")
       .upsert(
-        {
-          campaign_id: campaignId,
-          seed_title: profileTitle.length > 0 ? profileTitle : `Campaign ${campaignId.slice(0, 8)}`,
-          seed_description: profileDescription.length > 0 ? profileDescription : "World seed generated from campaign bootstrap.",
-          template_key: "custom",
-          world_profile_json: {
-            source: "mythic-bootstrap",
-            campaign_name: profileTitle,
-            campaign_description: profileDescription,
-          },
-        },
+        profilePayload,
         { onConflict: "campaign_id" },
       );
     if (profileErr) {
-      console.warn("mythic-bootstrap world profile warning:", profileErr);
+      logger.warn("bootstrap.world_profile.warning", { campaign_id: campaignId, error: profileErr.message ?? "unknown" });
       warnings.push(`world_profile_unavailable:${profileErr.message}`);
     }
+    await svc
+      .schema("mythic")
+      .from("campaign_world_profiles")
+      .upsert(profilePayload, { onConflict: "campaign_id" });
 
+    logger.info("bootstrap.success", { campaign_id: campaignId, warnings: warnings.length });
     return new Response(JSON.stringify({ ok: true, warnings }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("mythic-bootstrap error:", error);
+    logger.error("bootstrap.failed", error);
+    const normalized = sanitizeError(error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Failed to bootstrap campaign" }),
+      JSON.stringify({ error: normalized.message || "Failed to bootstrap campaign", code: normalized.code ?? "bootstrap_failed" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }

@@ -1,6 +1,9 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { callEdgeFunctionRaw } from "@/lib/edge";
+import { runOperation } from "@/lib/ops/runOperation";
+import type { OperationState } from "@/lib/ops/operationState";
+import { createLogger } from "@/lib/observability/logger";
 
 type MessageRole = "user" | "assistant";
 
@@ -16,10 +19,20 @@ interface SendOptions {
   appendUser?: boolean;
 }
 
+const MAX_HISTORY_MESSAGES = 16;
+const MAX_MESSAGE_CONTENT = 1800;
+
+const trimMessage = (content: string) =>
+  content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
+
+const logger = createLogger("mythic-dm-hook");
+
 export function useMythicDungeonMaster(campaignId: string | undefined) {
   const [messages, setMessages] = useState<MythicDMMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentResponse, setCurrentResponse] = useState("");
+  const [operation, setOperation] = useState<OperationState | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const parseResponse = (text: string): { narration: string; [k: string]: unknown } | null => {
     try {
@@ -45,22 +58,42 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
       const shouldAppendUser = options?.appendUser !== false;
       if (shouldAppendUser) setMessages((prev) => [...prev, userMessage]);
 
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
       setIsLoading(true);
       setCurrentResponse("");
 
       let assistantContent = "";
       try {
-        const response = await callEdgeFunctionRaw("mythic-dungeon-master", {
-          requireAuth: true,
-          body: {
-            campaignId,
-            messages: [...messages, userMessage].map((m) => ({ role: m.role, content: m.content })),
-          },
+        const { result: response } = await runOperation({
+          name: "mythic.dm.send",
+          signal: controller.signal,
+          timeoutMs: 30_000,
+          maxRetries: 1,
+          onUpdate: setOperation,
+          run: async ({ signal }) =>
+            await callEdgeFunctionRaw("mythic-dungeon-master", {
+              requireAuth: true,
+              signal,
+              idempotencyKey: `${campaignId}:${crypto.randomUUID()}`,
+              body: {
+                campaignId,
+                messages: [...messages, userMessage]
+                  .slice(-MAX_HISTORY_MESSAGES)
+                  .map((m) => ({ role: m.role, content: trimMessage(m.content) })),
+              },
+            }),
         });
 
         if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          throw new Error(errorData.error || `Request failed: ${response.status}`);
+          const errorData = await response.json().catch(() => ({} as Record<string, unknown>));
+          const baseMessage =
+            (typeof errorData.error === "string" && errorData.error) ||
+            (typeof errorData.message === "string" && errorData.message) ||
+            `Request failed: ${response.status}`;
+          const code = typeof errorData.code === "string" ? errorData.code : null;
+          throw new Error(code ? `${baseMessage} [${code}]` : baseMessage);
         }
 
         if (!response.body) throw new Error("No response body");
@@ -72,6 +105,10 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          if (controller.signal.aborted) {
+            await reader.cancel();
+            throw new Error("DM request cancelled");
+          }
           textBuffer += decoder.decode(value, { stream: true });
 
           let newlineIndex: number;
@@ -115,11 +152,12 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
 
         return { message: assistantMessage, parsed: parsedResponse };
       } catch (error) {
-        console.error("Mythic DM Error:", error);
+        logger.error("mythic.dm.send.failed", error);
         toast.error(error instanceof Error ? error.message : "Failed to reach Mythic DM");
         setCurrentResponse("");
         throw error;
       } finally {
+        abortRef.current = null;
         setIsLoading(false);
       }
     },
@@ -127,15 +165,22 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
   );
 
   const clearMessages = useCallback(() => {
+    abortRef.current?.abort();
     setMessages([]);
     setCurrentResponse("");
+  }, []);
+
+  const cancelMessage = useCallback(() => {
+    abortRef.current?.abort();
   }, []);
 
   return {
     messages,
     isLoading,
     currentResponse,
+    operation,
     sendMessage,
     clearMessages,
+    cancelMessage,
   };
 }

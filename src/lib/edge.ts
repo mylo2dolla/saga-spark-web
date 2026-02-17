@@ -1,4 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
+import { createLogger } from "@/lib/observability/logger";
+import { recordHealthFailure, recordHealthSuccess } from "@/lib/observability/health";
+import { recordEdgeCall, recordEdgeResponse } from "@/ui/data/networkHealth";
 
 type EdgeHeaders = Record<string, string>;
 
@@ -10,6 +13,9 @@ interface EdgeOptions {
   accessToken?: string | null;
   signal?: AbortSignal;
   timeoutMs?: number;
+  maxRetries?: number;
+  retryBaseMs?: number;
+  idempotencyKey?: string;
 }
 
 interface EdgeRawOptions extends EdgeOptions {
@@ -21,10 +27,22 @@ interface AuthContext {
   authError: Error | null;
 }
 
+const logger = createLogger("edge");
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const DEFAULT_EDGE_TIMEOUT_MS = 20_000;
 const AUTH_CALL_TIMEOUT_MS = 4_000;
+const REFRESH_BUFFER_MS = 60_000;
+const DEFAULT_MAX_RETRIES = 2;
+const DEFAULT_RETRY_BASE_MS = 350;
+const MAX_CONCURRENT_EDGE_CALLS = 6;
+const MAX_RESPONSE_SNIPPET = 2000;
+
+let activeEdgeCalls = 0;
+const edgeCallQueue: Array<() => void> = [];
+
+const inFlightJsonCalls = new Map<string, Promise<unknown>>();
+const inFlightRawCalls = new Map<string, Promise<Response>>();
 
 const ensureEnv = () => {
   if (!SUPABASE_URL || !ANON_KEY) {
@@ -32,12 +50,10 @@ const ensureEnv = () => {
   }
 };
 
-const REFRESH_BUFFER_MS = 60_000;
-
 const withAuthTimeout = async <T>(
   operation: () => Promise<T>,
   label: string,
-  timeoutMs = AUTH_CALL_TIMEOUT_MS
+  timeoutMs = AUTH_CALL_TIMEOUT_MS,
 ): Promise<T> => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
@@ -55,27 +71,6 @@ type SessionLike = {
   expires_at?: number | null;
 };
 
-const getStoredSession = (): SessionLike | null => {
-  if (typeof window === "undefined" || !window.localStorage || !SUPABASE_URL) return null;
-  const projectRef = SUPABASE_URL.replace("https://", "").split(".")[0];
-  if (!projectRef) return null;
-  const raw = window.localStorage.getItem(`sb-${projectRef}-auth-token`);
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as
-      | { currentSession?: SessionLike | null }
-      | SessionLike
-      | null;
-    const candidate = parsed && typeof parsed === "object" && "currentSession" in parsed
-      ? parsed.currentSession
-      : parsed;
-    if (!candidate || typeof candidate !== "object") return null;
-    return candidate.access_token ? candidate : null;
-  } catch {
-    return null;
-  }
-};
-
 const getSessionSafe = async (): Promise<{ session: SessionLike | null; error: Error | null }> => {
   try {
     const { data: { session }, error } = await withAuthTimeout(
@@ -83,14 +78,10 @@ const getSessionSafe = async (): Promise<{ session: SessionLike | null; error: E
       "Auth session fetch",
     );
     if (error && !session) {
-      const fallback = getStoredSession();
-      if (fallback) return { session: fallback, error: null };
       return { session: null, error };
     }
     return { session: session ?? null, error: null };
   } catch (error) {
-    const fallback = getStoredSession();
-    if (fallback) return { session: fallback, error: null };
     return {
       session: null,
       error: error instanceof Error ? error : new Error("Auth session fetch failed"),
@@ -119,13 +110,15 @@ const refreshSessionSafe = async (): Promise<{ session: SessionLike | null; erro
 const getAuthContext = async (requireAuth?: boolean): Promise<AuthContext> => {
   const { session: initialSession, error: sessionError } = await getSessionSafe();
   let activeSession = initialSession;
+
   if (sessionError && !activeSession?.access_token) {
     return { accessToken: null, authError: sessionError };
   }
+
   const expiresAt = activeSession?.expires_at ? activeSession.expires_at * 1000 : null;
   const shouldRefresh = Boolean(
     (requireAuth && !activeSession?.access_token)
-      || (expiresAt && expiresAt - Date.now() < REFRESH_BUFFER_MS)
+      || (expiresAt && expiresAt - Date.now() < REFRESH_BUFFER_MS),
   );
 
   if (shouldRefresh) {
@@ -146,6 +139,7 @@ const getAuthContext = async (requireAuth?: boolean): Promise<AuthContext> => {
       authError: new Error("You must be signed in to continue."),
     };
   }
+
   return { accessToken, authError: null };
 };
 
@@ -170,6 +164,7 @@ const buildHeaders = async (
       "Content-Type": "application/json",
       apikey: ANON_KEY,
       ...(options?.headers ?? {}),
+      ...(options?.idempotencyKey ? { "x-idempotency-key": options.idempotencyKey } : {}),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     skipped: false,
@@ -196,7 +191,7 @@ const fetchWithTimeout = async (
   name: string,
   timeoutMs: number,
   input: string,
-  init: RequestInit
+  init: RequestInit,
 ): Promise<Response> => {
   const timeoutController = new AbortController();
   const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
@@ -204,12 +199,20 @@ const fetchWithTimeout = async (
     ? combineSignals(init.signal, timeoutController.signal)
     : timeoutController.signal;
 
+  const startedAt = Date.now();
   try {
-    return await fetch(input, { ...init, signal });
+    recordEdgeCall();
+    const response = await fetch(input, { ...init, signal });
+    recordEdgeResponse();
+    recordHealthSuccess(`edge:${name}`, Date.now() - startedAt);
+    return response;
   } catch (error) {
     if (timeoutController.signal.aborted) {
-      throw new Error(`Edge function ${name} timed out after ${timeoutMs}ms`);
+      const timeoutError = new Error(`Edge function ${name} timed out after ${timeoutMs}ms`);
+      recordHealthFailure(`edge:${name}`, timeoutError, Date.now() - startedAt);
+      throw timeoutError;
     }
+    recordHealthFailure(`edge:${name}`, error, Date.now() - startedAt);
     throw error;
   } finally {
     clearTimeout(timeoutId);
@@ -219,14 +222,11 @@ const fetchWithTimeout = async (
 const buildInvokeHeaders = (headers?: EdgeHeaders) => {
   if (!headers) return undefined;
   const normalized: EdgeHeaders = { ...headers };
-  // supabase.functions.invoke already manages apikey/auth headers.
   delete normalized.Authorization;
   delete normalized.authorization;
   delete normalized.apikey;
   return normalized;
 };
-
-const MAX_RESPONSE_SNIPPET = 2000;
 
 const hasHeaderGetter = (value: unknown): value is { headers: { get: (name: string) => string | null } } => {
   if (!value || typeof value !== "object") return false;
@@ -250,7 +250,7 @@ const extractRequestId = (response?: Response | null, json?: unknown): string | 
 };
 
 const readResponseBody = async (
-  response?: Response | null
+  response?: Response | null,
 ): Promise<{ text: string | null; json: unknown | null }> => {
   if (!response || typeof (response as { clone?: unknown }).clone !== "function") {
     return { text: null, json: null };
@@ -277,7 +277,7 @@ const buildEdgeErrorMessage = (
   statusText: string | null,
   responseDetails: { text: string | null; json: unknown | null },
   fallback: string,
-  requestId: string | null
+  requestId: string | null,
 ) => {
   const json = responseDetails.json as
     | { message?: string; error?: string; details?: { message?: string } }
@@ -293,190 +293,325 @@ const buildEdgeErrorMessage = (
   return `Edge function ${name} failed (${status}${statusSuffix}): ${message}${requestSuffix}`;
 };
 
-const logEdgeFailure = async (
-  name: string,
-  status: number,
-  error: Error,
-  response?: Response | null
-) => {
-  const responseDetails = await readResponseBody(response);
-  const requestId = extractRequestId(response, responseDetails.json);
-  console.error("[edge] invoke failed", {
-    name,
-    status,
-    message: error.message,
-    requestId,
-    responseText: responseDetails.text,
-    responseJson: responseDetails.json,
-  });
+const shouldRetryStatus = (status: number) =>
+  status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+
+const shouldRetryError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("timed out") || message.includes("network") || message.includes("failed to fetch") || message.includes("edge_fetch_failed");
 };
+
+const waitBackoff = async (attempt: number, baseMs: number, signal?: AbortSignal) => {
+  const ms = Math.min(8_000, baseMs * 2 ** Math.max(0, attempt - 1));
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(new Error("Request cancelled"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+  return ms;
+};
+
+const withEdgeSlot = async <T>(run: () => Promise<T>): Promise<T> => {
+  if (activeEdgeCalls >= MAX_CONCURRENT_EDGE_CALLS) {
+    await new Promise<void>((resolve) => {
+      edgeCallQueue.push(resolve);
+    });
+  }
+
+  activeEdgeCalls += 1;
+  try {
+    return await run();
+  } finally {
+    activeEdgeCalls = Math.max(0, activeEdgeCalls - 1);
+    const next = edgeCallQueue.shift();
+    if (next) next();
+  }
+};
+
+const responseForAuthError = (authError: Error) => ({
+  data: null,
+  error: authError,
+  status: 401,
+  raw: new Response(null, { status: 401, statusText: "auth_required" }),
+  skipped: true,
+});
+
+const buildRequestHeaders = (options: EdgeOptions | undefined, token: string | null): EdgeHeaders => ({
+  "Content-Type": "application/json",
+  apikey: ANON_KEY,
+  ...(options?.headers ? buildInvokeHeaders(options.headers) ?? {} : {}),
+  ...(options?.idempotencyKey ? { "x-idempotency-key": options.idempotencyKey } : {}),
+  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+});
 
 export async function callEdgeFunction<T>(
   name: string,
-  options?: EdgeOptions
+  options?: EdgeOptions,
 ): Promise<{ data: T | null; error: Error | null; status: number; raw: Response; skipped: boolean }> {
   ensureEnv();
-  const overrideToken = options?.accessToken ?? null;
-  const baseAuth = overrideToken
-    ? { authError: null as Error | null, accessToken: overrideToken }
-    : await getAuthContext(options?.requireAuth);
-  if (baseAuth.authError) {
-    await logEdgeFailure(name, 401, baseAuth.authError, null);
-    return {
-      data: null,
-      error: baseAuth.authError,
-      status: 401,
-      raw: new Response(null, { status: 401, statusText: "auth_required" }),
-      skipped: true,
-    };
+
+  const dedupeKey = options?.idempotencyKey ? `${name}:${options.idempotencyKey}` : null;
+  if (dedupeKey && inFlightJsonCalls.has(dedupeKey)) {
+    const existing = inFlightJsonCalls.get(dedupeKey) as Promise<{ data: T | null; error: Error | null; status: number; raw: Response; skipped: boolean }>;
+    return await existing;
   }
 
-  const buildRequestHeaders = (token: string | null): EdgeHeaders => ({
-    "Content-Type": "application/json",
-    apikey: ANON_KEY,
-    ...(options?.headers ? buildInvokeHeaders(options.headers) ?? {} : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  });
+  const runPromise = withEdgeSlot(async () => {
+    const overrideToken = options?.accessToken ?? null;
+    const baseAuth = overrideToken
+      ? { authError: null as Error | null, accessToken: overrideToken }
+      : await getAuthContext(options?.requireAuth);
 
-  const runFetch = async (headers: EdgeHeaders): Promise<Response> =>
-    fetchWithTimeout(name, options?.timeoutMs ?? DEFAULT_EDGE_TIMEOUT_MS, buildUrl(name), {
-      method: options?.method ?? "POST",
-      headers,
-      body: options?.body ? JSON.stringify(options.body) : undefined,
-      signal: options?.signal,
-    });
+    if (baseAuth.authError) {
+      logger.error("auth.required", baseAuth.authError, { name });
+      return responseForAuthError(baseAuth.authError);
+    }
 
-  let response: Response;
-  try {
-    response = await runFetch(buildRequestHeaders(baseAuth.accessToken));
-  } catch (error) {
-    const edgeError = error instanceof Error ? error : new Error("Edge function request failed");
-    await logEdgeFailure(name, 599, edgeError, null);
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_EDGE_TIMEOUT_MS;
+    const maxRetries = Math.max(0, Math.floor(options?.maxRetries ?? DEFAULT_MAX_RETRIES));
+    const retryBaseMs = Math.max(100, Math.floor(options?.retryBaseMs ?? DEFAULT_RETRY_BASE_MS));
+    const url = buildUrl(name);
+    const method = options?.method ?? "POST";
+
+    let response: Response | null = null;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
+      const startedAt = Date.now();
+      try {
+        response = await fetchWithTimeout(name, timeoutMs, url, {
+          method,
+          headers: buildRequestHeaders(options, baseAuth.accessToken),
+          body: options?.body ? JSON.stringify(options.body) : undefined,
+          signal: options?.signal,
+        });
+      } catch (error) {
+        const edgeError = error instanceof Error ? error : new Error("Edge function request failed");
+        lastError = edgeError;
+        logger.error("invoke.error", edgeError, { name, attempt, method });
+        if (attempt <= maxRetries && shouldRetryError(edgeError)) {
+          const waitMs = await waitBackoff(attempt, retryBaseMs, options?.signal);
+          logger.warn("invoke.retry", { name, attempt, wait_ms: waitMs, reason: edgeError.message });
+          continue;
+        }
+        return {
+          data: null,
+          error: edgeError,
+          status: 599,
+          raw: new Response(null, { status: 599, statusText: "edge_fetch_failed" }),
+          skipped: false,
+        };
+      }
+
+      const responseDetails = await readResponseBody(response);
+      const requestId = extractRequestId(response, responseDetails.json);
+
+      if (!response.ok) {
+        const fallbackMessage = responseDetails.text ?? "Edge function request failed";
+        const message = buildEdgeErrorMessage(
+          name,
+          response.status,
+          response.statusText,
+          responseDetails,
+          fallbackMessage,
+          requestId,
+        );
+
+        // Retry once on auth invalid after refresh.
+        const shouldRefresh = response.status === 401 || message.toLowerCase().includes("invalid jwt");
+        if (shouldRefresh) {
+          const { session: refreshedSession, error: refreshError } = await refreshSessionSafe();
+          if (!refreshError && refreshedSession?.access_token) {
+            try {
+              response = await fetchWithTimeout(name, timeoutMs, url, {
+                method,
+                headers: buildRequestHeaders(options, refreshedSession.access_token),
+                body: options?.body ? JSON.stringify(options.body) : undefined,
+                signal: options?.signal,
+              });
+            } catch (error) {
+              const refreshFetchError = error instanceof Error ? error : new Error("Edge function request failed");
+              logger.error("invoke.refresh.error", refreshFetchError, { name, attempt });
+              return {
+                data: null,
+                error: refreshFetchError,
+                status: 599,
+                raw: new Response(null, { status: 599, statusText: "edge_fetch_failed" }),
+                skipped: false,
+              };
+            }
+            if (response.ok) {
+              const refreshedPayload = await readResponseBody(response);
+              if (refreshedPayload.json) {
+                recordHealthSuccess(`edge:${name}`, Date.now() - startedAt);
+                return { data: refreshedPayload.json as T, error: null, status: response.status, raw: response, skipped: false };
+              }
+            }
+          }
+        }
+
+        const error = new Error(message);
+        lastError = error;
+        logger.error("invoke.bad_status", error, {
+          name,
+          attempt,
+          status: response.status,
+          requestId,
+          responseText: responseDetails.text,
+        });
+
+        if (attempt <= maxRetries && shouldRetryStatus(response.status)) {
+          const waitMs = await waitBackoff(attempt, retryBaseMs, options?.signal);
+          logger.warn("invoke.retry", { name, attempt, wait_ms: waitMs, status: response.status });
+          continue;
+        }
+
+        recordHealthFailure(`edge:${name}`, error, Date.now() - startedAt);
+        return {
+          data: null,
+          error,
+          status: response.status,
+          raw: response,
+          skipped: false,
+        };
+      }
+
+      const payload = responseDetails.json as T | null;
+      if (payload) {
+        recordHealthSuccess(`edge:${name}`, Date.now() - startedAt);
+        return { data: payload, error: null, status: response.status, raw: response, skipped: false };
+      }
+
+      if (!responseDetails.text || responseDetails.text.trim().length === 0) {
+        recordHealthSuccess(`edge:${name}`, Date.now() - startedAt);
+        return { data: null, error: null, status: response.status, raw: response, skipped: false };
+      }
+
+      try {
+        const parsed = JSON.parse(responseDetails.text) as T;
+        recordHealthSuccess(`edge:${name}`, Date.now() - startedAt);
+        return { data: parsed, error: null, status: response.status, raw: response, skipped: false };
+      } catch (parseError) {
+        const parseErr = parseError instanceof Error ? parseError : new Error("Failed to parse edge response");
+        lastError = parseErr;
+        logger.error("invoke.parse_error", parseErr, { name, attempt, snippet: responseDetails.text });
+        if (attempt <= maxRetries) {
+          const waitMs = await waitBackoff(attempt, retryBaseMs, options?.signal);
+          logger.warn("invoke.retry", { name, attempt, wait_ms: waitMs, reason: "parse_error" });
+          continue;
+        }
+        return {
+          data: null,
+          error: parseErr,
+          status: response.status,
+          raw: response,
+          skipped: false,
+        };
+      }
+    }
+
+    const fallbackError = lastError ?? new Error("Edge function request failed after retries");
     return {
       data: null,
-      error: edgeError,
+      error: fallbackError,
       status: 599,
       raw: new Response(null, { status: 599, statusText: "edge_fetch_failed" }),
       skipped: false,
     };
-  }
-  let responseDetails = await readResponseBody(response);
-  let requestId = extractRequestId(response, responseDetails.json);
+  });
 
-  if (!response.ok) {
-    const fallbackMessage = responseDetails.text ?? "Edge function request failed";
-    const currentMessage = buildEdgeErrorMessage(
-      name,
-      response.status,
-      response.statusText,
-      responseDetails,
-      fallbackMessage,
-      requestId
-    );
-    const shouldRefresh = response.status === 401 || currentMessage.toLowerCase().includes("invalid jwt");
-    if (shouldRefresh) {
-      const { session: refreshedSession, error: refreshError } = await refreshSessionSafe();
-      const refreshedToken = refreshedSession?.access_token ?? null;
-      if (!refreshError && refreshedToken) {
-        try {
-          response = await runFetch(buildRequestHeaders(refreshedToken));
-        } catch (error) {
-          const edgeError = error instanceof Error ? error : new Error("Edge function request failed");
-          await logEdgeFailure(name, 599, edgeError, null);
-          return {
-            data: null,
-            error: edgeError,
-            status: 599,
-            raw: new Response(null, { status: 599, statusText: "edge_fetch_failed" }),
-            skipped: false,
-          };
-        }
-        responseDetails = await readResponseBody(response);
-        requestId = extractRequestId(response, responseDetails.json);
-      }
-    }
-  }
-
-  if (!response.ok) {
-    const fallbackMessage = responseDetails.text ?? "Edge function request failed";
-    const message = buildEdgeErrorMessage(
-      name,
-      response.status,
-      response.statusText,
-      responseDetails,
-      fallbackMessage,
-      requestId
-    );
-    await logEdgeFailure(name, response.status, new Error(message), response);
-    return {
-      data: null,
-      error: new Error(message),
-      status: response.status,
-      raw: response,
-      skipped: false,
-    };
-  }
-
-  const payload = responseDetails.json as T | null;
-  if (payload) {
-    return { data: payload, error: null, status: response.status, raw: response, skipped: false };
-  }
-
-  if (!responseDetails.text || responseDetails.text.trim().length === 0) {
-    return { data: null, error: null, status: response.status, raw: response, skipped: false };
+  if (dedupeKey) {
+    inFlightJsonCalls.set(dedupeKey, runPromise as Promise<unknown>);
   }
 
   try {
-    return {
-      data: JSON.parse(responseDetails.text) as T,
-      error: null,
-      status: response.status,
-      raw: response,
-      skipped: false,
-    };
-  } catch (parseError) {
-    const error = parseError instanceof Error ? parseError : new Error("Failed to parse edge response");
-    await logEdgeFailure(name, response.status, error, response);
-    return {
-      data: null,
-      error,
-      status: response.status,
-      raw: response,
-      skipped: false,
-    };
+    return await runPromise;
+  } finally {
+    if (dedupeKey) inFlightJsonCalls.delete(dedupeKey);
   }
 }
 
 export async function callEdgeFunctionRaw(
   name: string,
-  options?: EdgeRawOptions
+  options?: EdgeRawOptions,
 ): Promise<Response> {
-  const { headers, skipped, authError } = await buildHeaders(options);
-  if (skipped || authError) {
-    if (authError) {
-      await logEdgeFailure(name, 401, authError, null);
+  const dedupeKey = options?.idempotencyKey ? `${name}:${options.idempotencyKey}` : null;
+  if (dedupeKey && inFlightRawCalls.has(dedupeKey)) {
+    return await inFlightRawCalls.get(dedupeKey)!;
+  }
+
+  const runPromise = withEdgeSlot(async () => {
+    const { headers, skipped, authError } = await buildHeaders(options);
+    if (skipped || authError) {
+      if (authError) {
+        logger.error("raw.auth.required", authError, { name });
+      }
+      return new Response(null, { status: 401, statusText: "auth_required" });
     }
-    return new Response(null, { status: 401, statusText: "auth_required" });
-  }
-  const response = await fetchWithTimeout(name, options?.timeoutMs ?? DEFAULT_EDGE_TIMEOUT_MS, buildUrl(name), {
-    method: options?.method ?? "POST",
-    headers,
-    body: options?.body ? JSON.stringify(options.body) : undefined,
-    signal: options?.signal,
+
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_EDGE_TIMEOUT_MS;
+    const maxRetries = Math.max(0, Math.floor(options?.maxRetries ?? DEFAULT_MAX_RETRIES));
+    const retryBaseMs = Math.max(100, Math.floor(options?.retryBaseMs ?? DEFAULT_RETRY_BASE_MS));
+
+    for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
+      try {
+        const response = await fetchWithTimeout(name, timeoutMs, buildUrl(name), {
+          method: options?.method ?? "POST",
+          headers,
+          body: options?.body ? JSON.stringify(options.body) : undefined,
+          signal: options?.signal,
+        });
+        if (!response.ok) {
+          const responseDetails = await readResponseBody(response);
+          const requestId = extractRequestId(response, responseDetails.json);
+          const message = buildEdgeErrorMessage(
+            name,
+            response.status,
+            response.statusText,
+            responseDetails,
+            "Edge function request failed",
+            requestId,
+          );
+          logger.error("raw.bad_status", new Error(message), {
+            name,
+            attempt,
+            status: response.status,
+            requestId,
+          });
+          if (attempt <= maxRetries && shouldRetryStatus(response.status)) {
+            const waitMs = await waitBackoff(attempt, retryBaseMs, options?.signal);
+            logger.warn("raw.retry", { name, attempt, wait_ms: waitMs, status: response.status });
+            continue;
+          }
+          throw new Error(message);
+        }
+        return response;
+      } catch (error) {
+        const edgeError = error instanceof Error ? error : new Error("Edge function request failed");
+        if (attempt <= maxRetries && shouldRetryError(edgeError)) {
+          const waitMs = await waitBackoff(attempt, retryBaseMs, options?.signal);
+          logger.warn("raw.retry", { name, attempt, wait_ms: waitMs, reason: edgeError.message });
+          continue;
+        }
+        logger.error("raw.invoke.error", edgeError, { name, attempt });
+        throw edgeError;
+      }
+    }
+
+    throw new Error(`Edge function ${name} failed after retries`);
   });
-  if (!response.ok) {
-    const responseDetails = await readResponseBody(response);
-    const requestId = extractRequestId(response, responseDetails.json);
-    const message = buildEdgeErrorMessage(
-      name,
-      response.status,
-      response.statusText,
-      responseDetails,
-      "Edge function request failed",
-      requestId
-    );
-    await logEdgeFailure(name, response.status, new Error(message), response);
-    throw new Error(message);
+
+  if (dedupeKey) inFlightRawCalls.set(dedupeKey, runPromise);
+  try {
+    return await runPromise;
+  } finally {
+    if (dedupeKey) inFlightRawCalls.delete(dedupeKey);
   }
-  return response;
 }

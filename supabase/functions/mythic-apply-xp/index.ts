@@ -1,10 +1,12 @@
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { createLogger } from "../_shared/logger.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -15,6 +17,7 @@ const RequestSchema = z.object({
   reason: z.string().max(120).optional(),
   metadata: z.record(z.unknown()).optional(),
 });
+const logger = createLogger("mythic-apply-xp");
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
@@ -130,8 +133,9 @@ serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("mythic-apply-xp error:", error);
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Failed to apply XP" }), {
+    const normalized = sanitizeError(error);
+    logger.error("apply_xp.failed", error);
+    return new Response(JSON.stringify({ error: normalized.message || "Failed to apply XP", code: normalized.code ?? "apply_xp_failed" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

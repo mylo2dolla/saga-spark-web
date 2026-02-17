@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
+import { recordHealthFailure, recordHealthSuccess } from "@/lib/observability/health";
+import { createLogger } from "@/lib/observability/logger";
+
+const logger = createLogger("db-health");
 
 export function useDbHealth(enabled = true) {
   const [status, setStatus] = useState<"ok" | "error" | "loading">("loading");
@@ -46,6 +50,7 @@ export function useDbHealth(enabled = true) {
         if (isMounted && requestIdRef.current === requestId && !didTimeout) {
           setStatus("ok");
           setLastProbe({ status: status ?? null, timedOut: false, elapsedMs: Date.now() - startedAt, at: Date.now() });
+          recordHealthSuccess("db", Date.now() - startedAt);
         }
       } catch (error) {
         if (isMounted && requestIdRef.current === requestId) {
@@ -72,6 +77,7 @@ export function useDbHealth(enabled = true) {
                 setStatus("ok");
                 setLastError(null);
                 setLastProbe({ status: res.status, timedOut: false, elapsedMs: Date.now() - startedAt, at: Date.now() });
+                recordHealthSuccess("db", Date.now() - startedAt);
                 return;
               }
               setLastError(`DB probe failed (supabase-js): ${baseError}. REST status ${res.status}`);
@@ -87,6 +93,8 @@ export function useDbHealth(enabled = true) {
               elapsedMs: Date.now() - startedAt,
               at: Date.now(),
             });
+            recordHealthFailure("db", fallbackErr, Date.now() - startedAt);
+            logger.error("db.health.failure", fallbackErr, { didTimeout });
             return;
           }
 
@@ -97,6 +105,8 @@ export function useDbHealth(enabled = true) {
             elapsedMs: Date.now() - startedAt,
             at: Date.now(),
           });
+          recordHealthFailure("db", error, Date.now() - startedAt);
+          logger.error("db.health.failure", error, { didTimeout });
         }
       } finally {
         if (timeoutId) clearTimeout(timeoutId);

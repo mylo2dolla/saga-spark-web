@@ -2,10 +2,12 @@ import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { clampInt, rngInt } from "../_shared/mythic_rng.ts";
+import { createLogger } from "../_shared/logger.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -14,6 +16,7 @@ const RequestSchema = z.object({
   reason: z.string().max(200).optional(),
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
 });
+const logger = createLogger("mythic-combat-start");
 
 type MythicBoardType = "town" | "dungeon" | "travel" | "combat";
 type StatKey = "offense" | "defense" | "control" | "support" | "mobility" | "utility";
@@ -365,9 +368,10 @@ serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    console.error("mythic-combat-start error:", error);
+    const normalized = sanitizeError(error);
+    logger.error("combat_start.failed", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Failed to start combat" }),
+      JSON.stringify({ error: normalized.message || "Failed to start combat", code: normalized.code ?? "combat_start_failed" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
