@@ -1,10 +1,12 @@
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
+import { createLogger } from "../_shared/logger.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -12,6 +14,7 @@ const RequestSchema = z.object({
   campaignId: z.string().uuid(),
   characterId: z.string().uuid().optional(),
 });
+const logger = createLogger("mythic-recompute-character");
 
 type StatKey = "offense" | "defense" | "control" | "support" | "mobility" | "utility";
 const STAT_KEYS: StatKey[] = ["offense", "defense", "control", "support", "mobility", "utility"];
@@ -241,8 +244,9 @@ serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("mythic-recompute-character error:", error);
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Failed to recompute character" }), {
+    const normalized = sanitizeError(error);
+    logger.error("recompute_character.failed", error);
+    return new Response(JSON.stringify({ error: normalized.message || "Failed to recompute character", code: normalized.code ?? "recompute_character_failed" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

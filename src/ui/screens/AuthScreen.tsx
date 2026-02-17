@@ -7,22 +7,26 @@ import { Label } from "@/components/ui/label";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useAuth } from "@/hooks/useAuth";
+import { runOperation } from "@/lib/ops/runOperation";
+import type { OperationState } from "@/lib/ops/operationState";
+import { redactText, sanitizeError } from "@/lib/observability/redact";
+import { createLogger } from "@/lib/observability/logger";
+import { recordHealthFailure, recordHealthSuccess } from "@/lib/observability/health";
 
 interface AuthScreenProps {
   mode: "login" | "signup";
 }
 
+const logger = createLogger("auth-screen");
+
 export default function AuthScreen({ mode }: AuthScreenProps) {
   const navigate = useNavigate();
-  const { lastError, setLastError, lastErrorAt } = useDiagnostics();
-  useAuth(); // ensure auth subscription is active on the login screen
+  const { lastError, setLastError, lastErrorAt, recordOperation } = useDiagnostics();
+  useAuth(); // keep subscription active on auth screen
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [pendingSince, setPendingSince] = useState<number | null>(null);
-  const submitLockRef = useRef(false);
-  const submitAttemptRef = useRef(0);
+  const [authOp, setAuthOp] = useState<OperationState | null>(null);
   const [didCopyError, setDidCopyError] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<{
@@ -41,181 +45,103 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
   const [authTestResult, setAuthTestResult] = useState<string | null>(null);
   const [isAuthTesting, setIsAuthTesting] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const isSubmitting = authOp?.status === "RUNNING" || authOp?.status === "PENDING";
+  const pendingSeconds = authOp?.started_at ? Math.max(1, Math.floor((Date.now() - authOp.started_at) / 1000)) : 0;
+
+  const cancelSubmit = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     event.stopPropagation();
-    const nativeEvent = event.nativeEvent as SubmitEvent | undefined;
-    if (nativeEvent && nativeEvent.isTrusted === false) {
-      console.info("[auth] log", { step: "login_submit_blocked_untrusted" });
-      return;
-    }
+
     if (!email.trim() || !password.trim()) {
       setLastError("Email and password are required.");
       return;
     }
 
-    if (submitLockRef.current || isSubmitting) {
-      console.info("[auth] log", { step: "login_submit_blocked" });
+    if (isSubmitting) {
+      logger.warn("auth.submit.blocked", { reason: "already_running", mode });
       return;
     }
-    submitLockRef.current = true;
-    setIsSubmitting(true);
-    setPendingSince(Date.now());
-    submitAttemptRef.current += 1;
-    const attemptId = submitAttemptRef.current;
+
     setLastError(null);
     setAuthDebug(null);
-    console.info("[auth] log", { step: "login_submit" });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
-      (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = true;
-      console.info("[auth] log", { step: "login_signin_call" });
-      const action = mode === "login"
-        ? async () => {
-          if (!supabaseUrl || !supabaseAnonKey) {
-            throw new Error("Supabase env is not configured");
+      const { result } = await runOperation({
+        name: `auth.${mode}`,
+        signal: controller.signal,
+        timeoutMs: 12_000,
+        maxRetries: 1,
+        onUpdate: (state) => {
+          setAuthOp(state);
+          recordOperation(state);
+        },
+        run: async ({ signal }) => {
+          if (signal.aborted) {
+            throw new DOMException("Operation aborted", "AbortError");
           }
-          const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-            method: "POST",
-            headers: {
-              apikey: supabaseAnonKey,
-              "Content-Type": "application/json",
+
+          if (mode === "login") {
+            const response = await supabase.auth.signInWithPassword({
+              email: email.trim(),
+              password,
+            });
+            if (response.error) throw response.error;
+            return { session: response.data.session, user: response.data.user };
+          }
+
+          const response = await supabase.auth.signUp({
+            email: email.trim(),
+            password,
+            options: {
+              data: { display_name: displayName || email.split("@")[0] },
             },
-            body: JSON.stringify({ email, password }),
           });
-          const json = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            const msg = (json as { error_description?: string; error?: string })?.error_description
-              ?? (json as { error?: string })?.error
-              ?? "Login failed";
-            throw new Error(msg);
-          }
-          const access_token = (json as { access_token?: string })?.access_token ?? null;
-          const refresh_token = (json as { refresh_token?: string })?.refresh_token ?? null;
-          const expires_in = Number((json as { expires_in?: number })?.expires_in ?? 3600);
-          const expires_at = Number((json as { expires_at?: number })?.expires_at ?? (Math.floor(Date.now() / 1000) + expires_in));
-          if (!access_token || !refresh_token) {
-            throw new Error("Auth tokens missing from response");
-          }
-          const sessionPayload = {
-            access_token,
-            refresh_token,
-            token_type: (json as { token_type?: string })?.token_type ?? "bearer",
-            expires_in,
-            expires_at,
-            user: (json as { user?: unknown })?.user ?? null,
-          };
+          if (response.error) throw response.error;
+          return { session: response.data.session, user: response.data.user };
+        },
+      });
 
-          const setSessionWithTimeout = async () => {
-            const timeoutMs = 2000;
-            const timeoutPromise = new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error("setSession timed out")), timeoutMs)
-            );
-            const setPromise = supabase.auth.setSession({ access_token, refresh_token });
-            return await Promise.race([setPromise, timeoutPromise]);
-          };
-
-          try {
-            const { error: setErr } = await setSessionWithTimeout();
-            if (setErr) throw setErr;
-          } catch (e) {
-            // Fallback: write session directly to storage if setSession hangs.
-            const projectRef = supabaseUrl.replace("https://", "").split(".")[0] ?? "supabase";
-            const storageKey = `sb-${projectRef}-auth-token`;
-            try {
-              window.localStorage.setItem(storageKey, JSON.stringify(sessionPayload));
-            } catch {
-              // If storage fails, we still proceed; login flow will show error if session is missing.
-            }
-          }
-
-          return { data: { session: { access_token }, user: sessionPayload.user }, error: null } as const;
+      if (mode === "login") {
+        if (!result.session) {
+          throw new Error("Sign-in completed without an active session");
         }
-        : () => supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: { display_name: displayName || email.split("@")[0] },
-          },
-        });
-
-      const timeoutMs = 12000;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("Auth request timed out")), timeoutMs);
-      });
-
-      const result = await Promise.race([action(), timeoutPromise]);
-      if (attemptId !== submitAttemptRef.current) {
-        console.info("[auth] log", { step: "login_result_ignored", attemptId });
-        return;
-      }
-      console.info("[auth] log", { step: "login_signin_end" });
-      if (result.error) throw result.error;
-      const session = result.data?.session ?? null;
-      const user = result.data?.user ?? null;
-      const hasSession = Boolean(session);
-      console.info("[auth] log", {
-        step: "login_result",
-        hasSession,
-        userId: user?.id ?? null,
-        error: null,
-      });
-      if (hasSession) {
-        console.info("[auth] log", { step: "login_success_bootstrap" });
-        console.info("[auth] log", { step: "login_navigate" });
+        recordHealthSuccess("auth", 0);
         navigate("/dashboard");
         return;
       }
-      if (result.data?.user) {
-        const note = mode === "signup"
-          ? "Account created. Check your email to confirm and then log in."
-          : "Sign-in succeeded without a session. If email confirmation is required, confirm your email and try again.";
-        setLastError(note);
-        return;
-      }
-      throw new Error("No session returned from sign-in");
-    } catch (error) {
-      if (error instanceof TypeError) {
-        const message = error.message || "Failed to fetch";
-        const description = import.meta.env.DEV ? `Network/CORS failure — ${message}` : "Network error. Please try again.";
-        setLastError(description);
-        setAuthDebug({ message, status: null, code: null, name: "TypeError" });
-        console.info("[auth] log", {
-          step: "login_result",
-          hasSession: false,
-          userId: null,
-          error: { message, status: null, name: "TypeError" },
-        });
+
+      if (result.user && !result.session) {
+        setLastError("Account created. Check your email to confirm and then log in.");
         return;
       }
 
+      if (result.session) {
+        navigate("/dashboard");
+      }
+    } catch (error) {
+      const normalized = sanitizeError(error);
       const message = formatError(error, "Failed to authenticate");
       setLastError(message);
       setAuthDebug({
-        message,
+        message: normalized.message,
         status: (error as { status?: number })?.status ?? null,
-        code: (error as { code?: string })?.code ?? null,
+        code: normalized.code,
         name: (error as { name?: string })?.name ?? null,
       });
-      console.info("[auth] log", {
-        step: "login_result",
-        hasSession: false,
-        userId: null,
-        error: {
-          message,
-          status: (error as { status?: number })?.status ?? null,
-          name: (error as { name?: string })?.name ?? null,
-        },
-      });
+      recordHealthFailure("auth", error);
+      logger.error("auth.submit.failed", error, { mode });
     } finally {
-      if (attemptId === submitAttemptRef.current) {
-        setIsSubmitting(false);
-        submitLockRef.current = false;
-        setPendingSince(null);
-        (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress = false;
-        console.info("[auth] log", { step: "login_submit_unlock" });
-      }
+      abortRef.current = null;
     }
   };
 
@@ -263,19 +189,14 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         <Button className="w-full" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Working..." : mode === "login" ? "Login" : "Sign up"}
         </Button>
-        {isSubmitting && pendingSince ? (
+        {isSubmitting ? (
           <div className="flex items-center justify-between rounded-lg border border-border bg-background/30 p-3 text-xs text-muted-foreground">
-            <div>Auth request pending for {Math.max(1, Math.floor((Date.now() - pendingSince) / 1000))}s</div>
+            <div>Auth request pending for {pendingSeconds}s</div>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              onClick={() => {
-                submitAttemptRef.current += 1;
-                setIsSubmitting(false);
-                submitLockRef.current = false;
-                setPendingSince(null);
-              }}
+              onClick={cancelSubmit}
             >
               Cancel
             </Button>
@@ -309,7 +230,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                     setDidCopyError(true);
                     setTimeout(() => setDidCopyError(false), 1500);
                   } catch {
-                    // Clipboard permission denied; no-op.
+                    // Clipboard denied.
                   }
                 }}
               >
@@ -378,7 +299,8 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                     timeout(8000),
                   ]);
                   const text = await res.text();
-                  const snippet = text.length > 200 ? `${text.slice(0, 200)}...` : text;
+                  const redacted = redactText(text);
+                  const snippet = redacted.length > 200 ? `${redacted.slice(0, 200)}...` : redacted;
                   setAuthTestResult(`status ${res.status} ${res.statusText} :: ${snippet || "(empty body)"}`);
                   setCheckResult((prev) => ({ ...(prev ?? {}), authDetail: `token ${res.status}` }));
                 } catch (e) {

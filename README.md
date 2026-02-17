@@ -132,6 +132,45 @@ WHERE schemaname = 'public'
 npm run build
 ```
 
+## Production hardening checks
+
+Run the baseline production checks before shipping:
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+npm run smoke:prod
+```
+
+Full manual checklist:
+- `docs/PRODUCTION_SMOKE_TEST.md`
+
+## Mythic backup and restore
+
+Create a linked-project backup for the `mythic` schema:
+
+```bash
+./scripts/backup-mythic.sh
+```
+
+Restore from a backup file:
+
+```bash
+export SUPABASE_DB_URL="postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres"
+./scripts/restore-mythic.sh backups/mythic-backup-YYYYMMDD-HHMMSS.sql
+```
+
+## Debug bundle and redaction
+
+`Servers/Admin` includes `Export Debug Bundle`, which downloads a redacted JSON bundle with:
+- build metadata
+- health checks
+- operation history
+- recent surfaced errors
+
+Redaction covers auth headers, JWT-like tokens, and API keys.
+
 ## Verify Groq API access
 
 Set your API key in the environment (or a local `.env.local` file) and run the verification script:

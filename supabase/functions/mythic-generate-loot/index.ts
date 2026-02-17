@@ -2,10 +2,12 @@ import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { rngInt, rngPick, weightedPick } from "../_shared/mythic_rng.ts";
+import { createLogger } from "../_shared/logger.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -21,6 +23,7 @@ const RequestSchema = z.object({
   rarity: z.enum(RARITIES).optional(),
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
 });
+const logger = createLogger("mythic-generate-loot");
 
 const BUDGETS: Record<Rarity, number> = {
   common: 8,
@@ -337,9 +340,10 @@ serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    const message = toErrorMessage(error);
-    console.error("mythic-generate-loot error:", message, error);
-    return new Response(JSON.stringify({ error: message }), {
+    const normalized = sanitizeError(error);
+    const message = normalized.message || toErrorMessage(error);
+    logger.error("generate_loot.failed", error);
+    return new Response(JSON.stringify({ error: message, code: normalized.code ?? "generate_loot_failed" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

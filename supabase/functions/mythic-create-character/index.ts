@@ -4,10 +4,12 @@ import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { aiChatCompletionsWithFallback } from "../_shared/llm_fallback.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 import { clampInt, rngInt, rngPick, weightedPick } from "../_shared/mythic_rng.ts";
+import { createLogger } from "../_shared/logger.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -73,6 +75,7 @@ const RequestSchema = z.object({
   classDescription: z.string().min(3).max(2000),
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
 });
+const logger = createLogger("mythic-create-character");
 
 function normalizeConcept(s: string): string {
   return s
@@ -605,7 +608,9 @@ serve(async (req) => {
       }
       refinedData = refined.data;
     } catch (llmError) {
-      console.warn("mythic-create-character llm fallback to deterministic narrative:", llmError);
+      logger.warn("create_character.llm_fallback", {
+        reason: sanitizeError(llmError).message,
+      });
       warnings.push(`llm_unavailable:${llmError instanceof Error ? llmError.message : String(llmError)}`);
       refinedData = deterministicRefineNarrative({ classDescription, kit });
     }
@@ -745,9 +750,13 @@ serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    console.error("mythic-create-character error:", error);
+    const normalized = sanitizeError(error);
+    logger.error("create_character.failed", error);
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Failed to create character" }),
+      JSON.stringify({
+        error: normalized.message || "Failed to create character",
+        code: normalized.code ?? "create_character_failed",
+      }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }

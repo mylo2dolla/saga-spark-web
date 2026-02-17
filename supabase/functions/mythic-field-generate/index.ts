@@ -3,10 +3,13 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { aiChatCompletionsWithFallback } from "../_shared/llm_fallback.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
+import { createLogger } from "../_shared/logger.ts";
+import { enforceRateLimit } from "../_shared/request_guard.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -26,6 +29,7 @@ const RequestSchema = z.object({
   campaignId: z.string().uuid().optional(),
   context: z.record(z.unknown()).optional(),
 });
+const logger = createLogger("mythic-field-generate");
 
 function fieldDirective(fieldType: z.infer<typeof RequestSchema>["fieldType"]): string {
   switch (fieldType) {
@@ -144,6 +148,15 @@ serve(async (req) => {
     });
   }
 
+  const rateLimited = enforceRateLimit({
+    req,
+    route: "mythic-field-generate",
+    limit: 60,
+    windowMs: 60_000,
+    corsHeaders,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -183,12 +196,24 @@ serve(async (req) => {
 
     let worldProfile: Record<string, unknown> = {};
     if (campaignId) {
-      const { data: profile } = await svc
+      const primary = await svc
         .schema("mythic")
-        .from("campaign_world_profiles")
+        .from("world_profiles")
         .select("seed_title, seed_description, template_key, world_profile_json")
         .eq("campaign_id", campaignId)
         .maybeSingle();
+
+      let profile = primary.data;
+      if (primary.error) {
+        const fallback = await svc
+          .schema("mythic")
+          .from("campaign_world_profiles")
+          .select("seed_title, seed_description, template_key, world_profile_json")
+          .eq("campaign_id", campaignId)
+          .maybeSingle();
+        profile = fallback.data;
+      }
+
       if (profile) {
         worldProfile = {
           seed_title: profile.seed_title,
@@ -238,7 +263,11 @@ serve(async (req) => {
       const completionData = completion.data as { choices?: Array<{ message?: { content?: string } }> };
       text = String(completionData?.choices?.[0]?.message?.content ?? "").trim();
     } catch (error) {
-      console.warn("mythic-field-generate llm fallback to deterministic text:", error);
+      logger.warn("field_generate.llm_fallback", {
+        reason: sanitizeError(error).message,
+        field_type: fieldType,
+        mode,
+      });
       text = deterministicFieldText({
         mode,
         fieldType,
@@ -265,8 +294,9 @@ serve(async (req) => {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
-    console.error("mythic-field-generate error:", error);
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Failed to generate text" }), {
+    const normalized = sanitizeError(error);
+    logger.error("field_generate.failed", error);
+    return new Response(JSON.stringify({ error: normalized.message || "Failed to generate text", code: normalized.code ?? "field_generate_failed" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

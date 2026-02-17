@@ -4,10 +4,18 @@ import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { bresenhamLine, distanceTiles, type Metric } from "../_shared/mythic_grid.ts";
 import { rng01 } from "../_shared/mythic_rng.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
+import { createLogger } from "../_shared/logger.ts";
+import {
+  enforceRateLimit,
+  getIdempotentResponse,
+  idempotencyKeyFromRequest,
+  storeIdempotentResponse,
+} from "../_shared/request_guard.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -63,6 +71,7 @@ type SkillRow = {
 };
 
 type TurnOrderRow = { combatant_id: string };
+const logger = createLogger("mythic-combat-use-skill");
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -277,6 +286,15 @@ serve(async (req) => {
     });
   }
 
+  const rateLimited = enforceRateLimit({
+    req,
+    route: "mythic-combat-use-skill",
+    limit: 120,
+    windowMs: 60_000,
+    corsHeaders,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -302,6 +320,15 @@ serve(async (req) => {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+    const idempotencyHeader = idempotencyKeyFromRequest(req);
+    const idempotencyKey = idempotencyHeader ? `${user.id}:${idempotencyHeader}` : null;
+    if (idempotencyKey) {
+      const cached = getIdempotentResponse(idempotencyKey);
+      if (cached) {
+        logger.info("combat_use_skill.idempotent_hit");
+        return cached;
+      }
     }
 
     const parsed = RequestSchema.safeParse(await req.json().catch(() => null));
@@ -1028,10 +1055,21 @@ serve(async (req) => {
           payload_json: { combat_session_id: combatSessionId, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } },
         });
       }
-      return new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } }), {
+      const response = new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+      if (idempotencyKey) {
+        storeIdempotentResponse(idempotencyKey, response, 15_000);
+      }
+      logger.info("combat_use_skill.ended", {
+        campaign_id: campaignId,
+        combat_session_id: combatSessionId,
+        actor_combatant_id: actor.id,
+        alive_players: alivePlayers,
+        alive_npcs: aliveNpcs,
+      });
+      return response;
     }
 
     const nextCombatantId = order[nextIndex]!.combatant_id;
@@ -1060,16 +1098,28 @@ serve(async (req) => {
       payload: { actor_combatant_id: nextCombatantId },
     });
 
-    return new Response(JSON.stringify({ ok: true, next_turn_index: nextIndex, next_actor_combatant_id: nextCombatantId }), {
+    const response = new Response(JSON.stringify({ ok: true, next_turn_index: nextIndex, next_actor_combatant_id: nextCombatantId }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+    if (idempotencyKey) {
+      storeIdempotentResponse(idempotencyKey, response, 10_000);
+    }
+    logger.info("combat_use_skill.success", {
+      campaign_id: campaignId,
+      combat_session_id: combatSessionId,
+      actor_combatant_id: actor.id,
+      skill_id: skill.id,
+      next_turn_index: nextIndex,
+    });
+    return response;
   } catch (error) {
-    console.error("mythic-combat-use-skill error:", error);
-    const msg = error instanceof Error ? error.message : "Failed to use skill";
+    logger.error("combat_use_skill.failed", error);
+    const normalized = sanitizeError(error);
+    const msg = normalized.message || "Failed to use skill";
     // Never emit sexual content, even in errors.
     const safeMsg = msg;
-    return new Response(JSON.stringify({ error: safeMsg }), {
+    return new Response(JSON.stringify({ error: safeMsg, code: normalized.code ?? "combat_use_skill_failed" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

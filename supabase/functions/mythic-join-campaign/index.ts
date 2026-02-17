@@ -2,10 +2,18 @@ import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { rngInt, rngPick } from "../_shared/mythic_rng.ts";
+import { createLogger } from "../_shared/logger.ts";
+import {
+  enforceRateLimit,
+  getIdempotentResponse,
+  idempotencyKeyFromRequest,
+  storeIdempotentResponse,
+} from "../_shared/request_guard.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -15,6 +23,7 @@ const RequestSchema = z.object({
 
 const syllableA = ["Ash", "Iron", "Dus", "Grim", "Stone", "Glen", "Oath", "Hex", "Rift", "Wolf", "Black", "Silver"];
 const syllableB = ["hold", "bridge", "hollow", "reach", "mark", "port", "spire", "vale", "cross", "ford", "fall", "gate"];
+const logger = createLogger("mythic-join-campaign");
 
 const hashSeed = (input: string): number => {
   let hash = 0;
@@ -65,6 +74,15 @@ serve(async (req) => {
     });
   }
 
+  const rateLimited = enforceRateLimit({
+    req,
+    route: "mythic-join-campaign",
+    limit: 30,
+    windowMs: 60_000,
+    corsHeaders,
+  });
+  if (rateLimited) return rateLimited;
+
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -101,6 +119,15 @@ serve(async (req) => {
 
     const svc = createClient(supabaseUrl, serviceRoleKey);
     const inviteCode = parsed.data.inviteCode.trim();
+    const idempotencyHeader = idempotencyKeyFromRequest(req);
+    const idempotencyKey = idempotencyHeader ? `${user.id}:${idempotencyHeader}` : null;
+    if (idempotencyKey) {
+      const cached = getIdempotentResponse(idempotencyKey);
+      if (cached) {
+        logger.info("join_campaign.idempotent_hit", { user_id: user.id });
+        return cached;
+      }
+    }
 
     const { data: foundCampaigns, error: findError } = await svc
       .rpc("get_campaign_by_invite_code", { _invite_code: inviteCode });
@@ -174,25 +201,29 @@ serve(async (req) => {
       if (boardInsertError) throw boardInsertError;
     }
 
+    const worldProfilePayload = {
+      campaign_id: campaign.id,
+      seed_title: campaign.name,
+      seed_description: campaign.description ?? "World seeded from campaign join flow.",
+      template_key: "custom",
+      world_profile_json: {
+        source: "mythic-join-campaign",
+        title: campaign.name,
+        description: campaign.description ?? "",
+      },
+    };
+
+    await svc
+      .schema("mythic")
+      .from("world_profiles")
+      .upsert(worldProfilePayload, { onConflict: "campaign_id" });
+
     await svc
       .schema("mythic")
       .from("campaign_world_profiles")
-      .upsert(
-        {
-          campaign_id: campaign.id,
-          seed_title: campaign.name,
-          seed_description: campaign.description ?? "World seeded from campaign join flow.",
-          template_key: "custom",
-          world_profile_json: {
-            source: "mythic-join-campaign",
-            title: campaign.name,
-            description: campaign.description ?? "",
-          },
-        },
-        { onConflict: "campaign_id" },
-      );
+      .upsert(worldProfilePayload, { onConflict: "campaign_id" });
 
-    return new Response(JSON.stringify({
+    const response = new Response(JSON.stringify({
       ok: true,
       campaign,
       already_member: Boolean(existingMember),
@@ -200,9 +231,15 @@ serve(async (req) => {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+    if (idempotencyKey) {
+      storeIdempotentResponse(idempotencyKey, response, 60_000);
+    }
+    logger.info("join_campaign.success", { campaign_id: campaign.id, user_id: user.id });
+    return response;
   } catch (error) {
-    console.error("mythic-join-campaign error:", error);
-    const message = error instanceof Error ? error.message : "Failed to join campaign";
+    const normalized = sanitizeError(error);
+    logger.error("join_campaign.failed", error);
+    const message = normalized.message || "Failed to join campaign";
     return new Response(JSON.stringify({ ok: false, error: message, code: "join_failed" }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
