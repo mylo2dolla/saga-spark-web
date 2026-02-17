@@ -22,6 +22,31 @@ interface EdgeRawOptions extends EdgeOptions {
   body?: unknown;
 }
 
+export class EdgeFunctionError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  readonly requestId: string | null;
+  readonly details: unknown;
+  readonly route: string;
+
+  constructor(args: {
+    route: string;
+    status: number;
+    message: string;
+    code?: string | null;
+    requestId?: string | null;
+    details?: unknown;
+  }) {
+    super(args.message);
+    this.name = "EdgeFunctionError";
+    this.route = args.route;
+    this.status = args.status;
+    this.code = args.code ?? null;
+    this.requestId = args.requestId ?? null;
+    this.details = args.details ?? null;
+  }
+}
+
 interface AuthContext {
   accessToken: string | null;
   authError: Error | null;
@@ -30,6 +55,9 @@ interface AuthContext {
 const logger = createLogger("edge");
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+// Optional override to route all /functions/v1/* calls through a self-hosted API.
+// Must include the /functions/v1 prefix (example: https://api.example.com/functions/v1).
+const MYTHIC_FUNCTIONS_BASE_URL = (import.meta.env.VITE_MYTHIC_FUNCTIONS_BASE_URL ?? "").trim();
 const DEFAULT_EDGE_TIMEOUT_MS = 20_000;
 const AUTH_CALL_TIMEOUT_MS = 4_000;
 const REFRESH_BUFFER_MS = 60_000;
@@ -39,7 +67,15 @@ const MAX_CONCURRENT_EDGE_CALLS = 6;
 const MAX_RESPONSE_SNIPPET = 2000;
 
 let activeEdgeCalls = 0;
-const edgeCallQueue: Array<() => void> = [];
+type EdgeQueueItem = {
+  id: string;
+  release: () => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  aborted: boolean;
+  onAbort?: () => void;
+};
+const edgeCallQueue: EdgeQueueItem[] = [];
 
 const inFlightJsonCalls = new Map<string, Promise<unknown>>();
 const inFlightRawCalls = new Map<string, Promise<Response>>();
@@ -174,6 +210,12 @@ const buildHeaders = async (
 
 const buildUrl = (name: string) => {
   ensureEnv();
+  if (MYTHIC_FUNCTIONS_BASE_URL) {
+    const base = MYTHIC_FUNCTIONS_BASE_URL.endsWith("/")
+      ? MYTHIC_FUNCTIONS_BASE_URL.slice(0, -1)
+      : MYTHIC_FUNCTIONS_BASE_URL;
+    return `${base}/${name}`;
+  }
   return `${SUPABASE_URL}/functions/v1/${name}`;
 };
 
@@ -209,10 +251,17 @@ const fetchWithTimeout = async (
   } catch (error) {
     if (timeoutController.signal.aborted) {
       const timeoutError = new Error(`Edge function ${name} timed out after ${timeoutMs}ms`);
-      recordHealthFailure(`edge:${name}`, timeoutError, Date.now() - startedAt);
+      recordHealthFailure(`edge:${name}`, timeoutError, Date.now() - startedAt, {
+        route: name,
+        code: "upstream_timeout",
+      });
       throw timeoutError;
     }
-    recordHealthFailure(`edge:${name}`, error, Date.now() - startedAt);
+    const classified = classifyTransportError(name, error);
+    recordHealthFailure(`edge:${name}`, classified, Date.now() - startedAt, {
+      route: name,
+      code: classified.code,
+    });
     throw error;
   } finally {
     clearTimeout(timeoutId);
@@ -239,11 +288,17 @@ const extractRequestId = (response?: Response | null, json?: unknown): string | 
     const headerId =
       response.headers.get("x-request-id")
       ?? response.headers.get("x-correlation-id")
-      ?? response.headers.get("x-vercel-id");
+      ?? response.headers.get("x-vercel-id")
+      ?? response.headers.get("sb-request-id")
+      ?? response.headers.get("cf-ray");
     if (headerId) return headerId;
   }
   if (json && typeof json === "object" && "requestId" in json) {
     const value = (json as { requestId?: string }).requestId;
+    return value ?? null;
+  }
+  if (json && typeof json === "object" && "request_id" in json) {
+    const value = (json as { request_id?: string }).request_id;
     return value ?? null;
   }
   return null;
@@ -271,7 +326,101 @@ const readResponseBody = async (
   }
 };
 
-const buildEdgeErrorMessage = (
+type EdgeErrorPayload = {
+  message?: string;
+  error?: string;
+  code?: string;
+  details?: unknown;
+};
+
+const extractRequestIdFromDetails = (details: unknown): string | null => {
+  if (!details || typeof details !== "object") return null;
+  const payload = details as Record<string, unknown>;
+  return (
+    (typeof payload.requestId === "string" ? payload.requestId : null)
+    ?? (typeof payload.request_id === "string" ? payload.request_id : null)
+    ?? (typeof payload.sb_request_id === "string" ? payload.sb_request_id : null)
+    ?? null
+  );
+};
+
+const classifyTransportFromMessage = (message: string): { status: number; code: string } => {
+  const lower = message.toLowerCase();
+  const has522Signal =
+    lower.includes("error code 522")
+    || lower.includes("cloudflare 522")
+    || lower.includes("connection timed out")
+    || lower.includes("sb-request-id");
+  if (has522Signal) {
+    return { status: 522, code: "auth_gateway_timeout" };
+  }
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return { status: 504, code: "upstream_timeout" };
+  }
+  if (lower.includes("failed to fetch") || lower.includes("network") || lower.includes("load failed")) {
+    return { status: 503, code: "network_unreachable" };
+  }
+  if (lower.includes("cancelled") || lower.includes("aborted") || lower.includes("aborterror")) {
+    return { status: 499, code: "request_cancelled" };
+  }
+  return { status: 599, code: "edge_fetch_failed" };
+};
+
+const classifyTransportError = (
+  route: string,
+  error: unknown,
+): EdgeFunctionError => {
+  if (error instanceof EdgeFunctionError) {
+    return error;
+  }
+  const fallback = error instanceof Error ? error.message : "Edge function request failed";
+  const message = fallback.trim().length > 0 ? fallback : "Edge function request failed";
+  const { status, code } = classifyTransportFromMessage(message);
+  const requestId = extractRequestIdFromDetails((error as { details?: unknown })?.details);
+
+  return new EdgeFunctionError({
+    route,
+    status,
+    code,
+    requestId,
+    details: { classifier: code, route },
+    message: `Edge function ${route} failed (${status}): ${message} [${code}]`,
+  });
+};
+
+const normalizeAuthContextError = (error: Error): EdgeFunctionError => {
+  const lower = error.message.toLowerCase();
+  if (lower.includes("timed out")) {
+    return new EdgeFunctionError({
+      route: "supabase-auth",
+      status: 522,
+      code: "auth_gateway_timeout",
+      requestId: null,
+      details: { classifier: "auth_gateway_timeout", route: "supabase-auth" },
+      message: `Supabase auth gateway unreachable: ${error.message}`,
+    });
+  }
+  if (lower.includes("failed to fetch") || lower.includes("network")) {
+    return new EdgeFunctionError({
+      route: "supabase-auth",
+      status: 503,
+      code: "network_unreachable",
+      requestId: null,
+      details: { classifier: "network_unreachable", route: "supabase-auth" },
+      message: `Supabase auth network path failed: ${error.message}`,
+    });
+  }
+  return new EdgeFunctionError({
+    route: "supabase-auth",
+    status: 401,
+    code: "auth_required",
+    requestId: null,
+    details: { classifier: "auth_required", route: "supabase-auth" },
+    message: error.message,
+  });
+};
+
+const buildEdgeError = (
   name: string,
   status: number,
   statusText: string | null,
@@ -279,27 +428,52 @@ const buildEdgeErrorMessage = (
   fallback: string,
   requestId: string | null,
 ) => {
-  const json = responseDetails.json as
-    | { message?: string; error?: string; details?: { message?: string } }
-    | null;
+  const json = responseDetails.json as EdgeErrorPayload | null;
+  const responseText = responseDetails.text?.toLowerCase() ?? "";
+  const has522Signal =
+    responseText.includes("error code 522")
+    || responseText.includes("connection timed out")
+    || (responseText.includes("cloudflare") && responseText.includes("timed out"));
+  const normalizedStatus = has522Signal && status >= 500 ? 522 : status;
+  const derivedCode =
+    json?.code
+    ?? (normalizedStatus === 522 ? "auth_gateway_timeout" : null)
+    ?? (normalizedStatus === 504 ? "upstream_timeout" : null)
+    ?? (normalizedStatus === 503 ? "network_unreachable" : null);
   const message =
     json?.message
     ?? json?.error
-    ?? json?.details?.message
     ?? responseDetails.text
     ?? fallback;
   const requestSuffix = requestId ? ` (requestId: ${requestId})` : "";
   const statusSuffix = statusText ? ` ${statusText}` : "";
-  return `Edge function ${name} failed (${status}${statusSuffix}): ${message}${requestSuffix}`;
+  const codeSuffix = derivedCode ? ` [${derivedCode}]` : "";
+  return new EdgeFunctionError({
+    route: name,
+    status: normalizedStatus,
+    code: derivedCode ?? null,
+    requestId,
+    details: json?.details ?? { edge_status: status, route: name },
+    message: `Edge function ${name} failed (${normalizedStatus}${statusSuffix}): ${message}${codeSuffix}${requestSuffix}`,
+  });
 };
 
 const shouldRetryStatus = (status: number) =>
-  status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+  status === 408 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 522;
 
 const shouldRetryError = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false;
+  if (error instanceof EdgeFunctionError) {
+    return error.code === "network_unreachable"
+      || error.code === "upstream_timeout"
+      || error.code === "auth_gateway_timeout"
+      || error.code === "edge_fetch_failed";
+  }
   const message = error.message.toLowerCase();
-  return message.includes("timed out") || message.includes("network") || message.includes("failed to fetch") || message.includes("edge_fetch_failed");
+  return message.includes("timed out")
+    || message.includes("network")
+    || message.includes("failed to fetch")
+    || message.includes("edge_fetch_failed");
 };
 
 const waitBackoff = async (attempt: number, baseMs: number, signal?: AbortSignal) => {
@@ -318,30 +492,75 @@ const waitBackoff = async (attempt: number, baseMs: number, signal?: AbortSignal
   return ms;
 };
 
-const withEdgeSlot = async <T>(run: () => Promise<T>): Promise<T> => {
+const dequeueNextEdgeSlot = () => {
+  while (edgeCallQueue.length > 0) {
+    const next = edgeCallQueue.shift();
+    if (!next) return;
+    if (next.onAbort && next.signal) {
+      next.signal.removeEventListener("abort", next.onAbort);
+      next.onAbort = undefined;
+    }
+    if (next.aborted || next.signal?.aborted) continue;
+    activeEdgeCalls += 1;
+    next.release();
+    return;
+  }
+};
+
+const waitForEdgeSlot = (signal?: AbortSignal): Promise<void> =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Request cancelled"));
+      return;
+    }
+
+    const item: EdgeQueueItem = {
+      id: crypto.randomUUID(),
+      release: resolve,
+      reject,
+      signal,
+      aborted: false,
+    };
+
+    item.onAbort = () => {
+      item.aborted = true;
+      const index = edgeCallQueue.findIndex((entry) => entry.id === item.id);
+      if (index >= 0) edgeCallQueue.splice(index, 1);
+      reject(new Error("Request cancelled"));
+    };
+
+    if (signal) {
+      signal.addEventListener("abort", item.onAbort, { once: true });
+    }
+
+    edgeCallQueue.push(item);
+  });
+
+const withEdgeSlot = async <T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
   if (activeEdgeCalls >= MAX_CONCURRENT_EDGE_CALLS) {
-    await new Promise<void>((resolve) => {
-      edgeCallQueue.push(resolve);
-    });
+    await waitForEdgeSlot(signal);
+  } else {
+    activeEdgeCalls += 1;
   }
 
-  activeEdgeCalls += 1;
   try {
     return await run();
   } finally {
     activeEdgeCalls = Math.max(0, activeEdgeCalls - 1);
-    const next = edgeCallQueue.shift();
-    if (next) next();
+    dequeueNextEdgeSlot();
   }
 };
 
-const responseForAuthError = (authError: Error) => ({
-  data: null,
-  error: authError,
-  status: 401,
-  raw: new Response(null, { status: 401, statusText: "auth_required" }),
-  skipped: true,
-});
+const responseForAuthError = (authError: Error) => {
+  const normalized = normalizeAuthContextError(authError);
+  return {
+    data: null,
+    error: normalized,
+    status: normalized.status,
+    raw: new Response(null, { status: normalized.status, statusText: normalized.code ?? "auth_required" }),
+    skipped: true,
+  };
+};
 
 const buildRequestHeaders = (options: EdgeOptions | undefined, token: string | null): EdgeHeaders => ({
   "Content-Type": "application/json",
@@ -370,7 +589,9 @@ export async function callEdgeFunction<T>(
       : await getAuthContext(options?.requireAuth);
 
     if (baseAuth.authError) {
-      logger.error("auth.required", baseAuth.authError, { name });
+      const authError = normalizeAuthContextError(baseAuth.authError);
+      logger.error("auth.required", authError, { name, code: authError.code });
+      recordHealthFailure("auth", authError, null, { route: "supabase-auth", code: authError.code });
       return responseForAuthError(baseAuth.authError);
     }
 
@@ -393,19 +614,20 @@ export async function callEdgeFunction<T>(
           signal: options?.signal,
         });
       } catch (error) {
-        const edgeError = error instanceof Error ? error : new Error("Edge function request failed");
+        const edgeError = classifyTransportError(name, error);
         lastError = edgeError;
-        logger.error("invoke.error", edgeError, { name, attempt, method });
+        logger.error("invoke.error", edgeError, { name, attempt, method, code: edgeError.code });
         if (attempt <= maxRetries && shouldRetryError(edgeError)) {
           const waitMs = await waitBackoff(attempt, retryBaseMs, options?.signal);
           logger.warn("invoke.retry", { name, attempt, wait_ms: waitMs, reason: edgeError.message });
           continue;
         }
+        recordHealthFailure(`edge:${name}`, edgeError, Date.now() - startedAt, { route: name, code: edgeError.code });
         return {
           data: null,
           error: edgeError,
-          status: 599,
-          raw: new Response(null, { status: 599, statusText: "edge_fetch_failed" }),
+          status: edgeError.status,
+          raw: new Response(null, { status: edgeError.status, statusText: edgeError.code ?? "edge_fetch_failed" }),
           skipped: false,
         };
       }
@@ -415,7 +637,7 @@ export async function callEdgeFunction<T>(
 
       if (!response.ok) {
         const fallbackMessage = responseDetails.text ?? "Edge function request failed";
-        const message = buildEdgeErrorMessage(
+        const edgeError = buildEdgeError(
           name,
           response.status,
           response.statusText,
@@ -425,7 +647,10 @@ export async function callEdgeFunction<T>(
         );
 
         // Retry once on auth invalid after refresh.
-        const shouldRefresh = response.status === 401 || message.toLowerCase().includes("invalid jwt");
+        const shouldRefresh =
+          response.status === 401
+          || edgeError.message.toLowerCase().includes("invalid jwt")
+          || edgeError.code === "auth_invalid";
         if (shouldRefresh) {
           const { session: refreshedSession, error: refreshError } = await refreshSessionSafe();
           if (!refreshError && refreshedSession?.access_token) {
@@ -437,13 +662,14 @@ export async function callEdgeFunction<T>(
                 signal: options?.signal,
               });
             } catch (error) {
-              const refreshFetchError = error instanceof Error ? error : new Error("Edge function request failed");
-              logger.error("invoke.refresh.error", refreshFetchError, { name, attempt });
+              const refreshFetchError = classifyTransportError(name, error);
+              logger.error("invoke.refresh.error", refreshFetchError, { name, attempt, code: refreshFetchError.code });
+              recordHealthFailure(`edge:${name}`, refreshFetchError, Date.now() - startedAt, { route: name, code: refreshFetchError.code });
               return {
                 data: null,
                 error: refreshFetchError,
-                status: 599,
-                raw: new Response(null, { status: 599, statusText: "edge_fetch_failed" }),
+                status: refreshFetchError.status,
+                raw: new Response(null, { status: refreshFetchError.status, statusText: refreshFetchError.code ?? "edge_fetch_failed" }),
                 skipped: false,
               };
             }
@@ -457,9 +683,8 @@ export async function callEdgeFunction<T>(
           }
         }
 
-        const error = new Error(message);
-        lastError = error;
-        logger.error("invoke.bad_status", error, {
+        lastError = edgeError;
+        logger.error("invoke.bad_status", edgeError, {
           name,
           attempt,
           status: response.status,
@@ -473,10 +698,10 @@ export async function callEdgeFunction<T>(
           continue;
         }
 
-        recordHealthFailure(`edge:${name}`, error, Date.now() - startedAt);
+        recordHealthFailure(`edge:${name}`, edgeError, Date.now() - startedAt, { route: name, code: edgeError.code });
         return {
           data: null,
-          error,
+          error: edgeError,
           status: response.status,
           raw: response,
           skipped: false,
@@ -518,14 +743,16 @@ export async function callEdgeFunction<T>(
     }
 
     const fallbackError = lastError ?? new Error("Edge function request failed after retries");
+    const fallbackStatus = fallbackError instanceof EdgeFunctionError ? fallbackError.status : 599;
+    const fallbackCode = fallbackError instanceof EdgeFunctionError ? fallbackError.code : "edge_fetch_failed";
     return {
       data: null,
       error: fallbackError,
-      status: 599,
-      raw: new Response(null, { status: 599, statusText: "edge_fetch_failed" }),
+      status: fallbackStatus,
+      raw: new Response(null, { status: fallbackStatus, statusText: fallbackCode ?? "edge_fetch_failed" }),
       skipped: false,
     };
-  });
+  }, options?.signal);
 
   if (dedupeKey) {
     inFlightJsonCalls.set(dedupeKey, runPromise as Promise<unknown>);
@@ -571,7 +798,7 @@ export async function callEdgeFunctionRaw(
         if (!response.ok) {
           const responseDetails = await readResponseBody(response);
           const requestId = extractRequestId(response, responseDetails.json);
-          const message = buildEdgeErrorMessage(
+          const edgeError = buildEdgeError(
             name,
             response.status,
             response.statusText,
@@ -579,7 +806,7 @@ export async function callEdgeFunctionRaw(
             "Edge function request failed",
             requestId,
           );
-          logger.error("raw.bad_status", new Error(message), {
+          logger.error("raw.bad_status", edgeError, {
             name,
             attempt,
             status: response.status,
@@ -590,11 +817,11 @@ export async function callEdgeFunctionRaw(
             logger.warn("raw.retry", { name, attempt, wait_ms: waitMs, status: response.status });
             continue;
           }
-          throw new Error(message);
+          throw edgeError;
         }
         return response;
       } catch (error) {
-        const edgeError = error instanceof Error ? error : new Error("Edge function request failed");
+        const edgeError = classifyTransportError(name, error);
         if (attempt <= maxRetries && shouldRetryError(edgeError)) {
           const waitMs = await waitBackoff(attempt, retryBaseMs, options?.signal);
           logger.warn("raw.retry", { name, attempt, wait_ms: waitMs, reason: edgeError.message });
@@ -606,7 +833,7 @@ export async function callEdgeFunctionRaw(
     }
 
     throw new Error(`Edge function ${name} failed after retries`);
-  });
+  }, options?.signal);
 
   if (dedupeKey) inFlightRawCalls.set(dedupeKey, runPromise);
   try {
