@@ -1,0 +1,18 @@
+{
+  # Global options.
+  email {$CADDY_EMAIL}
+}
+
+{$MYTHIC_API_DOMAIN} {
+  encode zstd gzip
+
+  # Basic health endpoint.
+  handle /healthz {
+    reverse_proxy mythic-api:3001
+  }
+
+  # Preserve Supabase Edge function path contract.
+  handle /functions/v1/* {
+    reverse_proxy mythic-api:3001
+  }
+}
