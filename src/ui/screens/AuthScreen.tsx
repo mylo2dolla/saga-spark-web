@@ -79,7 +79,9 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       const { result } = await runOperation({
         name: `auth.${mode}`,
         signal: controller.signal,
-        timeoutMs: 12_000,
+        // Supabase auth can intermittently be slow/variable behind Cloudflare. Use a higher budget
+        // and rely on explicit cancel + connectivity checks to avoid false timeouts.
+        timeoutMs: 45_000,
         maxRetries: 1,
         onUpdate: (state) => {
           setAuthOp(state);
@@ -91,12 +93,48 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           }
 
           if (mode === "login") {
-            const response = await supabase.auth.signInWithPassword({
-              email: email.trim(),
-              password,
+            const trimmedEmail = email.trim();
+            const tokenUrl = `${supabaseUrl}/auth/v1/token?grant_type=password`;
+            const tokenRes = await fetch(tokenUrl, {
+              method: "POST",
+              headers: {
+                apikey: supabaseAnonKey,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ email: trimmedEmail, password }),
+              signal,
             });
-            if (response.error) throw response.error;
-            return { session: response.data.session, user: response.data.user };
+
+            if (!tokenRes.ok) {
+              const requestId =
+                tokenRes.headers.get("sb-request-id")
+                ?? tokenRes.headers.get("x-request-id")
+                ?? tokenRes.headers.get("cf-ray");
+              let message = `Auth failed (${tokenRes.status})`;
+              try {
+                const json = await tokenRes.clone().json() as { error_description?: string; message?: string } | null;
+                message = json?.error_description ?? json?.message ?? message;
+              } catch {
+                // Non-JSON responses (e.g. Cloudflare HTML 522) are expected in some outage modes.
+                message = tokenRes.status === 522 ? "Supabase auth gateway timed out (522)" : message;
+              }
+              if (requestId) {
+                message = `${message} (requestId: ${requestId})`;
+              }
+              throw Object.assign(new Error(message), { status: tokenRes.status });
+            }
+
+            const tokenJson = await tokenRes.json() as { access_token?: string; refresh_token?: string };
+            if (!tokenJson.access_token || !tokenJson.refresh_token) {
+              throw new Error("Auth completed without tokens");
+            }
+
+            const setRes = await supabase.auth.setSession({
+              access_token: tokenJson.access_token,
+              refresh_token: tokenJson.refresh_token,
+            });
+            if (setRes.error) throw setRes.error;
+            return { session: setRes.data.session, user: setRes.data.user };
           }
 
           const response = await supabase.auth.signUp({
@@ -253,15 +291,13 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                 setIsChecking(true);
                 setCheckResult(null);
                 try {
-                  const timeout = (ms: number) =>
-                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out")), ms));
                   const headers = supabaseAnonKey ? { apikey: supabaseAnonKey } : undefined;
-                  const authReq = fetch(`${supabaseUrl}/auth/v1/health`, { method: "GET", headers });
-                  const restReq = fetch(`${supabaseUrl}/rest/v1/`, { method: "GET", headers });
+                  const controller = new AbortController();
+                  const timeoutId = setTimeout(() => controller.abort(), 12_000);
                   const [authRes, restRes] = await Promise.all([
-                    Promise.race([authReq, timeout(6000)]),
-                    Promise.race([restReq, timeout(6000)]),
-                  ]);
+                    fetch(`${supabaseUrl}/auth/v1/health`, { method: "GET", headers, signal: controller.signal }),
+                    fetch(`${supabaseUrl}/rest/v1/`, { method: "GET", headers, signal: controller.signal }),
+                  ]).finally(() => clearTimeout(timeoutId));
                   setCheckResult({
                     authStatus: `auth ${authRes.status}${authRes.status === 401 ? " (key required)" : ""}`,
                     restStatus: `rest ${restRes.status}${restRes.status === 401 ? " (key required)" : ""}`,
@@ -285,19 +321,17 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                 setIsAuthTesting(true);
                 setAuthTestResult(null);
                 try {
-                  const timeout = (ms: number) =>
-                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out")), ms));
-                  const res = await Promise.race([
-                    fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-                      method: "POST",
-                      headers: {
-                        apikey: supabaseAnonKey,
-                        "Content-Type": "application/json",
-                      },
-                      body: JSON.stringify({ email, password }),
-                    }),
-                    timeout(8000),
-                  ]);
+                  const controller = new AbortController();
+                  const timeoutId = setTimeout(() => controller.abort(), 12_000);
+                  const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+                    method: "POST",
+                    headers: {
+                      apikey: supabaseAnonKey,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ email, password }),
+                    signal: controller.signal,
+                  }).finally(() => clearTimeout(timeoutId));
                   const text = await res.text();
                   const redacted = redactText(text);
                   const snippet = redacted.length > 200 ? `${redacted.slice(0, 200)}...` : redacted;
