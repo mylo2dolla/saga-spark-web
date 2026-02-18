@@ -15,6 +15,24 @@ interface Props {
 export function BoardInspectDialog(props: Props) {
   const target = props.target;
   const recentThreads = props.questThreads.slice(0, 3);
+  const metaEntries = target?.meta && typeof target.meta === "object"
+    ? Object.entries(target.meta)
+        .filter(([key]) => !key.startsWith("_"))
+        .slice(0, 10)
+    : [];
+
+  const formatMeta = (value: unknown): string => {
+    if (value === null || value === undefined) return "—";
+    if (typeof value === "string") return value.length > 160 ? `${value.slice(0, 160)}...` : value;
+    if (typeof value === "number") return Number.isFinite(value) ? String(value) : "—";
+    if (typeof value === "boolean") return value ? "yes" : "no";
+    try {
+      const json = JSON.stringify(value);
+      return json.length > 160 ? `${json.slice(0, 160)}...` : json;
+    } catch {
+      return String(value);
+    }
+  };
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
@@ -27,6 +45,20 @@ export function BoardInspectDialog(props: Props) {
         </DialogHeader>
 
         <div className="max-h-[70vh] overflow-auto pr-1">
+          {metaEntries.length > 0 ? (
+            <div className="mb-3 rounded-lg border border-border bg-background/30 p-3">
+              <div className="mb-2 text-xs font-semibold text-foreground">Details</div>
+              <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                {metaEntries.map(([key, value]) => (
+                  <div key={key} className="rounded border border-border bg-background/20 px-2 py-2">
+                    <div className="font-medium text-foreground">{key}</div>
+                    <div className="mt-1 break-words">{formatMeta(value)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           {target?.actions?.length ? (
             <div className="grid gap-2">
               {target.actions.map((action) => (
@@ -65,4 +97,3 @@ export function BoardInspectDialog(props: Props) {
     </Dialog>
   );
 }
-

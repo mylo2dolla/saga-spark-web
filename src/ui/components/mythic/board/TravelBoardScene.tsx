@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import type { MythicUiAction } from "@/hooks/useMythicDungeonMaster";
+import type { BoardInspectTarget } from "@/ui/components/mythic/board/inspectTypes";
 import { PixelBoardCanvas } from "@/ui/components/mythic/board/pixel/PixelBoardCanvas";
 import { pixelPalette } from "@/ui/components/mythic/board/pixel/pixelPalette";
 import {
@@ -15,7 +15,7 @@ import {
 interface TravelBoardSceneProps {
   boardState: Record<string, unknown>;
   scene: Record<string, unknown> | null;
-  onAction: (action: MythicUiAction) => void;
+  onInspect: (target: BoardInspectTarget) => void;
 }
 
 interface ThemeColors {
@@ -132,7 +132,7 @@ export function TravelBoardScene(props: TravelBoardSceneProps) {
     const encounterSeeds = Array.isArray(props.boardState.encounter_seeds)
       ? props.boardState.encounter_seeds.map((seed) => Number(seed)).filter((seed) => Number.isFinite(seed))
       : [];
-    return encounterSeeds.slice(0, 6).map((seed, idx) => seededMarker(seed, idx, 96, 72));
+    return encounterSeeds.slice(0, 6).map((seed, idx) => ({ seed, ...seededMarker(seed, idx, 96, 72) }));
   }, [props.boardState.encounter_seeds]);
 
   const terrainBands = Array.isArray(props.boardState.terrain_bands)
@@ -273,31 +273,101 @@ export function TravelBoardScene(props: TravelBoardSceneProps) {
           }}
           onClickPixel={(x, y) => {
             if (x <= 14 && y >= 50) {
-              props.onAction({ id: "travel-town", label: "Head to Town", intent: "town", boardTarget: "town" });
+              props.onInspect({
+                kind: "landmark",
+                id: "travel-town",
+                title: "Road Back to Town",
+                subtitle: "Lamp light, walls, and merchants. Safety costs time.",
+                actions: [
+                  { id: "travel-town-go", label: "Head to Town", intent: "town", boardTarget: "town" },
+                  {
+                    id: "travel-town-prompt",
+                    label: "Ask For Directions",
+                    intent: "dm_prompt",
+                    prompt: "I backtrack toward town and ask travelers for news and directions, watching for ambush signs.",
+                  },
+                ],
+                rect: { x: 0, y: 50, w: 14, h: 22 },
+              });
               return;
             }
 
             if (searchTarget === "dungeon" && x >= 80 && y <= 18) {
               if (dungeonTracesFound) {
-                props.onAction({ id: "travel-enter-dungeon", label: "Enter Dungeon", intent: "dungeon", boardTarget: "dungeon" });
+                props.onInspect({
+                  kind: "landmark",
+                  id: "travel-dungeon-entrance",
+                  title: "Dungeon Entrance",
+                  subtitle: "A cold mouth in the earth. The air tastes of old stone.",
+                  actions: [
+                    { id: "travel-enter-dungeon", label: "Enter Dungeon", intent: "dungeon", boardTarget: "dungeon" },
+                    {
+                      id: "travel-dungeon-assess",
+                      label: "Scout The Entrance",
+                      intent: "dm_prompt",
+                      prompt: "I scout the dungeon entrance for traps, tracks, and any sign of watchers before going in.",
+                      payload: { travel_probe: "assess_entrance", search_target: "dungeon", tile_x: x, tile_y: y },
+                    },
+                  ],
+                  rect: { x: 80, y: 0, w: 16, h: 18 },
+                });
               } else {
-                props.onAction({
+                props.onInspect({
+                  kind: "landmark",
                   id: "travel-search-dungeon",
-                  label: "Search Dungeon Route",
-                  intent: "dm_prompt",
-                  prompt: "I sweep this route for cave mouths, ruin doors, and signs of dungeon access.",
-                  payload: { travel_probe: "search", search_target: "dungeon", tile_x: x, tile_y: y },
+                  title: "Unconfirmed Dungeon Traces",
+                  subtitle: "Broken stone, hollow wind, and a pattern that almost fits.",
+                  actions: [
+                    {
+                      id: "travel-search-dungeon-prompt",
+                      label: "Search The Route",
+                      intent: "dm_prompt",
+                      prompt: "I sweep this route for cave mouths, ruin doors, and signs of dungeon access.",
+                      payload: { travel_probe: "search", search_target: "dungeon", tile_x: x, tile_y: y },
+                    },
+                  ],
+                  rect: { x: 80, y: 0, w: 16, h: 18 },
                 });
               }
               return;
             }
 
-            props.onAction({
+            const encounterHit = markers.find((m) => x >= m.x - 4 && x <= m.x + 4 && y >= m.y - 4 && y <= m.y + 4) ?? null;
+            if (encounterHit) {
+              props.onInspect({
+                kind: "landmark",
+                id: `travel-encounter-${encounterHit.seed}`,
+                title: "Signs On The Wind",
+                subtitle: "Fresh scuffs, snapped brush, and a pressure in the silence.",
+                actions: [
+                  {
+                    id: `travel-encounter-probe-${encounterHit.seed}`,
+                    label: "Investigate",
+                    intent: "dm_prompt",
+                    prompt: "I investigate these signs carefully, looking for threats, tracks, and opportunities.",
+                    payload: { travel_probe: "investigate", encounter_seed: encounterHit.seed, tile_x: x, tile_y: y },
+                  },
+                ],
+                rect: { x: encounterHit.x - 4, y: encounterHit.y - 4, w: 8, h: 8 },
+              });
+              return;
+            }
+
+            props.onInspect({
+              kind: "landmark",
               id: "travel-scout",
-              label: "Scout Route",
-              intent: "dm_prompt",
-              prompt: "I scout the route ahead, checking hazards, encounters, and hidden opportunities.",
-              payload: { travel_probe: "scout", tile_x: x, tile_y: y },
+              title: "Overland Route",
+              subtitle: "Uncertain ground. Hidden angles. Bad luck waiting for a gap.",
+              actions: [
+                {
+                  id: "travel-scout-prompt",
+                  label: "Scout Route",
+                  intent: "dm_prompt",
+                  prompt: "I scout the route ahead, checking hazards, encounters, and hidden opportunities.",
+                  payload: { travel_probe: "scout", tile_x: x, tile_y: y },
+                },
+              ],
+              rect: { x: Math.max(0, x - 4), y: Math.max(0, y - 4), w: 8, h: 8 },
             });
           }}
         />

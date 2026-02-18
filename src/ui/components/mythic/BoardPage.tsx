@@ -89,10 +89,10 @@ export function BoardPage(props: BoardPageProps) {
               <TownBoardScene boardState={props.boardState} scene={props.sceneHints} onInspect={props.onInspect} />
             ) : null}
             {props.boardType === "travel" ? (
-              <TravelBoardScene boardState={props.boardState} scene={props.sceneHints} onAction={props.onAction} />
+              <TravelBoardScene boardState={props.boardState} scene={props.sceneHints} onInspect={props.onInspect} />
             ) : null}
             {props.boardType === "dungeon" ? (
-              <DungeonBoardScene boardState={props.boardState} scene={props.sceneHints} onAction={props.onAction} />
+              <DungeonBoardScene boardState={props.boardState} scene={props.sceneHints} onInspect={props.onInspect} />
             ) : null}
             {props.boardType === "combat" ? (
               props.combatSessionId ? (
@@ -110,6 +110,7 @@ export function BoardPage(props: BoardPageProps) {
                   onTickTurn={props.onTickTurn}
                   onUseSkill={props.onUseSkill}
                   onFocusCombatant={props.onFocusCombatant}
+                  onInspect={props.onInspect}
                 />
               ) : (
                 <div className="flex min-h-[520px] items-center justify-center rounded-xl border border-border bg-background/30 text-sm text-muted-foreground">
