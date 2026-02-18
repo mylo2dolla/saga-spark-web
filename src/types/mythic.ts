@@ -1,3 +1,5 @@
+import type { Json, Tables } from "@/integrations/supabase/types";
+
 export type MythicBoardType = "town" | "dungeon" | "travel" | "combat";
 
 export type MythicRarity = "common" | "magical" | "unique" | "legendary" | "mythic" | "unhinged";
@@ -52,68 +54,20 @@ export interface MythicSkill {
   narration_style: string;
 }
 
-export interface MythicCharacterRow {
-  id: string;
-  campaign_id: string;
-  player_id: string | null;
-  name: string;
-  level: number;
-  xp: number;
-  xp_to_next: number;
-  unspent_points: number;
-  offense: number;
-  defense: number;
-  control: number;
-  support: number;
-  mobility: number;
-  utility: number;
-  class_json: Record<string, unknown>;
-  derived_json: Record<string, unknown>;
-  progression_json: Record<string, unknown>;
-  resources: Record<string, unknown>;
-  last_level_up_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface MythicCharacterLoadoutRow {
-  id: string;
-  character_id: string;
-  campaign_id: string;
-  name: string;
-  is_active: boolean;
-  slots_json: string[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface MythicProgressionEventRow {
-  id: string;
-  campaign_id: string;
-  character_id: string;
-  event_type: "xp_applied" | "level_up" | "points_spent" | "loadout_changed" | "gear_progression" | string;
-  payload: Record<string, unknown>;
-  created_at: string;
-}
-
-export interface MythicQuestThreadRow {
-  id: string;
-  source: "dm_memory" | "board_transition" | "progression" | "loot_drop" | "reputation";
-  event_type: string;
-  title: string;
-  detail: string;
-  severity: number;
-  created_at: string;
-}
+export type MythicCharacterRow = Tables<{ schema: "mythic" }, "characters">;
+export type MythicItemRow = Tables<{ schema: "mythic" }, "items">;
+export type MythicSkillRow = Tables<{ schema: "mythic" }, "skills">;
+export type MythicInventoryRow = Pick<
+  Tables<{ schema: "mythic" }, "inventory">,
+  "id" | "container" | "equip_slot" | "quantity" | "equipped_at"
+> & {
+  item: MythicItemRow | null;
+};
 
 export interface MythicCharacterBundle {
   character: MythicCharacterRow;
-  skills: MythicSkill[];
-  items: Array<Record<string, unknown>>;
-  loadouts: MythicCharacterLoadoutRow[];
-  progressionEvents: MythicProgressionEventRow[];
-  questThreads: MythicQuestThreadRow[];
-  loadoutSlotCap: number;
+  skills: MythicSkillRow[];
+  items: MythicInventoryRow[];
 }
 
 export interface MythicCreateCharacterRequest {
@@ -145,4 +99,10 @@ export interface MythicBootstrapRequest {
 
 export interface MythicBootstrapResponse {
   ok: boolean;
+}
+
+export interface MythicQuestThreadRow {
+  id: string;
+  title: string;
+  detail?: string | null;
 }

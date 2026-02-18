@@ -1,34 +1,53 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useAuth } from "@/hooks/useAuth";
+import { useGameSessionContext } from "@/contexts/GameSessionContext";
 import { MythicCharacterCreator } from "@/components/MythicCharacterCreator";
 import { useMythicCharacter } from "@/hooks/useMythicCharacter";
 import type { MythicCreateCharacterResponse } from "@/types/mythic";
 
-export default function MythicCharacterScreen() {
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+export default function CharacterScreen() {
   const { campaignId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
   const { setLastError } = useDiagnostics();
   const { user, isLoading: authLoading } = useAuth();
+  const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
   const [showCreator, setShowCreator] = useState(false);
+  const [lastAction, setLastAction] = useState<string | null>(null);
   const [sessionFallback, setSessionFallback] = useState<{
     checking: boolean;
     hasSession: boolean | null;
     error: string | null;
   }>({ checking: false, hasSession: null, error: null });
 
+  const gameSession = useGameSessionContext();
   const { character, isLoading: characterLoading, error: characterError, refetch } = useMythicCharacter(campaignId);
 
   const shouldShowCreator = useMemo(() => showCreator || !character, [showCreator, character]);
 
+  console.info("[mythic.character]", {
+    step: "enter_screen",
+    route: location.pathname,
+    campaignId,
+    hasSession: Boolean(user),
+    userId: user?.id ?? null,
+  });
+
   useEffect(() => {
+    if (E2E_BYPASS_AUTH) return;
     if (authLoading || user) return;
     let isMounted = true;
 
@@ -50,21 +69,23 @@ export default function MythicCharacterScreen() {
       }
     };
 
-    void run();
+    run();
     return () => {
       isMounted = false;
     };
-  }, [authLoading, user]);
+  }, [E2E_BYPASS_AUTH, authLoading, user]);
 
   useEffect(() => {
+    if (E2E_BYPASS_AUTH) return;
     if (!campaignId) return;
     if (authLoading || sessionFallback.checking) return;
     if (!user && !sessionFallback.hasSession) {
       navigate("/login");
     }
-  }, [authLoading, campaignId, navigate, sessionFallback.checking, sessionFallback.hasSession, user]);
+  }, [E2E_BYPASS_AUTH, authLoading, campaignId, navigate, sessionFallback.checking, sessionFallback.hasSession, user]);
 
   const handleCompleteMythic = async (res: MythicCreateCharacterResponse) => {
+    setLastAction("create_mythic_character_success");
     setShowCreator(false);
     setLastError(null);
 
@@ -73,6 +94,7 @@ export default function MythicCharacterScreen() {
       description: `${res.class.class_name} kit saved in mythic schema.`,
     });
 
+    // The mythic screen reads authoritative board + transitions + combat playback.
     navigate(`/mythic/${campaignId}`);
   };
 
@@ -116,8 +138,9 @@ export default function MythicCharacterScreen() {
   }
 
   if (!shouldShowCreator && character) {
-    const className = String((character.class_json as any)?.class_name ?? "(class)");
-    const role = String((character.class_json as any)?.role ?? "?");
+    const classJson = asObject(character.class_json);
+    const className = typeof classJson.class_name === "string" ? classJson.class_name : "(class)";
+    const role = typeof classJson.role === "string" ? classJson.role : "?";
 
     return (
       <div className="space-y-4">
@@ -142,6 +165,13 @@ export default function MythicCharacterScreen() {
           <button
             type="button"
             className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
+            onClick={() => navigate(`/game/${campaignId}`)}
+          >
+            Continue (Legacy)
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground"
             onClick={() => setShowCreator(true)}
           >
             Regenerate Mythic Kit
@@ -157,9 +187,25 @@ export default function MythicCharacterScreen() {
         campaignId={campaignId}
         onComplete={handleCompleteMythic}
         onCancel={() => {
+          setLastAction("create_character_cancel");
           navigate("/dashboard");
         }}
       />
+      {import.meta.env.DEV ? (
+        <div className="fixed bottom-2 right-2 z-[9999] max-w-xs rounded-md border border-border bg-card/95 p-2 text-[11px] text-muted-foreground">
+          <div>route: {location.pathname}</div>
+          <div>campaignId: {campaignId}</div>
+          <div>userId: {user?.id ?? "-"}</div>
+          <div>hasSession: {user ? "yes" : "no"}</div>
+          <div>authLoading: {String(authLoading)}</div>
+          <div>characterLoading: {String(characterLoading)}</div>
+          <div>characterExists: {character ? "yes" : "no"}</div>
+          <div>characterError: {characterError ?? "none"}</div>
+          <div>engineReady: {gameSession.isInitialized ? "yes" : "no"}</div>
+          <div>lastError: {gameSession.error ?? "none"}</div>
+          <div>lastAction: {lastAction ?? "none"}</div>
+        </div>
+      ) : null}
     </>
   );
 }

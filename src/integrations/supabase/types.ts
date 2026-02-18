@@ -715,6 +715,51 @@ export type Database = {
         }
         Relationships: []
       }
+      dm_turn_log: {
+        Row: {
+          action_tags: string[]
+          applied_ops: Json
+          campaign_id: string
+          created_at: string
+          dm_deltas: Json
+          id: string
+          mood_after: string | null
+          mood_before: string | null
+          narration: string
+          player_action: string
+          player_id: string | null
+          tension_deltas: Json
+        }
+        Insert: {
+          action_tags?: string[]
+          applied_ops?: Json
+          campaign_id: string
+          created_at?: string
+          dm_deltas?: Json
+          id?: string
+          mood_after?: string | null
+          mood_before?: string | null
+          narration: string
+          player_action: string
+          player_id?: string | null
+          tension_deltas?: Json
+        }
+        Update: {
+          action_tags?: string[]
+          applied_ops?: Json
+          campaign_id?: string
+          created_at?: string
+          dm_deltas?: Json
+          id?: string
+          mood_after?: string | null
+          mood_before?: string | null
+          narration?: string
+          player_action?: string
+          player_id?: string | null
+          tension_deltas?: Json
+        }
+        Relationships: []
+      }
       faction_reputation: {
         Row: {
           campaign_id: string
@@ -1173,6 +1218,95 @@ export type Database = {
           },
         ]
       }
+      quest_arcs: {
+        Row: {
+          arc_key: string
+          campaign_id: string
+          created_at: string
+          id: string
+          priority: number
+          source: string
+          state: string
+          summary: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          arc_key: string
+          campaign_id: string
+          created_at?: string
+          id?: string
+          priority?: number
+          source?: string
+          state?: string
+          summary?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          arc_key?: string
+          campaign_id?: string
+          created_at?: string
+          id?: string
+          priority?: number
+          source?: string
+          state?: string
+          summary?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      quest_objectives: {
+        Row: {
+          arc_id: string
+          campaign_id: string
+          created_at: string
+          current_count: number
+          description: string
+          id: string
+          objective_key: string
+          sort_order: number
+          state: string
+          target_count: number
+          updated_at: string
+        }
+        Insert: {
+          arc_id: string
+          campaign_id: string
+          created_at?: string
+          current_count?: number
+          description: string
+          id?: string
+          objective_key: string
+          sort_order?: number
+          state?: string
+          target_count?: number
+          updated_at?: string
+        }
+        Update: {
+          arc_id?: string
+          campaign_id?: string
+          created_at?: string
+          current_count?: number
+          description?: string
+          id?: string
+          objective_key?: string
+          sort_order?: number
+          state?: string
+          target_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quest_objectives_arc_id_fkey"
+            columns: ["arc_id"]
+            isOneToOne: false
+            referencedRelation: "quest_arcs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       reputation_events: {
         Row: {
           campaign_id: string
@@ -1329,6 +1463,42 @@ export type Database = {
             referencedColumns: ["character_id"]
           },
         ]
+      }
+      story_beats: {
+        Row: {
+          beat_type: string
+          campaign_id: string
+          created_at: string
+          created_by: string
+          emphasis: string
+          id: string
+          metadata: Json
+          narrative: string
+          title: string
+        }
+        Insert: {
+          beat_type?: string
+          campaign_id: string
+          created_at?: string
+          created_by?: string
+          emphasis?: string
+          id?: string
+          metadata?: Json
+          narrative: string
+          title: string
+        }
+        Update: {
+          beat_type?: string
+          campaign_id?: string
+          created_at?: string
+          created_by?: string
+          emphasis?: string
+          id?: string
+          metadata?: Json
+          narrative?: string
+          title?: string
+        }
+        Relationships: []
       }
       turn_order: {
         Row: {
@@ -1569,6 +1739,14 @@ export type Database = {
           p_turn_index: number
         }
         Returns: string
+      }
+      apply_dm_turn: {
+        Args: {
+          p_campaign_id: string
+          p_payload: Json
+          p_player_id: string
+        }
+        Returns: Json
       }
       apply_xp: {
         Args: {
