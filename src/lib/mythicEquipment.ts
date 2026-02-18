@@ -40,10 +40,9 @@ export function splitInventory(rows: MythicInventoryRow[]) {
 export function getGrantedAbilities(item: MythicItemRow | null): string[] {
   if (!item) return [];
   const effects = item.effects_json ?? {};
-  const list = (effects as any).abilities_granted;
+  const list = effects.abilities_granted;
   if (Array.isArray(list)) {
     return list.map((x) => String(x)).filter((x) => x.length > 0);
   }
   return [];
 }
-

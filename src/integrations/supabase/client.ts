@@ -98,8 +98,16 @@ const fetchWithHardTimeout: typeof fetch = async (input, init) => {
   }
 };
 
+const resolveFetchUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  if (typeof Request !== "undefined" && input instanceof Request) return input.url;
+  const maybe = input as { url?: string; href?: string };
+  return maybe.url ?? maybe.href ?? "";
+};
+
 const debugFetch: typeof fetch = async (input, init) => {
-  const url = typeof input === "string" ? input : input.url;
+  const url = resolveFetchUrl(input);
   const method = init?.method ?? "GET";
   if (DEV_SUPABASE_FETCH_DEBUG) {
     logger.debug("supabase.fetch.start", { method, url });
