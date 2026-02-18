@@ -177,6 +177,19 @@ curl -i -X POST "https://othlyxwtigxzczeffzee.supabase.co/auth/v1/token?grant_ty
 
 Campaign-create failures during auth 522 are expected infra-path failures, not schema mismatch bugs.
 
+## Self-Hosted Functions (VPS)
+
+This repo includes a Supabase Edge Functions compatibility layer at:
+`/Users/dev/saga-spark-web/services/mythic-api`
+
+It preserves the existing client contract:
+`POST /functions/v1/<function-name>`
+
+Frontend cutover is a base URL swap only:
+`VITE_MYTHIC_FUNCTIONS_BASE_URL=https://<your-host>/functions/v1`
+
+See `/Users/dev/saga-spark-web/services/mythic-api/README.md` for deployment details.
+
 ## Mythic backup and restore
 
 Create a linked-project backup for the `mythic` schema:
