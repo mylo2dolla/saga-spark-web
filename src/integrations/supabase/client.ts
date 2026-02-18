@@ -68,10 +68,13 @@ const createSafeStorage = () => {
 
 const baseFetch = globalThis.fetch.bind(globalThis);
 
-const withTimeout = (timeoutMs: number) => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  return { controller, timeoutId };
+const timeoutForSupabaseRequest = (url: string): number => {
+  const normalized = url.toLowerCase();
+  // Auth calls can be slow/variable behind Cloudflare; keep a higher budget to avoid "false timeouts".
+  if (normalized.includes("/auth/v1/")) return 45_000;
+  // Functions can be legitimately slow when doing LLM work or multi-step DB writes.
+  if (normalized.includes("/functions/v1/")) return 25_000;
+  return 15_000;
 };
 
 const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
@@ -86,9 +89,14 @@ const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
 };
 
 const fetchWithHardTimeout: typeof fetch = async (input, init) => {
+  const url = typeof input === "string" ? input : input.url;
   // Prevent the UI from hanging forever on bad networks/router weirdness.
-  const timeoutMs = 15_000;
-  const { controller, timeoutId } = withTimeout(timeoutMs);
+  const timeoutMs = timeoutForSupabaseRequest(url);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    // Provide an actionable abort reason. Some browsers otherwise surface "signal is aborted without reason".
+    controller.abort(new Error(`Supabase request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
   const signal = init?.signal ? combineSignals(init.signal, controller.signal) : controller.signal;
 
   try {
