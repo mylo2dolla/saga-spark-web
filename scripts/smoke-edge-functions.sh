@@ -20,9 +20,21 @@ fi
 
 payload='{"type":"initial_world","campaignSeed":{"title":"Smoke Test","description":"Edge function smoke test","themes":["mystic","frontier"]},"context":{"playerLevel":1}}'
 
-echo "POST ${VITE_SUPABASE_URL}/functions/v1/world-generator"
+FUNCTIONS_BASE_URL="${VITE_MYTHIC_FUNCTIONS_BASE_URL:-}"
+if [[ -n "$FUNCTIONS_BASE_URL" && "$FUNCTIONS_BASE_URL" != *"/functions/v1"* ]]; then
+  echo "VITE_MYTHIC_FUNCTIONS_BASE_URL must include /functions/v1 (example: https://api.example.com/functions/v1)."
+  exit 1
+fi
+if [[ -z "$FUNCTIONS_BASE_URL" ]]; then
+  FUNCTIONS_BASE_URL="${VITE_SUPABASE_URL%/}/functions/v1"
+fi
+FUNCTIONS_BASE_URL="${FUNCTIONS_BASE_URL%/}"
+
+EDGE_URL="${FUNCTIONS_BASE_URL}/world-generator"
+
+echo "POST ${EDGE_URL}"
 response="$(curl -s -w "\nHTTP_STATUS:%{http_code}\n" \
-  -X POST "${VITE_SUPABASE_URL}/functions/v1/world-generator" \
+  -X POST "${EDGE_URL}" \
   -H "apikey: ${VITE_SUPABASE_ANON_KEY}" \
   -H "Content-Type: application/json" \
   -d "${payload}")"

@@ -2,6 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
+const FUNCTIONS_BASE_URL_OVERRIDE = (process.env.VITE_MYTHIC_FUNCTIONS_BASE_URL ?? "").trim();
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const EMAIL = process.env.SUPABASE_TEST_EMAIL ?? process.env.SUPABASE_EMAIL;
 const PASSWORD = process.env.SUPABASE_TEST_PASSWORD ?? process.env.SUPABASE_PASSWORD;
@@ -49,6 +50,11 @@ if (campaignInsert.error || !campaignInsert.data) {
 
 const campaignId = campaignInsert.data.id;
 
+const FUNCTIONS_BASE_URL = (() => {
+  if (FUNCTIONS_BASE_URL_OVERRIDE) return FUNCTIONS_BASE_URL_OVERRIDE.replace(/\/+$/, "");
+  return `${SUPABASE_URL.replace(/\/+$/, "")}/functions/v1`;
+})();
+
 try {
   const memberInsert = await serviceClient
     .from("campaign_members")
@@ -64,7 +70,7 @@ try {
   }
 
   console.log("Calling world-generator...");
-  const worldResponse = await fetch(`${SUPABASE_URL}/functions/v1/world-generator`, {
+  const worldResponse = await fetch(`${FUNCTIONS_BASE_URL}/world-generator`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -87,7 +93,7 @@ try {
   console.log("world-generator body", worldBody);
 
   console.log("Calling world-content-writer...");
-  const writerResponse = await fetch(`${SUPABASE_URL}/functions/v1/world-content-writer`, {
+  const writerResponse = await fetch(`${FUNCTIONS_BASE_URL}/world-content-writer`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
