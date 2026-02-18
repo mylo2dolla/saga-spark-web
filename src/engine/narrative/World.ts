@@ -17,7 +17,7 @@ import type {
   WorldEvent,
   FactionInfo,
   QuestReward,
-} from "./types";
+} from "./types.ts";
 import * as NPCModule from "./NPC";
 import * as QuestModule from "./Quest";
 import * as ItemModule from "./Item";

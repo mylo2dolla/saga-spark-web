@@ -34,12 +34,14 @@ const DEFAULT_STARTING_LOCATION: EnhancedLocation = {
   factionControl: null,
   questHooks: [],
   services: ["rest", "trade", "heal"] as const,
-  ambientDescription: "Warm lantern light spills onto cobblestone paths, and the scent of hearth fires lingers in the air.",
+  ambientDescription: "Warm lantern light spills onto cobblestone paths, and the scent of hearth fires lingers in the air as locals trade stories.",
   shops: [],
   inn: true,
   travelTime: {},
   currentEvents: [],
 };
+
+const DEBUG = false;
 
 export interface GameSessionState {
   unifiedState: UnifiedState | null;
@@ -80,23 +82,74 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const initializedKeyRef = useRef<string | null>(null);
   const initializingRef = useRef(false); // Prevents concurrent initializations
 
+  const getErrorMessage = (error: unknown) => {
+    if (!error) return "";
+    if (typeof error === "string") return error;
+    if (error instanceof Error) return error.message;
+    if (typeof error === "object" && "message" in error) {
+      return String((error as { message?: string }).message ?? "");
+    }
+    return "";
+  };
+
+  const stringifyError = (error: unknown) => {
+    try {
+      return JSON.stringify(error);
+    } catch (stringifyError) {
+      return String(error ?? stringifyError);
+    }
+  };
+
+  const logSupabaseError = (label: string, error: unknown) => {
+    const message = getErrorMessage(error);
+    const status =
+      typeof (error as { status?: number })?.status === "number"
+        ? (error as { status?: number }).status
+        : undefined;
+    console.error(`${label} failed`, {
+      campaignId,
+      userId,
+      error,
+      status,
+      message,
+    });
+    return {
+      message,
+      status,
+      toastMessage: message || stringifyError(error),
+    };
+  };
+
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
     travel: TravelState | null
   ): { unified: UnifiedState; travel: TravelState } => {
     let nextWorld = unified.world;
     let locations = new Map(nextWorld.locations);
-    let nextTravel = travel ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
+    let locationIds = Array.from(locations.keys());
+    const firstLocationId = locationIds[0];
+    let nextTravel = travel ?? createTravelState(firstLocationId ?? DEFAULT_STARTING_LOCATION.id);
 
     if (locations.size === 0) {
       locations.set(DEFAULT_STARTING_LOCATION.id, DEFAULT_STARTING_LOCATION);
-    } else if (!locations.has(DEFAULT_STARTING_LOCATION.id)) {
-      locations.set(DEFAULT_STARTING_LOCATION.id, DEFAULT_STARTING_LOCATION);
     }
 
-    const locationIds = Array.from(locations.keys());
+    const hasOnlyDefaultLocation =
+      locations.size === 1 && locations.has(DEFAULT_STARTING_LOCATION.id);
+    const realLocationsExist = locations.size > 0 && !hasOnlyDefaultLocation;
+    if (realLocationsExist && locations.has(DEFAULT_STARTING_LOCATION.id)) {
+      locations.delete(DEFAULT_STARTING_LOCATION.id);
+    }
+    locationIds = Array.from(locations.keys());
     let currentLocationId = nextTravel.currentLocationId;
-    if (!locations.has(currentLocationId)) {
+    const preferredRealLocationId =
+      locationIds.find(id => id !== DEFAULT_STARTING_LOCATION.id) ?? locationIds[0];
+
+    if (realLocationsExist) {
+      if (!locations.has(currentLocationId) || currentLocationId === DEFAULT_STARTING_LOCATION.id) {
+        currentLocationId = preferredRealLocationId;
+      }
+    } else if (!locations.has(currentLocationId)) {
       currentLocationId = locations.has(DEFAULT_STARTING_LOCATION.id)
         ? DEFAULT_STARTING_LOCATION.id
         : locationIds[0];
@@ -184,7 +237,17 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         .eq("id", campaignId)
         .single();
       
-      if (campaignError) throw campaignError;
+      if (campaignError || !campaign) {
+        const error = campaignError ?? new Error("Campaign not found");
+        const { message, status, toastMessage } = logSupabaseError("Campaign fetch", error);
+        const isNotFound =
+          status === 404 ||
+          status === 406 ||
+          message.toLowerCase().includes("row not found");
+        const displayMessage = isNotFound ? "Campaign not found or access denied" : toastMessage;
+        toast.error(displayMessage);
+        throw new Error(displayMessage);
+      }
       
       // Fetch saves directly to ensure we have latest data
       const { data: savesData, error: savesError } = await supabase
@@ -195,9 +258,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         .order("updated_at", { ascending: false })
         .limit(10);
 
-      if (savesError) throw savesError;
-      
-      const existingSaves = savesData ?? [];
+      let existingSaves = savesData ?? [];
+      if (savesError) {
+        const { toastMessage } = logSupabaseError("Game saves fetch", savesError);
+        toast.error(toastMessage);
+        existingSaves = [];
+      }
       const latestSave = existingSaves[0]; // Most recent
       
       let unifiedState: UnifiedState;
@@ -212,7 +278,10 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           
           // Extract travel state from world state if available
           const worldWithTravel = loaded.world as unknown as TravelWorldState;
-          travelState = worldWithTravel.travelState ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
+          const savedLocationId = worldWithTravel.travelState?.currentLocationId;
+          const firstLocationId = Array.from(worldWithTravel.locations.keys())[0];
+          const fallbackLocationId = savedLocationId ?? firstLocationId ?? DEFAULT_STARTING_LOCATION.id;
+          travelState = worldWithTravel.travelState ?? createTravelState(fallbackLocationId);
           initialPlaytime = latestSave.playtime_seconds;
           lastSaveIdRef.current = latestSave.id;
           
@@ -248,8 +317,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
           };
         }
 
+        const locationIds = Array.from(unifiedState.world.locations.keys());
+        const startingId =
+          locationIds.find(id => id !== DEFAULT_STARTING_LOCATION.id)
+          ?? locationIds[0]
+          ?? DEFAULT_STARTING_LOCATION.id;
+
         // Initialize travel state with starting location
-        travelState = createTravelState(DEFAULT_STARTING_LOCATION.id);
+        travelState = createTravelState(startingId);
       }
 
       const invariantResult = ensureWorldInvariants(unifiedState, travelState);
@@ -281,18 +356,26 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       
       initializedKeyRef.current = initKey;
       initializingRef.current = false;
+      if (DEBUG && unifiedState && travelState) {
+        const currentLocation = unifiedState.world.locations.get(travelState.currentLocationId);
+        console.info("Game session initialized", {
+          locationsSize: unifiedState.world.locations.size,
+          currentLocationId: travelState.currentLocationId,
+          currentLocationName: currentLocation?.name,
+          connectedTo: currentLocation?.connectedTo ?? [],
+        });
+      }
       
     } catch (error) {
-      console.error("Failed to initialize game session:", error);
-      const message = error instanceof Error ? error.message : "Failed to load game";
-      toast.error(message);
+      const { toastMessage } = logSupabaseError("Game session initialization", error);
+      toast.error(toastMessage);
       initializingRef.current = false;
       initializedKeyRef.current = null;
       setSessionState(prev => ({
         ...prev,
         isInitialized: false,
         isLoading: false,
-        error: message,
+        error: toastMessage,
       }));
     }
   }, [
@@ -423,7 +506,10 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     const loaded = await persistence.loadGame(saveId);
     if (loaded) {
       const worldWithTravel = loaded.world as unknown as TravelWorldState;
-      const travelState = worldWithTravel.travelState ?? createTravelState(DEFAULT_STARTING_LOCATION.id);
+      const firstLocationId = Array.from(worldWithTravel.locations.keys())[0];
+      const fallbackLocationId =
+        worldWithTravel.travelState?.currentLocationId ?? firstLocationId ?? DEFAULT_STARTING_LOCATION.id;
+      const travelState = worldWithTravel.travelState ?? createTravelState(fallbackLocationId);
       const mergedWorld = worldContent
         ? mergeIntoWorldState(loaded.world, worldContent)
         : loaded.world;
