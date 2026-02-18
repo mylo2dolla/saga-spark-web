@@ -1,0 +1,23 @@
+export const pixelPalette = {
+  void: "#05070e",
+  ink: "#0e1629",
+  parchment: "#1b140f",
+  amber: "#f2c56b",
+  amberDim: "#7a5a27",
+  cyan: "#6ac8e8",
+  cyanDim: "#2c6077",
+  violet: "#b087ff",
+  violetDim: "#513477",
+  green: "#8ed47a",
+  red: "#ef6b6b",
+  gray: "#6f7484",
+  white: "#e8ecff",
+  black: "#0a0d14",
+  road: "#56452d",
+  grassA: "#223c2d",
+  grassB: "#1b3327",
+  stoneA: "#2a2e3c",
+  stoneB: "#1f2330",
+  fog: "#b29ae8",
+} as const;
+

@@ -1,7 +1,6 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
-import { DEV_FINGERPRINT } from "./devFingerprint";
 
 const DEV_DEBUG = import.meta.env.DEV;
 const devWindow = window as Window & {
@@ -9,15 +8,18 @@ const devWindow = window as Window & {
   __devFetchBase?: typeof fetch;
 };
 
-console.log("[env] DEV_FINGERPRINT", DEV_FINGERPRINT);
-
 if (DEV_DEBUG && !devWindow.__devFetchWrapped) {
   devWindow.__devFetchWrapped = true;
   devWindow.__devFetchBase = window.fetch.bind(window);
 
   window.fetch = async (...args) => {
     const [input, init] = args;
-    const url = typeof input === "string" ? input : input.url;
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
     const method = init?.method ?? "GET";
     if (url.includes("supabase.co")) {
       console.info("DEV_DEBUG fetch start", { method, url });

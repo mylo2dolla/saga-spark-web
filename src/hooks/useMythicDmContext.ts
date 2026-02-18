@@ -1,30 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { callEdgeFunction } from "@/lib/edge";
 import { formatError } from "@/ui/data/async";
+import type { MythicDmContextPayload } from "@/types/mythicDm";
+import { getMythicE2EDmContext, isMythicE2E } from "@/ui/e2e/mythicState";
 
-export interface MythicDmContextPayload {
-  ok: boolean;
-  campaign_id: string;
-  player_id: string;
-  board: unknown;
-  character: unknown;
-  combat: unknown;
-  rules: unknown;
-  script: unknown;
-  dm_campaign_state: unknown;
-  dm_world_tension: unknown;
-}
-
-export function useMythicDmContext(campaignId: string | undefined) {
+export function useMythicDmContext(campaignId: string | undefined, enabled = true) {
   const [data, setData] = useState<MythicDmContextPayload | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
 
   const fetchOnce = useCallback(async () => {
-    if (!campaignId) {
+    if (!campaignId || !enabled) {
       if (isMountedRef.current) {
         setData(null);
+        setIsLoading(false);
+        setError(null);
+      }
+      return;
+    }
+
+    if (isMythicE2E(campaignId)) {
+      if (isMountedRef.current) {
+        setData(getMythicE2EDmContext(campaignId));
         setIsLoading(false);
         setError(null);
       }
@@ -51,7 +49,7 @@ export function useMythicDmContext(campaignId: string | undefined) {
     } finally {
       if (isMountedRef.current) setIsLoading(false);
     }
-  }, [campaignId]);
+  }, [campaignId, enabled]);
 
   useEffect(() => {
     isMountedRef.current = true;

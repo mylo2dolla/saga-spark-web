@@ -1,0 +1,91 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "version: 0.0.0"
+    - generic [ref=e6]: "build: 2026-02-11T12:15:22.225Z"
+    - generic [ref=e7]: "git: 982608b"
+    - generic [ref=e8]: "runId: f41e5e79-a917-4477-b644-a7a93e9621a2"
+    - generic [ref=e9]: "now: 2026-02-11T12:30:57.151Z"
+    - generic [ref=e10]: "base: /"
+    - generic [ref=e11]: "href: http://localhost:8080/login"
+  - generic [ref=e32]:
+    - complementary [ref=e33]:
+      - generic [ref=e34]: Saga Spark
+      - navigation [ref=e35]:
+        - link "Dashboard" [ref=e36] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e37] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Game" [ref=e38] [cursor=pointer]:
+          - /url: /game
+        - link "Servers/Admin" [ref=e39] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e40]:
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]: "Auth: psylus13@gmail.com"
+          - generic [ref=e44]: "DB: ok"
+        - generic [ref=e45]: /dashboard
+      - generic [ref=e47]:
+        - generic [ref=e48]:
+          - heading "Dashboard" [level=1] [ref=e49]
+          - paragraph [ref=e50]: Your campaigns and access codes.
+          - generic [ref=e51]: "Auth: session | userId: 316225c3-b052-4e4b-bb01-991ff577c037 | DB: ok"
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - generic [ref=e54]:
+              - heading "Campaigns" [level=3] [ref=e55]
+              - button "Delete All" [ref=e104] [cursor=pointer]
+            - generic [ref=e106]:
+              - generic [ref=e107]:
+                - generic [ref=e108]: this is a test
+                - generic [ref=e109]: "Invite: 56347f93"
+                - generic [ref=e110]: "Members: 1"
+              - generic [ref=e111]:
+                - button "Open" [ref=e112] [cursor=pointer]
+                - button "Delete" [ref=e113] [cursor=pointer]
+          - generic [ref=e60]:
+            - generic [ref=e61]:
+              - heading "Auth" [level=3] [ref=e63]
+              - generic [ref=e65]:
+                - generic [ref=e66]: Signed in as
+                - generic [ref=e67]: psylus13@gmail.com
+                - generic [ref=e68]: 316225c3-b052-4e4b-bb01-991ff577c037
+                - button "Sign out" [ref=e69] [cursor=pointer]
+            - generic [ref=e70]:
+              - heading "Create campaign" [level=3] [ref=e72]
+              - generic [ref=e73]:
+                - textbox "Campaign name" [ref=e74]: Playwright Campaign 053426
+                - textbox "Campaign description" [ref=e75]: Created by Codex playwright verification
+                - generic [ref=e115]: Generating world...
+                - button "Creating..." [disabled]
+            - generic [ref=e76]:
+              - heading "Join campaign" [level=3] [ref=e78]
+              - generic [ref=e79]:
+                - textbox "Invite code" [ref=e80]
+                - button "Join" [disabled]
+      - generic [ref=e82]:
+        - generic [ref=e83]: "Build: unknown"
+        - generic [ref=e84]: "Route: /dashboard"
+        - generic [ref=e85]: "Last API Error: none"
+      - generic [ref=e86]:
+        - generic [ref=e87]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e88]: "Anon key present: yes"
+        - generic [ref=e89]: "Session exists: yes"
+        - generic [ref=e90]: "Access token exists: yes"
+        - generic [ref=e91]: "Last status: -"
+        - generic [ref=e92]: "Last body: -"
+        - button "Test generate-class" [ref=e93] [cursor=pointer]
+      - generic [ref=e94]:
+        - generic [ref=e95]: "FPS: 60"
+        - generic [ref=e96]: "Heap: 18 MB"
+        - generic [ref=e97]: "Long tasks: 1"
+  - generic [ref=e98]:
+    - generic [ref=e99]: "session: yes"
+    - generic [ref=e100]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e101]: "authLoading: false"
+    - generic [ref=e102]: "route: /dashboard"
+    - generic [ref=e103]: "lastAuthError: none"

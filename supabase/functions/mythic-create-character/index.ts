@@ -1,13 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
+import { mythicOpenAIChatCompletions } from "../_shared/ai_provider.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 import { clampInt, rngInt, rngPick, weightedPick } from "../_shared/mythic_rng.ts";
+import { createLogger } from "../_shared/logger.ts";
+import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -70,9 +72,15 @@ const ResponseSchema = z.object({
 const RequestSchema = z.object({
   campaignId: z.string().uuid(),
   characterName: z.string().min(2).max(60),
-  classDescription: z.string().min(3).max(500),
+  classDescription: z.string().min(3).max(2000),
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
 });
+const logger = createLogger("mythic-create-character");
+const requestIdFrom = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
 
 function normalizeConcept(s: string): string {
   return s
@@ -365,9 +373,10 @@ function generateMechanicalKit(input: {
 }
 
 serve(async (req) => {
+  const requestId = requestIdFrom(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+    return new Response(JSON.stringify({ error: "Method not allowed", code: "method_not_allowed", requestId }), {
       status: 405,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -376,7 +385,7 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Authentication required" }), {
+      return new Response(JSON.stringify({ error: "Authentication required", code: "auth_required", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -394,7 +403,7 @@ serve(async (req) => {
     const authClient = createClient(supabaseUrl, anonKey);
     const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
+      return new Response(JSON.stringify({ error: "Invalid or expired authentication token", code: "auth_invalid", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -402,7 +411,7 @@ serve(async (req) => {
 
     const parsedBody = RequestSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) {
-      return new Response(JSON.stringify({ error: "Invalid request", details: parsedBody.error.flatten() }), {
+      return new Response(JSON.stringify({ error: "Invalid request", code: "invalid_request", details: parsedBody.error.flatten(), requestId }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -422,7 +431,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (!campaign) {
-      return new Response(JSON.stringify({ error: "Campaign not found" }), {
+      return new Response(JSON.stringify({ error: "Campaign not found", code: "campaign_not_found", requestId }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -436,7 +445,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (!member && campaign.owner_id !== user.id) {
-      return new Response(JSON.stringify({ error: "Not authorized for this campaign" }), {
+      return new Response(JSON.stringify({ error: "Not authorized for this campaign", code: "campaign_access_denied", requestId }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -467,8 +476,8 @@ serve(async (req) => {
     const canonicalRules = rulesRow?.rules ? JSON.stringify(rulesRow.rules) : "{}";
     const canonicalScript = scriptRow?.content ?? "";
 
-    // Ask Groq to rewrite names/descriptions only; mechanics are deterministic.
-    const systemPrompt = `You are generating a Mythic Weave class kit.\n\nCANONICAL GENERATOR SCRIPT (authoritative):\n${canonicalScript}\n\nCANONICAL RULES JSON (authoritative):\n${canonicalRules}\n\nTASK:\n- You will receive a deterministic mechanics skeleton JSON (numbers, cooldowns, targeting, costs, effects_json/scaling_json/counterplay).\n- Do NOT change any numeric values, cooldowns, range_tiles, targeting, targeting_json, or cost_json.\n- Improve ONLY these fields: class_name, class_description, weapon_identity.notes (optional), weakness.description/counterplay (may rephrase but keep meaning), each skill.name, each skill.description.\n- Tone: living comic book, mischievous ruthless DM energy. Use onomatopoeia inside descriptions sparingly.\n- NO sexual content. NO sexual violence. Violence/gore allowed. Profanity allowed.\n\nOutput MUST be ONLY valid JSON matching this schema:\n{\n  \"class_name\": string,\n  \"class_description\": string,\n  \"weapon_identity\": {\"family\": string, \"notes\"?: string},\n  \"role\": string,\n  \"base_stats\": {offense:int, defense:int, control:int, support:int, mobility:int, utility:int},\n  \"resources\": object,\n  \"weakness\": {id:string, description:string, counterplay:string},\n  \"skills\": [ {kind, targeting, targeting_json, name, description, range_tiles, cooldown_turns, cost_json, effects_json, scaling_json, counterplay, narration_style} ]\n}`;
+    // Ask OpenAI to rewrite names/descriptions only; mechanics stay deterministic.
+    const systemPrompt = `You are generating a Mythic Weave class kit.\n\nCANONICAL GENERATOR SCRIPT (authoritative):\n${canonicalScript}\n\nCANONICAL RULES JSON (authoritative):\n${canonicalRules}\n\nTASK:\n- You will receive a deterministic mechanics skeleton JSON (numbers, cooldowns, targeting, costs, effects_json/scaling_json/counterplay).\n- Do NOT change any numeric values, cooldowns, range_tiles, targeting, targeting_json, or cost_json.\n- Improve ONLY these fields: class_name, class_description, weapon_identity.notes (optional), weakness.description/counterplay (may rephrase but keep meaning), each skill.name, each skill.description.\n- Tone: living comic book, mischievous ruthless DM energy. Use onomatopoeia inside descriptions sparingly.\n- NO sexual content. NO sexual violence. Violence/gore allowed. Profanity allowed.\n\nOutput MUST be ONLY valid JSON matching this schema:\n{\n  "class_name": string,\n  "class_description": string,\n  "weapon_identity": {"family": string, "notes"?: string},\n  "role": string,\n  "base_stats": {offense:int, defense:int, control:int, support:int, mobility:int, utility:int},\n  "resources": object,\n  "weakness": {id:string, description:string, counterplay:string},\n  "skills": [ {kind, targeting, targeting_json, name, description, range_tiles, cooldown_turns, cost_json, effects_json, scaling_json, counterplay, narration_style} ]\n}`;
 
     const skeleton = {
       class_name: "",
@@ -481,45 +490,49 @@ serve(async (req) => {
       skills: kit.skills,
     };
 
-    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
-
-    const completion = await aiChatCompletions({
-      model,
-      temperature: 0.2,
-      messages: [
-        { role: "system", content: systemPrompt },
-        {
-          role: "user",
-          content: `CLASS CONCEPT: ${classDescription}\nSEED: ${seed}\n\nMECHANICS SKELETON (do not change numbers):\n${JSON.stringify(skeleton)}`,
-        },
-      ],
-    });
-
-    const content = completion?.choices?.[0]?.message?.content;
-    if (!content) throw new Error("No response from AI");
+    const warnings: string[] = [];
+    const completion = await mythicOpenAIChatCompletions(
+      {
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `CLASS CONCEPT: ${classDescription}\nSEED: ${seed}\n\nMECHANICS SKELETON (do not change numbers):\n${JSON.stringify(skeleton)}`,
+          },
+        ],
+      },
+      "gpt-4o-mini",
+    );
+    const completionData = completion.data as { choices?: Array<{ message?: { content?: string } }> };
+    const content = completionData?.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error("OpenAI returned an empty response for class refinement");
+    }
 
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("AI response was not valid JSON");
+    if (!jsonMatch) throw new Error("OpenAI response was not valid JSON");
 
     let parsedJson: unknown;
     try {
       parsedJson = JSON.parse(jsonMatch[0]);
     } catch {
-      throw new Error("AI returned malformed JSON");
+      throw new Error("OpenAI returned malformed JSON");
     }
 
     const refined = ResponseSchema.safeParse(parsedJson);
     if (!refined.success) {
-      throw new Error(`AI output failed schema validation: ${JSON.stringify(refined.error.flatten())}`);
+      throw new Error(`OpenAI output failed schema validation: ${JSON.stringify(refined.error.flatten())}`);
     }
+    const refinedData = refined.data;
 
     // Enforce content policy on stored text fields.
     assertContentAllowed([
-      { path: "class_name", value: refined.data.class_name },
-      { path: "class_description", value: refined.data.class_description },
-      { path: "weakness.description", value: refined.data.weakness.description },
-      { path: "weakness.counterplay", value: refined.data.weakness.counterplay },
-      ...refined.data.skills.flatMap((s, idx) => [
+      { path: "class_name", value: refinedData.class_name },
+      { path: "class_description", value: refinedData.class_description },
+      { path: "weakness.description", value: refinedData.weakness.description },
+      { path: "weakness.counterplay", value: refinedData.weakness.counterplay },
+      ...refinedData.skills.flatMap((s, idx) => [
         { path: `skills[${idx}].name`, value: s.name },
         { path: `skills[${idx}].description`, value: s.description },
       ]),
@@ -527,20 +540,32 @@ serve(async (req) => {
 
     // Persist character and skills.
     const classJson = {
-      class_name: refined.data.class_name,
-      class_description: refined.data.class_description,
-      role: refined.data.role,
-      weapon_identity: refined.data.weapon_identity,
-      weakness: refined.data.weakness,
+      class_name: refinedData.class_name,
+      class_description: refinedData.class_description,
+      role: refinedData.role,
+      weapon_identity: refinedData.weapon_identity,
+      weakness: refinedData.weakness,
       seed,
       concept: classDescription,
+    };
+
+    const normalizeResources = (
+      refined: Record<string, unknown>,
+      existing: Record<string, unknown> | null,
+    ): Record<string, unknown> => {
+      const next: Record<string, unknown> = { ...refined };
+      const refinedCoins = Number(next.coins);
+      const existingCoins = existing ? Number(existing.coins) : Number.NaN;
+      const chosen = Number.isFinite(existingCoins) ? existingCoins : Number.isFinite(refinedCoins) ? refinedCoins : 100;
+      next.coins = Math.max(0, Math.floor(chosen));
+      return next;
     };
 
     // Upsert by (campaign_id, player_id, name) isn't unique; so create new or update existing by player+campaign+name.
     const { data: existingChars, error: existingError } = await svc
       .schema("mythic")
       .from("characters")
-      .select("id")
+      .select("id, resources")
       .eq("campaign_id", campaignId)
       .eq("player_id", user.id)
       .eq("name", characterName)
@@ -548,21 +573,29 @@ serve(async (req) => {
     if (existingError) throw existingError;
 
     let characterId: string;
+    const refinedResources = refinedData.resources as unknown as Record<string, unknown>;
+    let finalResources = normalizeResources(refinedResources, null);
     if (existingChars && existingChars.length > 0) {
       characterId = existingChars[0]!.id as string;
+      const existingResources =
+        existingChars[0] && typeof (existingChars[0] as { resources?: unknown }).resources === "object"
+          ? ((existingChars[0] as { resources?: Record<string, unknown> }).resources ?? null)
+          : null;
+      const mergedResources = normalizeResources(refinedResources, existingResources);
+      finalResources = mergedResources;
       const { error: updErr } = await svc
         .schema("mythic")
         .from("characters")
         .update({
           level: 1,
-          offense: refined.data.base_stats.offense,
-          defense: refined.data.base_stats.defense,
-          control: refined.data.base_stats.control,
-          support: refined.data.base_stats.support,
-          mobility: refined.data.base_stats.mobility,
-          utility: refined.data.base_stats.utility,
+          offense: refinedData.base_stats.offense,
+          defense: refinedData.base_stats.defense,
+          control: refinedData.base_stats.control,
+          support: refinedData.base_stats.support,
+          mobility: refinedData.base_stats.mobility,
+          utility: refinedData.base_stats.utility,
           class_json: classJson,
-          resources: refined.data.resources,
+          resources: mergedResources,
           updated_at: new Date().toISOString(),
         })
         .eq("id", characterId);
@@ -576,6 +609,8 @@ serve(async (req) => {
         .eq("character_id", characterId);
       if (delSkillsErr) throw delSkillsErr;
     } else {
+      const mergedResources = normalizeResources(refinedResources, null);
+      finalResources = mergedResources;
       const { data: inserted, error: insErr } = await svc
         .schema("mythic")
         .from("characters")
@@ -584,14 +619,14 @@ serve(async (req) => {
           player_id: user.id,
           name: characterName,
           level: 1,
-          offense: refined.data.base_stats.offense,
-          defense: refined.data.base_stats.defense,
-          control: refined.data.base_stats.control,
-          support: refined.data.base_stats.support,
-          mobility: refined.data.base_stats.mobility,
-          utility: refined.data.base_stats.utility,
+          offense: refinedData.base_stats.offense,
+          defense: refinedData.base_stats.defense,
+          control: refinedData.base_stats.control,
+          support: refinedData.base_stats.support,
+          mobility: refinedData.base_stats.mobility,
+          utility: refinedData.base_stats.utility,
           class_json: classJson,
-          resources: refined.data.resources,
+          resources: mergedResources,
           derived_json: {},
         })
         .select("id")
@@ -600,7 +635,7 @@ serve(async (req) => {
       characterId = inserted.id as string;
     }
 
-    const skillRows = refined.data.skills.map((s) => ({
+    const skillRows = refinedData.skills.map((s) => ({
       campaign_id: campaignId,
       character_id: characterId,
       kind: s.kind,
@@ -629,24 +664,35 @@ serve(async (req) => {
         character_id: characterId,
         seed,
         class: {
-          class_name: refined.data.class_name,
-          class_description: refined.data.class_description,
-          role: refined.data.role,
-          weapon_identity: refined.data.weapon_identity,
-          weakness: refined.data.weakness,
-          base_stats: refined.data.base_stats,
-          resources: refined.data.resources,
+          class_name: refinedData.class_name,
+          class_description: refinedData.class_description,
+          role: refinedData.role,
+          weapon_identity: refinedData.weapon_identity,
+          weakness: refinedData.weakness,
+          base_stats: refinedData.base_stats,
+          resources: finalResources,
         },
-        skills: refined.data.skills,
+        skills: refinedData.skills,
         skill_ids: insertedSkills?.map((r) => r.id) ?? [],
+        warnings,
+        provider: completion.provider,
+        model: completion.model,
+        requestId,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    console.error("mythic-create-character error:", error);
+    const normalized = sanitizeError(error);
+    logger.error("create_character.failed", error);
+    const code = normalized.code ?? "create_character_failed";
+    const status = code === "openai_not_configured" ? 503 : code === "openai_request_failed" ? 502 : 500;
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Failed to create character" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({
+        error: normalized.message || "Failed to create character",
+        code,
+        requestId,
+      }),
+      { status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });

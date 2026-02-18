@@ -2,13 +2,24 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 import { recordProfilesRead } from "@/ui/data/networkHealth";
+import { getSupabaseErrorInfo } from "@/lib/supabaseError";
 
-const DEV_DEBUG = import.meta.env.DEV;
-const AUTH_DEBUG = DEV_DEBUG && import.meta.env.VITE_DEBUG_AUTH === "true";
-const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 const PROFILE_TTL_MS = 60000;
+const AUTH_TIMEOUT_MS = 20000;
+const AUTH_FAILSAFE_MS = 30000;
+const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 const profileCache = new Map<string, { data: Profile | null; fetchedAt: number }>();
 const profileInFlight = new Map<string, Promise<Profile | null>>();
+
+const isProfileFetchTimeout = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  return error.message.toLowerCase().includes("profile fetch timed out");
+};
+
+const isSessionFetchTimeout = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
+  return error.message.toLowerCase().includes("auth session fetch timed out");
+};
 
 interface AuthState {
   session: Session | null;
@@ -42,9 +53,16 @@ const initialState: AuthState = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const logAuthDebug = (payload: Record<string, unknown>) => {
-  if (!AUTH_DEBUG) return;
-  console.debug("[auth] log", payload);
+const withTimeout = async <T,>(promise: PromiseLike<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 };
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -54,15 +72,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState(prev => ({ ...prev, ...partial }));
   }, []);
 
-  const notifyAuthError = useCallback((error: { message?: string; status?: number } | null) => {
+  const notifyAuthError = useCallback((error: unknown) => {
     if (!error) return;
+    const info = getSupabaseErrorInfo(error);
     updateState({
-      lastAuthError: { message: error.message ?? "Unknown error", status: error.status ?? null },
+      lastAuthError: { message: info.message, status: info.status },
     });
   }, [updateState]);
 
   const fetchProfileInternal = useCallback(async (userId: string) => {
-    logAuthDebug({ step: "profile_fetch_start", userId });
     try {
       const cached = profileCache.get(userId);
       const now = Date.now();
@@ -131,47 +149,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         updateState({ profile: createResult.data });
       }
     } finally {
-      logAuthDebug({ step: "profile_fetch_end", userId });
       updateState({ isProfileCreating: false, isLoading: false });
     }
   }, [notifyAuthError, updateState]);
 
   useEffect(() => {
-    let isActive = true;
-
     if (E2E_BYPASS_AUTH) {
-      const fakeUser = {
-        id: "e2e-user",
-        email: "e2e@example.com",
-      } as User;
-      setState({
-        session: { user: fakeUser } as Session,
-        user: fakeUser,
-        profile: {
-          id: "e2e-profile",
-          user_id: "e2e-user",
-          display_name: "E2E Tester",
-          avatar_url: null,
-        },
+      updateState({
+        session: null,
+        user: null,
+        profile: null,
         isLoading: false,
         isProfileCreating: false,
         lastAuthError: null,
       });
-      return () => {
-        isActive = false;
-      };
+      return;
     }
 
-    if (DEV_DEBUG) {
-      console.count("[auth] init");
-    }
+    let isActive = true;
+    const failsafeId = setTimeout(() => {
+      if (!isActive) return;
+      updateState({ isLoading: false, isProfileCreating: false });
+      notifyAuthError(new Error("Auth bootstrap timed out"));
+    }, AUTH_FAILSAFE_MS);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         if (!isActive) return;
         updateState({ session: session ?? null, user: session?.user ?? null });
         if (session?.user) {
-          await fetchProfileInternal(session.user.id);
+          try {
+            await withTimeout(fetchProfileInternal(session.user.id), AUTH_TIMEOUT_MS, "Profile fetch");
+          } catch (error) {
+            if (!isProfileFetchTimeout(error)) {
+              notifyAuthError(error);
+            }
+            updateState({ isLoading: false, isProfileCreating: false });
+          }
         } else {
           updateState({ profile: null, isProfileCreating: false, isLoading: false });
         }
@@ -179,29 +193,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
 
     const bootstrap = async () => {
-      if (DEV_DEBUG) {
-        console.count("[auth] getSession");
-      }
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const { data: { session }, error } = await withTimeout(
+          supabase.auth.getSession(),
+          AUTH_TIMEOUT_MS,
+          "Auth session fetch"
+        );
         if (!isActive) return;
         if (error) {
           notifyAuthError(error);
         }
         updateState({ session: session ?? null, user: session?.user ?? null });
         if (session?.user) {
-          await fetchProfileInternal(session.user.id);
+          await withTimeout(fetchProfileInternal(session.user.id), AUTH_TIMEOUT_MS, "Profile fetch");
         } else {
           updateState({ profile: null });
         }
       } catch (error) {
         if (isActive) {
-          notifyAuthError(error as { message?: string; status?: number });
+          if (!isProfileFetchTimeout(error) && !isSessionFetchTimeout(error)) {
+            notifyAuthError(error);
+          }
         }
       } finally {
         if (isActive) {
           updateState({ isLoading: false });
         }
+        clearTimeout(failsafeId);
       }
     };
 
@@ -209,18 +227,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     return () => {
       isActive = false;
+      clearTimeout(failsafeId);
       subscription?.unsubscribe();
     };
   }, [fetchProfileInternal, notifyAuthError, updateState]);
 
   const signOut = useCallback(async () => {
-    if (E2E_BYPASS_AUTH) return;
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   }, []);
 
   const updateProfile = useCallback(async (updates: Partial<Profile>) => {
-    if (E2E_BYPASS_AUTH) return;
     if (!state.user) throw new Error("Not authenticated");
 
     const { error } = await supabase
@@ -250,6 +267,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) {

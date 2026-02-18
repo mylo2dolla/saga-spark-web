@@ -17,15 +17,21 @@ export interface MythicSkillLite {
   cooldown_turns: number;
 }
 
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
 function pct(n: number, d: number): number {
   if (!Number.isFinite(n) || !Number.isFinite(d) || d <= 0) return 0;
   return Math.max(0, Math.min(1, n / d));
 }
 
 function shortEvent(e: MythicActionEventRow): string {
-  if (e.event_type === "skill_used") return `skill_used: ${String((e.payload as any)?.skill_name ?? (e.payload as any)?.skill_id ?? "")}`;
-  if (e.event_type === "damage") return `damage: ${String((e.payload as any)?.damage_to_hp ?? "")}`;
-  if (e.event_type === "death") return `death: ${String((e.payload as any)?.target_combatant_id ?? "")}`;
+  const payload = asObject(e.payload);
+  if (e.event_type === "skill_used") return `skill_used: ${String(payload.skill_name ?? payload.skill_id ?? "")}`;
+  if (e.event_type === "damage") return `damage: ${String(payload.damage_to_hp ?? "")}`;
+  if (e.event_type === "death") return `death: ${String(payload.target_combatant_id ?? "")}`;
   return `${e.event_type}`;
 }
 
@@ -39,7 +45,11 @@ export function MythicCombatPanel(props: {
   currentTurnIndex: number;
   skills: MythicSkillLite[];
   onUseSkill: (args: { actorCombatantId: string; skillId: string; target: Target }) => Promise<void>;
+  onTickTurn?: () => Promise<void>;
   isActing: boolean;
+  isTicking?: boolean;
+  canTick?: boolean;
+  bossPhaseLabel?: string | null;
 }) {
   const { combatants, activeTurnCombatantId, events, playerCombatantId } = props;
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
@@ -50,7 +60,6 @@ export function MythicCombatPanel(props: {
     () => props.skills.find((s) => s.id === selectedSkillId) ?? null,
     [props.skills, selectedSkillId],
   );
-  const selectedCooldown = selectedSkill ? (cooldowns.get(selectedSkill.id) ?? 0) : 0;
 
   const byId = useMemo(() => {
     const m = new Map<string, MythicCombatantRow>();
@@ -63,19 +72,21 @@ export function MythicCombatPanel(props: {
 
   const cooldowns = useMemo(() => {
     if (!playerActor) return new Map<string, number>();
-    const raw = Array.isArray((playerActor as any).statuses) ? (playerActor as any).statuses : [];
+    const raw = Array.isArray(playerActor.statuses) ? playerActor.statuses : [];
     const map = new Map<string, number>();
     for (const s of raw) {
       if (!s || typeof s !== "object") continue;
-      const id = String((s as any).id ?? "");
+      const status = asObject(s);
+      const id = String(status.id ?? "");
       if (!id.startsWith("cd:")) continue;
-      const expires = Number((s as any).expires_turn ?? 0);
+      const expires = Number(status.expires_turn ?? 0);
       const skillId = id.replace("cd:", "");
       const remaining = Math.max(0, Math.floor(expires - props.currentTurnIndex));
       map.set(skillId, remaining);
     }
     return map;
   }, [playerActor, props.currentTurnIndex]);
+  const selectedCooldown = selectedSkill ? (cooldowns.get(selectedSkill.id) ?? 0) : 0;
 
   const gridSize = useMemo(() => {
     const maxX = Math.max(9, ...combatants.map((c) => c.x));
@@ -101,7 +112,14 @@ export function MythicCombatPanel(props: {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="rounded-xl border border-border bg-card/40 p-4">
-        <div className="mb-2 text-sm font-semibold">Combat</div>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="text-sm font-semibold">Combat</div>
+          {props.bossPhaseLabel ? (
+            <div className="rounded bg-primary/15 px-2 py-1 text-[11px] font-medium text-primary">
+              {props.bossPhaseLabel}
+            </div>
+          ) : null}
+        </div>
         <div className="text-sm text-muted-foreground">
           Turn:{" "}
           <span className="font-medium text-foreground">
@@ -132,6 +150,11 @@ export function MythicCombatPanel(props: {
                 <div className="text-xs text-muted-foreground">
                   {c.entity_type} · ({c.x},{c.y}) · armor {Math.floor(c.armor)}
                 </div>
+                {Array.isArray(c.statuses) && c.statuses.length > 0 ? (
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    status: {c.statuses.map((s: any) => String(s?.id ?? "status")).slice(0, 3).join(", ")}
+                  </div>
+                ) : null}
                   </div>
                   <div className="w-28 shrink-0">
                     <div className="h-2 w-full overflow-hidden rounded bg-muted">
@@ -264,6 +287,15 @@ export function MythicCombatPanel(props: {
           >
             Clear
           </Button>
+          {props.onTickTurn ? (
+            <Button
+              variant="outline"
+              onClick={() => void props.onTickTurn?.()}
+              disabled={!props.canTick || Boolean(props.isTicking)}
+            >
+              {props.isTicking ? "Advancing..." : "Advance Enemy Turn"}
+            </Button>
+          ) : null}
         </div>
 
         <div className="mt-2 text-xs text-muted-foreground">

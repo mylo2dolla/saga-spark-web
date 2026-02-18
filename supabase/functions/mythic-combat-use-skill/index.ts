@@ -27,6 +27,9 @@ const RequestSchema = z.object({
 
 type CombatantRow = {
   id: string;
+  entity_type: "player" | "npc" | "summon";
+  player_id: string | null;
+  character_id: string | null;
   name: string;
   x: number;
   y: number;
@@ -63,6 +66,10 @@ type SkillRow = {
 };
 
 type TurnOrderRow = { combatant_id: string };
+type BoardStateRow = { state_json: Record<string, unknown> | null };
+type AliveRow = { id: string; is_alive: boolean };
+type AliveCombatantRow = { id: string; entity_type: "player" | "npc" | "summon"; is_alive: boolean };
+type LastBoardRow = { id: string; board_type: string };
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -71,6 +78,27 @@ function asObject(value: unknown): Record<string, unknown> {
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function parseBlockedTiles(value: unknown): Array<{ x: number; y: number }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => asObject(entry))
+    .filter((entry) => Number.isFinite(Number(entry.x)) && Number.isFinite(Number(entry.y)))
+    .map((entry) => ({ x: Math.floor(Number(entry.x)), y: Math.floor(Number(entry.y)) }));
 }
 
 type StatusEntry = {
@@ -213,9 +241,8 @@ function getTargetsForShape(args: {
 }
 
 function getFlatCost(costJson: Record<string, unknown>): { amount: number; resource_id: string | null } {
-  const amt = Number((costJson as any).amount ?? 0);
-  const amount = Number.isFinite(amt) ? Math.max(0, Math.floor(amt)) : 0;
-  const resource_id = typeof (costJson as any).resource_id === "string" ? String((costJson as any).resource_id) : null;
+  const amount = Math.max(0, Math.floor(asNumber(costJson.amount, 0)));
+  const resource_id = asString(costJson.resource_id, "") || null;
   return { amount, resource_id };
 }
 
@@ -415,13 +442,13 @@ serve(async (req) => {
 
     const targetingJson = asObject(skill.targeting_json);
     const metric = metricFromTargetingJson(targetingJson);
-    const shape = String((targetingJson as any).shape ?? skill.targeting ?? "single");
-    const radius = Math.max(0, Math.floor(Number((targetingJson as any).radius ?? 1)));
-    const length = Math.max(1, Math.floor(Number((targetingJson as any).length ?? skill.range_tiles ?? 1)));
-    const width = Math.max(1, Math.floor(Number((targetingJson as any).width ?? 1)));
-    const requiresLos = Boolean((targetingJson as any).requires_los ?? false);
-    const blocksOnWalls = Boolean((targetingJson as any).blocks_on_walls ?? true);
-    const friendlyFire = Boolean((targetingJson as any).friendly_fire ?? false);
+    const shape = asString(targetingJson.shape, skill.targeting ?? "single");
+    const radius = Math.max(0, Math.floor(asNumber(targetingJson.radius, 1)));
+    const length = Math.max(1, Math.floor(asNumber(targetingJson.length, skill.range_tiles ?? 1)));
+    const width = Math.max(1, Math.floor(asNumber(targetingJson.width, 1)));
+    const requiresLos = asBoolean(targetingJson.requires_los, false);
+    const blocksOnWalls = asBoolean(targetingJson.blocks_on_walls, true);
+    const friendlyFire = asBoolean(targetingJson.friendly_fire, false);
 
     const resolveTarget = async (target: z.infer<typeof TargetSchema>) => {
       if (target.kind === "self") {
@@ -468,10 +495,8 @@ serve(async (req) => {
       .select("state_json")
       .eq("combat_session_id", combatSessionId)
       .eq("status", "active")
-      .maybeSingle();
-    const blockedTiles = Array.isArray((boardRow as any)?.state_json?.blocked_tiles)
-      ? ((boardRow as any).state_json.blocked_tiles as Array<{ x: number; y: number }>)
-      : [];
+      .maybeSingle<BoardStateRow>();
+    const blockedTiles = parseBlockedTiles(asObject(boardRow?.state_json).blocked_tiles);
     const blockedSet = toBlockedSet(blockedTiles);
 
     if (requiresLos && blocksOnWalls) {
@@ -635,9 +660,9 @@ serve(async (req) => {
     // Self debuff hook.
     const selfDebuff = asObject(effects.self_debuff);
     if (Object.keys(selfDebuff).length > 0 && typeof selfDebuff.id === "string") {
-      const duration = Math.max(0, Math.floor(Number((selfDebuff as any).duration_turns ?? 0)));
-      const id = String((selfDebuff as any).id);
-      nextStatuses = setSimpleStatus(nextStatuses, id, turnIndex + duration, { intensity: Number((selfDebuff as any).intensity ?? 1) });
+      const duration = Math.max(0, Math.floor(asNumber(selfDebuff.duration_turns, 0)));
+      const id = asString(selfDebuff.id);
+      nextStatuses = setSimpleStatus(nextStatuses, id, turnIndex + duration, { intensity: asNumber(selfDebuff.intensity, 1) });
       events.push({
         event_type: "status_applied",
         payload: { target_combatant_id: actor.id, status: { id, duration_turns: duration, self: true } },
@@ -694,7 +719,7 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const skillMult = Number((dmg as any).skill_mult ?? 1);
+      const skillMult = asNumber(dmg.skill_mult, 1);
       const attacker = effectiveAttackerStats(actor);
 
       for (const target of targets) {
@@ -712,7 +737,7 @@ serve(async (req) => {
         });
         if (dmgErr) throw dmgErr;
         const dmgObj = asObject(dmgJson);
-        const finalDamage = Number((dmgObj as any).final_damage ?? 0);
+        const finalDamage = asNumber(dmgObj.final_damage, 0);
         const raw = Number.isFinite(finalDamage) ? Math.max(0, finalDamage) : 0;
 
         const shield = Math.max(0, Number(target.armor ?? 0));
@@ -773,8 +798,8 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const duration = Math.max(0, Math.floor(Number((status as any).duration_turns)));
-      const statusId = String((status as any).id);
+      const duration = Math.max(0, Math.floor(asNumber(status.duration_turns, 0)));
+      const statusId = asString(status.id);
       for (const target of targets) {
         const { data: chance, error: chanceErr } = await svc.schema("mythic").rpc("status_apply_chance", {
           control: actor.control,
@@ -856,7 +881,7 @@ serve(async (req) => {
       const targets = shape === "self"
         ? [actor]
         : allTargets.filter((t) => isAlly(actor, t) || t.id === actor.id);
-      const amount = Math.max(0, Math.floor(Number((heal as any).amount ?? 0)));
+      const amount = Math.max(0, Math.floor(asNumber(heal.amount, 0)));
       for (const target of targets) {
         const newHp = Math.min(target.hp_max, Number(target.hp ?? 0) + amount);
         const { error: healErr } = await svc
@@ -881,8 +906,8 @@ serve(async (req) => {
       const targets = shape === "self"
         ? [actor]
         : allTargets.filter((t) => isAlly(actor, t) || t.id === actor.id);
-      const ids = Array.isArray((cleanse as any).ids)
-        ? (cleanse as any).ids.map((x: unknown) => String(x))
+      const ids = Array.isArray(cleanse.ids)
+        ? cleanse.ids.map((x: unknown) => String(x))
         : null;
       for (const target of targets) {
         const targetStatuses = nowStatuses(target.statuses);
@@ -929,7 +954,7 @@ serve(async (req) => {
     // Power gain.
     const powerGain = asObject(effects.power_gain);
     if (Object.keys(powerGain).length > 0) {
-      const amount = Math.max(0, Math.floor(Number((powerGain as any).amount ?? 0)));
+      const amount = Math.max(0, Math.floor(asNumber(powerGain.amount, 0)));
       const basePower = typeof updates.power === "number" ? updates.power : nextPower;
       const newPower = Math.min(actor.power_max, basePower + amount);
       updates.power = newPower;
@@ -942,7 +967,7 @@ serve(async (req) => {
     }
 
     // Persist actor update (power, move, armor for barrier, statuses/cooldowns).
-    updates.statuses = nextStatuses as any;
+    updates.statuses = nextStatuses;
     const { error: actorUpdateErr } = await svc
       .schema("mythic")
       .from("combatants")
@@ -979,7 +1004,7 @@ serve(async (req) => {
       .select("id, is_alive")
       .eq("combat_session_id", combatSessionId);
     if (aliveErr) throw aliveErr;
-    const aliveSet = new Set((aliveRows ?? []).filter((r: any) => r.is_alive).map((r: any) => r.id));
+    const aliveSet = new Set(((aliveRows ?? []) as AliveRow[]).filter((r) => r.is_alive).map((r) => r.id));
 
     const total = order.length;
     let nextIndex = (turnIndex + 1) % total;
@@ -999,8 +1024,9 @@ serve(async (req) => {
       .select("id, entity_type, is_alive")
       .eq("combat_session_id", combatSessionId);
     if (aliveCombatantsErr) throw aliveCombatantsErr;
-    const alivePlayers = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "player").length;
-    const aliveNpcs = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "npc").length;
+    const aliveList = (aliveCombatants ?? []) as AliveCombatantRow[];
+    const alivePlayers = aliveList.filter((c) => c.is_alive && c.entity_type === "player").length;
+    const aliveNpcs = aliveList.filter((c) => c.is_alive && c.entity_type === "npc").length;
     if (alivePlayers === 0 || aliveNpcs === 0) {
       await svc.schema("mythic").rpc("end_combat_session", {
         p_combat_session_id: combatSessionId,
@@ -1015,14 +1041,14 @@ serve(async (req) => {
         .neq("board_type", "combat")
         .order("updated_at", { ascending: false })
         .limit(1)
-        .maybeSingle();
+        .maybeSingle<LastBoardRow>();
       if (lastBoard) {
-        await svc.schema("mythic").from("boards").update({ status: "active", updated_at: new Date().toISOString() }).eq("id", (lastBoard as any).id);
+        await svc.schema("mythic").from("boards").update({ status: "active", updated_at: new Date().toISOString() }).eq("id", lastBoard.id);
         await svc.schema("mythic").from("boards").update({ status: "archived", updated_at: new Date().toISOString() }).eq("combat_session_id", combatSessionId);
         await svc.schema("mythic").from("board_transitions").insert({
           campaign_id: campaignId,
           from_board_type: "combat",
-          to_board_type: (lastBoard as any).board_type,
+          to_board_type: lastBoard.board_type,
           reason: "combat_end",
           animation: "page_turn",
           payload_json: { combat_session_id: combatSessionId, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } },

@@ -39,6 +39,27 @@ verify_jwt = false
 [functions.mythic-dm-context]
 verify_jwt = false
 
+[functions.mythic-field-generate]
+verify_jwt = false
+
+[functions.mythic-set-loadout]
+verify_jwt = false
+
+[functions.mythic-apply-xp]
+verify_jwt = false
+
+[functions.mythic-generate-loot]
+verify_jwt = false
+
+[functions.mythic-combat-tick]
+verify_jwt = false
+
+[functions.mythic-list-campaigns]
+verify_jwt = false
+
+[functions.mythic-join-campaign]
+verify_jwt = false
+
 [functions.dm]
 enabled = true
 verify_jwt = true

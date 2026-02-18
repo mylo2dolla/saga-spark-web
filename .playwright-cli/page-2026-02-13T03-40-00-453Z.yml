@@ -1,0 +1,202 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic:
+    - generic: "Runtime: DEV (development)"
+    - generic: "version: 0.0.0"
+    - generic: "build: 2026-02-13T03:25:41.607Z"
+    - generic: "git: cd67b24"
+    - generic: "runId: 752867bb-301c-4df4-9608-ab1067c23d0f"
+    - generic: "now: 2026-02-13T03:28:15.813Z"
+    - generic: "base: /"
+    - generic: "href: http://localhost:8081/login"
+  - generic [ref=e26]:
+    - complementary [ref=e27]:
+      - generic [ref=e28]: Saga Spark
+      - navigation [ref=e29]:
+        - link "Dashboard" [ref=e30] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e31] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Mythic" [ref=e32] [cursor=pointer]:
+          - /url: /dashboard#campaigns
+        - link "Servers/Admin" [ref=e33] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: "Auth: psylus13@gmail.com"
+          - generic [ref=e38]: "DB: ok"
+        - generic [ref=e39]: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59
+      - generic [ref=e527]:
+        - generic [ref=e528]:
+          - generic [ref=e529]:
+            - generic [ref=e530]: Mythic Weave
+            - generic [ref=e531]: "Board: town"
+          - generic [ref=e532]:
+            - button "Dashboard" [ref=e533] [cursor=pointer]
+            - button "Refresh" [ref=e534] [cursor=pointer]
+            - button "Refresh DM" [ref=e535] [cursor=pointer]
+            - button "Town" [ref=e536] [cursor=pointer]
+            - button "Travel" [ref=e537] [cursor=pointer]
+            - button "Dungeon" [ref=e538] [cursor=pointer]
+            - button "Start Combat" [ref=e539] [cursor=pointer]
+        - generic [ref=e540]:
+          - generic [ref=e541]:
+            - generic [ref=e542]: Character
+            - generic [ref=e543]:
+              - generic [ref=e544]: Aria Flux
+              - generic [ref=e545]: Time Reaver
+            - generic [ref=e546]: Derived Stats (equipment applied)
+            - generic [ref=e547]:
+              - generic [ref=e548]: "Offense: 53"
+              - generic [ref=e549]: "Defense: 43"
+              - generic [ref=e550]: "Control: 72"
+              - generic [ref=e551]: "Support: 52"
+              - generic [ref=e552]: "Mobility: 39"
+              - generic [ref=e553]: "Utility: 48"
+            - generic [ref=e554]: Skills
+            - generic [ref=e555]:
+              - generic [ref=e556]:
+                - generic [ref=e557]: Chrono Acceleration
+                - generic [ref=e558]: passive · self · r0 · cd0
+              - generic [ref=e559]:
+                - generic [ref=e560]: Temporal Feedback
+                - generic [ref=e561]: passive · self · r0 · cd0
+              - generic [ref=e562]:
+                - generic [ref=e563]: Time Warp
+                - generic [ref=e564]: active · tile · r4 · cd2
+              - generic [ref=e565]:
+                - generic [ref=e566]: Chrono Shield
+                - generic [ref=e567]: active · self · r0 · cd3
+              - generic [ref=e568]:
+                - generic [ref=e569]: Time Bomb
+                - generic [ref=e570]: active · single · r5 · cd1
+              - generic [ref=e571]:
+                - generic [ref=e572]: Temporal Distortion
+                - generic [ref=e573]: active · area · r4 · cd3
+          - generic [ref=e574]:
+            - generic [ref=e575]: Board State (authoritative)
+            - generic [ref=e577]: "{ \"seed\": 765883371, \"gossip\": [], \"rumors\": [], \"vendors\": [ { \"id\": \"vendor_1\", \"name\": \"Blackport\", \"services\": [ \"heal\", \"enchant\" ] }, { \"id\": \"vendor_2\", \"name\": \"Dusport\", \"services\": [ \"potions\", \"bombs\" ] }, { \"id\": \"vendor_3\", \"name\": \"Duscross\", \"services\": [ \"potions\", \"bombs\" ] } ], \"bounties\": [], \"services\": [ \"inn\", \"healer\", \"notice_board\" ], \"guard_alertness\": 0.3, \"factions_present\": [], \"consequence_flags\": {} }"
+            - generic [ref=e578]: "UI contract: board + transitions + action_events are sufficient for deterministic replay. (bootstrapped)"
+        - generic [ref=e579]:
+          - generic [ref=e580]:
+            - generic [ref=e581]: Progression
+            - generic [ref=e582]:
+              - generic [ref=e583]: "Level: 1"
+              - generic [ref=e584]: "Unspent Points: 0"
+              - generic [ref=e585]: "XP: 0"
+              - generic [ref=e586]: "XP to Next: 300"
+            - generic [ref=e587]:
+              - button "+250 XP" [ref=e588] [cursor=pointer]
+              - button "Generate Loot" [ref=e589] [cursor=pointer]
+              - button "Recompute" [ref=e590] [cursor=pointer]
+            - generic [ref=e591]: Recent Progression Events
+            - generic [ref=e593]: No progression events yet.
+          - generic [ref=e594]:
+            - generic [ref=e595]: Skill Loadout
+            - generic [ref=e596]: "Slots unlocked: 2 · Selected: 2"
+            - generic [ref=e597]:
+              - textbox "Loadout name" [ref=e598]: Default
+              - generic [ref=e599]:
+                - button "Random" [ref=e600] [cursor=pointer]:
+                  - img
+                  - text: Random
+                - button "Expand" [ref=e601] [cursor=pointer]:
+                  - img
+                  - text: Expand
+            - generic [ref=e602]:
+              - button "Time Warp" [ref=e603] [cursor=pointer]
+              - button "Chrono Shield" [ref=e604] [cursor=pointer]
+              - button "Time Bomb" [ref=e605] [cursor=pointer]
+              - button "Temporal Distortion" [ref=e606] [cursor=pointer]
+              - button "Weakness Exploit" [ref=e607] [cursor=pointer]
+              - button "Temporal Reckoning" [ref=e608] [cursor=pointer]
+            - button "Save + Activate" [ref=e610] [cursor=pointer]
+            - generic [ref=e611]: Saved Loadouts
+            - generic [ref=e613]: No saved loadouts.
+        - generic [ref=e614]:
+          - generic [ref=e615]:
+            - generic [ref=e616]: Board Summary
+            - generic [ref=e617]:
+              - generic [ref=e618]: "Vendors: 3"
+              - generic [ref=e619]: "Services: inn, healer, notice_board"
+              - generic [ref=e620]: "Factions:"
+              - generic [ref=e621]: "Rumors:"
+          - generic [ref=e622]:
+            - generic [ref=e623]: Board Actions
+            - button "Depart Travel" [ref=e625] [cursor=pointer]
+        - generic [ref=e627]:
+          - generic [ref=e628]: Inventory + Equipment
+          - generic [ref=e629]: Equipment bonuses are applied in real time. Rings/trinkets stack with no limit.
+          - generic [ref=e630]:
+            - generic [ref=e631]: Equipped Bonuses
+            - generic [ref=e632]: None
+          - generic [ref=e633]:
+            - generic [ref=e634]:
+              - generic [ref=e635]: Equipment
+              - generic [ref=e637]: No equipped items.
+            - generic [ref=e638]:
+              - generic [ref=e639]: Backpack
+              - generic [ref=e641]: Backpack is empty.
+        - generic [ref=e642]:
+          - generic [ref=e643]: Recent Board Transitions (append-only)
+          - generic [ref=e644]: "[]"
+        - generic [ref=e645]:
+          - generic [ref=e646]:
+            - generic [ref=e647]: DM Context (from mythic.v_*_for_dm + canonical rules/script)
+            - generic [ref=e648]: loading...
+          - generic [ref=e649]: "null"
+        - generic [ref=e650]:
+          - generic [ref=e651]:
+            - generic [ref=e652]: Mythic DM (DB-driven narration)
+            - generic [ref=e657]:
+              - generic [ref=e659]:
+                - textbox "Say something to the DM..." [ref=e660]
+                - generic [ref=e661]:
+                  - button "Random" [ref=e662] [cursor=pointer]:
+                    - img
+                    - text: Random
+                  - button "Expand" [disabled]:
+                    - img
+                    - text: Expand
+              - generic [ref=e663]:
+                - button "Send" [disabled]
+              - generic [ref=e664]: "DB is truth: the DM must narrate from mythic state and events."
+            - generic [ref=e665]:
+              - text: Uses edge function
+              - code [ref=e666]: mythic-dungeon-master
+              - text: and feeds it canonical rules/script + mythic.v_*_for_dm payloads.
+          - generic [ref=e667]:
+            - generic [ref=e668]: System Notes
+            - generic [ref=e669]:
+              - text: Combat actions are committed as append-only
+              - code [ref=e670]: mythic.action_events
+              - text: . Tokens on the grid render the real
+              - code [ref=e671]: mythic.combatants
+              - text: rows (HP/armor/position), and turns advance by updating
+              - code [ref=e672]: mythic.combat_sessions.current_turn_index
+              - text: .
+      - generic [ref=e348]:
+        - generic [ref=e349]: "Build: unknown"
+        - generic [ref=e350]: "Route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59"
+        - generic [ref=e351]: "Last API Error: none"
+      - generic [ref=e352]:
+        - generic [ref=e353]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e354]: "Anon key present: yes"
+        - generic [ref=e355]: "Session exists: yes"
+        - generic [ref=e356]: "Access token exists: yes"
+        - generic [ref=e357]: "Last status: -"
+        - generic [ref=e358]: "Last body: -"
+        - button "Test generate-class" [ref=e359] [cursor=pointer]
+      - generic:
+        - generic: "FPS: 60"
+        - generic: "Heap: 20 MB"
+        - generic: "Long tasks: 4"
+  - generic [ref=e360]:
+    - generic [ref=e361]: "session: yes"
+    - generic [ref=e362]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e363]: "authLoading: false"
+    - generic [ref=e364]: "route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59"
+    - generic [ref=e365]: "lastAuthError: none"

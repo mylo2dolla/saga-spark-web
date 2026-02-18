@@ -1,0 +1,54 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "version: 0.0.0"
+    - generic [ref=e6]: "build: 2026-02-11T13:10:02.449Z"
+    - generic [ref=e7]: "git: ae589bb"
+    - generic [ref=e8]: "runId: 968d71ce-d5ad-4c6b-952a-941cf208f4c3"
+    - generic [ref=e9]: "now: 2026-02-11T13:30:33.506Z"
+    - generic [ref=e10]: "base: /"
+    - generic [ref=e11]: "href: http://localhost:8080/game/13bd0ec8-4d02-47a9-9ded-66ff3c0084d1/create-character"
+  - generic [ref=e13]:
+    - complementary [ref=e14]:
+      - generic [ref=e15]: Saga Spark
+      - navigation [ref=e16]:
+        - link "Dashboard" [ref=e17] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e18] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Game" [ref=e19] [cursor=pointer]:
+          - /url: /game
+        - link "Servers/Admin" [ref=e20] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e21]:
+      - generic [ref=e22]:
+        - generic [ref=e23]:
+          - generic [ref=e24]: "Auth: psylus13@gmail.com"
+          - generic [ref=e25]: "DB: loading"
+        - generic [ref=e26]: /mythic/13bd0ec8-4d02-47a9-9ded-66ff3c0084d1/create-character
+      - generic [ref=e28]: Loading session...
+      - generic [ref=e30]:
+        - generic [ref=e31]: "Build: unknown"
+        - generic [ref=e32]: "Route: /mythic/13bd0ec8-4d02-47a9-9ded-66ff3c0084d1/create-character"
+        - generic [ref=e33]: "Last API Error: none"
+      - generic [ref=e34]:
+        - generic [ref=e35]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e36]: "Anon key present: yes"
+        - generic [ref=e37]: "Session exists: no"
+        - generic [ref=e38]: "Access token exists: no"
+        - generic [ref=e39]: "Last status: -"
+        - generic [ref=e40]: "Last body: -"
+        - button "Test generate-class" [ref=e41] [cursor=pointer]
+      - generic [ref=e42]:
+        - generic [ref=e43]: "FPS: 0"
+        - generic [ref=e44]: "Heap: n/a MB"
+        - generic [ref=e45]: "Long tasks: 0"
+  - generic [ref=e46]:
+    - generic [ref=e47]: "session: yes"
+    - generic [ref=e48]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e49]: "authLoading: true"
+    - generic [ref=e50]: "route: /mythic/13bd0ec8-4d02-47a9-9ded-66ff3c0084d1/create-character"
+    - generic [ref=e51]: "lastAuthError: none"

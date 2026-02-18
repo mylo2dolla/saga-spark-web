@@ -4,13 +4,22 @@ import { Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { MythicDMMessage } from "@/hooks/useMythicDungeonMaster";
+import type { MythicDMMessage, MythicUiAction } from "@/hooks/useMythicDungeonMaster";
+import { MythicActionChips } from "@/components/mythic/MythicActionChips";
 
 interface Props {
   messages: MythicDMMessage[];
   isLoading: boolean;
   currentResponse: string;
-  onSendMessage: (message: string) => void;
+  actions?: MythicUiAction[];
+  onAction?: (action: MythicUiAction) => void;
+  voiceEnabled?: boolean;
+  voiceSupported?: boolean;
+  voiceBlocked?: boolean;
+  onToggleVoice?: (enabled: boolean) => void;
+  onSpeakLatest?: () => void;
+  onStopVoice?: () => void;
+  onSendMessage: (message: string, actionTags?: string[]) => Promise<void> | void;
   error?: string | null;
 }
 
@@ -26,7 +35,7 @@ export function MythicDMChat({ messages, isLoading, currentResponse, onSendMessa
 
   const handleSend = () => {
     if (!input.trim() || isLoading) return;
-    onSendMessage(input);
+    void onSendMessage(input);
     setInput("");
   };
 
@@ -85,6 +94,14 @@ export function MythicDMChat({ messages, isLoading, currentResponse, onSendMessa
       </ScrollArea>
 
       <div className="border-t border-border p-3">
+        <div className="mb-2">
+          <MythicActionChips
+            disabled={isLoading}
+            onSelect={(prompt, tags) => {
+              void onSendMessage(prompt, tags);
+            }}
+          />
+        </div>
         <div className="flex gap-2">
           <Input
             value={input}

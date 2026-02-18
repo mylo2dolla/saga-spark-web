@@ -1,3 +1,5 @@
+import type { Json, Tables } from "@/integrations/supabase/types";
+
 export type MythicBoardType = "town" | "dungeon" | "travel" | "combat";
 
 export type MythicRarity = "common" | "magical" | "unique" | "legendary" | "mythic" | "unhinged";
@@ -52,29 +54,20 @@ export interface MythicSkill {
   narration_style: string;
 }
 
-export interface MythicCharacterRow {
-  id: string;
-  campaign_id: string;
-  player_id: string | null;
-  name: string;
-  level: number;
-  offense: number;
-  defense: number;
-  control: number;
-  support: number;
-  mobility: number;
-  utility: number;
-  class_json: Record<string, unknown>;
-  derived_json: Record<string, unknown>;
-  resources: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
-}
+export type MythicCharacterRow = Tables<{ schema: "mythic" }, "characters">;
+export type MythicItemRow = Tables<{ schema: "mythic" }, "items">;
+export type MythicSkillRow = Tables<{ schema: "mythic" }, "skills">;
+export type MythicInventoryRow = Pick<
+  Tables<{ schema: "mythic" }, "inventory">,
+  "id" | "container" | "equip_slot" | "quantity" | "equipped_at"
+> & {
+  item: MythicItemRow | null;
+};
 
 export interface MythicCharacterBundle {
   character: MythicCharacterRow;
-  skills: MythicSkill[];
-  items: Array<Record<string, unknown>>;
+  skills: MythicSkillRow[];
+  items: MythicInventoryRow[];
 }
 
 export interface MythicCreateCharacterRequest {
@@ -106,4 +99,10 @@ export interface MythicBootstrapRequest {
 
 export interface MythicBootstrapResponse {
   ok: boolean;
+}
+
+export interface MythicQuestThreadRow {
+  id: string;
+  title: string;
+  detail?: string | null;
 }

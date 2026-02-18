@@ -2,6 +2,7 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { recordNetworkRequest } from "@/ui/data/networkHealth";
+import { createLogger } from "@/lib/observability/logger";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
 const RAW_SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -15,6 +16,8 @@ const SUPABASE_KEY_SOURCE = SUPABASE_ANON_KEY
     ? (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ? "VITE_SUPABASE_PUBLISHABLE_KEY" : "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
     : null;
 const DEV_DEBUG = import.meta.env.DEV;
+const DEV_SUPABASE_FETCH_DEBUG = DEV_DEBUG && import.meta.env.VITE_DEBUG_SUPABASE_FETCH === "true";
+const logger = createLogger("supabase-client");
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
@@ -26,26 +29,17 @@ if (DEV_DEBUG) {
     : SUPABASE_KEY?.startsWith("sb_publishable_")
       ? "publishable"
       : "unknown";
-  const keyPrefix = SUPABASE_KEY ? SUPABASE_KEY.slice(0, 8) : null;
-  const keySuffix = SUPABASE_KEY ? SUPABASE_KEY.slice(-6) : null;
-  console.info("DEV_DEBUG supabase config", {
+  logger.info("supabase.config", {
     hasUrl: Boolean(SUPABASE_URL),
     hasKey: Boolean(SUPABASE_KEY),
     keySource: SUPABASE_KEY_SOURCE,
     projectRef,
-    url: SUPABASE_URL ?? null,
     keyType,
-    keyPrefix,
-    keySuffix,
   });
   if (SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.startsWith("eyJ")) {
-    const anonPrefix = SUPABASE_ANON_KEY.slice(0, 8);
-    const anonSuffix = SUPABASE_ANON_KEY.slice(-6);
-    console.warn("DEV_DEBUG supabase anon key is not a JWT", {
+    logger.warn("supabase.anon_key.format", {
       keySource: SUPABASE_KEY_SOURCE,
       keyType: SUPABASE_ANON_KEY.startsWith("sb_publishable_") ? "publishable" : "unknown",
-      keyPrefix: anonPrefix,
-      keySuffix: anonSuffix,
     });
   }
 }
@@ -104,17 +98,25 @@ const fetchWithHardTimeout: typeof fetch = async (input, init) => {
   }
 };
 
+const resolveFetchUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  if (typeof Request !== "undefined" && input instanceof Request) return input.url;
+  const maybe = input as { url?: string; href?: string };
+  return maybe.url ?? maybe.href ?? "";
+};
+
 const debugFetch: typeof fetch = async (input, init) => {
-  const url = typeof input === "string" ? input : input.url;
+  const url = resolveFetchUrl(input);
   const method = init?.method ?? "GET";
-  if (DEV_DEBUG) {
-    console.info("DEV_DEBUG supabase fetch start", { method, url });
+  if (DEV_SUPABASE_FETCH_DEBUG) {
+    logger.debug("supabase.fetch.start", { method, url });
   }
 
   try {
     const response = await fetchWithHardTimeout(input, init);
-    if (DEV_DEBUG) {
-      console.info("DEV_DEBUG supabase fetch response", {
+    if (DEV_SUPABASE_FETCH_DEBUG) {
+      logger.debug("supabase.fetch.response", {
         method,
         url,
         status: response.status,
@@ -123,8 +125,8 @@ const debugFetch: typeof fetch = async (input, init) => {
     recordNetworkRequest();
     return response;
   } catch (error) {
-    if (DEV_DEBUG) {
-      console.error("DEV_DEBUG supabase fetch error", { method, url, error });
+    if (DEV_SUPABASE_FETCH_DEBUG) {
+      logger.error("supabase.fetch.error", error, { method, url });
     }
     recordNetworkRequest();
     throw error;
@@ -152,21 +154,21 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
     authAny.signInWithPassword = async (...args) => {
       const allowed = (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress === true;
       if (DEV_DEBUG && !allowed) {
-        console.warn("[auth] signIn called outside AuthScreen", {
+        logger.warn("auth.sign_in.outside_auth_screen", {
           route: globalThis.location?.pathname ?? null,
         });
       }
       if (inFlight) {
         if (DEV_DEBUG) {
           const count = ((globalThis as { __authTokenGrantCount?: number }).__authTokenGrantCount ?? 0);
-          console.info("[auth] log", { step: "sign_in_dedupe", count });
+          logger.info("auth.sign_in.dedupe", { count });
         }
         return inFlight;
       }
       if (DEV_DEBUG) {
         const globalRef = (globalThis as { __authTokenGrantCount?: number });
         globalRef.__authTokenGrantCount = (globalRef.__authTokenGrantCount ?? 0) + 1;
-        console.info("[auth] log", { step: "sign_in_start", count: globalRef.__authTokenGrantCount });
+        logger.info("auth.sign_in.start", { count: globalRef.__authTokenGrantCount });
       }
       const promise = originalSignIn(...args);
       inFlight = promise;
@@ -175,7 +177,7 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
       } finally {
         inFlight = null;
         if (DEV_DEBUG) {
-          console.info("[auth] log", { step: "sign_in_end" });
+          logger.info("auth.sign_in.end");
         }
       }
     };
