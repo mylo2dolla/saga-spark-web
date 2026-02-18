@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -13,14 +13,11 @@ import type { MythicCreateCharacterResponse } from "@/types/mythic";
 export default function MythicCharacterScreen() {
   const { campaignId } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
   const { toast } = useToast();
   const { setLastError } = useDiagnostics();
   const { user, isLoading: authLoading } = useAuth();
-  const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
   const [showCreator, setShowCreator] = useState(false);
-  const [lastAction, setLastAction] = useState<string | null>(null);
   const [sessionFallback, setSessionFallback] = useState<{
     checking: boolean;
     hasSession: boolean | null;
@@ -32,7 +29,6 @@ export default function MythicCharacterScreen() {
   const shouldShowCreator = useMemo(() => showCreator || !character, [showCreator, character]);
 
   useEffect(() => {
-    if (E2E_BYPASS_AUTH) return;
     if (authLoading || user) return;
     let isMounted = true;
 
@@ -58,19 +54,17 @@ export default function MythicCharacterScreen() {
     return () => {
       isMounted = false;
     };
-  }, [E2E_BYPASS_AUTH, authLoading, user]);
+  }, [authLoading, user]);
 
   useEffect(() => {
-    if (E2E_BYPASS_AUTH) return;
     if (!campaignId) return;
     if (authLoading || sessionFallback.checking) return;
     if (!user && !sessionFallback.hasSession) {
       navigate("/login");
     }
-  }, [E2E_BYPASS_AUTH, authLoading, campaignId, navigate, sessionFallback.checking, sessionFallback.hasSession, user]);
+  }, [authLoading, campaignId, navigate, sessionFallback.checking, sessionFallback.hasSession, user]);
 
   const handleCompleteMythic = async (res: MythicCreateCharacterResponse) => {
-    setLastAction("create_mythic_character_success");
     setShowCreator(false);
     setLastError(null);
 
@@ -163,23 +157,9 @@ export default function MythicCharacterScreen() {
         campaignId={campaignId}
         onComplete={handleCompleteMythic}
         onCancel={() => {
-          setLastAction("create_character_cancel");
           navigate("/dashboard");
         }}
       />
-      {import.meta.env.DEV ? (
-        <div className="pointer-events-none fixed bottom-2 right-2 z-[9999] max-w-xs rounded-md border border-border bg-card/95 p-2 text-[11px] text-muted-foreground">
-          <div>route: {location.pathname}</div>
-          <div>campaignId: {campaignId}</div>
-          <div>userId: {user?.id ?? "-"}</div>
-          <div>hasSession: {user ? "yes" : "no"}</div>
-          <div>authLoading: {String(authLoading)}</div>
-          <div>characterLoading: {String(characterLoading)}</div>
-          <div>characterExists: {character ? "yes" : "no"}</div>
-          <div>characterError: {characterError ?? "none"}</div>
-          <div>lastAction: {lastAction ?? "none"}</div>
-        </div>
-      ) : null}
     </>
   );
 }

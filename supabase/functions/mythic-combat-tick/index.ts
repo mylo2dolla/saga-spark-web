@@ -53,6 +53,8 @@ type Combatant = {
 type TurnRow = { turn_index: number; combatant_id: string };
 const logger = createLogger("mythic-combat-tick");
 
+const clampInt = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, Math.floor(value)));
+
 async function appendEvent(
   svc: ReturnType<typeof createClient>,
   combatSessionId: string,
@@ -157,6 +159,68 @@ async function grantSimpleLoot(args: {
   return item;
 }
 
+async function appendMemoryEvent(args: {
+  svc: ReturnType<typeof createClient>;
+  campaignId: string;
+  playerId: string;
+  category: string;
+  severity: number;
+  payload: Record<string, unknown>;
+}) {
+  const { error } = await args.svc.schema("mythic").from("dm_memory_events").insert({
+    campaign_id: args.campaignId,
+    player_id: args.playerId,
+    category: args.category,
+    severity: clampInt(args.severity, 1, 5),
+    payload: args.payload,
+  });
+  if (error) throw error;
+}
+
+async function applyReputationDelta(args: {
+  svc: ReturnType<typeof createClient>;
+  campaignId: string;
+  playerId: string;
+  factionId: string;
+  delta: number;
+  severity: number;
+  evidence: Record<string, unknown>;
+}) {
+  if (args.delta === 0) return;
+  const { error: repEventError } = await args.svc.schema("mythic").from("reputation_events").insert({
+    campaign_id: args.campaignId,
+    faction_id: args.factionId,
+    player_id: args.playerId,
+    severity: clampInt(args.severity, 1, 5),
+    delta: clampInt(args.delta, -1000, 1000),
+    evidence: args.evidence,
+  });
+  if (repEventError) throw repEventError;
+
+  const currentRepQuery = await args.svc
+    .schema("mythic")
+    .from("faction_reputation")
+    .select("rep")
+    .eq("campaign_id", args.campaignId)
+    .eq("faction_id", args.factionId)
+    .eq("player_id", args.playerId)
+    .maybeSingle();
+  if (currentRepQuery.error) throw currentRepQuery.error;
+  const currentRep = Number(currentRepQuery.data?.rep ?? 0);
+  const nextRep = clampInt(currentRep + args.delta, -1000, 1000);
+  const { error: upsertError } = await args.svc
+    .schema("mythic")
+    .from("faction_reputation")
+    .upsert({
+      campaign_id: args.campaignId,
+      faction_id: args.factionId,
+      player_id: args.playerId,
+      rep: nextRep,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "campaign_id,faction_id,player_id" });
+  if (upsertError) throw upsertError;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") {
@@ -247,6 +311,20 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    const factionPoolQuery = await svc
+      .schema("mythic")
+      .from("factions")
+      .select("id,name,tags")
+      .eq("campaign_id", campaignId)
+      .order("created_at", { ascending: true });
+    const factionPool = (factionPoolQuery.data ?? [])
+      .filter((row) => typeof row.id === "string")
+      .map((row) => ({
+        id: String(row.id),
+        name: typeof row.name === "string" ? row.name : "Faction",
+        tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === "string") : [],
+      }));
 
     let ticks = 0;
     let ended = false;
@@ -494,7 +572,7 @@ serve(async (req) => {
       const { data: aliveRows, error: aliveErr } = await svc
         .schema("mythic")
         .from("combatants")
-        .select("id,entity_type,is_alive,character_id,lvl")
+        .select("id,entity_type,is_alive,character_id,player_id,lvl")
         .eq("combat_session_id", combatSessionId);
       if (aliveErr) throw aliveErr;
 
@@ -511,6 +589,8 @@ serve(async (req) => {
         const won = alivePlayers.length > 0 && aliveNpcs.length === 0;
         const bossAlive = (aliveRows ?? []).some((r: any) => r.entity_type === "npc" && r.is_alive);
         const xpPer = won ? 180 + (aliveRows?.length ?? 0) * 35 + (bossAlive ? 0 : 220) : 0;
+        const playerRowsAll = (aliveRows ?? []).filter((r: any) => r.entity_type === "player" && typeof r.player_id === "string");
+        const primaryFaction = factionPool[0] ?? null;
 
         if (won) {
           for (const p of alivePlayers) {
@@ -543,6 +623,83 @@ serve(async (req) => {
               rarity: lootItem.rarity,
               name: lootItem.name,
             });
+
+            if (primaryFaction && typeof (p as any).player_id === "string") {
+              try {
+                await applyReputationDelta({
+                  svc,
+                  campaignId,
+                  playerId: String((p as any).player_id),
+                  factionId: primaryFaction.id,
+                  delta: 6,
+                  severity: 2,
+                  evidence: {
+                    reason: "combat_victory",
+                    combat_session_id: combatSessionId,
+                    xp_awarded: xpPer,
+                    loot_item_id: lootItem.id,
+                  },
+                });
+                await appendMemoryEvent({
+                  svc,
+                  campaignId,
+                  playerId: String((p as any).player_id),
+                  category: "quest_thread",
+                  severity: 2,
+                  payload: {
+                    type: "combat_victory",
+                    combat_session_id: combatSessionId,
+                    xp_awarded: xpPer,
+                    loot_item_id: lootItem.id,
+                    faction_id: primaryFaction.id,
+                    faction_name: primaryFaction.name,
+                  },
+                });
+              } catch (persistError) {
+                logger.warn("combat_tick.persistence_warning", {
+                  campaign_id: campaignId,
+                  combat_session_id: combatSessionId,
+                  reason: sanitizeError(persistError).message,
+                });
+              }
+            }
+          }
+        } else {
+          for (const playerRow of playerRowsAll) {
+            try {
+              await appendMemoryEvent({
+                svc,
+                campaignId,
+                playerId: String((playerRow as any).player_id),
+                category: "quest_thread",
+                severity: 3,
+                payload: {
+                  type: "combat_setback",
+                  combat_session_id: combatSessionId,
+                  survived: Boolean((playerRow as any).is_alive),
+                },
+              });
+              if (primaryFaction) {
+                await applyReputationDelta({
+                  svc,
+                  campaignId,
+                  playerId: String((playerRow as any).player_id),
+                  factionId: primaryFaction.id,
+                  delta: -4,
+                  severity: 2,
+                  evidence: {
+                    reason: "combat_loss",
+                    combat_session_id: combatSessionId,
+                  },
+                });
+              }
+            } catch (persistError) {
+              logger.warn("combat_tick.persistence_warning", {
+                campaign_id: campaignId,
+                combat_session_id: combatSessionId,
+                reason: sanitizeError(persistError).message,
+              });
+            }
           }
         }
 

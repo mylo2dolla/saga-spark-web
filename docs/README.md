@@ -18,19 +18,6 @@
    npm run dev
    ```
 
-## Run tests
-```bash
-npm run test:e2e
-```
-
-## Production smoke
-```bash
-npm run lint
-npm run typecheck
-npm run build
-npm run smoke:prod
-```
-
 Manual checklist:
 - `docs/PRODUCTION_SMOKE_TEST.md`
 

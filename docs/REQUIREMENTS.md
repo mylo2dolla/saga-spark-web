@@ -21,12 +21,13 @@
 Fill these in `/Users/dev/saga-spark-web/.env`:
 ```
 OPENAI_API_KEY=
-GROQ_API_KEY=
 VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 ```
+
+Mythic runtime uses OpenAI only. `GROQ_API_KEY` is optional legacy-only and not used by Mythic endpoints.
 
 Security requirements:
 - Never commit `.env` values.
@@ -42,7 +43,6 @@ Security requirements:
 npm run lint
 npm run typecheck
 npm run build
-npm run smoke:prod
 ```
 
 Manual smoke checklist:

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
 import type { MythicBoardType } from "@/types/mythic";
+import type { Database, Json } from "@/integrations/supabase/types";
 
 export interface MythicBoardRow {
   id: string;
@@ -25,6 +26,44 @@ export interface MythicBoardTransitionRow {
   payload_json: Record<string, unknown>;
   created_at: string;
 }
+
+type MythicBoardDbRow = Database["mythic"]["Tables"]["boards"]["Row"];
+type MythicTransitionDbRow = Database["mythic"]["Tables"]["board_transitions"]["Row"];
+
+const toRecord = (value: Json): Record<string, unknown> => {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+};
+
+const toBoardStatus = (value: string): MythicBoardRow["status"] => {
+  if (value === "active" || value === "archived" || value === "paused") return value;
+  return "active";
+};
+
+const mapBoardRow = (row: MythicBoardDbRow): MythicBoardRow => ({
+  id: row.id,
+  campaign_id: row.campaign_id,
+  board_type: row.board_type as MythicBoardType,
+  status: toBoardStatus(row.status),
+  state_json: toRecord(row.state_json),
+  ui_hints_json: toRecord(row.ui_hints_json),
+  active_scene_id: row.active_scene_id,
+  combat_session_id: row.combat_session_id,
+  updated_at: row.updated_at,
+});
+
+const mapTransitionRow = (row: MythicTransitionDbRow): MythicBoardTransitionRow => ({
+  id: row.id,
+  campaign_id: row.campaign_id,
+  from_board_type: row.from_board_type as MythicBoardType | null,
+  to_board_type: row.to_board_type as MythicBoardType,
+  reason: row.reason,
+  animation: row.animation,
+  payload_json: toRecord(row.payload_json),
+  created_at: row.created_at,
+});
 
 export function useMythicBoard(campaignId: string | undefined) {
   const [board, setBoard] = useState<MythicBoardRow | null>(null);
@@ -76,8 +115,8 @@ export function useMythicBoard(campaignId: string | undefined) {
       if (tErr) throw tErr;
 
       if (isMountedRef.current) {
-        setBoard((b ?? null) as unknown as MythicBoardRow | null);
-        setRecentTransitions((t ?? []) as unknown as MythicBoardTransitionRow[]);
+        setBoard(b ? mapBoardRow(b) : null);
+        setRecentTransitions((t ?? []).map(mapTransitionRow));
       }
     } catch (e) {
       const msg = formatError(e, "Failed to load mythic board");

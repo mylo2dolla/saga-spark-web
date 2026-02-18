@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
-import { callEdgeFunctionRaw } from "@/lib/edge";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
@@ -29,33 +28,23 @@ interface WorldEventRow {
 }
 
 const normalizeNodeStatus = (value: string | null | undefined): ServerNodeRow["status"] => {
-  if (value === "online" || value === "offline" || value === "degraded") {
-    return value;
-  }
+  if (value === "online" || value === "offline" || value === "degraded") return value;
   return "degraded";
 };
 
 export default function ServerAdminScreen() {
   const { user, isLoading: authLoading } = useAuth();
-  const { setLastError, engineSnapshot, lastError, lastErrorAt, healthChecks, exportDebugBundle } = useDiagnostics();
+  const { setLastError, lastError, lastErrorAt, healthChecks, authProbe } = useDiagnostics();
   const networkHealth = useNetworkHealth(1000);
   const logger = useMemo(() => createLogger("server-admin-screen"), []);
   const [nodes, setNodes] = useState<ServerNodeRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [dbTest, setDbTest] = useState<{ ok: boolean; status?: number; message?: string } | null>(null);
-  const [edgeTest, setEdgeTest] = useState<{ ok: boolean; status?: number; body?: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
-  const [eventToolsMessage, setEventToolsMessage] = useState<string | null>(null);
   const [worldEvents, setWorldEvents] = useState<WorldEventRow[]>([]);
   const [worldEventsStatus, setWorldEventsStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [worldEventsError, setWorldEventsError] = useState<string | null>(null);
-  const [isOwner, setIsOwner] = useState(false);
-  const ownerCheckRef = useRef<string | null>(null);
-
-  const DEV_DEBUG = import.meta.env.DEV;
-  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-  const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
   const fetchNodes = useCallback(async () => {
     if (!user) return;
@@ -115,29 +104,6 @@ export default function ServerAdminScreen() {
     fetchWorldEvents();
   }, [fetchWorldEvents]);
 
-  useEffect(() => {
-    if (!user || !engineSnapshot?.campaignId) {
-      setIsOwner(false);
-      ownerCheckRef.current = null;
-      return;
-    }
-    if (ownerCheckRef.current === engineSnapshot.campaignId) return;
-    ownerCheckRef.current = engineSnapshot.campaignId;
-    const loadOwner = async () => {
-      const { data, error } = await supabase
-        .from("campaigns")
-        .select("owner_id")
-        .eq("id", engineSnapshot.campaignId)
-        .maybeSingle();
-      if (error || !data) {
-        setIsOwner(false);
-        return;
-      }
-      setIsOwner(data.owner_id === user.id);
-    };
-    loadOwner();
-  }, [engineSnapshot?.campaignId, user]);
-
   const handleDbTest = useCallback(async () => {
     setIsTesting(true);
     setDbTest(null);
@@ -154,28 +120,6 @@ export default function ServerAdminScreen() {
       setIsTesting(false);
     }
   }, []);
-
-  const handleEdgeTest = useCallback(async () => {
-    if (!DEV_DEBUG) return;
-    setIsTesting(true);
-    setEdgeTest(null);
-    try {
-      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-        setEdgeTest({ ok: false, body: "Missing Supabase env" });
-        return;
-      }
-      const response = await callEdgeFunctionRaw("generate-class", {
-        requireAuth: false,
-        body: { classDescription: "Quick test class" },
-      });
-      const body = await response.text();
-      setEdgeTest({ ok: response.ok, status: response.status, body });
-    } catch (err) {
-      setEdgeTest({ ok: false, body: formatError(err, "Edge test failed") });
-    } finally {
-      setIsTesting(false);
-    }
-  }, [DEV_DEBUG, SUPABASE_ANON_KEY, SUPABASE_URL]);
 
   const handleReconnectSession = useCallback(async () => {
     setIsTesting(true);
@@ -212,56 +156,27 @@ export default function ServerAdminScreen() {
     }
   }, [fetchNodes, handleDbTest, setLastError]);
 
-  const handleReplayEvents = useCallback(async () => {
-    setEventToolsMessage(null);
-    const controls = (globalThis as { __worldEventControls?: { replayLastEvents?: (count: number) => void } })
-      .__worldEventControls;
-    if (!controls?.replayLastEvents) {
-      setEventToolsMessage("No active game session to replay.");
-      return;
-    }
-    controls.replayLastEvents(10);
-    setEventToolsMessage("Replayed last 10 events.");
-  }, []);
-
-  const handleReloadState = useCallback(async () => {
-    setEventToolsMessage(null);
-    const controls = (globalThis as { __worldEventControls?: { reloadFromDb?: () => Promise<void> | void } })
-      .__worldEventControls;
-    if (!controls?.reloadFromDb) {
-      setEventToolsMessage("No active game session to reload.");
-      return;
-    }
-    await controls.reloadFromDb();
-    setEventToolsMessage("Reloaded state from DB.");
-  }, []);
-
   useEffect(() => {
     if (!user) return;
     const channel = supabase
       .channel("ui-server-nodes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "server_nodes" },
-        payload => {
-          const row = payload.new as (ServerNodeRow & { status?: string }) | undefined;
-          if (row && row.node_name) {
-            const normalizedRow: ServerNodeRow = {
-              ...row,
-              status: normalizeNodeStatus(row.status),
-            };
-            setNodes(prev => {
-              const idx = prev.findIndex(item => item.id === normalizedRow.id);
-              if (idx >= 0) {
-                const next = [...prev];
-                next[idx] = normalizedRow;
-                return next;
-              }
-              return [normalizedRow, ...prev];
-            });
+      .on("postgres_changes", { event: "*", schema: "public", table: "server_nodes" }, (payload) => {
+        const row = payload.new as (ServerNodeRow & { status?: string }) | undefined;
+        if (!row || !row.node_name) return;
+        const normalizedRow: ServerNodeRow = {
+          ...row,
+          status: normalizeNodeStatus(row.status),
+        };
+        setNodes((prev) => {
+          const idx = prev.findIndex((item) => item.id === normalizedRow.id);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = normalizedRow;
+            return next;
           }
-        },
-      )
+          return [normalizedRow, ...prev];
+        });
+      })
       .subscribe();
 
     return () => {
@@ -284,15 +199,15 @@ export default function ServerAdminScreen() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">Servers/Admin</h1>
-          <div className="text-xs text-muted-foreground">Live server nodes</div>
+          <div className="text-xs text-muted-foreground">Operational status and reconnect controls</div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={fetchNodes}>Reconnect</Button>
+          <Button variant="outline" onClick={fetchNodes}>Refresh Nodes</Button>
           <Button variant="outline" onClick={handleReconnectAll} disabled={isTesting}>
             Reconnect + Refresh
           </Button>
           <Button variant="outline" onClick={handleReconnectSession} disabled={isTesting}>
-            Reconnect Session
+            Refresh Session
           </Button>
         </div>
       </div>
@@ -313,7 +228,7 @@ export default function ServerAdminScreen() {
             <div className="text-sm text-muted-foreground">No nodes reported.</div>
           ) : (
             <div className="space-y-3">
-              {nodes.map(node => {
+              {nodes.map((node) => {
                 const lastHeartbeat = new Date(node.last_heartbeat);
                 const stale = Date.now() - lastHeartbeat.getTime() > 30000;
                 const status = stale ? "offline" : node.status;
@@ -321,7 +236,7 @@ export default function ServerAdminScreen() {
                   <div key={node.id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-xs">
                     <div>
                       <div className="font-semibold">{node.node_name}</div>
-                      <div className="text-muted-foreground">Last: {lastHeartbeat.toLocaleTimeString()}</div>
+                      <div className="text-muted-foreground">Last heartbeat: {lastHeartbeat.toLocaleTimeString()}</div>
                     </div>
                     <div className="text-right">
                       <div>Status: {status}</div>
@@ -337,62 +252,31 @@ export default function ServerAdminScreen() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Diagnostics</CardTitle>
+          <CardTitle className="text-base">Operational Status</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3 text-xs text-muted-foreground">
-          <div>Auth: {user?.email ?? "guest"}</div>
-          <div>DB: {dbTest?.ok ? "ok" : "unknown"}</div>
+          <div>Auth user: {user.email ?? "guest"}</div>
+          <div>DB test: {dbTest?.ok ? "ok" : dbTest ? "error" : "not run"}</div>
           <div>Requests/min: {networkHealth.requestsPerMinute}</div>
           <div>Last DB read: {networkHealth.lastDbReadAt ? new Date(networkHealth.lastDbReadAt).toLocaleTimeString() : "-"}</div>
           <div>Last DB write: {networkHealth.lastDbWriteAt ? new Date(networkHealth.lastDbWriteAt).toLocaleTimeString() : "-"}</div>
           <div>Last DB load: {networkHealth.lastDbLoadAt ? new Date(networkHealth.lastDbLoadAt).toLocaleTimeString() : "-"}</div>
-          <div>Last Edge call: {networkHealth.lastEdgeCallAt ? new Date(networkHealth.lastEdgeCallAt).toLocaleTimeString() : "-"}</div>
+          <div>Last edge call: {networkHealth.lastEdgeCallAt ? new Date(networkHealth.lastEdgeCallAt).toLocaleTimeString() : "-"}</div>
+          <div>
+            Auth probe: {authProbe ? `${authProbe.endpoint} ${authProbe.status ?? "?"}` : "not run"}
+            {typeof authProbe?.latency_ms === "number" ? ` · ${authProbe.latency_ms}ms` : ""}
+          </div>
+          {authProbe?.request_id ? <div>Auth request ID: {authProbe.request_id}</div> : null}
           {lastError ? <div className="text-destructive">Last error: {lastError}</div> : null}
           {lastErrorAt ? <div>Last error at: {new Date(lastErrorAt).toLocaleTimeString()}</div> : null}
-          {engineSnapshot ? (
-            <div className="space-y-1">
-              <div>
-                Engine: {engineSnapshot.state ?? "unknown"} | Location: {engineSnapshot.locationName ?? "-"} ({engineSnapshot.locationId ?? "-"})
-              </div>
-              <div>Campaign: {engineSnapshot.campaignSeedTitle ?? "-"} ({engineSnapshot.campaignSeedId ?? "-"})</div>
-              <div>
-                Travel: {engineSnapshot.travel?.currentLocationId ?? "-"} | In transit: {engineSnapshot.travel?.isInTransit ? "yes" : "no"} | {Math.round(engineSnapshot.travel?.transitProgress ?? 0)}%
-              </div>
-              <div>Combat: {engineSnapshot.combatState ?? "-"}</div>
-            </div>
-          ) : (
-            <div>Engine: no snapshot</div>
-          )}
+
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={handleDbTest} disabled={isTesting}>
               Test DB
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                const blob = new Blob([exportDebugBundle()], { type: "application/json" });
-                const url = URL.createObjectURL(blob);
-                const anchor = document.createElement("a");
-                const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-                anchor.href = url;
-                anchor.download = `mythic-debug-bundle-${stamp}.json`;
-                anchor.click();
-                URL.revokeObjectURL(url);
-              }}
-            >
-              Export Debug Bundle
-            </Button>
-            {DEV_DEBUG ? (
-              <Button variant="outline" onClick={handleEdgeTest} disabled={isTesting || !SUPABASE_URL}>
-                Test generate-class
-              </Button>
-            ) : null}
           </div>
           {dbTest ? (
-            <div>DB test: {dbTest.ok ? "ok" : "error"} {dbTest.status ? `(${dbTest.status})` : ""} {dbTest.message ?? ""}</div>
-          ) : null}
-          {edgeTest ? (
-            <div>Edge test: {edgeTest.ok ? "ok" : "error"} {edgeTest.status ? `(${edgeTest.status})` : ""}</div>
+            <div>DB result: {dbTest.ok ? "ok" : "error"} {dbTest.status ? `(${dbTest.status})` : ""} {dbTest.message ?? ""}</div>
           ) : null}
           <div className="space-y-1 rounded-md border border-border p-2">
             <div className="font-semibold text-foreground">Subsystem health</div>
@@ -411,64 +295,19 @@ export default function ServerAdminScreen() {
         </CardContent>
       </Card>
 
-      {isOwner && engineSnapshot ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">World State Inspector</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-xs text-muted-foreground">
-            <details className="rounded-md border border-border p-2">
-              <summary className="cursor-pointer text-sm text-foreground">Current snapshot</summary>
-              <div className="mt-2 space-y-1">
-                <div>Current location: {engineSnapshot.locationName ?? "-"} ({engineSnapshot.locationId ?? "-"})</div>
-                <div>Known locations: {engineSnapshot.knownLocations?.length ?? 0}</div>
-                {engineSnapshot.knownLocations?.length ? (
-                  <div className="text-muted-foreground">
-                    {engineSnapshot.knownLocations.slice(0, 8).join(", ")}
-                    {engineSnapshot.knownLocations.length > 8 ? "…" : ""}
-                  </div>
-                ) : null}
-                <div>Active flags: {engineSnapshot.storyFlags?.length ?? 0}</div>
-                {engineSnapshot.storyFlags?.length ? (
-                  <div className="text-muted-foreground">
-                    {engineSnapshot.storyFlags.slice(0, 8).join(", ")}
-                    {engineSnapshot.storyFlags.length > 8 ? "…" : ""}
-                  </div>
-                ) : null}
-                <div>Active quests: {engineSnapshot.activeQuests?.length ?? 0}</div>
-                {engineSnapshot.activeQuests?.length ? (
-                  <div className="text-muted-foreground">
-                    {engineSnapshot.activeQuests.slice(0, 6).join(", ")}
-                    {engineSnapshot.activeQuests.length > 6 ? "…" : ""}
-                  </div>
-                ) : null}
-              </div>
-            </details>
-          </CardContent>
-        </Card>
-      ) : null}
-
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Recent World Events</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-xs text-muted-foreground">
-          {worldEventsStatus === "loading" ? (
-            <div>Loading events...</div>
-          ) : null}
-          {worldEventsError ? (
-            <div className="text-destructive">{worldEventsError}</div>
-          ) : null}
-          {worldEventsStatus === "ok" && worldEvents.length === 0 ? (
-            <div>No events available.</div>
-          ) : null}
+          {worldEventsStatus === "loading" ? <div>Loading events...</div> : null}
+          {worldEventsError ? <div className="text-destructive">{worldEventsError}</div> : null}
+          {worldEventsStatus === "ok" && worldEvents.length === 0 ? <div>No events available.</div> : null}
           {worldEvents.length > 0 ? (
             <div className="space-y-2">
               {worldEvents.map((event) => (
                 <div key={event.id} className="rounded-md border border-border p-2">
-                  <div className="text-[11px] text-muted-foreground">
-                    {new Date(event.created_at).toLocaleString()}
-                  </div>
+                  <div className="text-[11px] text-muted-foreground">{new Date(event.created_at).toLocaleString()}</div>
                   <div className="text-xs text-foreground">{event.action_text}</div>
                   <div className="text-[11px] text-muted-foreground">
                     Campaign: {event.campaign_id} | User: {event.user_id}
@@ -479,28 +318,6 @@ export default function ServerAdminScreen() {
           ) : null}
         </CardContent>
       </Card>
-
-      {DEV_DEBUG ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">World Events Tools</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-xs text-muted-foreground">
-            <div>Requires an active Game session in another tab.</div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={handleReplayEvents} disabled={isTesting}>
-                Replay last 10 events
-              </Button>
-              <Button variant="outline" onClick={handleReloadState} disabled={isTesting}>
-                Clear local state and reload from DB
-              </Button>
-            </div>
-            {eventToolsMessage ? (
-              <div>{eventToolsMessage}</div>
-            ) : null}
-          </CardContent>
-        </Card>
-      ) : null}
     </div>
   );
 }

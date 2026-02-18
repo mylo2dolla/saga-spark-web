@@ -9,6 +9,7 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Expose-Headers": "x-request-id",
 };
 
 const RequestSchema = z.object({
@@ -22,6 +23,13 @@ type MythicBoardType = "town" | "dungeon" | "travel" | "combat";
 type StatKey = "offense" | "defense" | "control" | "support" | "mobility" | "utility";
 
 const STAT_KEYS: StatKey[] = ["offense", "defense", "control", "support", "mobility", "utility"];
+
+function requestIdFrom(req: Request): string {
+  return req.headers.get("x-request-id")
+    ?? req.headers.get("x-correlation-id")
+    ?? req.headers.get("x-vercel-id")
+    ?? crypto.randomUUID();
+}
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -70,20 +78,23 @@ function sumEquipmentBonuses(rows: Array<{ item?: { stat_mods?: unknown; slot?: 
 }
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
+  const requestId = requestIdFrom(req);
+  const baseHeaders = { ...corsHeaders, "x-request-id": requestId };
+
+  if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: baseHeaders });
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+    return new Response(JSON.stringify({ error: "Method not allowed", code: "method_not_allowed", requestId }), {
       status: 405,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...baseHeaders, "Content-Type": "application/json" },
     });
   }
 
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Authentication required" }), {
+      return new Response(JSON.stringify({ error: "Authentication required", code: "auth_required", requestId }), {
         status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...baseHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -99,17 +110,17 @@ serve(async (req) => {
     const authClient = createClient(supabaseUrl, anonKey);
     const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
+      return new Response(JSON.stringify({ error: "Invalid or expired authentication token", code: "auth_invalid", requestId }), {
         status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...baseHeaders, "Content-Type": "application/json" },
       });
     }
 
     const parsed = RequestSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
-      return new Response(JSON.stringify({ error: "Invalid request", details: parsed.error.flatten() }), {
+      return new Response(JSON.stringify({ error: "Invalid request", code: "invalid_request", details: parsed.error.flatten(), requestId }), {
         status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...baseHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -117,6 +128,14 @@ serve(async (req) => {
     const reason = parsed.data.reason ?? "encounter";
 
     const svc = createClient(supabaseUrl, serviceRoleKey);
+    const t0 = Date.now();
+
+    logger.info("combat_start.request", {
+      request_id: requestId,
+      campaign_id: campaignId,
+      user_id: user.id,
+      reason,
+    });
 
     // Ensure campaign exists.
     const { data: campaign, error: campaignError } = await svc
@@ -126,14 +145,14 @@ serve(async (req) => {
       .maybeSingle();
     throwIfError(campaignError, "campaign lookup");
     if (!campaign) {
-      return new Response(JSON.stringify({ error: "Campaign not found" }), {
+      return new Response(JSON.stringify({ error: "Campaign not found", code: "campaign_not_found", requestId }), {
         status: 404,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...baseHeaders, "Content-Type": "application/json" },
       });
     }
 
     // Active board seed -> stable encounter seed.
-    const { data: activeBoard } = await svc
+    const { data: activeBoard, error: activeBoardError } = await svc
       .schema("mythic")
       .from("boards")
       .select("id, board_type, state_json")
@@ -142,6 +161,7 @@ serve(async (req) => {
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    throwIfError(activeBoardError, "active board lookup");
 
     const boardSeed = (() => {
       const s = (activeBoard as { state_json?: any } | null)?.state_json?.seed;
@@ -163,9 +183,9 @@ serve(async (req) => {
       .maybeSingle();
     throwIfError(charError, "character lookup");
     if (!character) {
-      return new Response(JSON.stringify({ error: "No mythic character found for this campaign" }), {
+      return new Response(JSON.stringify({ error: "No mythic character found for this campaign", code: "character_missing", requestId }), {
         status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...baseHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -332,7 +352,7 @@ serve(async (req) => {
       y: rngInt(seed, `walls:y:${i}`, 1, 4),
     }));
 
-    await svc
+    const { data: updatedBoards, error: boardUpdateError } = await svc
       .schema("mythic")
       .from("boards")
       .update({
@@ -346,33 +366,60 @@ serve(async (req) => {
       })
       .eq("combat_session_id", combatId)
       .eq("status", "active");
+    throwIfError(boardUpdateError, "combat board update");
+    if (!updatedBoards) {
+      // `update` without select returns null, but we still want to ensure row matched.
+      const { data: verifyBoard, error: verifyError } = await svc
+        .schema("mythic")
+        .from("boards")
+        .select("id")
+        .eq("combat_session_id", combatId)
+        .eq("status", "active")
+        .maybeSingle();
+      throwIfError(verifyError, "combat board verify");
+      if (!verifyBoard) throw new Error("Combat board update affected 0 rows");
+    }
 
-    await svc.rpc("mythic_append_action_event", {
+    const roundStartRes = await svc.rpc("mythic_append_action_event", {
       combat_session_id: combatId,
       turn_index: 0,
       actor_combatant_id: null,
       event_type: "round_start",
       payload: { round_index: 0, initiative_snapshot: initiativeSnapshot },
     });
+    throwIfError(roundStartRes.error, "append_action_event round_start");
 
-    await svc.rpc("mythic_append_action_event", {
+    const turnStartRes = await svc.rpc("mythic_append_action_event", {
       combat_session_id: combatId,
       turn_index: 0,
       actor_combatant_id: sorted[0]!.id,
       event_type: "turn_start",
       payload: { actor_combatant_id: sorted[0]!.id },
     });
+    throwIfError(turnStartRes.error, "append_action_event turn_start");
+
+    logger.info("combat_start.success", {
+      request_id: requestId,
+      campaign_id: campaignId,
+      combat_session_id: combatId,
+      duration_ms: Date.now() - t0,
+      enemy_count: enemyCount,
+    });
 
     return new Response(
-      JSON.stringify({ ok: true, combat_session_id: combatId }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({ ok: true, combat_session_id: combatId, requestId }),
+      { status: 200, headers: { ...baseHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
     const normalized = sanitizeError(error);
-    logger.error("combat_start.failed", error);
+    logger.error("combat_start.failed", error, { request_id: requestId });
     return new Response(
-      JSON.stringify({ error: normalized.message || "Failed to start combat", code: normalized.code ?? "combat_start_failed" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      JSON.stringify({
+        error: normalized.message || "Failed to start combat",
+        code: normalized.code ?? "combat_start_failed",
+        requestId,
+      }),
+      { status: 500, headers: { ...baseHeaders, "Content-Type": "application/json" } },
     );
   }
 });

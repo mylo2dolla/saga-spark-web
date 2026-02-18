@@ -24,6 +24,11 @@ const RequestSchema = z.object({
 const syllableA = ["Ash", "Iron", "Dus", "Grim", "Stone", "Glen", "Oath", "Hex", "Rift", "Wolf", "Black", "Silver"];
 const syllableB = ["hold", "bridge", "hollow", "reach", "mark", "port", "spire", "vale", "cross", "ford", "fall", "gate"];
 const logger = createLogger("mythic-join-campaign");
+const requestIdFrom = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
 
 const hashSeed = (input: string): number => {
   let hash = 0;
@@ -66,9 +71,10 @@ const makeTownState = (seed: number) => {
 };
 
 serve(async (req) => {
+  const requestId = requestIdFrom(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), {
+    return new Response(JSON.stringify({ ok: false, error: "Method not allowed", code: "method_not_allowed", requestId }), {
       status: 405,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -86,7 +92,7 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ ok: false, error: "Authentication required", code: "auth_required" }), {
+      return new Response(JSON.stringify({ ok: false, error: "Authentication required", code: "auth_required", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -101,7 +107,13 @@ serve(async (req) => {
 
     const parsed = RequestSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
-      return new Response(JSON.stringify({ ok: false, error: "Invalid request", code: "invalid_request", details: parsed.error.flatten() }), {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: "Invalid request",
+        code: "invalid_request",
+        details: parsed.error.flatten(),
+        requestId,
+      }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -111,7 +123,7 @@ serve(async (req) => {
     const authClient = createClient(supabaseUrl, anonKey);
     const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
-      return new Response(JSON.stringify({ ok: false, error: "Invalid or expired authentication token", code: "auth_invalid" }), {
+      return new Response(JSON.stringify({ ok: false, error: "Invalid or expired authentication token", code: "auth_invalid", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -119,12 +131,13 @@ serve(async (req) => {
 
     const svc = createClient(supabaseUrl, serviceRoleKey);
     const inviteCode = parsed.data.inviteCode.trim();
+    const warnings: string[] = [];
     const idempotencyHeader = idempotencyKeyFromRequest(req);
     const idempotencyKey = idempotencyHeader ? `${user.id}:${idempotencyHeader}` : null;
     if (idempotencyKey) {
       const cached = getIdempotentResponse(idempotencyKey);
       if (cached) {
-        logger.info("join_campaign.idempotent_hit", { user_id: user.id });
+        logger.info("join_campaign.idempotent_hit", { user_id: user.id, request_id: requestId });
         return cached;
       }
     }
@@ -146,14 +159,14 @@ serve(async (req) => {
       | null;
 
     if (!campaign) {
-      return new Response(JSON.stringify({ ok: false, error: "Invalid invite code", code: "invalid" }), {
+      return new Response(JSON.stringify({ ok: false, error: "Invalid invite code", code: "invalid", requestId }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     if (!campaign.is_active) {
-      return new Response(JSON.stringify({ ok: false, error: "Invite code is inactive", code: "inactive" }), {
+      return new Response(JSON.stringify({ ok: false, error: "Invite code is inactive", code: "inactive", requestId }), {
         status: 409,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -178,17 +191,35 @@ serve(async (req) => {
 
     // Ensure Mythic runtime artifacts exist so joined campaigns are always actionable.
     const seedBase = hashSeed(`${campaign.id}:${user.id}:join`);
-    await svc.schema("mythic").from("dm_campaign_state").upsert({ campaign_id: campaign.id }, { onConflict: "campaign_id" });
-    await svc.schema("mythic").from("dm_world_tension").upsert({ campaign_id: campaign.id }, { onConflict: "campaign_id" });
+    const dmStateSeed = await svc
+      .schema("mythic")
+      .from("dm_campaign_state")
+      .upsert({ campaign_id: campaign.id }, { onConflict: "campaign_id" });
+    if (dmStateSeed.error) {
+      warnings.push(`dm_campaign_state:${dmStateSeed.error.message ?? "unknown"}`);
+    }
 
-    const { data: activeBoard } = await svc
+    const tensionSeed = await svc
+      .schema("mythic")
+      .from("dm_world_tension")
+      .upsert({ campaign_id: campaign.id }, { onConflict: "campaign_id" });
+    if (tensionSeed.error) {
+      warnings.push(`dm_world_tension:${tensionSeed.error.message ?? "unknown"}`);
+    }
+
+    const { data: activeBoards, error: activeBoardError } = await svc
       .schema("mythic")
       .from("boards")
       .select("id")
       .eq("campaign_id", campaign.id)
       .eq("status", "active")
-      .limit(1)
-      .maybeSingle();
+      .order("updated_at", { ascending: false })
+      .limit(2);
+    if (activeBoardError) throw activeBoardError;
+    if ((activeBoards?.length ?? 0) > 1) {
+      warnings.push("duplicate_active_boards_detected:using_latest_board_row");
+    }
+    const activeBoard = activeBoards?.[0] ?? null;
 
     if (!activeBoard) {
       const { error: boardInsertError } = await svc.schema("mythic").from("boards").insert({
@@ -213,20 +244,37 @@ serve(async (req) => {
       },
     };
 
-    await svc
+    const worldProfileResult = await svc
       .schema("mythic")
       .from("world_profiles")
       .upsert(worldProfilePayload, { onConflict: "campaign_id" });
+    if (worldProfileResult.error) {
+      warnings.push(`world_profiles:${worldProfileResult.error.message ?? "unknown"}`);
+    }
 
-    await svc
+    const legacyProfileResult = await svc
       .schema("mythic")
       .from("campaign_world_profiles")
       .upsert(worldProfilePayload, { onConflict: "campaign_id" });
+    if (legacyProfileResult.error) {
+      warnings.push(`campaign_world_profiles:${legacyProfileResult.error.message ?? "unknown"}`);
+    }
+
+    if (warnings.length > 0) {
+      logger.warn("join_campaign.profile_mirror_warning", {
+        campaign_id: campaign.id,
+        user_id: user.id,
+        request_id: requestId,
+        warnings,
+      });
+    }
 
     const response = new Response(JSON.stringify({
       ok: true,
       campaign,
       already_member: Boolean(existingMember),
+      warnings,
+      requestId,
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -234,13 +282,13 @@ serve(async (req) => {
     if (idempotencyKey) {
       storeIdempotentResponse(idempotencyKey, response, 60_000);
     }
-    logger.info("join_campaign.success", { campaign_id: campaign.id, user_id: user.id });
+    logger.info("join_campaign.success", { campaign_id: campaign.id, user_id: user.id, request_id: requestId });
     return response;
   } catch (error) {
     const normalized = sanitizeError(error);
-    logger.error("join_campaign.failed", error);
+    logger.error("join_campaign.failed", error, { request_id: requestId });
     const message = normalized.message || "Failed to join campaign";
-    return new Response(JSON.stringify({ ok: false, error: message, code: "join_failed" }), {
+    return new Response(JSON.stringify({ ok: false, error: message, code: "join_failed", requestId }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

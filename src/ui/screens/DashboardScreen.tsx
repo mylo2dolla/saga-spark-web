@@ -9,12 +9,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useDbHealth } from "@/ui/data/useDbHealth";
-import { callEdgeFunction } from "@/lib/edge";
+import { callEdgeFunction, EdgeFunctionError } from "@/lib/edge";
 import { PromptAssistField } from "@/components/PromptAssistField";
 import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
 import { createLogger } from "@/lib/observability/logger";
 import { AsyncStateCard } from "@/ui/components/AsyncStateCard";
+import { getSupabaseErrorInfo } from "@/lib/supabaseError";
 
 type HealthStatus = "ready" | "needs_migration" | "broken";
 
@@ -41,6 +42,29 @@ interface CampaignSummary {
   health_detail: string | null;
 }
 
+interface EdgeErrorMeta {
+  status: number | null;
+  code: string | null;
+  requestId: string | null;
+}
+
+const DASHBOARD_EDGE_TIMEOUT_MS = 24_000;
+const DASHBOARD_EDGE_RETRIES = 1;
+const DASHBOARD_DB_TIMEOUT_MS = 20_000;
+const NETWORK_AUTH_CODES = new Set(["auth_gateway_timeout", "network_unreachable", "upstream_timeout", "edge_fetch_failed"]);
+
+const withTimeout = async <T,>(promiseLike: PromiseLike<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promiseLike, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
+
 const TEMPLATE_OPTIONS: Array<{ key: TemplateKey; label: string; description: string }> = [
   { key: "custom", label: "Custom", description: "Use your own seed and let Mythic adapt." },
   { key: "graphic_novel_fantasy", label: "Graphic Novel Fantasy", description: "Heroic pulp, factions, and brutal adventure." },
@@ -65,12 +89,37 @@ const HEALTH_BADGE: Record<HealthStatus, { label: string; className: string }> =
   },
 };
 
-function inferJoinErrorCode(message: string): string {
+function inferJoinErrorCode(message: string, code?: string | null): string {
+  if (code) return code;
   const lower = message.toLowerCase();
   if (lower.includes("invalid invite") || lower.includes("invalid")) return "invalid";
   if (lower.includes("inactive")) return "inactive";
   if (lower.includes("already")) return "already_member";
   return "join_failed";
+}
+
+function edgeMetaFromError(error: unknown): EdgeErrorMeta | null {
+  if (error instanceof EdgeFunctionError) {
+    return {
+      status: error.status ?? null,
+      code: error.code ?? null,
+      requestId: error.requestId ?? null,
+    };
+  }
+
+  if (!error || typeof error !== "object") return null;
+  const maybe = error as { status?: unknown; code?: unknown; requestId?: unknown };
+  const status = typeof maybe.status === "number" ? maybe.status : null;
+  const code = typeof maybe.code === "string" ? maybe.code : null;
+  const requestId = typeof maybe.requestId === "string" ? maybe.requestId : null;
+  if (!status && !code && !requestId) return null;
+  return { status, code, requestId };
+}
+
+function toActionableNetworkMessage(baseMessage: string, meta: EdgeErrorMeta | null): string {
+  if (!meta?.code || !NETWORK_AUTH_CODES.has(meta.code)) return baseMessage;
+  const requestSuffix = meta.requestId ? ` RequestId: ${meta.requestId}.` : "";
+  return `Network/auth path failed (${meta.code}). Verify Supabase auth connectivity, then retry.${requestSuffix}`;
 }
 
 export default function DashboardScreen() {
@@ -95,8 +144,11 @@ export default function DashboardScreen() {
   const [isDeletingLegacy, setIsDeletingLegacy] = useState(false);
 
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createErrorMeta, setCreateErrorMeta] = useState<EdgeErrorMeta | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [joinErrorMeta, setJoinErrorMeta] = useState<EdgeErrorMeta | null>(null);
   const [joinErrorCode, setJoinErrorCode] = useState<string | null>(null);
+  const [loadErrorMeta, setLoadErrorMeta] = useState<EdgeErrorMeta | null>(null);
   const [createWarning, setCreateWarning] = useState<string | null>(null);
   const [lastCreatedCampaignId, setLastCreatedCampaignId] = useState<string | null>(null);
   const [loadOp, setLoadOp] = useState<OperationState | null>(null);
@@ -110,7 +162,7 @@ export default function DashboardScreen() {
   const activeUserId = session?.user?.id ?? user?.id ?? null;
   const activeAccessToken = activeSession?.access_token ?? null;
   const dbEnabled = Boolean(activeUserId);
-  const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled);
+  const { lastError: dbError } = useDbHealth(dbEnabled);
 
   const loadCampaigns = useCallback(async () => {
     if (!activeAccessToken) {
@@ -122,19 +174,36 @@ export default function DashboardScreen() {
 
     setIsLoading(true);
     setError(null);
+    setLoadErrorMeta(null);
     try {
       const { result } = await runOperation({
         name: "dashboard.load_campaigns",
-        timeoutMs: 10_000,
-        maxRetries: 2,
+        timeoutMs: DASHBOARD_EDGE_TIMEOUT_MS,
+        maxRetries: DASHBOARD_EDGE_RETRIES,
         onUpdate: (state) => {
           setLoadOp(state);
           recordOperation(state);
         },
-        run: async ({ signal }) => {
-          const { data, error } = await callEdgeFunction<{ ok: boolean; campaigns: CampaignSummary[] }>(
+        run: async ({ signal, attempt }) => {
+          const { data, error } = await callEdgeFunction<{
+            ok: boolean;
+            campaigns: CampaignSummary[];
+            warnings?: string[];
+            degraded?: boolean;
+            requestId?: string;
+            code?: string;
+            error?: string;
+          }>(
             "mythic-list-campaigns",
-            { requireAuth: true, accessToken: activeAccessToken, body: {}, signal },
+            {
+              requireAuth: true,
+              accessToken: activeAccessToken,
+              body: {},
+              signal,
+              timeoutMs: DASHBOARD_EDGE_TIMEOUT_MS,
+              maxRetries: DASHBOARD_EDGE_RETRIES,
+              retryBaseMs: 350 * Math.max(1, attempt),
+            },
           );
           if (error) {
             throw error;
@@ -147,8 +216,10 @@ export default function DashboardScreen() {
       });
       setCampaigns(result);
     } catch (err) {
-      const message = formatError(err, "Failed to load campaigns");
+      const meta = edgeMetaFromError(err);
+      const message = toActionableNetworkMessage(formatError(err, "Failed to load campaigns"), meta);
       setError(message);
+      setLoadErrorMeta(meta);
       setLastError(message);
       logger.error("dashboard.load_campaigns.failed", err);
     } finally {
@@ -211,6 +282,7 @@ export default function DashboardScreen() {
     createAbortRef.current = controller;
     setIsCreating(true);
     setCreateError(null);
+    setCreateErrorMeta(null);
     setCreateWarning(null);
     setLastError(null);
 
@@ -218,24 +290,31 @@ export default function DashboardScreen() {
       const { result: data } = await runOperation({
         name: "dashboard.create_campaign",
         signal: controller.signal,
-        timeoutMs: 16_000,
-        maxRetries: 1,
+        timeoutMs: DASHBOARD_EDGE_TIMEOUT_MS,
+        maxRetries: DASHBOARD_EDGE_RETRIES,
         onUpdate: (state) => {
           setCreateOp(state);
           recordOperation(state);
         },
-        run: async ({ signal }) => {
+        run: async ({ signal, attempt }) => {
           const { data, error } = await callEdgeFunction<{
             ok: boolean;
             campaign: CampaignSummary;
             world_seed_status?: string;
             warnings?: string[];
+            requestId?: string;
+            code?: string;
+            details?: unknown;
+            error?: string;
           }>(
             "mythic-create-campaign",
             {
               requireAuth: true,
               accessToken: activeAccessToken,
               signal,
+              timeoutMs: DASHBOARD_EDGE_TIMEOUT_MS,
+              maxRetries: DASHBOARD_EDGE_RETRIES,
+              retryBaseMs: 350 * Math.max(1, attempt),
               idempotencyKey: `${activeUser.id}:${name}:${description}`,
               body: {
                 name,
@@ -269,8 +348,10 @@ export default function DashboardScreen() {
       void loadCampaigns();
       navigate(`/mythic/${data.campaign.id}/create-character`);
     } catch (err) {
-      const message = formatError(err, "Failed to create campaign");
+      const meta = edgeMetaFromError(err);
+      const message = toActionableNetworkMessage(formatError(err, "Failed to create campaign"), meta);
       setCreateError(message);
+      setCreateErrorMeta(meta);
       setLastError(message);
       toast({ title: "Failed to create campaign", description: message, variant: "destructive" });
     } finally {
@@ -297,6 +378,7 @@ export default function DashboardScreen() {
     joinAbortRef.current = controller;
     setIsJoining(true);
     setJoinError(null);
+    setJoinErrorMeta(null);
     setJoinErrorCode(null);
     setLastError(null);
 
@@ -304,19 +386,30 @@ export default function DashboardScreen() {
       const { result: data } = await runOperation({
         name: "dashboard.join_campaign",
         signal: controller.signal,
-        timeoutMs: 12_000,
-        maxRetries: 1,
+        timeoutMs: DASHBOARD_EDGE_TIMEOUT_MS,
+        maxRetries: DASHBOARD_EDGE_RETRIES,
         onUpdate: (state) => {
           setJoinOp(state);
           recordOperation(state);
         },
-        run: async ({ signal }) => {
-          const { data, error } = await callEdgeFunction<{ ok: boolean; campaign: CampaignSummary; already_member?: boolean }>(
+        run: async ({ signal, attempt }) => {
+          const { data, error } = await callEdgeFunction<{
+            ok: boolean;
+            campaign: CampaignSummary;
+            already_member?: boolean;
+            requestId?: string;
+            code?: string;
+            details?: unknown;
+            error?: string;
+          }>(
             "mythic-join-campaign",
             {
               requireAuth: true,
               accessToken: activeAccessToken,
               signal,
+              timeoutMs: DASHBOARD_EDGE_TIMEOUT_MS,
+              maxRetries: DASHBOARD_EDGE_RETRIES,
+              retryBaseMs: 350 * Math.max(1, attempt),
               idempotencyKey: `${activeUser.id}:${code}`,
               body: { inviteCode: code },
             },
@@ -337,9 +430,11 @@ export default function DashboardScreen() {
       void loadCampaigns();
       navigate(`/mythic/${data.campaign.id}`);
     } catch (err) {
-      const message = formatError(err, "Failed to join campaign");
+      const meta = edgeMetaFromError(err);
+      const message = toActionableNetworkMessage(formatError(err, "Failed to join campaign"), meta);
       setJoinError(message);
-      setJoinErrorCode(inferJoinErrorCode(message));
+      setJoinErrorMeta(meta);
+      setJoinErrorCode(inferJoinErrorCode(message, meta?.code));
       setLastError(message);
       toast({ title: "Failed to join campaign", description: message, variant: "destructive" });
     } finally {
@@ -368,7 +463,11 @@ export default function DashboardScreen() {
         onUpdate: (state) => recordOperation(state),
         run: async () => {
           const ids = legacy.map((campaign) => campaign.id);
-          const { error: deleteError } = await supabase.from("campaigns").delete().in("id", ids).eq("owner_id", activeUserId);
+          const { error: deleteError } = await withTimeout(
+            supabase.from("campaigns").delete().in("id", ids).eq("owner_id", activeUserId),
+            DASHBOARD_DB_TIMEOUT_MS,
+            "Delete legacy campaigns",
+          );
           if (deleteError) throw deleteError;
           return true;
         },
@@ -376,7 +475,8 @@ export default function DashboardScreen() {
       toast({ title: "Legacy campaigns deleted", description: `Removed ${legacy.length} campaign(s).` });
       await loadCampaigns();
     } catch (err) {
-      const message = formatError(err, "Failed to delete legacy campaigns");
+      const info = getSupabaseErrorInfo(err, formatError(err, "Failed to delete legacy campaigns"));
+      const message = info.message;
       setError(message);
       toast({ title: "Delete failed", description: message, variant: "destructive" });
     } finally {
@@ -390,19 +490,21 @@ export default function DashboardScreen() {
     return `${campaigns.length} campaign${campaigns.length === 1 ? "" : "s"}`;
   }, [campaigns.length, isLoading]);
 
-  const dbStatusLabel = dbEnabled ? dbStatus : "paused";
-
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">Mythic-only campaigns and access codes.</p>
-        <div className="mt-2 text-xs text-muted-foreground">
-          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
-        </div>
         {loadOp?.status === "RUNNING" ? (
           <div className="mt-1 text-xs text-muted-foreground">
             Campaign sync running (attempt {loadOp.attempt})
+          </div>
+        ) : null}
+        {error && loadErrorMeta ? (
+          <div className="mt-1 text-xs text-destructive/90">
+            {loadErrorMeta.code ? `code: ${loadErrorMeta.code}` : null}
+            {loadErrorMeta.code && loadErrorMeta.requestId ? " · " : null}
+            {loadErrorMeta.requestId ? `requestId: ${loadErrorMeta.requestId}` : null}
           </div>
         ) : null}
         {dbError ? <div className="mt-1 text-xs text-destructive">DB Error: {dbError}</div> : null}
@@ -564,6 +666,13 @@ export default function DashboardScreen() {
               </div>
 
               {createError ? <div className="text-xs text-destructive">{createError}</div> : null}
+              {createErrorMeta ? (
+                <div className="text-xs text-destructive/90">
+                  {createErrorMeta.code ? `code: ${createErrorMeta.code}` : null}
+                  {createErrorMeta.code && createErrorMeta.requestId ? " · " : null}
+                  {createErrorMeta.requestId ? `requestId: ${createErrorMeta.requestId}` : null}
+                </div>
+              ) : null}
               {createOp?.status === "RUNNING" ? (
                 <div className="text-xs text-muted-foreground">
                   Create pending (attempt {createOp.attempt}
@@ -642,6 +751,13 @@ export default function DashboardScreen() {
                 maxLength={24}
               />
               {joinError ? <div className="text-xs text-destructive">{joinError}</div> : null}
+              {joinErrorMeta ? (
+                <div className="text-xs text-destructive/90">
+                  {joinErrorMeta.code ? `code: ${joinErrorMeta.code}` : null}
+                  {joinErrorMeta.code && joinErrorMeta.requestId ? " · " : null}
+                  {joinErrorMeta.requestId ? `requestId: ${joinErrorMeta.requestId}` : null}
+                </div>
+              ) : null}
               {joinOp?.status === "RUNNING" ? (
                 <div className="text-xs text-muted-foreground">
                   Join pending (attempt {joinOp.attempt}

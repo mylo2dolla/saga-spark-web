@@ -167,10 +167,6 @@ function rollItem(args: {
     set_tag: rarity === "mythic" || rarity === "unhinged" ? `${classRole}_ascendant` : null,
     drop_tier: rarityTier(rarity),
     bind_policy: rarity === "common" || rarity === "magical" ? "unbound" : "bind_on_equip",
-    _debug: {
-      name,
-      budget,
-    },
   };
 }
 
@@ -288,11 +284,10 @@ serve(async (req) => {
       });
     });
 
-    const itemRowsForInsert = generatedItems.map(({ _debug, ...row }) => row);
     const { data: insertedItems, error: insertItemsErr } = await svc
       .schema("mythic")
       .from("items")
-      .insert(itemRowsForInsert)
+      .insert(generatedItems)
       .select("*");
     if (insertItemsErr) throw insertItemsErr;
 

@@ -2,12 +2,16 @@ const SECRET_KEY_PATTERN = /(token|secret|password|apikey|api_key|authorization|
 const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9._-]+\.[A-Za-z0-9._-]+\b/g;
 const BEARER_PATTERN = /Bearer\s+[A-Za-z0-9._-]+/gi;
 const API_KEY_PATTERN = /\b(sk-[A-Za-z0-9_-]{16,}|sb_publishable_[A-Za-z0-9_-]{20,})\b/g;
+// OpenAI sometimes returns an error string that includes a partially shown key fragment.
+// Example: "Incorrect API key provided: abcd****wxyz. You can find your API key at …"
+const OPENAI_KEY_FRAGMENT_PATTERN = /Incorrect API key provided:\s*[A-Za-z0-9_*.-]+/gi;
 
 export function redactText(input: string): string {
   return input
     .replace(BEARER_PATTERN, "Bearer [REDACTED]")
     .replace(JWT_PATTERN, "[REDACTED_JWT]")
-    .replace(API_KEY_PATTERN, "[REDACTED_KEY]");
+    .replace(API_KEY_PATTERN, "[REDACTED_KEY]")
+    .replace(OPENAI_KEY_FRAGMENT_PATTERN, "Incorrect API key provided: [REDACTED]");
 }
 
 function redactPrimitive(value: unknown): unknown {
@@ -54,4 +58,3 @@ export function sanitizeError(error: unknown): { message: string; code: string |
   }
   return { message: "Unknown error", code: null };
 }
-

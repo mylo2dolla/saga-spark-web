@@ -1,18 +1,14 @@
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
-import { DEV_FINGERPRINT } from "./devFingerprint";
 
 const DEV_DEBUG = import.meta.env.DEV;
-const DEV_FETCH_DEBUG = import.meta.env.VITE_DEBUG_FETCH === "true";
 const devWindow = window as Window & {
   __devFetchWrapped?: boolean;
   __devFetchBase?: typeof fetch;
 };
 
-console.log("[env] DEV_FINGERPRINT", DEV_FINGERPRINT);
-
-if (DEV_DEBUG && DEV_FETCH_DEBUG && !devWindow.__devFetchWrapped) {
+if (DEV_DEBUG && !devWindow.__devFetchWrapped) {
   devWindow.__devFetchWrapped = true;
   devWindow.__devFetchBase = window.fetch.bind(window);
 

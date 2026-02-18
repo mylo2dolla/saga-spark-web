@@ -21,6 +21,16 @@ export interface EngineSnapshot {
   combatState?: string | null;
 }
 
+export interface AuthProbeSnapshot {
+  endpoint: "auth_health" | "auth_token" | "auth_login";
+  status: number | null;
+  request_id: string | null;
+  latency_ms: number | null;
+  checked_at: number;
+  code: string | null;
+  message: string | null;
+}
+
 export interface DiagnosticsState {
   lastError: string | null;
   lastErrorAt: number | null;
@@ -31,6 +41,8 @@ export interface DiagnosticsState {
   operations: OperationState[];
   recordOperation: (operation: OperationState) => void;
   healthChecks: Record<string, HealthSnapshot>;
+  authProbe: AuthProbeSnapshot | null;
+  setAuthProbe: (snapshot: AuthProbeSnapshot | null) => void;
   exportDebugBundle: () => string;
 }
 
