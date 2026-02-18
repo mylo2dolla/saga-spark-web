@@ -1,30 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Tables } from "@/integrations/supabase/types";
 import { formatError } from "@/ui/data/async";
-import type { MythicBoardType } from "@/types/mythic";
-
-export interface MythicBoardRow {
-  id: string;
-  campaign_id: string;
-  board_type: MythicBoardType;
-  status: "active" | "archived" | "paused";
-  state_json: Record<string, unknown>;
-  ui_hints_json: Record<string, unknown>;
-  active_scene_id: string | null;
-  combat_session_id: string | null;
-  updated_at: string;
-}
-
-export interface MythicBoardTransitionRow {
-  id: string;
-  campaign_id: string;
-  from_board_type: MythicBoardType | null;
-  to_board_type: MythicBoardType;
-  reason: string;
-  animation: string;
-  payload_json: Record<string, unknown>;
-  created_at: string;
-}
+import { getMythicE2EBoard, isMythicE2E } from "@/ui/e2e/mythicState";
+export type MythicBoardRow = Tables<{ schema: "mythic" }, "boards">;
+export type MythicBoardTransitionRow = Tables<{ schema: "mythic" }, "board_transitions">;
 
 export function useMythicBoard(campaignId: string | undefined) {
   const [board, setBoard] = useState<MythicBoardRow | null>(null);
@@ -40,6 +20,17 @@ export function useMythicBoard(campaignId: string | undefined) {
         setBoard(null);
         setRecentTransitions([]);
         setError(null);
+      }
+      return;
+    }
+
+    if (isMythicE2E(campaignId)) {
+      if (isMountedRef.current) {
+        const e2e = getMythicE2EBoard(campaignId);
+        setBoard(e2e.board);
+        setRecentTransitions(e2e.transitions);
+        setError(null);
+        setIsLoading(false);
       }
       return;
     }
@@ -73,8 +64,8 @@ export function useMythicBoard(campaignId: string | undefined) {
       if (tErr) throw tErr;
 
       if (isMountedRef.current) {
-        setBoard((b ?? null) as unknown as MythicBoardRow | null);
-        setRecentTransitions((t ?? []) as unknown as MythicBoardTransitionRow[]);
+        setBoard(b ?? null);
+        setRecentTransitions(t ?? []);
       }
     } catch (e) {
       const msg = formatError(e, "Failed to load mythic board");

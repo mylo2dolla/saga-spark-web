@@ -16,6 +16,18 @@ const RequestSchema = z.object({
   payload: z.record(z.unknown()).optional(),
 });
 
+type MythicBoardType = "town" | "travel" | "dungeon" | "combat";
+
+type ActiveBoardRow = {
+  id: string;
+  board_type: MythicBoardType;
+  state_json: Record<string, unknown> | null;
+};
+
+type InsertedBoardRow = {
+  id: string;
+};
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -175,10 +187,12 @@ serve(async (req) => {
       .eq("status", "active")
       .order("updated_at", { ascending: false })
       .limit(1)
-      .maybeSingle();
+      .maybeSingle<ActiveBoardRow>();
 
-    const seedBase = typeof (activeBoard as any)?.state_json?.seed === "number"
-      ? Number((activeBoard as any).state_json.seed)
+    const activeState = activeBoard?.state_json ?? {};
+    const rawSeed = activeState.seed;
+    const seedBase = typeof rawSeed === "number" && Number.isFinite(rawSeed)
+      ? Math.floor(rawSeed)
       : rngInt(Date.now() % 2_147_483_647, "board:seed", 1000, 999999);
 
     let stateJson: Record<string, unknown>;
@@ -188,7 +202,7 @@ serve(async (req) => {
     else stateJson = { seed: seedBase + 4 };
 
     if (activeBoard) {
-      await svc.schema("mythic").from("boards").update({ status: "archived", updated_at: nowIso() }).eq("id", (activeBoard as any).id);
+      await svc.schema("mythic").from("boards").update({ status: "archived", updated_at: nowIso() }).eq("id", activeBoard.id);
     }
 
     const { data: newBoard, error: newBoardErr } = await svc
@@ -202,19 +216,19 @@ serve(async (req) => {
         ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
       })
       .select("id")
-      .maybeSingle();
+      .maybeSingle<InsertedBoardRow>();
     if (newBoardErr) throw newBoardErr;
 
     await svc.schema("mythic").from("board_transitions").insert({
       campaign_id: campaignId,
-      from_board_type: (activeBoard as any)?.board_type ?? null,
+      from_board_type: activeBoard?.board_type ?? null,
       to_board_type: toBoardType,
       reason,
       animation: "page_turn",
       payload_json: { ...payload },
     });
 
-    return new Response(JSON.stringify({ ok: true, board_id: (newBoard as any)?.id ?? null }), {
+    return new Response(JSON.stringify({ ok: true, board_id: newBoard?.id ?? null }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

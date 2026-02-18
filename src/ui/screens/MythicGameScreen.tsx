@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -14,8 +13,12 @@ import { useMythicCombat } from "@/hooks/useMythicCombat";
 import { useMythicCombatState } from "@/hooks/useMythicCombatState";
 import { MythicCombatPanel } from "@/components/mythic/MythicCombatPanel";
 import { MythicInventoryPanel } from "@/components/mythic/MythicInventoryPanel";
+import { MythicQuestPanel } from "@/components/mythic/MythicQuestPanel";
+import { MythicStoryTimeline } from "@/components/mythic/MythicStoryTimeline";
+import { useMythicQuestArcs } from "@/hooks/useMythicQuestArcs";
+import { useMythicStoryTimeline } from "@/hooks/useMythicStoryTimeline";
 import { callEdgeFunction } from "@/lib/edge";
-import { sumStatMods, splitInventory, type MythicInventoryRow } from "@/lib/mythicEquipment";
+import { sumStatMods, splitInventory, type MythicInventoryRow as EquipmentInventoryRow } from "@/lib/mythicEquipment";
 
 function prettyJson(value: unknown): string {
   try {
@@ -25,56 +28,69 @@ function prettyJson(value: unknown): string {
   }
 }
 
-const pageTurn = {
-  initial: { rotateY: -90, opacity: 0, transformOrigin: "left center" },
-  animate: { rotateY: 0, opacity: 1, transformOrigin: "left center" },
-  exit: { rotateY: 90, opacity: 0, transformOrigin: "right center" },
-};
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
 
 export default function MythicGameScreen() {
   const { campaignId } = useParams();
   const navigate = useNavigate();
   const { user, isLoading: authLoading } = useAuth();
+  const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
   const { bootstrapCampaign, isBootstrapping } = useMythicCreator();
   const { board, recentTransitions, isLoading: boardLoading, error: boardError, refetch } = useMythicBoard(campaignId);
   const { character, skills, items, isLoading: charLoading, error: charError, refetch: refetchCharacter } = useMythicCharacter(campaignId);
   const dm = useMythicDmContext(campaignId, Boolean(campaignId && board && character));
   const mythicDm = useMythicDungeonMaster(campaignId);
+  const questArcs = useMythicQuestArcs(campaignId);
+  const storyTimeline = useMythicStoryTimeline(campaignId);
   const combat = useMythicCombat();
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionError, setTransitionError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [bootstrapped, setBootstrapped] = useState(false);
   const bootstrapOnceRef = useRef(false);
 
   useEffect(() => {
     if (!campaignId) return;
-    if (authLoading) return;
-    if (!user) {
+    if (!E2E_BYPASS_AUTH && authLoading) return;
+    if (!E2E_BYPASS_AUTH && !user) {
       navigate("/login");
       return;
     }
     if (bootstrapOnceRef.current) return;
     bootstrapOnceRef.current = true;
 
+    if (E2E_BYPASS_AUTH) {
+      setBootstrapped(true);
+      return;
+    }
+
     (async () => {
       await bootstrapCampaign(campaignId);
       setBootstrapped(true);
       await refetch();
     })();
-  }, [authLoading, bootstrapCampaign, campaignId, navigate, refetch, user]);
-
-  const modeKey = useMemo(() => {
-    return board ? `${board.board_type}:${board.id}:${board.updated_at}` : "none";
-  }, [board]);
+  }, [E2E_BYPASS_AUTH, authLoading, bootstrapCampaign, campaignId, navigate, refetch, user]);
 
   const combatSessionId = useMemo(() => {
     if (!board) return null;
-    const stateSessionId =
-      typeof (board.state_json as any)?.combat_session_id === "string"
-        ? String((board.state_json as any).combat_session_id)
-        : null;
+    const stateJson = asRecord(board.state_json);
+    const stateSessionId = typeof stateJson.combat_session_id === "string" ? stateJson.combat_session_id : null;
     return board.combat_session_id ?? stateSessionId;
   }, [board]);
 
@@ -85,10 +101,25 @@ export default function MythicGameScreen() {
     return c?.id ?? null;
   }, [combatState.combatants, user]);
 
-  const invRowsSafe = useMemo(
-    () => (Array.isArray(items) ? (items as unknown as MythicInventoryRow[]) : []),
-    [items],
-  );
+  const invRowsSafe = useMemo<EquipmentInventoryRow[]>(() => {
+    return items.map((row) => ({
+      id: row.id,
+      container: row.container === "equipment" ? "equipment" : "backpack",
+      equip_slot: row.equip_slot,
+      quantity: row.quantity,
+      item: row.item
+        ? {
+            id: row.item.id,
+            name: row.item.name,
+            slot: row.item.slot,
+            stat_mods: asRecord(row.item.stat_mods),
+            effects_json: asRecord(row.item.effects_json),
+            rarity: row.item.rarity,
+          }
+        : null,
+    }));
+  }, [items]);
+
   const { equipment } = splitInventory(invRowsSafe);
   const equipBonuses = sumStatMods(equipment.map((r) => r.item));
   const derivedStats = {
@@ -104,7 +135,7 @@ export default function MythicGameScreen() {
     return <div className="p-6 text-sm text-muted-foreground">Campaign not found.</div>;
   }
 
-  if (authLoading || boardLoading || charLoading || isBootstrapping) {
+  if ((!E2E_BYPASS_AUTH && authLoading) || boardLoading || charLoading || isBootstrapping) {
     return (
       <div className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin" />
@@ -142,6 +173,7 @@ export default function MythicGameScreen() {
     );
   }
 
+  const boardState = asRecord(board.state_json);
   const lastTransition = recentTransitions[0] ?? null;
 
   const transitionBoard = async (toBoardType: "town" | "travel" | "dungeon", reason: string) => {
@@ -172,22 +204,27 @@ export default function MythicGameScreen() {
   };
 
   return (
-    <div className="p-6">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+    <div className="space-y-4 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="font-display text-2xl">Mythic Weave</div>
           <div className="text-sm text-muted-foreground">
             Board: <span className="font-medium">{board.board_type}</span>{" "}
             {lastTransition ? (
-              <span className="text-muted-foreground">(last transition: {lastTransition.from_board_type ?? "?"} → {lastTransition.to_board_type}, {lastTransition.reason})</span>
+              <span className="text-muted-foreground">
+                (last transition: {lastTransition.from_board_type ?? "?"} → {lastTransition.to_board_type}, {lastTransition.reason})
+              </span>
             ) : null}
           </div>
         </div>
+
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={() => navigate(`/dashboard`)}>Dashboard</Button>
+          <Button variant="outline" onClick={() => navigate("/dashboard")}>Dashboard</Button>
           <Button variant="outline" onClick={() => navigate(`/game/${campaignId}`)}>Legacy Game</Button>
           <Button variant="outline" onClick={() => refetch()}>Refresh</Button>
-          <Button variant="outline" onClick={() => dm.refetch()}>Refresh DM</Button>
+          <Button variant="outline" onClick={() => setShowAdvanced((prev) => !prev)}>
+            {showAdvanced ? "Hide Advanced" : "Show Advanced"}
+          </Button>
           {board.board_type !== "combat" ? (
             <>
               <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("town", "return")}>
@@ -199,22 +236,19 @@ export default function MythicGameScreen() {
               <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("dungeon", "enter_dungeon")}>
                 Dungeon
               </Button>
+              <Button
+                onClick={async () => {
+                  const combatId = await combat.startCombat(campaignId);
+                  if (combatId) {
+                    await refetch();
+                    await dm.refetch();
+                  }
+                }}
+                disabled={combat.isStarting}
+              >
+                {combat.isStarting ? "Starting..." : "Start Combat"}
+              </Button>
             </>
-          ) : null}
-          {board.board_type !== "combat" ? (
-            <Button
-              onClick={async () => {
-                const combatId = await combat.startCombat(campaignId);
-                if (combatId) {
-                  // Board switch + action_events are written server-side. Pull fresh state.
-                  await refetch();
-                  await dm.refetch();
-                }
-              }}
-              disabled={combat.isStarting}
-            >
-              {combat.isStarting ? "Starting..." : "Start Combat"}
-            </Button>
           ) : null}
         </div>
       </div>
@@ -224,7 +258,7 @@ export default function MythicGameScreen() {
           <div className="mb-2 text-sm font-semibold">Character</div>
           <div className="text-sm">
             <div className="font-medium">{character.name}</div>
-            <div className="text-muted-foreground">{String((character.class_json as any)?.class_name ?? "(class)")}</div>
+            <div className="text-muted-foreground">{String(asRecord(character.class_json).class_name ?? "(class)")}</div>
           </div>
           <div className="mt-3 text-xs text-muted-foreground">Derived Stats (equipment applied)</div>
           <div className="mt-1 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
@@ -240,97 +274,80 @@ export default function MythicGameScreen() {
             {skills.slice(0, 6).map((s) => (
               <div key={s.id} className="rounded-md border border-border bg-background/30 p-2">
                 <div className="text-sm font-medium">{s.name}</div>
-                <div className="text-xs text-muted-foreground">{s.kind} · {s.targeting} · r{s.range_tiles} · cd{s.cooldown_turns}</div>
+                <div className="text-xs text-muted-foreground">
+                  {s.kind} · {s.targeting} · r{s.range_tiles} · cd{s.cooldown_turns}
+                </div>
               </div>
             ))}
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-card/40 p-4 [perspective:1200px]">
-          <div className="mb-2 text-sm font-semibold">Board State (authoritative)</div>
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={modeKey}
-              variants={pageTurn}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              transition={{ duration: 0.35, ease: "easeInOut" }}
-              className="rounded-lg border border-border bg-background/30 p-3"
-            >
-              <pre className="max-h-[520px] overflow-auto text-xs text-muted-foreground">{prettyJson(board.state_json)}</pre>
-            </motion.div>
-          </AnimatePresence>
+        <div className="rounded-xl border border-border bg-card/40 p-4">
+          <div className="mb-2 text-sm font-semibold">Board Summary</div>
+          {board.board_type === "town" ? (
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <div>Vendors: {asArray(boardState.vendors).length}</div>
+              <div>Services: {asStringArray(boardState.services).join(", ") || "-"}</div>
+              <div>Factions: {asStringArray(boardState.factions_present).join(", ") || "-"}</div>
+              <div>Rumors: {asStringArray(boardState.rumors).join(" · ") || "-"}</div>
+            </div>
+          ) : null}
+          {board.board_type === "travel" ? (
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <div>Weather: {String(boardState.weather ?? "-")}</div>
+              <div>Hazard: {String(boardState.hazard_meter ?? "-")}</div>
+              <div>Segments: {asArray(boardState.route_segments).length}</div>
+            </div>
+          ) : null}
+          {board.board_type === "dungeon" ? (
+            <div className="space-y-2 text-xs text-muted-foreground">
+              <div>Rooms: {asArray(asRecord(boardState.room_graph).rooms).length}</div>
+              <div>Loot nodes: {String(boardState.loot_nodes ?? "-")}</div>
+              <div>Trap signals: {String(boardState.trap_signals ?? "-")}</div>
+              <div>Faction presence: {asStringArray(boardState.faction_presence).join(", ") || "-"}</div>
+            </div>
+          ) : null}
+
+          <div className="mt-4">
+            <div className="mb-2 text-sm font-semibold">Board Actions</div>
+            <div className="flex flex-wrap gap-2">
+              {board.board_type === "travel" ? (
+                <>
+                  <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("town", "arrival")}>
+                    Arrive Town
+                  </Button>
+                  <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("dungeon", "arrival")}>
+                    Arrive Dungeon
+                  </Button>
+                </>
+              ) : null}
+              {board.board_type === "dungeon" ? (
+                <>
+                  <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("town", "exit_dungeon")}>
+                    Exit to Town
+                  </Button>
+                  <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("travel", "exit_dungeon")}>
+                    Exit to Travel
+                  </Button>
+                </>
+              ) : null}
+              {board.board_type === "town" ? (
+                <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("travel", "depart")}>
+                  Depart Travel
+                </Button>
+              ) : null}
+            </div>
+            {transitionError ? <div className="mt-2 text-xs text-destructive">{transitionError}</div> : null}
+          </div>
           <div className="mt-3 text-xs text-muted-foreground">
-            UI contract: board + transitions + action_events are sufficient for deterministic replay.
+            UI contract: board + transitions + action_events remain deterministic DB truth.
             {bootstrapped ? " (bootstrapped)" : ""}
           </div>
         </div>
       </div>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card/40 p-4">
-          <div className="mb-2 text-sm font-semibold">Board Summary</div>
-          {board.board_type === "town" ? (
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <div>Vendors: {Array.isArray((board.state_json as any)?.vendors) ? (board.state_json as any).vendors.length : 0}</div>
-              <div>Services: {Array.isArray((board.state_json as any)?.services) ? (board.state_json as any).services.join(", ") : "-"}</div>
-              <div>Factions: {Array.isArray((board.state_json as any)?.factions_present) ? (board.state_json as any).factions_present.join(", ") : "-"}</div>
-              <div>Rumors: {Array.isArray((board.state_json as any)?.rumors) ? (board.state_json as any).rumors.join(" · ") : "-"}</div>
-            </div>
-          ) : null}
-          {board.board_type === "travel" ? (
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <div>Weather: {String((board.state_json as any)?.weather ?? "-")}</div>
-              <div>Hazard: {String((board.state_json as any)?.hazard_meter ?? "-")}</div>
-              <div>Segments: {Array.isArray((board.state_json as any)?.route_segments) ? (board.state_json as any).route_segments.length : 0}</div>
-            </div>
-          ) : null}
-          {board.board_type === "dungeon" ? (
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <div>Rooms: {Array.isArray((board.state_json as any)?.room_graph?.rooms) ? (board.state_json as any).room_graph.rooms.length : 0}</div>
-              <div>Loot nodes: {String((board.state_json as any)?.loot_nodes ?? "-")}</div>
-              <div>Trap signals: {String((board.state_json as any)?.trap_signals ?? "-")}</div>
-              <div>Faction presence: {Array.isArray((board.state_json as any)?.faction_presence) ? (board.state_json as any).faction_presence.join(", ") : "-"}</div>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="rounded-xl border border-border bg-card/40 p-4">
-          <div className="mb-2 text-sm font-semibold">Board Actions</div>
-          <div className="flex flex-wrap gap-2">
-            {board.board_type === "travel" ? (
-              <>
-                <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("town", "arrival")}>
-                  Arrive Town
-                </Button>
-                <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("dungeon", "arrival")}>
-                  Arrive Dungeon
-                </Button>
-              </>
-            ) : null}
-            {board.board_type === "dungeon" ? (
-              <>
-                <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("town", "exit_dungeon")}>
-                  Exit to Town
-                </Button>
-                <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("travel", "exit_dungeon")}>
-                  Exit to Travel
-                </Button>
-              </>
-            ) : null}
-            {board.board_type === "town" ? (
-              <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("travel", "depart")}>
-                Depart Travel
-              </Button>
-            ) : null}
-          </div>
-          {transitionError ? <div className="mt-2 text-xs text-destructive">{transitionError}</div> : null}
-        </div>
-      </div>
-
       {board.board_type === "combat" && combatSessionId ? (
-        <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
+        <div className="rounded-xl border border-border bg-card/40 p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-semibold">Combat Playback (DB is truth)</div>
             <div className="text-xs text-muted-foreground">
@@ -373,60 +390,84 @@ export default function MythicGameScreen() {
         </div>
       ) : null}
 
-      <div className="mt-6">
-        <MythicInventoryPanel
-          rows={invRowsSafe}
-          onChanged={async () => {
-            await recomputeCharacter();
-            await refetch();
-          }}
+      <MythicInventoryPanel
+        rows={invRowsSafe}
+        onChanged={async () => {
+          await recomputeCharacter();
+          await refetch();
+          await questArcs.refetch();
+        }}
+      />
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <MythicQuestPanel
+          arcs={questArcs.arcs}
+          isLoading={questArcs.isLoading}
+          error={questArcs.error}
+        />
+        <MythicStoryTimeline
+          beats={storyTimeline.beats}
+          isLoading={storyTimeline.isLoading}
+          error={storyTimeline.error}
         />
       </div>
 
-      <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
-        <div className="mb-2 text-sm font-semibold">Recent Board Transitions (append-only)</div>
-        <pre className="max-h-[280px] overflow-auto text-xs text-muted-foreground">{prettyJson(recentTransitions)}</pre>
-        {transitionError ? <div className="mt-2 text-xs text-destructive">{transitionError}</div> : null}
+      <div className="rounded-xl border border-border bg-card/40 p-4">
+        <div className="mb-2 text-sm font-semibold">Mythic DM (DB-driven narration)</div>
+        <div className="h-[520px] overflow-hidden rounded-lg border border-border bg-background/30">
+          <MythicDMChat
+            messages={mythicDm.messages}
+            isLoading={mythicDm.isLoading}
+            currentResponse={mythicDm.currentResponse}
+            onSendMessage={async (msg, actionTags) => {
+              await mythicDm.sendMessage(msg, { actionTags });
+              await dm.refetch();
+              await questArcs.refetch();
+              await storyTimeline.refetch();
+            }}
+          />
+        </div>
+        <div className="mt-2 text-xs text-muted-foreground">
+          Uses edge function <code>mythic-dungeon-master</code> with DB-authoritative rules, board state, character state, and adaptive DM mood.
+        </div>
       </div>
 
-      <div className="mt-6 rounded-xl border border-border bg-card/40 p-4">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="text-sm font-semibold">DM Context (from mythic.v_*_for_dm + canonical rules/script)</div>
-          <div className="text-xs text-muted-foreground">
-            {dm.isLoading ? "loading..." : dm.error ? "error" : "ok"}
+      {showAdvanced ? (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border bg-card/40 p-4">
+            <div className="mb-2 text-sm font-semibold">Board State JSON (Advanced)</div>
+            <pre className="max-h-[520px] overflow-auto text-xs text-muted-foreground">{prettyJson(board.state_json)}</pre>
           </div>
-        </div>
-        {dm.error ? (
-          <div className="text-sm text-destructive">{dm.error}</div>
-        ) : (
-          <pre className="max-h-[360px] overflow-auto text-xs text-muted-foreground">{prettyJson(dm.data)}</pre>
-        )}
-      </div>
 
-      <div className="mt-6 grid gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card/40 p-4">
-          <div className="mb-2 text-sm font-semibold">Mythic DM (DB-driven narration)</div>
-          <div className="h-[520px] overflow-hidden rounded-lg border border-border bg-background/30">
-            <MythicDMChat
-              messages={mythicDm.messages}
-              isLoading={mythicDm.isLoading}
-              currentResponse={mythicDm.currentResponse}
-              onSendMessage={(msg) => mythicDm.sendMessage(msg)}
-            />
+          <div className="rounded-xl border border-border bg-card/40 p-4">
+            <div className="mb-2 text-sm font-semibold">Recent Board Transitions (Advanced)</div>
+            <pre className="max-h-[280px] overflow-auto text-xs text-muted-foreground">{prettyJson(recentTransitions)}</pre>
           </div>
-          <div className="mt-2 text-xs text-muted-foreground">
-            Uses edge function <code>mythic-dungeon-master</code> and feeds it canonical rules/script + mythic.v_*_for_dm payloads.
+
+          <div className="rounded-xl border border-border bg-card/40 p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-sm font-semibold">DM Context JSON (Advanced)</div>
+              <div className="text-xs text-muted-foreground">
+                {dm.isLoading ? "loading..." : dm.error ? "error" : "ok"}
+              </div>
+            </div>
+            {dm.error ? (
+              <div className="text-sm text-destructive">{dm.error}</div>
+            ) : (
+              <pre className="max-h-[360px] overflow-auto text-xs text-muted-foreground">{prettyJson(dm.data)}</pre>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border bg-card/40 p-4">
+            <div className="mb-2 text-sm font-semibold">System Notes (Advanced)</div>
+            <div className="text-sm text-muted-foreground">
+              Combat actions are committed as append-only <code>mythic.action_events</code>. Tokens on the grid render real
+              <code>mythic.combatants</code> rows (HP/armor/position), and turns advance by updating
+              <code>mythic.combat_sessions.current_turn_index</code>.
+            </div>
           </div>
         </div>
-        <div className="rounded-xl border border-border bg-card/40 p-4">
-          <div className="mb-2 text-sm font-semibold">System Notes</div>
-          <div className="text-sm text-muted-foreground">
-            Combat actions are committed as append-only <code>mythic.action_events</code>. Tokens on the grid render the real
-            <code>mythic.combatants</code> rows (HP/armor/position), and turns advance by updating
-            <code>mythic.combat_sessions.current_turn_index</code>.
-          </div>
-        </div>
-      </div>
+      ) : null}
     </div>
   );
 }

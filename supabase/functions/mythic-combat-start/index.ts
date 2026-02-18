@@ -17,6 +17,27 @@ const RequestSchema = z.object({
 
 type MythicBoardType = "town" | "dungeon" | "travel" | "combat";
 type StatKey = "offense" | "defense" | "control" | "support" | "mobility" | "utility";
+type ActiveBoardRow = {
+  id: string;
+  board_type: MythicBoardType;
+  state_json: Record<string, unknown> | null;
+};
+type CharacterRow = {
+  id: string;
+  name: string;
+  level: number;
+  offense: number;
+  defense: number;
+  control: number;
+  support: number;
+  mobility: number;
+  utility: number;
+};
+type InsertedCombatantRow = {
+  id: string;
+  name: string;
+  initiative: number | null;
+};
 
 const STAT_KEYS: StatKey[] = ["offense", "defense", "control", "support", "mobility", "utility"];
 
@@ -119,10 +140,10 @@ serve(async (req) => {
       .eq("status", "active")
       .order("updated_at", { ascending: false })
       .limit(1)
-      .maybeSingle();
+      .maybeSingle<ActiveBoardRow>();
 
     const boardSeed = (() => {
-      const s = (activeBoard as { state_json?: any } | null)?.state_json?.seed;
+      const s = activeBoard?.state_json?.seed;
       return typeof s === "number" && Number.isFinite(s) ? Math.floor(s) : 12345;
     })();
 
@@ -138,7 +159,7 @@ serve(async (req) => {
       .eq("player_id", user.id)
       .order("updated_at", { ascending: false })
       .limit(1)
-      .maybeSingle();
+      .maybeSingle<CharacterRow>();
     if (charError) throw charError;
     if (!character) {
       return new Response(JSON.stringify({ error: "No mythic character found for this campaign" }), {
@@ -160,7 +181,7 @@ serve(async (req) => {
     const equipBonuses = sumEquipmentBonuses((equippedItems ?? []) as Array<{ item?: { stat_mods?: unknown } | null }>);
 
     const derivedStats = STAT_KEYS.reduce((acc, key) => {
-      const base = num((character as any)[key], 0);
+      const base = num(character[key], 0);
       const bonus = num(equipBonuses[key], 0);
       acc[key] = clampStat(base + bonus);
       return acc;
@@ -181,7 +202,7 @@ serve(async (req) => {
         p_seed: seed,
         p_scene_json: {
           kind: "encounter",
-          started_from: (activeBoard as { board_type?: MythicBoardType } | null)?.board_type ?? null,
+          started_from: activeBoard?.board_type ?? null,
         },
         p_reason: reason,
       });
@@ -189,7 +210,7 @@ serve(async (req) => {
     if (startError) throw startError;
     if (!combatId || typeof combatId !== "string") throw new Error("start_combat_session returned no id");
 
-    const lvl = character.level as number;
+    const lvl = Number(character.level ?? 1);
 
     const [{ data: hpMax }, { data: powerMax }] = await Promise.all([
       svc.schema("mythic").rpc("max_hp", { lvl, defense: derivedStats.defense, support: derivedStats.support }),
@@ -280,14 +301,14 @@ serve(async (req) => {
     if (combatantsError) throw combatantsError;
     if (!insertedCombatants || insertedCombatants.length < 2) throw new Error("Failed to insert combatants");
 
-    const sorted = [...insertedCombatants].sort((a: any, b: any) => {
+    const sorted = [...(insertedCombatants as InsertedCombatantRow[])].sort((a, b) => {
       const ia = Number(a.initiative ?? 0);
       const ib = Number(b.initiative ?? 0);
       if (ib !== ia) return ib - ia;
       return String(a.name).localeCompare(String(b.name));
     });
 
-    const turnRows = sorted.map((c: any, idx: number) => ({
+    const turnRows = sorted.map((c, idx) => ({
       combat_session_id: combatId,
       turn_index: idx,
       combatant_id: c.id,
@@ -299,7 +320,7 @@ serve(async (req) => {
       .insert(turnRows);
     if (turnError) throw turnError;
 
-    const initiativeSnapshot = sorted.map((c: any) => ({ combatant_id: c.id, name: c.name, initiative: c.initiative }));
+    const initiativeSnapshot = sorted.map((c) => ({ combatant_id: c.id, name: c.name, initiative: c.initiative }));
 
     // Add a simple deterministic combat grid with blocked tiles for LOS checks.
     const blockedTiles = Array.from({ length: rngInt(seed, "walls:count", 3, 6) }).map((_, i) => ({

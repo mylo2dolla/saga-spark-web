@@ -15,6 +15,16 @@ const RequestSchema = z.object({
 
 type StatKey = "offense" | "defense" | "control" | "support" | "mobility" | "utility";
 const STAT_KEYS: StatKey[] = ["offense", "defense", "control", "support", "mobility", "utility"];
+type CharacterRow = {
+  id: string;
+  level: number;
+  offense: number;
+  defense: number;
+  control: number;
+  support: number;
+  mobility: number;
+  utility: number;
+};
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -124,7 +134,7 @@ serve(async (req) => {
       .eq(characterId ? "id" : "player_id", characterId ?? user.id)
       .order("updated_at", { ascending: false })
       .limit(1)
-      .maybeSingle();
+      .maybeSingle<CharacterRow>();
     if (charError) throw charError;
     if (!character) {
       return new Response(JSON.stringify({ error: "Character not found" }), {
@@ -137,14 +147,14 @@ serve(async (req) => {
       .schema("mythic")
       .from("inventory")
       .select("id, container, item:items(stat_mods)")
-      .eq("character_id", (character as any).id)
+      .eq("character_id", character.id)
       .eq("container", "equipment");
     if (equipError) throw equipError;
 
     const equipBonuses = sumEquipmentBonuses((equippedItems ?? []) as Array<{ item?: { stat_mods?: unknown } | null }>);
 
     const derivedStats = STAT_KEYS.reduce((acc, key) => {
-      const base = num((character as any)[key], 0);
+      const base = num(character[key], 0);
       const bonus = num(equipBonuses[key], 0);
       acc[key] = clampStat(base + bonus);
       return acc;
@@ -157,7 +167,7 @@ serve(async (req) => {
     const hpBonus = Math.max(0, num(equipBonuses.hp_max, 0));
     const powerBonus = Math.max(0, num(equipBonuses.power_max, 0));
 
-    const lvl = Number((character as any).level ?? 1);
+    const lvl = Number(character.level ?? 1);
     const [{ data: hpMax }, { data: powerMax }] = await Promise.all([
       svc.schema("mythic").rpc("max_hp", { lvl, defense: derivedStats.defense, support: derivedStats.support }),
       svc.schema("mythic").rpc("max_power_bar", { lvl, utility: derivedStats.utility, support: derivedStats.support }),
@@ -184,7 +194,7 @@ serve(async (req) => {
         derived_json: derivedJson,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", (character as any).id)
+      .eq("id", character.id)
       .eq("campaign_id", campaignId);
     if (updateError) throw updateError;
 
@@ -205,7 +215,7 @@ serve(async (req) => {
         .from("combatants")
         .select("id, hp, power, hp_max, power_max")
         .eq("combat_session_id", activeSession.id)
-        .eq("character_id", (character as any).id)
+        .eq("character_id", character.id)
         .maybeSingle();
 
       if (combatant?.id) {

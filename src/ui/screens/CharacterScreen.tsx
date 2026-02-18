@@ -11,6 +11,11 @@ import { MythicCharacterCreator } from "@/components/MythicCharacterCreator";
 import { useMythicCharacter } from "@/hooks/useMythicCharacter";
 import type { MythicCreateCharacterResponse } from "@/types/mythic";
 
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
 export default function CharacterScreen() {
   const { campaignId } = useParams();
   const navigate = useNavigate();
@@ -133,8 +138,9 @@ export default function CharacterScreen() {
   }
 
   if (!shouldShowCreator && character) {
-    const className = String((character.class_json as any)?.class_name ?? "(class)");
-    const role = String((character.class_json as any)?.role ?? "?");
+    const classJson = asObject(character.class_json);
+    const className = typeof classJson.class_name === "string" ? classJson.class_name : "(class)";
+    const role = typeof classJson.role === "string" ? classJson.role : "?";
 
     return (
       <div className="space-y-4">

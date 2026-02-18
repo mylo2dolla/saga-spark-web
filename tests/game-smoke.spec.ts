@@ -51,3 +51,32 @@ test("auth screen renders login controls", async ({ page }) => {
   await expect(page.getByLabel("Password")).toBeVisible();
   await expect(page.getByRole("button", { name: "Login" })).toBeVisible();
 });
+
+test("mythic screen keeps diagnostics hidden by default and reveals with advanced toggle", async ({ page }) => {
+  const campaignId = "e2e00000-0000-4000-8000-000000000001";
+  await page.goto(`/mythic/${campaignId}`);
+
+  await expect(page.getByText("Mythic Weave")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show Advanced" })).toBeVisible();
+  await expect(page.getByText("Board State JSON (Advanced)")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Show Advanced" }).click();
+  await expect(page.getByText("Board State JSON (Advanced)")).toBeVisible();
+  await expect(page.getByText("Recent Board Transitions (Advanced)")).toBeVisible();
+  await expect(page.getByText("DM Context JSON (Advanced)")).toBeVisible();
+});
+
+test("mythic DM turn updates quest arc and story timeline", async ({ page }) => {
+  const campaignId = "e2e00000-0000-4000-8000-000000000001";
+  await page.goto(`/mythic/${campaignId}`);
+
+  await expect(page.getByText("No active quest arcs yet.")).toBeVisible();
+  await expect(page.getByText("No story beats recorded yet.")).toBeVisible();
+
+  await page.getByPlaceholder("Say something to the DM...").fill("I threaten the gate guard and demand passage.");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.getByText("E2E Pressure Arc")).toBeVisible();
+  await expect(page.getByText("Endure three volatile turns. (1/3)")).toBeVisible();
+  await expect(page.getByText("Mood swing in motion")).toBeVisible();
+});

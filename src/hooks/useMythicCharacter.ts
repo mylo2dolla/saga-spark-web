@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
-import type { MythicCharacterBundle, MythicCharacterRow, MythicSkill } from "@/types/mythic";
+import type { Tables } from "@/integrations/supabase/types";
+import type { MythicCharacterBundle, MythicInventoryRow } from "@/types/mythic";
+import { getMythicE2ECharacterBundle, isMythicE2E } from "@/ui/e2e/mythicState";
+
+type MythicCharacterRow = Tables<{ schema: "mythic" }, "characters">;
+type MythicInventoryDbRow = Tables<{ schema: "mythic" }, "inventory">;
+type MythicItemRow = Tables<{ schema: "mythic" }, "items">;
 
 function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -19,6 +25,15 @@ export function useMythicCharacter(campaignId: string | undefined) {
         setIsLoading(false);
         setBundle(null);
         setError(null);
+      }
+      return;
+    }
+
+    if (isMythicE2E(campaignId)) {
+      if (isMountedRef.current) {
+        setBundle(getMythicE2ECharacterBundle(campaignId));
+        setError(null);
+        setIsLoading(false);
       }
       return;
     }
@@ -61,27 +76,48 @@ export function useMythicCharacter(campaignId: string | undefined) {
         .schema("mythic")
         .from("skills")
         .select("*")
-        .eq("character_id", (character as MythicCharacterRow).id)
+        .eq("character_id", character.id)
         .order("created_at", { ascending: true });
 
       if (skillsError) throw skillsError;
 
-      const { data: inv, error: invError } = await supabase
+      const { data: inventoryRows, error: invError } = await supabase
         .schema("mythic")
         .from("inventory")
-        .select("id, container, equip_slot, quantity, equipped_at, item:items(*)")
-        .eq("character_id", (character as MythicCharacterRow).id)
+        .select("id, container, equip_slot, quantity, equipped_at, item_id")
+        .eq("character_id", character.id)
         .order("created_at", { ascending: true });
 
       if (invError) throw invError;
 
-      const items = (inv ?? []).map((row) => row);
+      const itemIds = Array.from(
+        new Set((inventoryRows ?? []).map((row) => row.item_id).filter((id): id is string => typeof id === "string")),
+      );
+      let itemsById = new Map<string, MythicItemRow>();
+      if (itemIds.length > 0) {
+        const { data: itemRows, error: itemError } = await supabase
+          .schema("mythic")
+          .from("items")
+          .select("*")
+          .in("id", itemIds);
+        if (itemError) throw itemError;
+        itemsById = new Map((itemRows ?? []).map((row) => [row.id, row]));
+      }
+
+      const normalizedInventory: MythicInventoryRow[] = (inventoryRows ?? []).map((row: MythicInventoryDbRow) => ({
+        id: row.id,
+        container: row.container,
+        equip_slot: row.equip_slot,
+        quantity: row.quantity,
+        equipped_at: row.equipped_at,
+        item: itemsById.get(row.item_id) ?? null,
+      }));
 
       if (isMountedRef.current) {
         setBundle({
-          character: character as MythicCharacterRow,
-          skills: (skills ?? []) as unknown as MythicSkill[],
-          items: items as unknown as Array<Record<string, unknown>>,
+          character,
+          skills: skills ?? [],
+          items: normalizedInventory,
         });
       }
     } catch (e) {
