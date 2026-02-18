@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
+import type { Json } from "@/integrations/supabase/types";
 import type {
   MythicCharacterBundle,
   MythicCharacterLoadoutRow,
@@ -27,6 +28,18 @@ function summarizePayload(payload: unknown): string {
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
   }
   return "";
+}
+
+function toRecord(value: Json | null | undefined): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function toStringArray(value: Json | null | undefined): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((entry) => String(entry)).filter((entry) => entry.length > 0);
 }
 
 export function useMythicCharacter(campaignId: string | undefined) {
@@ -81,12 +94,13 @@ export function useMythicCharacter(campaignId: string | undefined) {
         }
         return;
       }
+      const characterId = character.id;
 
       const { data: skills, error: skillsError } = await supabase
         .schema("mythic")
         .from("skills")
         .select("*")
-        .eq("character_id", (character as MythicCharacterRow).id)
+        .eq("character_id", characterId)
         .order("created_at", { ascending: true });
 
       if (skillsError) throw skillsError;
@@ -95,7 +109,7 @@ export function useMythicCharacter(campaignId: string | undefined) {
         .schema("mythic")
         .from("inventory")
         .select("id, container, equip_slot, quantity, equipped_at, item:items(*)")
-        .eq("character_id", (character as MythicCharacterRow).id)
+        .eq("character_id", characterId)
         .order("created_at", { ascending: true });
 
       if (invError) throw invError;
@@ -114,13 +128,13 @@ export function useMythicCharacter(campaignId: string | undefined) {
             .schema("mythic")
             .from("character_loadouts")
             .select("*")
-            .eq("character_id", (character as MythicCharacterRow).id)
+            .eq("character_id", characterId)
             .order("updated_at", { ascending: false }),
           supabase
             .schema("mythic")
             .from("progression_events")
             .select("id,campaign_id,character_id,event_type,payload,created_at")
-            .eq("character_id", (character as MythicCharacterRow).id)
+            .eq("character_id", characterId)
             .order("created_at", { ascending: false })
             .limit(20),
           supabase
@@ -176,10 +190,10 @@ export function useMythicCharacter(campaignId: string | undefined) {
 
       const questThreads: MythicQuestThreadRow[] = [];
 
-      for (const event of (memoryEvents ?? []) as Array<Record<string, unknown>>) {
+      for (const event of memoryEvents ?? []) {
         const id = safeString(event.id, crypto.randomUUID());
         const category = safeString(event.category, "memory");
-        const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+        const payload = toRecord(event.payload);
         questThreads.push({
           id: `memory:${id}`,
           source: "dm_memory",
@@ -191,13 +205,11 @@ export function useMythicCharacter(campaignId: string | undefined) {
         });
       }
 
-      for (const transition of (boardTransitions ?? []) as Array<Record<string, unknown>>) {
+      for (const transition of boardTransitions ?? []) {
         const id = safeString(transition.id, crypto.randomUUID());
         const fromBoard = safeString(transition.from_board_type, "?").toUpperCase();
         const toBoard = safeString(transition.to_board_type, "?").toUpperCase();
-        const payload = transition.payload_json && typeof transition.payload_json === "object"
-          ? transition.payload_json as Record<string, unknown>
-          : {};
+        const payload = toRecord(transition.payload_json);
         const detailParts: string[] = [];
         const reason = safeString(transition.reason);
         if (reason) detailParts.push(`Reason: ${reason}`);
@@ -216,9 +228,9 @@ export function useMythicCharacter(campaignId: string | undefined) {
         });
       }
 
-      for (const event of (progressionEvents ?? []) as Array<Record<string, unknown>>) {
+      for (const event of progressionEvents ?? []) {
         const id = safeString(event.id, crypto.randomUUID());
-        const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+        const payload = toRecord(event.payload);
         const eventType = safeString(event.event_type, "progression");
         questThreads.push({
           id: `progression:${id}`,
@@ -231,9 +243,9 @@ export function useMythicCharacter(campaignId: string | undefined) {
         });
       }
 
-      for (const drop of (lootDrops ?? []) as Array<Record<string, unknown>>) {
+      for (const drop of lootDrops ?? []) {
         const id = safeString(drop.id, crypto.randomUUID());
-        const payload = drop.payload && typeof drop.payload === "object" ? drop.payload as Record<string, unknown> : {};
+        const payload = toRecord(drop.payload);
         const rarity = safeString(drop.rarity, "loot");
         const itemIds = Array.isArray(drop.item_ids) ? drop.item_ids.length : 0;
         questThreads.push({
@@ -247,14 +259,12 @@ export function useMythicCharacter(campaignId: string | undefined) {
         });
       }
 
-      for (const reputation of (reputationEvents ?? []) as Array<Record<string, unknown>>) {
+      for (const reputation of reputationEvents ?? []) {
         const id = safeString(reputation.id, crypto.randomUUID());
         const delta = Number(reputation.delta ?? 0);
         const factionId = safeString(reputation.faction_id);
         const factionName = factionNameById.get(factionId) ?? "Faction";
-        const evidence = reputation.evidence && typeof reputation.evidence === "object"
-          ? reputation.evidence as Record<string, unknown>
-          : {};
+        const evidence = toRecord(reputation.evidence);
         questThreads.push({
           id: `reputation:${id}`,
           source: "reputation",
@@ -278,7 +288,7 @@ export function useMythicCharacter(campaignId: string | undefined) {
       let loadoutSlotCap = 2;
       try {
         const { data: slotCapData, error: slotCapError } = await supabase
-          .rpc("mythic_loadout_slots_for_level", { lvl: (character as MythicCharacterRow).level });
+          .rpc("mythic_loadout_slots_for_level", { lvl: character.level });
         if (!slotCapError && Number.isFinite(Number(slotCapData))) {
           loadoutSlotCap = Math.max(1, Number(slotCapData));
         }
@@ -287,12 +297,46 @@ export function useMythicCharacter(campaignId: string | undefined) {
       }
 
       if (isMountedRef.current) {
+        const normalizedCharacter: MythicCharacterRow = {
+          ...character,
+          class_json: toRecord(character.class_json),
+          derived_json: toRecord(character.derived_json),
+          progression_json: toRecord(character.progression_json),
+          resources: toRecord(character.resources),
+        };
+        const normalizedSkills: MythicSkill[] = (skills ?? []).map((skill) => ({
+          ...skill,
+          targeting_json: toRecord(skill.targeting_json),
+          cost_json: toRecord(skill.cost_json),
+          effects_json: toRecord(skill.effects_json),
+          scaling_json: toRecord(skill.scaling_json),
+          counterplay: toRecord(skill.counterplay),
+        }));
+        const normalizedItems: Array<Record<string, unknown>> = (inv ?? []).map((row) => {
+          const rowRecord = row as Record<string, unknown>;
+          const itemRecord = rowRecord.item && typeof rowRecord.item === "object" && !Array.isArray(rowRecord.item)
+            ? ({
+                ...(rowRecord.item as Record<string, unknown>),
+                stat_mods: toRecord((rowRecord.item as { stat_mods?: Json }).stat_mods ?? null),
+                effects_json: toRecord((rowRecord.item as { effects_json?: Json }).effects_json ?? null),
+              } satisfies Record<string, unknown>)
+            : null;
+          return { ...rowRecord, item: itemRecord };
+        });
+        const normalizedLoadouts: MythicCharacterLoadoutRow[] = (loadouts ?? []).map((loadout) => ({
+          ...loadout,
+          slots_json: toStringArray(loadout.slots_json),
+        }));
+        const normalizedProgressionEvents: MythicProgressionEventRow[] = (progressionEvents ?? []).map((event) => ({
+          ...event,
+          payload: toRecord(event.payload),
+        }));
         setBundle({
-          character: character as MythicCharacterRow,
-          skills: (skills ?? []) as unknown as MythicSkill[],
-          items: ((inv ?? []).map((row) => row)) as unknown as Array<Record<string, unknown>>,
-          loadouts: (loadouts ?? []) as unknown as MythicCharacterLoadoutRow[],
-          progressionEvents: (progressionEvents ?? []) as unknown as MythicProgressionEventRow[],
+          character: normalizedCharacter,
+          skills: normalizedSkills,
+          items: normalizedItems,
+          loadouts: normalizedLoadouts,
+          progressionEvents: normalizedProgressionEvents,
           questThreads: sortedThreads,
           loadoutSlotCap,
         });

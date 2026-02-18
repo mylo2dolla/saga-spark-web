@@ -32,6 +32,8 @@ import { BoardInspectDialog } from "@/ui/components/mythic/BoardInspectDialog";
 import { ShopDialog } from "@/ui/components/mythic/ShopDialog";
 import type { BoardInspectTarget } from "@/ui/components/mythic/board/inspectTypes";
 
+const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
+
 type MythicPanelTab = "character" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "commands";
 
 function summarizeBoardHooks(state: unknown): Array<{ id: string; title: string; detail: string | null }> {
@@ -117,10 +119,11 @@ export default function MythicGameScreen() {
   useEffect(() => {
     if (!campaignId) return;
     if (authLoading) return;
-    if (!user) {
+    if (!user && !E2E_BYPASS_AUTH) {
       navigate("/login");
       return;
     }
+    if (!user && E2E_BYPASS_AUTH) return;
     if (bootstrapOnceRef.current) return;
     bootstrapOnceRef.current = true;
 
@@ -218,8 +221,16 @@ export default function MythicGameScreen() {
   const autoTickKeyRef = useRef<string | null>(null);
   const lastPlayerInputRef = useRef<string>("");
   const [panelOpen, setPanelOpen] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [activePanel, setActivePanel] = useState<MythicPanelTab>("character");
   const [focusedCombatantId, setFocusedCombatantId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (showAdvanced) return;
+    if (activePanel === "progression" || activePanel === "quests" || activePanel === "commands") {
+      setActivePanel("character");
+    }
+  }, [activePanel, showAdvanced]);
 
   useEffect(() => {
     const currentCap = Math.max(1, loadoutSlotCap);
@@ -734,13 +745,22 @@ export default function MythicGameScreen() {
           </>
         )}
         actions={(
-          <Button
-            size="sm"
-            onClick={() => openPanel("commands")}
-            className="border border-amber-200/40 bg-amber-300/20 text-amber-50 hover:bg-amber-300/30"
-          >
-            Menu
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setShowAdvanced((prev) => !prev)}
+            >
+              {showAdvanced ? "Hide Advanced" : "Show Advanced"}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => openPanel(showAdvanced ? "commands" : "character")}
+              className="border border-amber-200/40 bg-amber-300/20 text-amber-50 hover:bg-amber-300/30"
+            >
+              Menu
+            </Button>
+          </div>
         )}
         leftPage={(
           <NarrativePage
@@ -833,9 +853,13 @@ export default function MythicGameScreen() {
             <Button size="sm" variant={activePanel === "gear" ? "default" : "secondary"} onClick={() => setActivePanel("gear")}>Gear</Button>
             <Button size="sm" variant={activePanel === "skills" ? "default" : "secondary"} onClick={() => setActivePanel("skills")}>Skills</Button>
             <Button size="sm" variant={activePanel === "loadouts" ? "default" : "secondary"} onClick={() => setActivePanel("loadouts")}>Loadouts</Button>
-            <Button size="sm" variant={activePanel === "progression" ? "default" : "secondary"} onClick={() => setActivePanel("progression")}>Progression</Button>
-            <Button size="sm" variant={activePanel === "quests" ? "default" : "secondary"} onClick={() => setActivePanel("quests")}>Quests</Button>
-            <Button size="sm" variant={activePanel === "commands" ? "default" : "secondary"} onClick={() => setActivePanel("commands")}>Commands</Button>
+            {showAdvanced ? (
+              <>
+                <Button size="sm" variant={activePanel === "progression" ? "default" : "secondary"} onClick={() => setActivePanel("progression")}>Progression</Button>
+                <Button size="sm" variant={activePanel === "quests" ? "default" : "secondary"} onClick={() => setActivePanel("quests")}>Quests</Button>
+                <Button size="sm" variant={activePanel === "commands" ? "default" : "secondary"} onClick={() => setActivePanel("commands")}>Commands</Button>
+              </>
+            ) : null}
           </div>
           <div className="max-h-[68vh] overflow-auto pr-1">
             {activePanel === "character" ? (

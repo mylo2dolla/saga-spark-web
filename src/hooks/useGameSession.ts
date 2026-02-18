@@ -21,6 +21,8 @@ import type { Alignment, CampaignSeed, CharacterProgression, FactionInfo, Item, 
 import type { Json } from "@/integrations/supabase/types";
 import { toast } from "sonner";
 import { recordCampaignsRead, recordSavesRead } from "@/ui/data/networkHealth";
+import { getSupabaseErrorInfo } from "@/lib/supabaseError";
+import { createDeterministicPosition as createSeededPosition, hashStringToUint32, toKebab } from "@/lib/worldSeed";
 
 const DEV_DEBUG = import.meta.env.DEV;
 
@@ -194,24 +196,23 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   }, []);
 
   const logSupabaseError = useCallback((label: string, error: unknown) => {
-    const message = getErrorMessage(error);
-    const status =
-      typeof (error as { status?: number })?.status === "number"
-        ? (error as { status?: number }).status
-        : undefined;
+    const info = getSupabaseErrorInfo(error);
     console.error(`${label} failed`, {
       campaignId,
       userId,
       error,
-      status,
-      message,
+      status: info.status,
+      code: info.code,
+      message: info.message,
+      details: info.details,
+      hint: info.hint,
     });
     return {
-      message,
-      status,
-      toastMessage: message || stringifyError(error),
+      message: info.message,
+      status: info.status ?? undefined,
+      toastMessage: info.message || stringifyError(error),
     };
-  }, [campaignId, userId, getErrorMessage, stringifyError]);
+  }, [campaignId, userId, stringifyError]);
 
   const fetchLatestWorldEvent = useCallback(async (): Promise<WorldEventRecord | null> => {
     if (!campaignId || !userId) return null;
@@ -223,10 +224,12 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       .limit(1);
 
     if (error) {
+      const info = getSupabaseErrorInfo(error, "Failed to load world events");
       console.error("World events fetch failed", {
         campaignId,
         userId,
-        message: error.message,
+        message: info.message,
+        status: info.status,
       });
       return null;
     }
@@ -259,12 +262,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       .limit(limit);
 
     if (error) {
+      const info = getSupabaseErrorInfo(error, "Failed to load world events");
       console.error("World events fetch failed", {
         campaignId,
         userId,
-        message: error.message,
+        message: info.message,
+        status: info.status,
       });
-      const message = error.message || "Failed to load world events";
+      const message = info.message;
       setSessionState(prev => ({
         ...prev,
         worldEventsStatus: "error",
@@ -324,34 +329,20 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     });
   }, []);
 
-  const hashString = useCallback((value: string) => {
-    let hash = 0;
-    for (let i = 0; i < value.length; i += 1) {
-      hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
-    }
-    return hash.toString(16);
-  }, []);
-
   const createDeterministicPosition = useCallback((seed: string): { x: number; y: number } => {
-    const hashed = Number.parseInt(hashString(seed), 16) || 0;
-    return {
-      x: 50 + (hashed % 400),
-      y: 50 + ((hashed >>> 16) % 400),
-    };
-  }, [hashString]);
+    return createSeededPosition(seed);
+  }, []);
 
   const toStringArray = useCallback((value: unknown): string[] => {
     if (!Array.isArray(value)) return [];
     return value.filter((item): item is string => typeof item === "string");
   }, []);
 
-  const normalizeMap = useCallback(<T,>(
-    value: ReadonlyMap<string, T> | Map<string, T> | Array<[string, T]> | Record<string, T> | null | undefined,
-  ): Map<string, T> => {
-    if (value instanceof Map) return new Map(value);
-    if (Array.isArray(value)) return new Map(value);
+  const normalizeMap = useCallback(<T,>(value: unknown): Map<string, T> => {
+    if (value instanceof Map) return value as Map<string, T>;
+    if (Array.isArray(value)) return new Map(value as Array<[string, T]>);
     if (value && typeof value === "object") {
-      return new Map(Object.entries(value));
+      return new Map(Object.entries(value as Record<string, T>));
     }
     return new Map<string, T>();
   }, []);
@@ -362,7 +353,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       npcs: normalizeMap<NPC>(world.npcs),
       quests: normalizeMap<QuestType>(world.quests),
       items: normalizeMap<Item>(world.items),
-      locations: normalizeMap<EnhancedLocation>(world.locations as unknown as ReadonlyMap<string, EnhancedLocation>),
+      locations: normalizeMap<EnhancedLocation>(world.locations),
       storyFlags: normalizeMap<StoryFlag>(world.storyFlags),
       playerProgression: normalizeMap<CharacterProgression>(world.playerProgression),
     };
@@ -506,15 +497,15 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
   const computeFingerprint = useCallback((unified: UnifiedState, travel: TravelState) => {
     const unifiedSerialized = serializeUnifiedState(unified);
     const travelSerialized = JSON.stringify(buildTravelSnapshot(travel));
-    return hashString(`${unifiedSerialized}|${travelSerialized}`);
-  }, [buildTravelSnapshot, hashString]);
+    return hashStringToUint32(`${unifiedSerialized}|${travelSerialized}`).toString(16);
+  }, [buildTravelSnapshot]);
 
   const computeActionHash = useCallback((
     actionText: string,
     locationId: string | null
   ) => {
-    return hashString(`${campaignId}|${userId}|${locationId ?? "none"}|${actionText.trim().toLowerCase()}`);
-  }, [campaignId, hashString, userId]);
+    return hashStringToUint32(`${campaignId}|${userId}|${locationId ?? "none"}|${actionText.trim().toLowerCase()}`).toString(16);
+  }, [campaignId, userId]);
 
   const ensureWorldInvariants = useCallback((
     unified: UnifiedState,
@@ -603,12 +594,6 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       travel: nextTravel,
     };
   }, [normalizeWorldMaps]);
-
-  const toKebab = useCallback((value: string): string =>
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, ""), []);
 
   const toLocationType = useCallback((value: string | undefined): LocationType => {
     const normalized = (value ?? "").toLowerCase();
@@ -704,7 +689,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
         currentEvents: [],
       };
     });
-  }, [createDeterministicPosition, toKebab, toLocationType]);
+  }, [createDeterministicPosition, toLocationType]);
 
   const persistGeneratedContent = useCallback(async (
     content: Array<{
@@ -754,7 +739,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
     const adjectives = ["Amber", "Broken", "Crimson", "Elder", "Frosted", "Golden", "Hidden", "Iron", "Mist", "Silent"];
     const nouns = ["Vale", "Crossing", "Harbor", "Outpost", "Hollow", "Grove", "Keep", "March", "Ridge", "Reach"];
     const hashBase = `${seed.id}:${seed.title}:${index}`;
-    const hash = Number.parseInt(hashString(hashBase), 16) || 0;
+    const hash = hashStringToUint32(hashBase);
     const adjective = adjectives[hash % adjectives.length];
     const noun = nouns[(hash >>> 8) % nouns.length];
     const name = `${adjective} ${noun}`;
@@ -788,7 +773,7 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       services: ["rest", "trade"],
       currentEvents: [],
     };
-  }, [createDeterministicPosition, hashString]);
+  }, [createDeterministicPosition]);
 
   const ensureMinimumWorldGraph = useCallback((
     seed: CampaignSeed,

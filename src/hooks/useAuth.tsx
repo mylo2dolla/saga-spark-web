@@ -2,10 +2,12 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 import { recordProfilesRead } from "@/ui/data/networkHealth";
+import { getSupabaseErrorInfo } from "@/lib/supabaseError";
 
 const PROFILE_TTL_MS = 60000;
 const AUTH_TIMEOUT_MS = 20000;
 const AUTH_FAILSAFE_MS = 30000;
+const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 const profileCache = new Map<string, { data: Profile | null; fetchedAt: number }>();
 const profileInFlight = new Map<string, Promise<Profile | null>>();
 
@@ -51,7 +53,7 @@ const initialState: AuthState = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
+const withTimeout = async <T,>(promise: PromiseLike<T>, timeoutMs: number, label: string): Promise<T> => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<T>((_, reject) => {
     timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
@@ -70,10 +72,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState(prev => ({ ...prev, ...partial }));
   }, []);
 
-  const notifyAuthError = useCallback((error: { message?: string; status?: number } | null) => {
+  const notifyAuthError = useCallback((error: unknown) => {
     if (!error) return;
+    const info = getSupabaseErrorInfo(error);
     updateState({
-      lastAuthError: { message: error.message ?? "Unknown error", status: error.status ?? null },
+      lastAuthError: { message: info.message, status: info.status },
     });
   }, [updateState]);
 
@@ -151,11 +154,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [notifyAuthError, updateState]);
 
   useEffect(() => {
+    if (E2E_BYPASS_AUTH) {
+      updateState({
+        session: null,
+        user: null,
+        profile: null,
+        isLoading: false,
+        isProfileCreating: false,
+        lastAuthError: null,
+      });
+      return;
+    }
+
     let isActive = true;
     const failsafeId = setTimeout(() => {
       if (!isActive) return;
       updateState({ isLoading: false, isProfileCreating: false });
-      notifyAuthError({ message: "Auth bootstrap timed out", status: null });
+      notifyAuthError(new Error("Auth bootstrap timed out"));
     }, AUTH_FAILSAFE_MS);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
@@ -167,7 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             await withTimeout(fetchProfileInternal(session.user.id), AUTH_TIMEOUT_MS, "Profile fetch");
           } catch (error) {
             if (!isProfileFetchTimeout(error)) {
-              notifyAuthError(error as { message?: string; status?: number });
+              notifyAuthError(error);
             }
             updateState({ isLoading: false, isProfileCreating: false });
           }
@@ -197,7 +212,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         if (isActive) {
           if (!isProfileFetchTimeout(error) && !isSessionFetchTimeout(error)) {
-            notifyAuthError(error as { message?: string; status?: number });
+            notifyAuthError(error);
           }
         }
       } finally {
