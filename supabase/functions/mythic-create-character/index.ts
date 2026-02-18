@@ -619,7 +619,11 @@ serve(async (req) => {
       warnings.push("llm_unavailable:fallback_without_exception");
     }
 
-    const llmSkills = refinedData.skills.filter((s) => s?.name?.trim().toLowerCase() !== "move");
+    // Keep total skills within the existing contract bounds (LLM kit max 12).
+    // We reserve one slot for the universal Move skill to keep combat tactics consistent.
+    const llmSkills = refinedData.skills
+      .filter((s) => s?.name?.trim().toLowerCase() !== "move")
+      .slice(0, 11);
     const moveRange = clampInt(3 + Math.floor(refinedData.base_stats.mobility / 25), 3, 6);
     const moveSkill = {
       kind: "active" as const,
