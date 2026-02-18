@@ -1,14 +1,10 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import { useDbHealth } from "@/ui/data/useDbHealth";
 
 export default function AppShell() {
   const location = useLocation();
-  const { user, isProfileCreating } = useAuth();
-  const isLoginRoute = location.pathname === "/login" || location.pathname === "/signup";
+  const { user } = useAuth();
   const isMythicRoute = location.pathname.startsWith("/mythic/");
-  const shouldPollDb = Boolean(user) && !isLoginRoute;
-  const { status, lastError, lastProbe } = useDbHealth(shouldPollDb);
   const navLinks = [
     { to: "/dashboard", label: "Dashboard" },
     { to: "/dashboard#create", label: "Create/Join" },
@@ -69,20 +65,11 @@ export default function AppShell() {
             </nav>
           </div>
 
-          <div className="flex items-center justify-between border-b border-border bg-card/40 px-4 py-2 text-xs sm:text-sm">
-            <div className="flex flex-wrap items-center gap-4">
-              <span>Auth: {user?.email ?? "guest"}</span>
-              {isProfileCreating ? <span>Profile: creating...</span> : null}
-              <span>DB: {shouldPollDb ? (status === "ok" ? "ok" : status) : "paused"}</span>
-              {lastError ? <span className="text-destructive">DB Error: {lastError}</span> : null}
-              {lastProbe ? (
-                <span className="text-muted-foreground">
-                  DB probe: {lastProbe.timedOut ? "timeout" : lastProbe.status ?? "?"} · {lastProbe.elapsedMs}ms
-                </span>
-              ) : null}
+          {import.meta.env.DEV && user ? (
+            <div className="border-b border-border bg-card/40 px-4 py-2 text-xs text-muted-foreground">
+              {user.email}
             </div>
-            <div className="hidden text-muted-foreground md:block">{location.pathname}</div>
-          </div>
+          ) : null}
 
           <div className="flex-1 p-4 sm:p-6 lg:p-8">
             <Outlet />

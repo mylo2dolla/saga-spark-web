@@ -15,6 +15,7 @@ import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
 import { createLogger } from "@/lib/observability/logger";
 import { AsyncStateCard } from "@/ui/components/AsyncStateCard";
+import { getSupabaseErrorInfo } from "@/lib/supabaseError";
 
 type HealthStatus = "ready" | "needs_migration" | "broken";
 
@@ -49,7 +50,20 @@ interface EdgeErrorMeta {
 
 const DASHBOARD_EDGE_TIMEOUT_MS = 24_000;
 const DASHBOARD_EDGE_RETRIES = 1;
+const DASHBOARD_DB_TIMEOUT_MS = 20_000;
 const NETWORK_AUTH_CODES = new Set(["auth_gateway_timeout", "network_unreachable", "upstream_timeout", "edge_fetch_failed"]);
+
+const withTimeout = async <T,>(promiseLike: PromiseLike<T>, timeoutMs: number, label: string): Promise<T> => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promiseLike, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+};
 
 const TEMPLATE_OPTIONS: Array<{ key: TemplateKey; label: string; description: string }> = [
   { key: "custom", label: "Custom", description: "Use your own seed and let Mythic adapt." },
@@ -148,7 +162,7 @@ export default function DashboardScreen() {
   const activeUserId = session?.user?.id ?? user?.id ?? null;
   const activeAccessToken = activeSession?.access_token ?? null;
   const dbEnabled = Boolean(activeUserId);
-  const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled);
+  const { lastError: dbError } = useDbHealth(dbEnabled);
 
   const loadCampaigns = useCallback(async () => {
     if (!activeAccessToken) {
@@ -449,7 +463,11 @@ export default function DashboardScreen() {
         onUpdate: (state) => recordOperation(state),
         run: async () => {
           const ids = legacy.map((campaign) => campaign.id);
-          const { error: deleteError } = await supabase.from("campaigns").delete().in("id", ids).eq("owner_id", activeUserId);
+          const { error: deleteError } = await withTimeout(
+            supabase.from("campaigns").delete().in("id", ids).eq("owner_id", activeUserId),
+            DASHBOARD_DB_TIMEOUT_MS,
+            "Delete legacy campaigns",
+          );
           if (deleteError) throw deleteError;
           return true;
         },
@@ -457,7 +475,8 @@ export default function DashboardScreen() {
       toast({ title: "Legacy campaigns deleted", description: `Removed ${legacy.length} campaign(s).` });
       await loadCampaigns();
     } catch (err) {
-      const message = formatError(err, "Failed to delete legacy campaigns");
+      const info = getSupabaseErrorInfo(err, formatError(err, "Failed to delete legacy campaigns"));
+      const message = info.message;
       setError(message);
       toast({ title: "Delete failed", description: message, variant: "destructive" });
     } finally {
@@ -471,16 +490,11 @@ export default function DashboardScreen() {
     return `${campaigns.length} campaign${campaigns.length === 1 ? "" : "s"}`;
   }, [campaigns.length, isLoading]);
 
-  const dbStatusLabel = dbEnabled ? dbStatus : "paused";
-
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">Mythic-only campaigns and access codes.</p>
-        <div className="mt-2 text-xs text-muted-foreground">
-          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
-        </div>
         {loadOp?.status === "RUNNING" ? (
           <div className="mt-1 text-xs text-muted-foreground">
             Campaign sync running (attempt {loadOp.attempt})
