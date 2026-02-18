@@ -4,11 +4,14 @@ import { PixelBoardCanvas } from "@/ui/components/mythic/board/pixel/PixelBoardC
 import { pixelPalette } from "@/ui/components/mythic/board/pixel/pixelPalette";
 import {
   drawChest,
+  drawCaveMouth,
   drawHouse,
   drawHumanoid,
+  drawMonolith,
   drawOutlineRect,
   drawPixelRect,
   drawTrap,
+  drawRuin,
   drawTree,
 } from "@/ui/components/mythic/board/pixel/pixelSprites";
 
@@ -197,6 +200,17 @@ export function TravelBoardScene(props: TravelBoardSceneProps) {
             drawTree(ctx, 62, 12, Math.cos(frame.t * 1.3));
             drawTree(ctx, 72, 46, Math.sin(frame.t * 1.8));
 
+            // Landmarks: template-driven readability (low-res but identifiable).
+            if (template === "sci_fi_ruins") {
+              drawMonolith(ctx, 78, 28, Math.sin(frame.t * 2.4));
+            } else if (template === "gothic_horror" || template === "dark_mythic_horror") {
+              drawRuin(ctx, 78, 28, Math.sin(frame.t * 2.2));
+            } else if (template === "post_apoc_warlands" || template === "post_apocalypse") {
+              drawRuin(ctx, 14, 22, Math.cos(frame.t * 1.7));
+            } else {
+              drawMonolith(ctx, 14, 22, Math.cos(frame.t * 1.7));
+            }
+
             const partyPhase = (Math.sin(frame.t * 0.55) + 1) / 2;
             const idx = partyPhase * (pathPoints.length - 1);
             const from = pathPoints[Math.floor(idx)]!;
@@ -232,18 +246,12 @@ export function TravelBoardScene(props: TravelBoardSceneProps) {
 
             const hasDungeonSearch = searchTarget === "dungeon";
             if (hasDungeonSearch) {
-              const caveX = 86;
-              const caveY = 10;
-              drawOutlineRect(
-                ctx,
-                caveX - 4,
-                caveY - 3,
-                10,
-                8,
-                dungeonTracesFound ? "rgba(176,135,255,0.3)" : "rgba(83,93,120,0.25)",
-                dungeonTracesFound ? "rgba(242,197,107,0.9)" : "rgba(176,135,255,0.45)",
-              );
-              drawPixelRect(ctx, caveX, caveY + 1, 2, 2, "rgba(8,8,14,0.88)");
+              const caveX = 82;
+              const caveY = 6;
+              drawCaveMouth(ctx, caveX, caveY, Math.sin(frame.t * 3));
+              if (dungeonTracesFound) {
+                drawOutlineRect(ctx, caveX - 2, caveY - 2, 16, 13, "rgba(242,197,107,0.10)", "rgba(242,197,107,0.75)");
+              }
             }
 
             for (let i = 0; i < factionMarkers.length; i += 1) {
