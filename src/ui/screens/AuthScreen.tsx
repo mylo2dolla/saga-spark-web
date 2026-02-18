@@ -93,12 +93,48 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           }
 
           if (mode === "login") {
-            const response = await supabase.auth.signInWithPassword({
-              email: email.trim(),
-              password,
+            const trimmedEmail = email.trim();
+            const tokenUrl = `${supabaseUrl}/auth/v1/token?grant_type=password`;
+            const tokenRes = await fetch(tokenUrl, {
+              method: "POST",
+              headers: {
+                apikey: supabaseAnonKey,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ email: trimmedEmail, password }),
+              signal,
             });
-            if (response.error) throw response.error;
-            return { session: response.data.session, user: response.data.user };
+
+            if (!tokenRes.ok) {
+              const requestId =
+                tokenRes.headers.get("sb-request-id")
+                ?? tokenRes.headers.get("x-request-id")
+                ?? tokenRes.headers.get("cf-ray");
+              let message = `Auth failed (${tokenRes.status})`;
+              try {
+                const json = await tokenRes.clone().json() as { error_description?: string; message?: string } | null;
+                message = json?.error_description ?? json?.message ?? message;
+              } catch {
+                // Non-JSON responses (e.g. Cloudflare HTML 522) are expected in some outage modes.
+                message = tokenRes.status === 522 ? "Supabase auth gateway timed out (522)" : message;
+              }
+              if (requestId) {
+                message = `${message} (requestId: ${requestId})`;
+              }
+              throw Object.assign(new Error(message), { status: tokenRes.status });
+            }
+
+            const tokenJson = await tokenRes.json() as { access_token?: string; refresh_token?: string };
+            if (!tokenJson.access_token || !tokenJson.refresh_token) {
+              throw new Error("Auth completed without tokens");
+            }
+
+            const setRes = await supabase.auth.setSession({
+              access_token: tokenJson.access_token,
+              refresh_token: tokenJson.refresh_token,
+            });
+            if (setRes.error) throw setRes.error;
+            return { session: setRes.data.session, user: setRes.data.user };
           }
 
           const response = await supabase.auth.signUp({
