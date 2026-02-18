@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { aiChatCompletionsWithFallback } from "../_shared/llm_fallback.ts";
+import { mythicOpenAIChatCompletions } from "../_shared/ai_provider.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 import { createLogger } from "../_shared/logger.ts";
 import { enforceRateLimit } from "../_shared/request_guard.ts";
@@ -30,6 +30,11 @@ const RequestSchema = z.object({
   context: z.record(z.unknown()).optional(),
 });
 const logger = createLogger("mythic-field-generate");
+const requestIdFrom = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
 
 function fieldDirective(fieldType: z.infer<typeof RequestSchema>["fieldType"]): string {
   switch (fieldType) {
@@ -140,9 +145,10 @@ function deterministicFieldText(input: {
 }
 
 serve(async (req) => {
+  const requestId = requestIdFrom(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+    return new Response(JSON.stringify({ error: "Method not allowed", code: "method_not_allowed", requestId }), {
       status: 405,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -160,7 +166,7 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Authentication required" }), {
+      return new Response(JSON.stringify({ error: "Authentication required", code: "auth_required", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -175,7 +181,7 @@ serve(async (req) => {
 
     const parsed = RequestSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
-      return new Response(JSON.stringify({ error: "Invalid request", details: parsed.error.flatten() }), {
+      return new Response(JSON.stringify({ error: "Invalid request", code: "invalid_request", details: parsed.error.flatten(), requestId }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -185,7 +191,7 @@ serve(async (req) => {
     const authClient = createClient(supabaseUrl, anonKey);
     const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
+      return new Response(JSON.stringify({ error: "Invalid or expired authentication token", code: "auth_invalid", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -231,7 +237,7 @@ serve(async (req) => {
 
     const system = [
       "You generate concise game text for Mythic Weave.",
-      "Violence/gore allowed. Sexual content and sexual violence forbidden.",
+      "Violence/gore allowed. Mild sexuality and playful banter allowed. Sexual violence/coercion and explicit pornographic content forbidden.",
       "No markdown. Output plain text only.",
       "Keep output tight and actionable for player UX.",
     ].join("\n");
@@ -248,34 +254,27 @@ serve(async (req) => {
     ].join("\n");
 
     let text = "";
-    try {
-      const completion = await aiChatCompletionsWithFallback(
-        {
-          temperature: mode === "random" ? 0.8 : 0.45,
-          max_tokens: 350,
-          messages: [
-            { role: "system", content: system },
-            { role: "user", content: userPrompt },
-          ],
-        },
-        { openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" },
-      );
-      const completionData = completion.data as { choices?: Array<{ message?: { content?: string } }> };
-      text = String(completionData?.choices?.[0]?.message?.content ?? "").trim();
-    } catch (error) {
-      logger.warn("field_generate.llm_fallback", {
-        reason: sanitizeError(error).message,
+    let source: "llm" | "deterministic_fallback" = "llm";
+    const completion = await mythicOpenAIChatCompletions(
+      {
+        temperature: mode === "random" ? 0.8 : 0.45,
+        max_tokens: 350,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userPrompt },
+        ],
+      },
+      "gpt-4o-mini",
+    );
+    const completionData = completion.data as { choices?: Array<{ message?: { content?: string } }> };
+    text = String(completionData?.choices?.[0]?.message?.content ?? "").trim();
+    if (!text) {
+      logger.warn("field_generate.empty_llm_output", {
         field_type: fieldType,
         mode,
+        request_id: requestId,
       });
-      text = deterministicFieldText({
-        mode,
-        fieldType,
-        currentText,
-        worldProfile,
-      });
-    }
-    if (!text) {
+      source = "deterministic_fallback";
       text = deterministicFieldText({
         mode,
         fieldType,
@@ -289,15 +288,24 @@ serve(async (req) => {
 
     assertContentAllowed([{ path: "generated_text", value: finalText }]);
 
-    return new Response(JSON.stringify({ ok: true, text: finalText }), {
+    return new Response(JSON.stringify({
+      ok: true,
+      text: finalText,
+      source,
+      provider: completion.provider,
+      model: completion.model,
+      requestId,
+    }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {
     const normalized = sanitizeError(error);
-    logger.error("field_generate.failed", error);
-    return new Response(JSON.stringify({ error: normalized.message || "Failed to generate text", code: normalized.code ?? "field_generate_failed" }), {
-      status: 500,
+    logger.error("field_generate.failed", error, { request_id: requestId });
+    const code = normalized.code ?? "field_generate_failed";
+    const status = code === "openai_not_configured" ? 503 : code === "openai_request_failed" ? 502 : 500;
+    return new Response(JSON.stringify({ error: normalized.message || "Failed to generate text", code, requestId }), {
+      status,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }

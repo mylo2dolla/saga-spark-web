@@ -1,11 +1,15 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { callEdgeFunction } from "@/lib/edge";
+import { callEdgeFunction, EdgeFunctionError } from "@/lib/edge";
 import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
 import { createLogger } from "@/lib/observability/logger";
 
 const logger = createLogger("mythic-combat-hook");
+
+export type MythicCombatStartResult =
+  | { ok: true; combatSessionId: string }
+  | { ok: false; message: string; code: string | null; requestId: string | null };
 
 export function useMythicCombat() {
   const [isStarting, setIsStarting] = useState(false);
@@ -15,18 +19,20 @@ export function useMythicCombat() {
   const [actionOperation, setActionOperation] = useState<OperationState | null>(null);
   const [tickOperation, setTickOperation] = useState<OperationState | null>(null);
 
-  const startCombat = useCallback(async (campaignId: string) => {
+  const startCombat = useCallback(async (campaignId: string): Promise<MythicCombatStartResult> => {
     setIsStarting(true);
     try {
       const { result: data } = await runOperation({
         name: "combat.start",
-        timeoutMs: 15_000,
-        maxRetries: 1,
+        timeoutMs: 30_000,
+        maxRetries: 0,
         onUpdate: setStartOperation,
         run: async ({ signal }) => {
           const { data, error } = await callEdgeFunction<{ ok: boolean; combat_session_id: string }>("mythic-combat-start", {
             requireAuth: true,
             signal,
+            timeoutMs: 25_000,
+            maxRetries: 0,
             idempotencyKey: `${campaignId}:start`,
             body: { campaignId },
           });
@@ -35,13 +41,13 @@ export function useMythicCombat() {
           return data;
         },
       });
-      toast.success("Combat started");
-      return data.combat_session_id;
+      return { ok: true, combatSessionId: data.combat_session_id };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to start combat";
-      logger.error("combat.start.failed", e);
-      toast.error(msg);
-      return null;
+      const message = e instanceof Error ? e.message : "Failed to start combat";
+      const code = e instanceof EdgeFunctionError ? e.code : null;
+      const requestId = e instanceof EdgeFunctionError ? e.requestId : null;
+      logger.error("combat.start.failed", e, { code: code ?? undefined, requestId: requestId ?? undefined });
+      return { ok: false, message, code, requestId };
     } finally {
       setIsStarting(false);
     }

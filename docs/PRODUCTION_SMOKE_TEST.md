@@ -1,64 +1,62 @@
 # Production Smoke Test
 
-This checklist validates the production hardening pass without changing product scope.
+This checklist validates the production Mythic runtime without debug/test harnesses.
 
-## 1) Install and run
+## 1) Build and start
 
 ```bash
 ./scripts/install-deps.sh
 npm run lint
 npm run typecheck
 npm run build
-npm run dev
+npm run preview
 ```
 
-Open `http://localhost:8080`.
+Open `http://localhost:4173`.
 
 ## 2) Core flow
 
 1. Login with a valid account.
 2. Open `Dashboard`.
-3. Create a campaign with name + description.
-4. Confirm UI reaches `/mythic/:campaignId` (or `/mythic/:campaignId/create-character`).
-5. Confirm campaign appears in list and no spinner is stuck.
-6. Open `Servers/Admin` and run:
-   - `Test DB`
-   - `Export Debug Bundle`
+3. Create a campaign with name and description.
+4. Confirm navigation to `/mythic/:campaignId/create-character` or `/mythic/:campaignId`.
+5. Confirm campaign appears in campaign list with a health badge.
+6. Join a campaign by invite code and confirm terminal state (success or actionable error).
 
-## 3) Failure flow
+## 3) Mythic board flow
 
-1. Disconnect network temporarily (or block Supabase hostname) and attempt:
+1. Open a campaign in `/mythic/:campaignId`.
+2. Verify book layout:
+   - left page: narrative and DM interaction
+   - right page: active board renderer
+3. Send a DM message and confirm either response text or actionable error.
+4. Start combat and use a skill.
+5. Confirm HP/turn/action log update.
+6. Open control panel tabs (Character, Gear, Skills, Loadouts, Progression, Quests) and verify they are scrollable and interactive.
+
+## 4) Failure flow
+
+1. Temporarily disconnect network and trigger:
    - login
    - campaign create
    - DM send
-2. Verify each operation exits loading state and shows an actionable error.
-3. Reconnect network and retry from the same UI controls.
+2. Confirm each action exits loading state and shows actionable error text.
+3. Reconnect and retry from the same controls.
 
-## 4) Debug bundle export
+## 5) Auth gateway incident triage (522)
 
-1. In `Servers/Admin`, click `Export Debug Bundle`.
-2. Confirm JSON includes:
-   - app build metadata
-   - health checks
-   - operation history
-   - error history
-
-## 5) Secrets redaction verification
-
-1. Search downloaded bundle for any raw secrets:
+If auth fails with `auth_gateway_timeout` or `Supabase auth gateway unreachable`:
 
 ```bash
-rg -n "Bearer |eyJ|sk-|sb_publishable_|authorization|apikey|token|password" ~/Downloads/mythic-debug-bundle-*.json
+curl -i -X POST "https://othlyxwtigxzczeffzee.supabase.co/auth/v1/token?grant_type=password" \
+  -H "apikey: $VITE_SUPABASE_ANON_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"<email>","password":"<password>"}'
 ```
 
-2. Expected result:
-   - no raw token/key values
-   - values appear as `[REDACTED]`, `[REDACTED_KEY]`, or `[REDACTED_JWT]`
+Capture:
+- HTTP status
+- `sb-request-id`
+- `cf-ray`
 
-## 6) Automated smoke
-
-```bash
-npm run smoke:prod
-```
-
-This runs Playwright production smoke assertions for dashboard/campaign/mythic routes and diagnostics export.
+Then check [Supabase Status](https://status.supabase.com/) and retry from an alternate network if 522 persists.

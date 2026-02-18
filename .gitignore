@@ -11,6 +11,10 @@ node_modules
 dist
 dist-ssr
 *.local
+*.tsbuildinfo
+playwright-report/
+test-results/
+output/playwright/
 
 # Editor directories and files
 .vscode/*
@@ -27,6 +31,8 @@ dist-ssr
 # Supabase local temp
 supabase/.temp/
 .vercel
+.env
+.env.*
 .env*.local
 
 # Playwright CLI snapshots generated during smoke runs

@@ -9,7 +9,7 @@ import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useAuth } from "@/hooks/useAuth";
 import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
-import { redactText, sanitizeError } from "@/lib/observability/redact";
+import { sanitizeError } from "@/lib/observability/redact";
 import { createLogger } from "@/lib/observability/logger";
 import { recordHealthFailure, recordHealthSuccess } from "@/lib/observability/health";
 
@@ -18,33 +18,88 @@ interface AuthScreenProps {
 }
 
 const logger = createLogger("auth-screen");
+const AUTH_OPERATION_TIMEOUT_MS = 45_000;
+const AUTH_OPERATION_RETRIES = 1;
+
+interface AuthFailureDescriptor {
+  status: number | null;
+  code: string | null;
+  requestId: string | null;
+  message: string;
+}
+
+const errorRequestId = (error: unknown): string | null => {
+  if (!error || typeof error !== "object") return null;
+  const payload = error as Record<string, unknown>;
+  const details = payload.details && typeof payload.details === "object"
+    ? payload.details as Record<string, unknown>
+    : null;
+  return (
+    (typeof payload.requestId === "string" ? payload.requestId : null)
+    ?? (typeof payload.request_id === "string" ? payload.request_id : null)
+    ?? (typeof payload.sb_request_id === "string" ? payload.sb_request_id : null)
+    ?? (typeof details?.requestId === "string" ? details.requestId : null)
+    ?? (typeof details?.request_id === "string" ? details.request_id : null)
+    ?? (typeof details?.sb_request_id === "string" ? details.sb_request_id : null)
+    ?? null
+  );
+};
+
+const classifyAuthFailure = (error: unknown): AuthFailureDescriptor => {
+  const normalized = sanitizeError(error);
+  const status = typeof (error as { status?: unknown })?.status === "number"
+    ? Number((error as { status: number }).status)
+    : null;
+  const requestId = errorRequestId(error);
+  const lower = normalized.message.toLowerCase();
+  const has522Signal =
+    status === 522
+    || lower.includes("error code 522")
+    || lower.includes("connection timed out")
+    || lower.includes("cloudflare 522");
+  const hasTimeoutSignal = lower.includes("timed out") || lower.includes("timeout");
+  const hasNetworkSignal = lower.includes("failed to fetch") || lower.includes("network") || lower.includes("load failed");
+
+  if (has522Signal || hasTimeoutSignal) {
+    return {
+      status: status ?? 522,
+      code: "auth_gateway_timeout",
+      requestId,
+      message: `Supabase auth gateway unreachable. Retry in a moment or switch networks.${requestId ? ` sb-request-id: ${requestId}` : ""}`,
+    };
+  }
+  if (hasNetworkSignal) {
+    return {
+      status: status ?? 503,
+      code: "network_unreachable",
+      requestId,
+      message: `Supabase auth network path failed. Check DNS/router and retry.${requestId ? ` requestId: ${requestId}` : ""}`,
+    };
+  }
+  return {
+    status,
+    code: normalized.code,
+    requestId,
+    message: normalized.message,
+  };
+};
 
 export default function AuthScreen({ mode }: AuthScreenProps) {
   const navigate = useNavigate();
-  const { lastError, setLastError, lastErrorAt, recordOperation } = useDiagnostics();
+  const { lastError, setLastError, lastErrorAt, recordOperation, setAuthProbe } = useDiagnostics();
   useAuth(); // keep subscription active on auth screen
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [authOp, setAuthOp] = useState<OperationState | null>(null);
   const [didCopyError, setDidCopyError] = useState(false);
-  const [isChecking, setIsChecking] = useState(false);
-  const [checkResult, setCheckResult] = useState<{
-    authStatus?: string;
-    restStatus?: string;
-    error?: string;
-    authDetail?: string;
-  } | null>(null);
   const [authDebug, setAuthDebug] = useState<{
     message?: string;
     status?: number | null;
     code?: string | null;
     name?: string | null;
+    requestId?: string | null;
   } | null>(null);
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
-  const [authTestResult, setAuthTestResult] = useState<string | null>(null);
-  const [isAuthTesting, setIsAuthTesting] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const isSubmitting = authOp?.status === "RUNNING" || authOp?.status === "PENDING";
@@ -74,13 +129,14 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
 
     const controller = new AbortController();
     abortRef.current = controller;
+    const submitStartedAt = Date.now();
 
     try {
       const { result } = await runOperation({
         name: `auth.${mode}`,
         signal: controller.signal,
-        timeoutMs: 12_000,
-        maxRetries: 1,
+        timeoutMs: AUTH_OPERATION_TIMEOUT_MS,
+        maxRetries: AUTH_OPERATION_RETRIES,
         onUpdate: (state) => {
           setAuthOp(state);
           recordOperation(state);
@@ -115,6 +171,15 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         if (!result.session) {
           throw new Error("Sign-in completed without an active session");
         }
+        setAuthProbe({
+          endpoint: "auth_login",
+          status: 200,
+          request_id: null,
+          latency_ms: Date.now() - submitStartedAt,
+          checked_at: Date.now(),
+          code: null,
+          message: "ok",
+        });
         recordHealthSuccess("auth", 0);
         navigate("/dashboard");
         return;
@@ -130,15 +195,30 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       }
     } catch (error) {
       const normalized = sanitizeError(error);
-      const message = formatError(error, "Failed to authenticate");
+      const classified = classifyAuthFailure(error);
+      const message = classified.message || formatError(error, "Failed to authenticate");
+      const operationLatency = Date.now() - submitStartedAt;
       setLastError(message);
       setAuthDebug({
         message: normalized.message,
-        status: (error as { status?: number })?.status ?? null,
-        code: normalized.code,
+        status: classified.status,
+        code: classified.code ?? normalized.code,
         name: (error as { name?: string })?.name ?? null,
+        requestId: classified.requestId,
       });
-      recordHealthFailure("auth", error);
+      setAuthProbe({
+        endpoint: "auth_login",
+        status: classified.status,
+        request_id: classified.requestId,
+        latency_ms: operationLatency,
+        checked_at: Date.now(),
+        code: classified.code ?? normalized.code,
+        message,
+      });
+      recordHealthFailure("auth", error, operationLatency, {
+        route: "supabase-auth",
+        code: classified.code ?? normalized.code,
+      });
       logger.error("auth.submit.failed", error, { mode });
     } finally {
       abortRef.current = null;
@@ -206,11 +286,18 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="font-semibold">Auth error</div>
+                <div className="font-semibold">
+                  {authDebug?.code === "auth_gateway_timeout" ? "Supabase auth gateway unreachable" : "Auth error"}
+                </div>
                 <div className="break-words">{lastError}</div>
                 {authDebug ? (
                   <div className="mt-2 text-xs text-destructive/80">
-                    Debug: {authDebug.name ?? "Error"} | status {authDebug.status ?? "?"} | code {authDebug.code ?? "?"}
+                    Status {authDebug.status ?? "?"} | code {authDebug.code ?? "?"}
+                  </div>
+                ) : null}
+                {authDebug?.requestId ? (
+                  <div className="mt-1 text-xs text-destructive/80">
+                    requestId: {authDebug.requestId}
                   </div>
                 ) : null}
                 {lastErrorAt ? (
@@ -219,116 +306,28 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                   </div>
                 ) : null}
               </div>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={async () => {
-                  setDidCopyError(false);
-                  try {
-                    await navigator.clipboard.writeText(lastError);
-                    setDidCopyError(true);
-                    setTimeout(() => setDidCopyError(false), 1500);
-                  } catch {
-                    // Clipboard denied.
-                  }
-                }}
-              >
-                {didCopyError ? "Copied" : "Copy"}
-              </Button>
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={async () => {
+                    setDidCopyError(false);
+                    try {
+                      await navigator.clipboard.writeText(lastError);
+                      setDidCopyError(true);
+                      setTimeout(() => setDidCopyError(false), 1500);
+                    } catch {
+                      // Clipboard denied.
+                    }
+                  }}
+                >
+                  {didCopyError ? "Copied" : "Copy"}
+                </Button>
+              </div>
             </div>
           </div>
         ) : null}
-        <div className="rounded-lg border border-border bg-background/30 p-3 text-xs text-muted-foreground">
-          <div className="mb-2 font-semibold text-foreground">Connectivity Check</div>
-          <div className="mb-2">Supabase URL: <span className="font-mono">{supabaseUrl || "(missing)"}</span></div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={isChecking || !supabaseUrl}
-              onClick={async () => {
-                if (!supabaseUrl) return;
-                setIsChecking(true);
-                setCheckResult(null);
-                try {
-                  const timeout = (ms: number) =>
-                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out")), ms));
-                  const headers = supabaseAnonKey ? { apikey: supabaseAnonKey } : undefined;
-                  const authReq = fetch(`${supabaseUrl}/auth/v1/health`, { method: "GET", headers });
-                  const restReq = fetch(`${supabaseUrl}/rest/v1/`, { method: "GET", headers });
-                  const [authRes, restRes] = await Promise.all([
-                    Promise.race([authReq, timeout(6000)]),
-                    Promise.race([restReq, timeout(6000)]),
-                  ]);
-                  setCheckResult({
-                    authStatus: `auth ${authRes.status}${authRes.status === 401 ? " (key required)" : ""}`,
-                    restStatus: `rest ${restRes.status}${restRes.status === 401 ? " (key required)" : ""}`,
-                  });
-                } catch (e) {
-                  setCheckResult({ error: e instanceof Error ? e.message : "Connectivity check failed" });
-                } finally {
-                  setIsChecking(false);
-                }
-              }}
-            >
-              {isChecking ? "Checking..." : "Run Check"}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={isAuthTesting || !supabaseUrl || !supabaseAnonKey || !email.trim() || !password.trim()}
-              onClick={async () => {
-                if (!supabaseUrl || !supabaseAnonKey) return;
-                setIsAuthTesting(true);
-                setAuthTestResult(null);
-                try {
-                  const timeout = (ms: number) =>
-                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out")), ms));
-                  const res = await Promise.race([
-                    fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-                      method: "POST",
-                      headers: {
-                        apikey: supabaseAnonKey,
-                        "Content-Type": "application/json",
-                      },
-                      body: JSON.stringify({ email, password }),
-                    }),
-                    timeout(8000),
-                  ]);
-                  const text = await res.text();
-                  const redacted = redactText(text);
-                  const snippet = redacted.length > 200 ? `${redacted.slice(0, 200)}...` : redacted;
-                  setAuthTestResult(`status ${res.status} ${res.statusText} :: ${snippet || "(empty body)"}`);
-                  setCheckResult((prev) => ({ ...(prev ?? {}), authDetail: `token ${res.status}` }));
-                } catch (e) {
-                  setAuthTestResult(e instanceof Error ? e.message : "Auth test failed");
-                } finally {
-                  setIsAuthTesting(false);
-                }
-              }}
-            >
-              {isAuthTesting ? "Testing..." : "Auth Test"}
-            </Button>
-            {checkResult?.error ? (
-              <span className="text-destructive">{checkResult.error}</span>
-            ) : checkResult ? (
-              <span className="text-muted-foreground">
-                {checkResult.authStatus ?? "auth ?"} · {checkResult.restStatus ?? "rest ?"}
-              </span>
-            ) : null}
-          </div>
-          {authTestResult ? (
-            <div className="mt-2 rounded border border-border bg-background/40 p-2 text-[11px] text-muted-foreground">
-              Auth test: {authTestResult}
-            </div>
-          ) : null}
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            If this fails, it’s usually DNS/router blocking `supabase.co` or a captive network. This check tells us whether the router is the problem.
-          </div>
-        </div>
       </form>
 
       <div className="mt-4 text-xs text-muted-foreground">

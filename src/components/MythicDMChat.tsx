@@ -2,20 +2,28 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { MythicDMMessage } from "@/hooks/useMythicDungeonMaster";
-import { PromptAssistField } from "@/components/PromptAssistField";
+import type { MythicDMMessage, MythicUiAction } from "@/hooks/useMythicDungeonMaster";
+import { MythicActionChips } from "@/components/mythic/MythicActionChips";
 
 interface Props {
-  campaignId?: string;
   messages: MythicDMMessage[];
   isLoading: boolean;
   currentResponse: string;
-  onSendMessage: (message: string) => void;
+  actions?: MythicUiAction[];
+  onAction?: (action: MythicUiAction) => void;
+  voiceEnabled?: boolean;
+  voiceSupported?: boolean;
+  voiceBlocked?: boolean;
+  onToggleVoice?: (enabled: boolean) => void;
+  onSpeakLatest?: () => void;
+  onStopVoice?: () => void;
+  onSendMessage: (message: string, actionTags?: string[]) => Promise<void> | void;
   error?: string | null;
 }
 
-export function MythicDMChat({ campaignId, messages, isLoading, currentResponse, onSendMessage, error }: Props) {
+export function MythicDMChat({ messages, isLoading, currentResponse, onSendMessage, error }: Props) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -27,7 +35,7 @@ export function MythicDMChat({ campaignId, messages, isLoading, currentResponse,
 
   const handleSend = () => {
     if (!input.trim() || isLoading) return;
-    onSendMessage(input);
+    void onSendMessage(input);
     setInput("");
   };
 
@@ -86,20 +94,24 @@ export function MythicDMChat({ campaignId, messages, isLoading, currentResponse,
       </ScrollArea>
 
       <div className="border-t border-border p-3">
-        <div className="flex gap-2">
-          <PromptAssistField
-            value={input}
-            onChange={setInput}
-            fieldType="dm_action"
-            campaignId={campaignId}
-            context={{ recent_messages: messages.slice(-6).map((m) => ({ role: m.role, content: m.content })) }}
-            placeholder="Say something to the DM..."
-            className="w-full"
+        <div className="mb-2">
+          <MythicActionChips
             disabled={isLoading}
+            onSelect={(prompt, tags) => {
+              void onSendMessage(prompt, tags);
+            }}
           />
         </div>
-        <div className="mt-2">
-          <Button onClick={handleSend} disabled={isLoading || !input.trim()}>
+        <div className="flex gap-2">
+          <Input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Say something to the DM..."
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSend();
+            }}
+          />
+          <Button onClick={handleSend} disabled={isLoading}>
             Send
           </Button>
         </div>

@@ -2,12 +2,10 @@ import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { clampInt, rngInt } from "../_shared/mythic_rng.ts";
-import { createLogger } from "../_shared/logger.ts";
-import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -16,10 +14,30 @@ const RequestSchema = z.object({
   reason: z.string().max(200).optional(),
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
 });
-const logger = createLogger("mythic-combat-start");
 
 type MythicBoardType = "town" | "dungeon" | "travel" | "combat";
 type StatKey = "offense" | "defense" | "control" | "support" | "mobility" | "utility";
+type ActiveBoardRow = {
+  id: string;
+  board_type: MythicBoardType;
+  state_json: Record<string, unknown> | null;
+};
+type CharacterRow = {
+  id: string;
+  name: string;
+  level: number;
+  offense: number;
+  defense: number;
+  control: number;
+  support: number;
+  mobility: number;
+  utility: number;
+};
+type InsertedCombatantRow = {
+  id: string;
+  name: string;
+  initiative: number | null;
+};
 
 const STAT_KEYS: StatKey[] = ["offense", "defense", "control", "support", "mobility", "utility"];
 
@@ -35,25 +53,6 @@ function num(value: unknown, fallback = 0): number {
 
 function clampStat(n: number): number {
   return Math.min(100, Math.max(0, Math.floor(n)));
-}
-
-function toErrorMessage(error: unknown, context: string): string {
-  if (!error) return `${context} failed`;
-  if (error instanceof Error) return `${context}: ${error.message}`;
-  if (typeof error === "object") {
-    const anyErr = error as Record<string, unknown>;
-    const message = typeof anyErr.message === "string" ? anyErr.message : "unknown error";
-    const code = typeof anyErr.code === "string" ? ` code=${anyErr.code}` : "";
-    const hint = typeof anyErr.hint === "string" && anyErr.hint ? ` hint=${anyErr.hint}` : "";
-    const details = typeof anyErr.details === "string" && anyErr.details ? ` details=${anyErr.details}` : "";
-    return `${context}: ${message}${code}${hint}${details}`;
-  }
-  return `${context}: ${String(error)}`;
-}
-
-function throwIfError(error: unknown, context: string): void {
-  if (!error) return;
-  throw new Error(toErrorMessage(error, context));
 }
 
 function sumEquipmentBonuses(rows: Array<{ item?: { stat_mods?: unknown; slot?: string } | null }>) {
@@ -124,7 +123,7 @@ serve(async (req) => {
       .select("id")
       .eq("id", campaignId)
       .maybeSingle();
-    throwIfError(campaignError, "campaign lookup");
+    if (campaignError) throw campaignError;
     if (!campaign) {
       return new Response(JSON.stringify({ error: "Campaign not found" }), {
         status: 404,
@@ -141,10 +140,10 @@ serve(async (req) => {
       .eq("status", "active")
       .order("updated_at", { ascending: false })
       .limit(1)
-      .maybeSingle();
+      .maybeSingle<ActiveBoardRow>();
 
     const boardSeed = (() => {
-      const s = (activeBoard as { state_json?: any } | null)?.state_json?.seed;
+      const s = activeBoard?.state_json?.seed;
       return typeof s === "number" && Number.isFinite(s) ? Math.floor(s) : 12345;
     })();
 
@@ -160,8 +159,8 @@ serve(async (req) => {
       .eq("player_id", user.id)
       .order("updated_at", { ascending: false })
       .limit(1)
-      .maybeSingle();
-    throwIfError(charError, "character lookup");
+      .maybeSingle<CharacterRow>();
+    if (charError) throw charError;
     if (!character) {
       return new Response(JSON.stringify({ error: "No mythic character found for this campaign" }), {
         status: 400,
@@ -177,12 +176,12 @@ serve(async (req) => {
       .eq("character_id", character.id)
       .eq("container", "equipment");
 
-    throwIfError(equipError, "equipment lookup");
+    if (equipError) throw equipError;
 
     const equipBonuses = sumEquipmentBonuses((equippedItems ?? []) as Array<{ item?: { stat_mods?: unknown } | null }>);
 
     const derivedStats = STAT_KEYS.reduce((acc, key) => {
-      const base = num((character as any)[key], 0);
+      const base = num(character[key], 0);
       const bonus = num(equipBonuses[key], 0);
       acc[key] = clampStat(base + bonus);
       return acc;
@@ -196,34 +195,31 @@ serve(async (req) => {
     const powerBonus = Math.max(0, num(equipBonuses.power_max, 0));
 
     // Start combat session + activate combat board + transition + combat_start event.
-    const sceneJson = {
-      kind: "encounter",
-      started_from: (activeBoard as { board_type?: MythicBoardType } | null)?.board_type ?? null,
-    };
+    const { data: combatId, error: startError } = await svc
+      .schema("mythic")
+      .rpc("start_combat_session", {
+        p_campaign_id: campaignId,
+        p_seed: seed,
+        p_scene_json: {
+          kind: "encounter",
+          started_from: activeBoard?.board_type ?? null,
+        },
+        p_reason: reason,
+      });
 
-    const startRes = await svc.rpc("mythic_start_combat_session", {
-      campaign_id: campaignId,
-      seed,
-      scene_json: sceneJson,
-      reason,
-    });
-    const combatId = typeof startRes.data === "string" ? startRes.data : null;
-    const startError = startRes.error;
-    throwIfError(startError, "start_combat_session");
+    if (startError) throw startError;
     if (!combatId || typeof combatId !== "string") throw new Error("start_combat_session returned no id");
 
-    const lvl = character.level as number;
+    const lvl = Number(character.level ?? 1);
 
-    const [hpMaxRes, powerMaxRes] = await Promise.all([
-      svc.rpc("mythic_max_hp", { lvl, defense: derivedStats.defense, support: derivedStats.support }),
-      svc.rpc("mythic_max_power_bar", { lvl, utility: derivedStats.utility, support: derivedStats.support }),
+    const [{ data: hpMax }, { data: powerMax }] = await Promise.all([
+      svc.schema("mythic").rpc("max_hp", { lvl, defense: derivedStats.defense, support: derivedStats.support }),
+      svc.schema("mythic").rpc("max_power_bar", { lvl, utility: derivedStats.utility, support: derivedStats.support }),
     ]);
-    throwIfError(hpMaxRes.error, "max_hp");
-    throwIfError(powerMaxRes.error, "max_power_bar");
 
     const playerInit = clampInt((derivedStats.mobility as number) + rngInt(seed, `init:player:${character.id}`, 0, 25), 0, 999);
-    const hpMaxFinal = Math.max(1, Math.floor(((hpMaxRes.data as number | null) ?? 100) + hpBonus));
-    const powerMaxFinal = Math.max(0, Math.floor(((powerMaxRes.data as number | null) ?? 50) + powerBonus));
+    const hpMaxFinal = Math.max(1, Math.floor((hpMax ?? 100) + hpBonus));
+    const powerMaxFinal = Math.max(0, Math.floor((powerMax ?? 50) + powerBonus));
 
     const playerCombatant = {
       combat_session_id: combatId,
@@ -302,17 +298,17 @@ serve(async (req) => {
       .insert([playerCombatant, ...enemies])
       .select("id, name, initiative");
 
-    throwIfError(combatantsError, "combatants insert");
+    if (combatantsError) throw combatantsError;
     if (!insertedCombatants || insertedCombatants.length < 2) throw new Error("Failed to insert combatants");
 
-    const sorted = [...insertedCombatants].sort((a: any, b: any) => {
+    const sorted = [...(insertedCombatants as InsertedCombatantRow[])].sort((a, b) => {
       const ia = Number(a.initiative ?? 0);
       const ib = Number(b.initiative ?? 0);
       if (ib !== ia) return ib - ia;
       return String(a.name).localeCompare(String(b.name));
     });
 
-    const turnRows = sorted.map((c: any, idx: number) => ({
+    const turnRows = sorted.map((c, idx) => ({
       combat_session_id: combatId,
       turn_index: idx,
       combatant_id: c.id,
@@ -322,9 +318,9 @@ serve(async (req) => {
       .schema("mythic")
       .from("turn_order")
       .insert(turnRows);
-    throwIfError(turnError, "turn_order insert");
+    if (turnError) throw turnError;
 
-    const initiativeSnapshot = sorted.map((c: any) => ({ combatant_id: c.id, name: c.name, initiative: c.initiative }));
+    const initiativeSnapshot = sorted.map((c) => ({ combatant_id: c.id, name: c.name, initiative: c.initiative }));
 
     // Add a simple deterministic combat grid with blocked tiles for LOS checks.
     const blockedTiles = Array.from({ length: rngInt(seed, "walls:count", 3, 6) }).map((_, i) => ({
@@ -347,20 +343,20 @@ serve(async (req) => {
       .eq("combat_session_id", combatId)
       .eq("status", "active");
 
-    await svc.rpc("mythic_append_action_event", {
-      combat_session_id: combatId,
-      turn_index: 0,
-      actor_combatant_id: null,
-      event_type: "round_start",
-      payload: { round_index: 0, initiative_snapshot: initiativeSnapshot },
+    await svc.schema("mythic").rpc("append_action_event", {
+      p_combat_session_id: combatId,
+      p_turn_index: 0,
+      p_actor_combatant_id: null,
+      p_event_type: "round_start",
+      p_payload: { round_index: 0, initiative_snapshot: initiativeSnapshot },
     });
 
-    await svc.rpc("mythic_append_action_event", {
-      combat_session_id: combatId,
-      turn_index: 0,
-      actor_combatant_id: sorted[0]!.id,
-      event_type: "turn_start",
-      payload: { actor_combatant_id: sorted[0]!.id },
+    await svc.schema("mythic").rpc("append_action_event", {
+      p_combat_session_id: combatId,
+      p_turn_index: 0,
+      p_actor_combatant_id: sorted[0]!.id,
+      p_event_type: "turn_start",
+      p_payload: { actor_combatant_id: sorted[0]!.id },
     });
 
     return new Response(
@@ -368,10 +364,9 @@ serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
-    const normalized = sanitizeError(error);
-    logger.error("combat_start.failed", error);
+    console.error("mythic-combat-start error:", error);
     return new Response(
-      JSON.stringify({ error: normalized.message || "Failed to start combat", code: normalized.code ?? "combat_start_failed" }),
+      JSON.stringify({ error: error instanceof Error ? error.message : "Failed to start combat" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }

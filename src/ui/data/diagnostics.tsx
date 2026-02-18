@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { DiagnosticsContext, type EngineSnapshot } from "@/ui/data/diagnosticsContext";
+import { DiagnosticsContext, type AuthProbeSnapshot, type EngineSnapshot } from "@/ui/data/diagnosticsContext";
 import type { OperationState } from "@/lib/ops/operationState";
 import { getNetworkSnapshot } from "@/ui/data/networkHealth";
 import { getHealthSnapshot } from "@/lib/observability/health";
@@ -18,6 +18,7 @@ export function DiagnosticsProvider({ children }: { children: ReactNode }) {
   const [healthChecks, setHealthChecks] = useState<Record<string, HealthSnapshot>>(
     getHealthSnapshot(),
   );
+  const [authProbe, setAuthProbe] = useState<AuthProbeSnapshot | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -26,16 +27,16 @@ export function DiagnosticsProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, []);
 
-  const setLastError = (message: string | null) => {
+  const setLastError = useCallback((message: string | null) => {
     const at = message ? Date.now() : null;
     setLastErrorState(message);
     setLastErrorAt(at);
     if (message && at) {
       setErrorHistory((prev) => [{ message, at }, ...prev].slice(0, MAX_ERROR_HISTORY));
     }
-  };
+  }, []);
 
-  const recordOperation = (operation: OperationState) => {
+  const recordOperation = useCallback((operation: OperationState) => {
     setOperations((prev) => {
       const idx = prev.findIndex((entry) => entry.id === operation.id);
       if (idx === -1) {
@@ -45,7 +46,7 @@ export function DiagnosticsProvider({ children }: { children: ReactNode }) {
       next[idx] = operation;
       return next;
     });
-  };
+  }, []);
 
   const exportDebugBundle = useCallback(() => {
     const network = getNetworkSnapshot();
@@ -72,13 +73,14 @@ export function DiagnosticsProvider({ children }: { children: ReactNode }) {
         last_error_at: lastErrorAt,
         error_history: errorHistory,
         engine_snapshot: engineSnapshot,
+        auth_probe: authProbe,
         operations: operations.slice(0, 80),
         health_checks: getHealthSnapshot(),
         network,
       },
     });
     return JSON.stringify(payload, null, 2);
-  }, [engineSnapshot, errorHistory, lastError, lastErrorAt, operations]);
+  }, [authProbe, engineSnapshot, errorHistory, lastError, lastErrorAt, operations]);
 
   const value = useMemo(() => ({
     lastError,
@@ -90,8 +92,21 @@ export function DiagnosticsProvider({ children }: { children: ReactNode }) {
     operations,
     recordOperation,
     healthChecks,
+    authProbe,
+    setAuthProbe,
     exportDebugBundle,
-  }), [errorHistory, engineSnapshot, exportDebugBundle, healthChecks, lastError, lastErrorAt, operations]);
+  }), [
+    authProbe,
+    errorHistory,
+    engineSnapshot,
+    exportDebugBundle,
+    healthChecks,
+    lastError,
+    lastErrorAt,
+    operations,
+    recordOperation,
+    setLastError,
+  ]);
 
   return (
     <DiagnosticsContext.Provider value={value}>

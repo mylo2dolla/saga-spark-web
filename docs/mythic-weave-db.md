@@ -10,8 +10,14 @@ cd /Users/dev/saga-spark-web
 supabase link --project-ref othlyxwtigxzczeffzee
 ```
 
-2. Push migrations:
+2. Set DB password for remote migration parity checks:
 ```bash
+export SUPABASE_DB_PASSWORD="<your-db-password>"
+```
+
+3. Verify migration parity and push:
+```bash
+supabase migration list
 supabase db push
 ```
 
@@ -73,6 +79,22 @@ Playback:
 
 DM payload view:
 - `mythic.v_combat_state_for_dm` includes a prebuilt JSON payload with combatants, turn_order, and recent events.
+
+## Canonical Turn Engine (Atomic)
+
+Authoritative turn commits are stored in:
+- `mythic.turns`
+- `mythic.world_state` (campaign-scoped world clock + heat/notoriety)
+- `mythic.world_facts`, `mythic.world_entities`, `mythic.relationships` (patch-applied persistence)
+
+Turn commits are applied via RPC:
+- `public.mythic_commit_turn(...)` which calls `mythic.commit_turn(...)` (service_role-only enforced inside the function)
+
+Edge function that uses this:
+- `supabase/functions/mythic-dungeon-master/index.ts`
+
+Required secret for strong determinism:
+- `MYTHIC_TURN_SALT` (Supabase Edge Function secret). This is never stored in the repo.
 
 ## Quick Seed (No Placeholders)
 
@@ -204,6 +226,18 @@ select mythic.compute_damage(
 select name, version, is_active from mythic.generator_scripts where name='mythic-weave-core';
 select name, version from mythic.game_rules where name='mythic-weave-rules-v1';
 select name, version from mythic.ui_turn_flow_rules where name='mythic-weave-ui-turn-flow-v1';
+```
+
+### Confirm turn-engine tables + RPC exist
+```sql
+select to_regclass('mythic.turns') as turns_table,
+       to_regclass('mythic.world_state') as world_state_table,
+       to_regclass('mythic.audit_log') as audit_log_table;
+
+select proname, pronargs
+from pg_proc
+join pg_namespace n on n.oid = pg_proc.pronamespace
+where n.nspname = 'public' and proname = 'mythic_commit_turn';
 ```
 
 ## Verify Canonical Versions (Expected)

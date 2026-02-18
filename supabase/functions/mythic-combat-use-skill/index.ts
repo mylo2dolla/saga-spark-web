@@ -4,18 +4,10 @@ import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { bresenhamLine, distanceTiles, type Metric } from "../_shared/mythic_grid.ts";
 import { rng01 } from "../_shared/mythic_rng.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
-import { createLogger } from "../_shared/logger.ts";
-import {
-  enforceRateLimit,
-  getIdempotentResponse,
-  idempotencyKeyFromRequest,
-  storeIdempotentResponse,
-} from "../_shared/request_guard.ts";
-import { sanitizeError } from "../_shared/redact.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-idempotency-key",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -35,6 +27,9 @@ const RequestSchema = z.object({
 
 type CombatantRow = {
   id: string;
+  entity_type: "player" | "npc" | "summon";
+  player_id: string | null;
+  character_id: string | null;
   name: string;
   x: number;
   y: number;
@@ -71,7 +66,10 @@ type SkillRow = {
 };
 
 type TurnOrderRow = { combatant_id: string };
-const logger = createLogger("mythic-combat-use-skill");
+type BoardStateRow = { state_json: Record<string, unknown> | null };
+type AliveRow = { id: string; is_alive: boolean };
+type AliveCombatantRow = { id: string; entity_type: "player" | "npc" | "summon"; is_alive: boolean };
+type LastBoardRow = { id: string; board_type: string };
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -80,6 +78,27 @@ function asObject(value: unknown): Record<string, unknown> {
 
 function asArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function parseBlockedTiles(value: unknown): Array<{ x: number; y: number }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => asObject(entry))
+    .filter((entry) => Number.isFinite(Number(entry.x)) && Number.isFinite(Number(entry.y)))
+    .map((entry) => ({ x: Math.floor(Number(entry.x)), y: Math.floor(Number(entry.y)) }));
 }
 
 type StatusEntry = {
@@ -222,9 +241,8 @@ function getTargetsForShape(args: {
 }
 
 function getFlatCost(costJson: Record<string, unknown>): { amount: number; resource_id: string | null } {
-  const amt = Number((costJson as any).amount ?? 0);
-  const amount = Number.isFinite(amt) ? Math.max(0, Math.floor(amt)) : 0;
-  const resource_id = typeof (costJson as any).resource_id === "string" ? String((costJson as any).resource_id) : null;
+  const amount = Math.max(0, Math.floor(asNumber(costJson.amount, 0)));
+  const resource_id = asString(costJson.resource_id, "") || null;
   return { amount, resource_id };
 }
 
@@ -286,15 +304,6 @@ serve(async (req) => {
     });
   }
 
-  const rateLimited = enforceRateLimit({
-    req,
-    route: "mythic-combat-use-skill",
-    limit: 120,
-    windowMs: 60_000,
-    corsHeaders,
-  });
-  if (rateLimited) return rateLimited;
-
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
@@ -320,15 +329,6 @@ serve(async (req) => {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
-    }
-    const idempotencyHeader = idempotencyKeyFromRequest(req);
-    const idempotencyKey = idempotencyHeader ? `${user.id}:${idempotencyHeader}` : null;
-    if (idempotencyKey) {
-      const cached = getIdempotentResponse(idempotencyKey);
-      if (cached) {
-        logger.info("combat_use_skill.idempotent_hit");
-        return cached;
-      }
     }
 
     const parsed = RequestSchema.safeParse(await req.json().catch(() => null));
@@ -442,13 +442,13 @@ serve(async (req) => {
 
     const targetingJson = asObject(skill.targeting_json);
     const metric = metricFromTargetingJson(targetingJson);
-    const shape = String((targetingJson as any).shape ?? skill.targeting ?? "single");
-    const radius = Math.max(0, Math.floor(Number((targetingJson as any).radius ?? 1)));
-    const length = Math.max(1, Math.floor(Number((targetingJson as any).length ?? skill.range_tiles ?? 1)));
-    const width = Math.max(1, Math.floor(Number((targetingJson as any).width ?? 1)));
-    const requiresLos = Boolean((targetingJson as any).requires_los ?? false);
-    const blocksOnWalls = Boolean((targetingJson as any).blocks_on_walls ?? true);
-    const friendlyFire = Boolean((targetingJson as any).friendly_fire ?? false);
+    const shape = asString(targetingJson.shape, skill.targeting ?? "single");
+    const radius = Math.max(0, Math.floor(asNumber(targetingJson.radius, 1)));
+    const length = Math.max(1, Math.floor(asNumber(targetingJson.length, skill.range_tiles ?? 1)));
+    const width = Math.max(1, Math.floor(asNumber(targetingJson.width, 1)));
+    const requiresLos = asBoolean(targetingJson.requires_los, false);
+    const blocksOnWalls = asBoolean(targetingJson.blocks_on_walls, true);
+    const friendlyFire = asBoolean(targetingJson.friendly_fire, false);
 
     const resolveTarget = async (target: z.infer<typeof TargetSchema>) => {
       if (target.kind === "self") {
@@ -495,10 +495,8 @@ serve(async (req) => {
       .select("state_json")
       .eq("combat_session_id", combatSessionId)
       .eq("status", "active")
-      .maybeSingle();
-    const blockedTiles = Array.isArray((boardRow as any)?.state_json?.blocked_tiles)
-      ? ((boardRow as any).state_json.blocked_tiles as Array<{ x: number; y: number }>)
-      : [];
+      .maybeSingle<BoardStateRow>();
+    const blockedTiles = parseBlockedTiles(asObject(boardRow?.state_json).blocked_tiles);
     const blockedSet = toBlockedSet(blockedTiles);
 
     if (requiresLos && blocksOnWalls) {
@@ -662,9 +660,9 @@ serve(async (req) => {
     // Self debuff hook.
     const selfDebuff = asObject(effects.self_debuff);
     if (Object.keys(selfDebuff).length > 0 && typeof selfDebuff.id === "string") {
-      const duration = Math.max(0, Math.floor(Number((selfDebuff as any).duration_turns ?? 0)));
-      const id = String((selfDebuff as any).id);
-      nextStatuses = setSimpleStatus(nextStatuses, id, turnIndex + duration, { intensity: Number((selfDebuff as any).intensity ?? 1) });
+      const duration = Math.max(0, Math.floor(asNumber(selfDebuff.duration_turns, 0)));
+      const id = asString(selfDebuff.id);
+      nextStatuses = setSimpleStatus(nextStatuses, id, turnIndex + duration, { intensity: asNumber(selfDebuff.intensity, 1) });
       events.push({
         event_type: "status_applied",
         payload: { target_combatant_id: actor.id, status: { id, duration_turns: duration, self: true } },
@@ -721,11 +719,11 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const skillMult = Number((dmg as any).skill_mult ?? 1);
+      const skillMult = asNumber(dmg.skill_mult, 1);
       const attacker = effectiveAttackerStats(actor);
 
       for (const target of targets) {
-        const { data: dmgJson, error: dmgErr } = await svc.rpc("mythic_compute_damage", {
+        const { data: dmgJson, error: dmgErr } = await svc.schema("mythic").rpc("compute_damage", {
           seed,
           label: `${labelBase}:t:${target.id}`,
           lvl: actor.lvl,
@@ -739,7 +737,7 @@ serve(async (req) => {
         });
         if (dmgErr) throw dmgErr;
         const dmgObj = asObject(dmgJson);
-        const finalDamage = Number((dmgObj as any).final_damage ?? 0);
+        const finalDamage = asNumber(dmgObj.final_damage, 0);
         const raw = Number.isFinite(finalDamage) ? Math.max(0, finalDamage) : 0;
 
         const shield = Math.max(0, Number(target.armor ?? 0));
@@ -800,10 +798,10 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const duration = Math.max(0, Math.floor(Number((status as any).duration_turns)));
-      const statusId = String((status as any).id);
+      const duration = Math.max(0, Math.floor(asNumber(status.duration_turns, 0)));
+      const statusId = asString(status.id);
       for (const target of targets) {
-        const { data: chance, error: chanceErr } = await svc.rpc("mythic_status_apply_chance", {
+        const { data: chance, error: chanceErr } = await svc.schema("mythic").rpc("status_apply_chance", {
           control: actor.control,
           utility: actor.utility,
           target_resolve: Math.floor(Number(target.resist ?? 0)),
@@ -883,7 +881,7 @@ serve(async (req) => {
       const targets = shape === "self"
         ? [actor]
         : allTargets.filter((t) => isAlly(actor, t) || t.id === actor.id);
-      const amount = Math.max(0, Math.floor(Number((heal as any).amount ?? 0)));
+      const amount = Math.max(0, Math.floor(asNumber(heal.amount, 0)));
       for (const target of targets) {
         const newHp = Math.min(target.hp_max, Number(target.hp ?? 0) + amount);
         const { error: healErr } = await svc
@@ -908,8 +906,8 @@ serve(async (req) => {
       const targets = shape === "self"
         ? [actor]
         : allTargets.filter((t) => isAlly(actor, t) || t.id === actor.id);
-      const ids = Array.isArray((cleanse as any).ids)
-        ? (cleanse as any).ids.map((x: unknown) => String(x))
+      const ids = Array.isArray(cleanse.ids)
+        ? cleanse.ids.map((x: unknown) => String(x))
         : null;
       for (const target of targets) {
         const targetStatuses = nowStatuses(target.statuses);
@@ -956,7 +954,7 @@ serve(async (req) => {
     // Power gain.
     const powerGain = asObject(effects.power_gain);
     if (Object.keys(powerGain).length > 0) {
-      const amount = Math.max(0, Math.floor(Number((powerGain as any).amount ?? 0)));
+      const amount = Math.max(0, Math.floor(asNumber(powerGain.amount, 0)));
       const basePower = typeof updates.power === "number" ? updates.power : nextPower;
       const newPower = Math.min(actor.power_max, basePower + amount);
       updates.power = newPower;
@@ -969,7 +967,7 @@ serve(async (req) => {
     }
 
     // Persist actor update (power, move, armor for barrier, statuses/cooldowns).
-    updates.statuses = nextStatuses as any;
+    updates.statuses = nextStatuses;
     const { error: actorUpdateErr } = await svc
       .schema("mythic")
       .from("combatants")
@@ -980,12 +978,12 @@ serve(async (req) => {
 
     // Append events in order.
     for (const e of events) {
-      await svc.rpc("mythic_append_action_event", {
-        combat_session_id: combatSessionId,
-        turn_index: e.turn_index,
-        actor_combatant_id: e.actor_id,
-        event_type: e.event_type,
-        payload: e.payload,
+      await svc.schema("mythic").rpc("append_action_event", {
+        p_combat_session_id: combatSessionId,
+        p_turn_index: e.turn_index,
+        p_actor_combatant_id: e.actor_id,
+        p_event_type: e.event_type,
+        p_payload: e.payload,
       });
     }
 
@@ -1006,7 +1004,7 @@ serve(async (req) => {
       .select("id, is_alive")
       .eq("combat_session_id", combatSessionId);
     if (aliveErr) throw aliveErr;
-    const aliveSet = new Set((aliveRows ?? []).filter((r: any) => r.is_alive).map((r: any) => r.id));
+    const aliveSet = new Set(((aliveRows ?? []) as AliveRow[]).filter((r) => r.is_alive).map((r) => r.id));
 
     const total = order.length;
     let nextIndex = (turnIndex + 1) % total;
@@ -1026,12 +1024,13 @@ serve(async (req) => {
       .select("id, entity_type, is_alive")
       .eq("combat_session_id", combatSessionId);
     if (aliveCombatantsErr) throw aliveCombatantsErr;
-    const alivePlayers = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "player").length;
-    const aliveNpcs = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "npc").length;
+    const aliveList = (aliveCombatants ?? []) as AliveCombatantRow[];
+    const alivePlayers = aliveList.filter((c) => c.is_alive && c.entity_type === "player").length;
+    const aliveNpcs = aliveList.filter((c) => c.is_alive && c.entity_type === "npc").length;
     if (alivePlayers === 0 || aliveNpcs === 0) {
-      await svc.rpc("mythic_end_combat_session", {
-        combat_session_id: combatSessionId,
-        outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs },
+      await svc.schema("mythic").rpc("end_combat_session", {
+        p_combat_session_id: combatSessionId,
+        p_outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs },
       });
       // Reactivate the most recent non-combat board and log a page-turn transition.
       const { data: lastBoard } = await svc
@@ -1042,34 +1041,23 @@ serve(async (req) => {
         .neq("board_type", "combat")
         .order("updated_at", { ascending: false })
         .limit(1)
-        .maybeSingle();
+        .maybeSingle<LastBoardRow>();
       if (lastBoard) {
-        await svc.schema("mythic").from("boards").update({ status: "active", updated_at: new Date().toISOString() }).eq("id", (lastBoard as any).id);
+        await svc.schema("mythic").from("boards").update({ status: "active", updated_at: new Date().toISOString() }).eq("id", lastBoard.id);
         await svc.schema("mythic").from("boards").update({ status: "archived", updated_at: new Date().toISOString() }).eq("combat_session_id", combatSessionId);
         await svc.schema("mythic").from("board_transitions").insert({
           campaign_id: campaignId,
           from_board_type: "combat",
-          to_board_type: (lastBoard as any).board_type,
+          to_board_type: lastBoard.board_type,
           reason: "combat_end",
           animation: "page_turn",
           payload_json: { combat_session_id: combatSessionId, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } },
         });
       }
-      const response = new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } }), {
+      return new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
-      if (idempotencyKey) {
-        storeIdempotentResponse(idempotencyKey, response, 15_000);
-      }
-      logger.info("combat_use_skill.ended", {
-        campaign_id: campaignId,
-        combat_session_id: combatSessionId,
-        actor_combatant_id: actor.id,
-        alive_players: alivePlayers,
-        alive_npcs: aliveNpcs,
-      });
-      return response;
     }
 
     const nextCombatantId = order[nextIndex]!.combatant_id;
@@ -1082,44 +1070,32 @@ serve(async (req) => {
       .eq("campaign_id", campaignId);
     if (advanceErr) throw advanceErr;
 
-    await svc.rpc("mythic_append_action_event", {
-      combat_session_id: combatSessionId,
-      turn_index: turnIndex,
-      actor_combatant_id: actor.id,
-      event_type: "turn_end",
-      payload: { actor_combatant_id: actor.id },
+    await svc.schema("mythic").rpc("append_action_event", {
+      p_combat_session_id: combatSessionId,
+      p_turn_index: turnIndex,
+      p_actor_combatant_id: actor.id,
+      p_event_type: "turn_end",
+      p_payload: { actor_combatant_id: actor.id },
     });
 
-    await svc.rpc("mythic_append_action_event", {
-      combat_session_id: combatSessionId,
-      turn_index: nextIndex,
-      actor_combatant_id: nextCombatantId,
-      event_type: "turn_start",
-      payload: { actor_combatant_id: nextCombatantId },
+    await svc.schema("mythic").rpc("append_action_event", {
+      p_combat_session_id: combatSessionId,
+      p_turn_index: nextIndex,
+      p_actor_combatant_id: nextCombatantId,
+      p_event_type: "turn_start",
+      p_payload: { actor_combatant_id: nextCombatantId },
     });
 
-    const response = new Response(JSON.stringify({ ok: true, next_turn_index: nextIndex, next_actor_combatant_id: nextCombatantId }), {
+    return new Response(JSON.stringify({ ok: true, next_turn_index: nextIndex, next_actor_combatant_id: nextCombatantId }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
-    if (idempotencyKey) {
-      storeIdempotentResponse(idempotencyKey, response, 10_000);
-    }
-    logger.info("combat_use_skill.success", {
-      campaign_id: campaignId,
-      combat_session_id: combatSessionId,
-      actor_combatant_id: actor.id,
-      skill_id: skill.id,
-      next_turn_index: nextIndex,
-    });
-    return response;
   } catch (error) {
-    logger.error("combat_use_skill.failed", error);
-    const normalized = sanitizeError(error);
-    const msg = normalized.message || "Failed to use skill";
+    console.error("mythic-combat-use-skill error:", error);
+    const msg = error instanceof Error ? error.message : "Failed to use skill";
     // Never emit sexual content, even in errors.
     const safeMsg = msg;
-    return new Response(JSON.stringify({ error: safeMsg, code: normalized.code ?? "combat_use_skill_failed" }), {
+    return new Response(JSON.stringify({ error: safeMsg }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

@@ -1,38 +1,24 @@
-import { useEffect } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
-import ApiDebugPanel from "../components/ApiDebugPanel";
-import PerfHud from "../components/PerfHud";
-import { useDbHealth } from "@/ui/data/useDbHealth";
-import { useDiagnostics } from "@/ui/data/useDiagnostics";
-
-const buildSha = import.meta.env.VITE_GIT_SHA ?? "unknown";
-const DEV_DEBUG = import.meta.env.DEV;
-const AUTH_DEBUG = import.meta.env.DEV && import.meta.env.VITE_DEBUG_AUTH === "true";
 
 export default function AppShell() {
   const location = useLocation();
-  const { user, isProfileCreating } = useAuth();
-  const isLoginRoute = location.pathname === "/login" || location.pathname === "/signup";
-  const shouldPollDb = Boolean(user) && !isLoginRoute;
-  const { status, lastError, lastProbe } = useDbHealth(shouldPollDb);
-  const { lastError: lastApiError, lastErrorAt, engineSnapshot } = useDiagnostics();
+  const { user } = useAuth();
+  const isMythicRoute = location.pathname.startsWith("/mythic/");
   const navLinks = [
     { to: "/dashboard", label: "Dashboard" },
     { to: "/dashboard#create", label: "Create/Join" },
     { to: "/dashboard#campaigns", label: "Mythic" },
     { to: "/servers", label: "Servers/Admin" },
   ];
-  useEffect(() => {
-    if (!AUTH_DEBUG) return;
-    console.debug("[auth] log", {
-      step: "route_guard",
-      route: location.pathname,
-      hasSession: Boolean(user),
-      bootstrapped: Boolean(user),
-      skipGameHooks: isLoginRoute || !user,
-    });
-  }, [isLoginRoute, location.pathname, user]);
+
+  if (isMythicRoute) {
+    return (
+      <div className="min-h-screen bg-background text-foreground">
+        <Outlet />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -79,42 +65,15 @@ export default function AppShell() {
             </nav>
           </div>
 
-          <div className="flex items-center justify-between border-b border-border bg-card/40 px-4 py-2 text-xs sm:text-sm">
-            <div className="flex flex-wrap items-center gap-4">
-              <span>Auth: {user?.email ?? "guest"}</span>
-              {isProfileCreating ? <span>Profile: creating...</span> : null}
-              <span>DB: {shouldPollDb ? (status === "ok" ? "ok" : status) : "paused"}</span>
-              {lastError ? <span className="text-destructive">DB Error: {lastError}</span> : null}
-              {lastProbe ? (
-                <span className="text-muted-foreground">
-                  DB probe: {lastProbe.timedOut ? "timeout" : lastProbe.status ?? "?"} · {lastProbe.elapsedMs}ms
-                </span>
-              ) : null}
+          {import.meta.env.DEV && user ? (
+            <div className="border-b border-border bg-card/40 px-4 py-2 text-xs text-muted-foreground">
+              {user.email}
             </div>
-            <div className="hidden text-muted-foreground md:block">{location.pathname}</div>
-          </div>
+          ) : null}
 
           <div className="flex-1 p-4 sm:p-6 lg:p-8">
             <Outlet />
           </div>
-
-          {DEV_DEBUG ? (
-            <div className="border-t border-border bg-card/40 px-4 py-2 text-[11px] text-muted-foreground">
-              <div className="flex flex-wrap items-center gap-4">
-                <span>Build: {buildSha}</span>
-                <span>Route: {location.pathname}</span>
-                <span>Last API Error: {lastApiError ?? "none"}</span>
-                {lastErrorAt ? <span>At: {new Date(lastErrorAt).toLocaleTimeString()}</span> : null}
-                {engineSnapshot ? (
-                  <span>
-                    Engine: {engineSnapshot.state ?? "unknown"} | {engineSnapshot.locationName ?? "?"}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          {DEV_DEBUG ? <ApiDebugPanel /> : null}
-          {DEV_DEBUG ? <PerfHud /> : null}
         </main>
       </div>
     </div>

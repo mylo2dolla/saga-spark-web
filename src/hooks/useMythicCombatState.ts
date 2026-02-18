@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
+import type { Database, Json } from "@/integrations/supabase/types";
 
 export interface MythicCombatSessionRow {
   id: string;
@@ -28,7 +29,7 @@ export interface MythicCombatantRow {
   armor: number;
   resist: number;
   initiative: number;
-  statuses: unknown;
+  statuses: Json;
   is_alive: boolean;
   updated_at: string;
 }
@@ -48,6 +49,73 @@ export interface MythicActionEventRow {
   payload: Record<string, unknown>;
   created_at: string;
 }
+
+type CombatSessionSelectRow = Pick<
+  Database["mythic"]["Tables"]["combat_sessions"]["Row"],
+  "id" | "campaign_id" | "seed" | "status" | "current_turn_index" | "scene_json" | "updated_at"
+>;
+type CombatantDbRow = Database["mythic"]["Tables"]["combatants"]["Row"];
+type TurnOrderDbRow = Database["mythic"]["Tables"]["turn_order"]["Row"];
+type ActionEventDbRow = Database["mythic"]["Tables"]["action_events"]["Row"];
+
+const toRecord = (value: Json): Record<string, unknown> => {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+};
+
+const toEntityType = (value: string): MythicCombatantRow["entity_type"] => {
+  if (value === "player" || value === "npc" || value === "summon") return value;
+  return "npc";
+};
+
+const mapSessionRow = (row: CombatSessionSelectRow): MythicCombatSessionRow => ({
+  id: row.id,
+  campaign_id: row.campaign_id,
+  seed: row.seed,
+  status: row.status,
+  current_turn_index: row.current_turn_index,
+  scene_json: toRecord(row.scene_json),
+  updated_at: row.updated_at,
+});
+
+const mapCombatantRow = (row: CombatantDbRow): MythicCombatantRow => ({
+  id: row.id,
+  combat_session_id: row.combat_session_id,
+  entity_type: toEntityType(row.entity_type),
+  player_id: row.player_id,
+  character_id: row.character_id,
+  name: row.name,
+  x: row.x,
+  y: row.y,
+  hp: row.hp,
+  hp_max: row.hp_max,
+  power: row.power,
+  power_max: row.power_max,
+  armor: row.armor,
+  resist: row.resist,
+  initiative: row.initiative,
+  statuses: row.statuses,
+  is_alive: row.is_alive,
+  updated_at: row.updated_at,
+});
+
+const mapTurnOrderRow = (row: TurnOrderDbRow): MythicTurnOrderRow => ({
+  combat_session_id: row.combat_session_id,
+  turn_index: row.turn_index,
+  combatant_id: row.combatant_id,
+});
+
+const mapActionEventRow = (row: ActionEventDbRow): MythicActionEventRow => ({
+  id: row.id,
+  combat_session_id: row.combat_session_id,
+  turn_index: row.turn_index,
+  actor_combatant_id: row.actor_combatant_id,
+  event_type: row.event_type,
+  payload: toRecord(row.payload),
+  created_at: row.created_at,
+});
 
 export function useMythicCombatState(campaignId: string | undefined, combatSessionId: string | null | undefined) {
   const [session, setSession] = useState<MythicCombatSessionRow | null>(null);
@@ -123,10 +191,10 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
       if (eErr) throw eErr;
 
       if (isMountedRef.current) {
-        setSession((s ?? null) as unknown as MythicCombatSessionRow | null);
-        setCombatants((c ?? []) as unknown as MythicCombatantRow[]);
-        setTurnOrder((t ?? []) as unknown as MythicTurnOrderRow[]);
-        setEvents((e ?? []) as unknown as MythicActionEventRow[]);
+        setSession(s ? mapSessionRow(s) : null);
+        setCombatants((c ?? []).map(mapCombatantRow));
+        setTurnOrder((t ?? []).map(mapTurnOrderRow));
+        setEvents((e ?? []).map(mapActionEventRow));
       }
     } catch (e) {
       const msg = formatError(e, "Failed to load combat state");

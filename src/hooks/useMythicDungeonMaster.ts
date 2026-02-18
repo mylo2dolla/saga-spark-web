@@ -1,9 +1,8 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { callEdgeFunctionRaw } from "@/lib/edge";
-import { runOperation } from "@/lib/ops/runOperation";
-import type { OperationState } from "@/lib/ops/operationState";
-import { createLogger } from "@/lib/observability/logger";
+import { callEdgeFunction } from "@/lib/edge";
+import type { MythicDmTurnResponse } from "@/types/mythicDm";
+import { applyMythicE2ETurn, isMythicE2E } from "@/ui/e2e/mythicState";
 
 type MessageRole = "user" | "assistant";
 
@@ -12,37 +11,34 @@ export interface MythicDMMessage {
   role: MessageRole;
   content: string;
   timestamp: Date;
-  parsed?: { narration: string; [k: string]: unknown };
+  parsed?: MythicDmTurnResponse;
+}
+
+export interface MythicUiAction {
+  id: string;
+  label: string;
+  intent?: string;
+  prompt?: string;
+  actionTags?: string[];
+  payload?: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 interface SendOptions {
   appendUser?: boolean;
+  actionTags?: string[];
 }
 
-const MAX_HISTORY_MESSAGES = 16;
-const MAX_MESSAGE_CONTENT = 1800;
-
-const trimMessage = (content: string) =>
-  content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
-
-const logger = createLogger("mythic-dm-hook");
+interface MythicDungeonMasterResult {
+  ok: boolean;
+  turn?: MythicDmTurnResponse;
+  error?: string;
+}
 
 export function useMythicDungeonMaster(campaignId: string | undefined) {
   const [messages, setMessages] = useState<MythicDMMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentResponse, setCurrentResponse] = useState("");
-  const [operation, setOperation] = useState<OperationState | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
-
-  const parseResponse = (text: string): { narration: string; [k: string]: unknown } | null => {
-    try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) return JSON.parse(jsonMatch[0]);
-    } catch {
-      // ignore
-    }
-    return { narration: text };
-  };
 
   const sendMessage = useCallback(
     async (content: string, options?: SendOptions) => {
@@ -58,93 +54,119 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
       const shouldAppendUser = options?.appendUser !== false;
       if (shouldAppendUser) setMessages((prev) => [...prev, userMessage]);
 
-      abortRef.current?.abort();
-      const controller = new AbortController();
-      abortRef.current = controller;
       setIsLoading(true);
       setCurrentResponse("");
 
-      let assistantContent = "";
       try {
-        const { result: response } = await runOperation({
-          name: "mythic.dm.send",
-          signal: controller.signal,
-          timeoutMs: 30_000,
-          maxRetries: 1,
-          onUpdate: setOperation,
-          run: async ({ signal }) =>
-            await callEdgeFunctionRaw("mythic-dungeon-master", {
-              requireAuth: true,
-              signal,
-              idempotencyKey: `${campaignId}:${crypto.randomUUID()}`,
-              body: {
-                campaignId,
-                messages: [...messages, userMessage]
-                  .slice(-MAX_HISTORY_MESSAGES)
-                  .map((m) => ({ role: m.role, content: trimMessage(m.content) })),
+        if (isMythicE2E(campaignId)) {
+          const inferredMood =
+            options?.actionTags?.includes("mercy")
+              ? "merciful"
+              : options?.actionTags?.includes("retreat")
+                ? "chaotic-patron"
+                : options?.actionTags?.includes("threaten")
+                  ? "predatory"
+                  : "taunting";
+          const parsedResponse: MythicDmTurnResponse = {
+            narration: `The DM snaps at you, then smirks. "${content}" twists the scene, and the world answers in kind.`,
+            suggestions: [
+              "Press the advantage before the mood shifts.",
+              "Cash in the temporary opening or brace for punishment.",
+              "Decide whether this arc ends in dominance or restraint.",
+            ],
+            quest_ops: [
+              {
+                type: "upsert_arc",
+                arc_key: "e2e-pressure-arc",
+                title: "E2E Pressure Arc",
+                summary: "Survive the DM's mood swings while staying dangerous.",
+                state: "active",
+                priority: 4,
               },
-            }),
+              {
+                type: "upsert_objective",
+                arc_key: "e2e-pressure-arc",
+                objective_key: "e2e-endure",
+                objective_description: "Endure three volatile turns.",
+                objective_target_count: 3,
+                objective_state: "active",
+              },
+              {
+                type: "progress_objective",
+                arc_key: "e2e-pressure-arc",
+                objective_key: "e2e-endure",
+                objective_delta: 1,
+              },
+            ],
+            story_beat: {
+              beat_type: "dm_turn",
+              title: "Mood swing in motion",
+              narrative: `Action received: ${content}`,
+              emphasis: "high",
+              metadata: { action_tags: options?.actionTags ?? [] },
+            },
+            dm_deltas: { menace: 0.04, amusement: 0.02 },
+            tension_deltas: { tension: 0.03, spectacle: 0.02 },
+            memory_events: [
+              {
+                category: "e2e_turn",
+                severity: 2,
+                payload: { action: content },
+              },
+            ],
+            ui_hints: { e2e: true },
+            mood_before: "taunting",
+            mood_after: inferredMood,
+            action_tags: options?.actionTags ?? [],
+            applied: {
+              quest_arcs_updated: 1,
+              quest_objectives_updated: 2,
+              story_beats_created: 1,
+              dm_memory_events_created: 1,
+              mood_after: inferredMood,
+            },
+          };
+
+          applyMythicE2ETurn(campaignId, parsedResponse, content);
+          const assistantMessage: MythicDMMessage = {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: parsedResponse.narration,
+            timestamp: new Date(),
+            parsed: parsedResponse,
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+          setCurrentResponse("");
+          return { message: assistantMessage, parsed: parsedResponse };
+        }
+
+        const payloadMessages = [...messages, userMessage].map((m) => ({ role: m.role, content: m.content }));
+        const response = await callEdgeFunction<MythicDungeonMasterResult>("mythic-dungeon-master", {
+          requireAuth: true,
+          body: {
+            campaignId,
+            messages: payloadMessages,
+            actionTags: options?.actionTags ?? [],
+          },
         });
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({} as Record<string, unknown>));
-          const baseMessage =
-            (typeof errorData.error === "string" && errorData.error) ||
-            (typeof errorData.message === "string" && errorData.message) ||
-            `Request failed: ${response.status}`;
-          const code = typeof errorData.code === "string" ? errorData.code : null;
-          throw new Error(code ? `${baseMessage} [${code}]` : baseMessage);
+        if (response.error) {
+          throw response.error;
+        }
+        if (!response.data?.ok || !response.data.turn) {
+          throw new Error(response.data?.error ?? "Mythic DM returned no turn payload");
         }
 
-        if (!response.body) throw new Error("No response body");
+        const parsedResponse = response.data.turn;
+        const assistantContent = parsedResponse.narration;
+        setCurrentResponse(assistantContent);
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let textBuffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          if (controller.signal.aborted) {
-            await reader.cancel();
-            throw new Error("DM request cancelled");
-          }
-          textBuffer += decoder.decode(value, { stream: true });
-
-          let newlineIndex: number;
-          while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
-            let line = textBuffer.slice(0, newlineIndex);
-            textBuffer = textBuffer.slice(newlineIndex + 1);
-
-            if (line.endsWith("\r")) line = line.slice(0, -1);
-            if (line.startsWith(":")) continue;
-            if (!line.startsWith("data: ")) continue;
-
-            const jsonStr = line.slice(6).trim();
-            if (jsonStr === "[DONE]") break;
-
-            try {
-              const parsed = JSON.parse(jsonStr);
-              const delta = parsed.choices?.[0]?.delta?.content;
-              if (delta) {
-                assistantContent += delta;
-                setCurrentResponse(assistantContent);
-              }
-            } catch {
-              // Incomplete chunk; put back.
-              textBuffer = line + "\n" + textBuffer;
-              break;
-            }
-          }
-        }
-
-        const parsedResponse = parseResponse(assistantContent);
         const assistantMessage: MythicDMMessage = {
           id: crypto.randomUUID(),
           role: "assistant",
           content: assistantContent,
           timestamp: new Date(),
-          parsed: parsedResponse || undefined,
+          parsed: parsedResponse,
         };
 
         setMessages((prev) => [...prev, assistantMessage]);
@@ -152,12 +174,11 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
 
         return { message: assistantMessage, parsed: parsedResponse };
       } catch (error) {
-        logger.error("mythic.dm.send.failed", error);
+        console.error("Mythic DM Error:", error);
         toast.error(error instanceof Error ? error.message : "Failed to reach Mythic DM");
         setCurrentResponse("");
         throw error;
       } finally {
-        abortRef.current = null;
         setIsLoading(false);
       }
     },
@@ -165,22 +186,15 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
   );
 
   const clearMessages = useCallback(() => {
-    abortRef.current?.abort();
     setMessages([]);
     setCurrentResponse("");
-  }, []);
-
-  const cancelMessage = useCallback(() => {
-    abortRef.current?.abort();
   }, []);
 
   return {
     messages,
     isLoading,
     currentResponse,
-    operation,
     sendMessage,
     clearMessages,
-    cancelMessage,
   };
 }

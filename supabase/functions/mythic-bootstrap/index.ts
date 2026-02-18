@@ -23,6 +23,15 @@ const syllableB = [
   "hold", "bridge", "hollow", "reach", "mark", "port", "spire", "vale", "cross", "ford", "fall", "gate",
 ];
 const logger = createLogger("mythic-bootstrap");
+type TemplateKey =
+  | "custom"
+  | "graphic_novel_fantasy"
+  | "sci_fi_ruins"
+  | "post_apoc_warlands"
+  | "gothic_horror"
+  | "mythic_chaos"
+  | "dark_mythic_horror"
+  | "post_apocalypse";
 
 const hashSeed = (input: string): number => {
   let hash = 0;
@@ -38,7 +47,58 @@ const makeName = (seed: number, label: string): string => {
   return `${a}${b}`;
 };
 
-const makeTownState = (seed: number) => {
+const normalizeTemplate = (value: unknown): TemplateKey => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (
+    raw === "custom" ||
+    raw === "graphic_novel_fantasy" ||
+    raw === "sci_fi_ruins" ||
+    raw === "post_apoc_warlands" ||
+    raw === "gothic_horror" ||
+    raw === "mythic_chaos" ||
+    raw === "dark_mythic_horror" ||
+    raw === "post_apocalypse"
+  ) {
+    return raw;
+  }
+  return "custom";
+};
+
+const makeBaselineFactions = (template: TemplateKey): Array<{ name: string; description: string; tags: string[] }> => {
+  switch (template) {
+    case "sci_fi_ruins":
+      return [
+        { name: "Relay Wardens", description: "Custodians of relic networks.", tags: ["order", "tech", "salvage"] },
+        { name: "Neon Scavengers", description: "High-risk salvage crews.", tags: ["trade", "black_market", "scavenger"] },
+      ];
+    case "post_apoc_warlands":
+    case "post_apocalypse":
+      return [
+        { name: "Iron Convoy", description: "Supply-line enforcers.", tags: ["trade", "militia", "survival"] },
+        { name: "Ash Cartel", description: "Warland smugglers and raiders.", tags: ["crime", "raider", "black_market"] },
+      ];
+    case "gothic_horror":
+    case "dark_mythic_horror":
+      return [
+        { name: "Candle Covenant", description: "Wardens of ritual order.", tags: ["faith", "order", "ritual"] },
+        { name: "Grave Syndicate", description: "Occult brokers and grave thieves.", tags: ["occult", "crime", "relics"] },
+      ];
+    case "mythic_chaos":
+      return [
+        { name: "Rift Sentinels", description: "Stabilizers of chaotic frontiers.", tags: ["order", "arcane", "guard"] },
+        { name: "Laughing Spiral", description: "Chaos profiteers and cultists.", tags: ["chaos", "cult", "instability"] },
+      ];
+    case "graphic_novel_fantasy":
+    case "custom":
+    default:
+      return [
+        { name: "Gilded Accord", description: "Merchant power bloc.", tags: ["trade", "guild", "diplomacy"] },
+        { name: "Nightwatch Compact", description: "Regional defenders.", tags: ["guard", "order", "militia"] },
+      ];
+  }
+};
+
+const makeTownState = (seed: number, templateKey: TemplateKey, factionNames: string[]) => {
   const vendorCount = rngInt(seed, "town:vendors", 1, 3);
   const vendors = Array.from({ length: vendorCount }).map((_, idx) => ({
     id: `vendor_${idx + 1}`,
@@ -53,10 +113,11 @@ const makeTownState = (seed: number) => {
 
   return {
     seed,
+    template_key: templateKey,
     vendors,
     services: ["inn", "healer", "notice_board"],
     gossip: [],
-    factions_present: [],
+    factions_present: factionNames,
     guard_alertness: rngInt(seed, "town:guard", 10, 60) / 100,
     bounties: [],
     rumors: [],
@@ -158,6 +219,41 @@ serve(async (req) => {
     await svc.schema("mythic").from("dm_world_tension").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
 
     const warnings: string[] = [];
+    let templateKey: TemplateKey = "custom";
+    const profileRow = await svc
+      .schema("mythic")
+      .from("world_profiles")
+      .select("template_key")
+      .eq("campaign_id", campaignId)
+      .maybeSingle();
+    if (!profileRow.error && profileRow.data?.template_key) {
+      templateKey = normalizeTemplate(profileRow.data.template_key);
+    } else {
+      const fallbackProfile = await svc
+        .schema("mythic")
+        .from("campaign_world_profiles")
+        .select("template_key")
+        .eq("campaign_id", campaignId)
+        .maybeSingle();
+      if (!fallbackProfile.error && fallbackProfile.data?.template_key) {
+        templateKey = normalizeTemplate(fallbackProfile.data.template_key);
+      }
+    }
+
+    const baselineFactions = makeBaselineFactions(templateKey);
+    const factionNames = baselineFactions.map((entry) => entry.name);
+    const { error: factionSeedError } = await svc.schema("mythic").from("factions").upsert(
+      baselineFactions.map((faction) => ({
+        campaign_id: campaignId,
+        name: faction.name,
+        description: faction.description,
+        tags: faction.tags,
+      })),
+      { onConflict: "campaign_id,name" },
+    );
+    if (factionSeedError) {
+      warnings.push(`faction_seed_warning:${factionSeedError.message}`);
+    }
 
     // Ensure there is an active board.
     const { data: activeBoard, error: boardError } = await svc
@@ -174,7 +270,7 @@ serve(async (req) => {
 
     if (!activeBoard) {
       const seedBase = hashSeed(`bootstrap:${campaignId}`);
-      const townState = makeTownState(seedBase);
+      const townState = makeTownState(seedBase, templateKey, factionNames);
 
       const { error: insertBoardError } = await svc.schema("mythic").from("boards").insert({
         campaign_id: campaignId,
@@ -186,15 +282,17 @@ serve(async (req) => {
 
       if (insertBoardError) throw insertBoardError;
 
-      await svc.schema("mythic").from("factions").upsert(
-        {
-          campaign_id: campaignId,
-          name: makeName(seedBase, "faction"),
-          description: "A local power bloc with interests in keeping order and collecting leverage.",
-          tags: ["order", "influence", "watchers"],
-        },
-        { onConflict: "campaign_id,name" },
-      );
+      if (factionNames.length === 0) {
+        await svc.schema("mythic").from("factions").upsert(
+          {
+            campaign_id: campaignId,
+            name: makeName(seedBase, "faction"),
+            description: "A local power bloc with interests in keeping order and collecting leverage.",
+            tags: ["order", "influence", "watchers"],
+          },
+          { onConflict: "campaign_id,name" },
+        );
+      }
     }
 
     const profileTitle = String((campaign as { name?: string | null })?.name ?? "").trim();

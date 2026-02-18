@@ -17,15 +17,21 @@ export interface MythicSkillLite {
   cooldown_turns: number;
 }
 
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
 function pct(n: number, d: number): number {
   if (!Number.isFinite(n) || !Number.isFinite(d) || d <= 0) return 0;
   return Math.max(0, Math.min(1, n / d));
 }
 
 function shortEvent(e: MythicActionEventRow): string {
-  if (e.event_type === "skill_used") return `skill_used: ${String((e.payload as any)?.skill_name ?? (e.payload as any)?.skill_id ?? "")}`;
-  if (e.event_type === "damage") return `damage: ${String((e.payload as any)?.damage_to_hp ?? "")}`;
-  if (e.event_type === "death") return `death: ${String((e.payload as any)?.target_combatant_id ?? "")}`;
+  const payload = asObject(e.payload);
+  if (e.event_type === "skill_used") return `skill_used: ${String(payload.skill_name ?? payload.skill_id ?? "")}`;
+  if (e.event_type === "damage") return `damage: ${String(payload.damage_to_hp ?? "")}`;
+  if (e.event_type === "death") return `death: ${String(payload.target_combatant_id ?? "")}`;
   return `${e.event_type}`;
 }
 
@@ -66,13 +72,14 @@ export function MythicCombatPanel(props: {
 
   const cooldowns = useMemo(() => {
     if (!playerActor) return new Map<string, number>();
-    const raw = Array.isArray((playerActor as any).statuses) ? (playerActor as any).statuses : [];
+    const raw = Array.isArray(playerActor.statuses) ? playerActor.statuses : [];
     const map = new Map<string, number>();
     for (const s of raw) {
       if (!s || typeof s !== "object") continue;
-      const id = String((s as any).id ?? "");
+      const status = asObject(s);
+      const id = String(status.id ?? "");
       if (!id.startsWith("cd:")) continue;
-      const expires = Number((s as any).expires_turn ?? 0);
+      const expires = Number(status.expires_turn ?? 0);
       const skillId = id.replace("cd:", "");
       const remaining = Math.max(0, Math.floor(expires - props.currentTurnIndex));
       map.set(skillId, remaining);
