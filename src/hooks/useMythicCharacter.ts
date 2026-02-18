@@ -19,6 +19,7 @@ export function useMythicCharacter(campaignId: string | undefined) {
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const inFlightRef = useRef(false);
+  const pendingRefetchRef = useRef(false);
 
   const fetchBundle = useCallback(async () => {
     if (!campaignId || !isUuid(campaignId)) {
@@ -30,9 +31,13 @@ export function useMythicCharacter(campaignId: string | undefined) {
       return;
     }
 
-    if (inFlightRef.current) return;
+    if (inFlightRef.current) {
+      pendingRefetchRef.current = true;
+      return;
+    }
     try {
       inFlightRef.current = true;
+      pendingRefetchRef.current = false;
       if (isMountedRef.current) {
         setIsLoading(true);
         setError(null);
@@ -131,6 +136,13 @@ export function useMythicCharacter(campaignId: string | undefined) {
     } finally {
       inFlightRef.current = false;
       if (isMountedRef.current) setIsLoading(false);
+      if (pendingRefetchRef.current && isMountedRef.current) {
+        pendingRefetchRef.current = false;
+        queueMicrotask(() => {
+          if (!isMountedRef.current) return;
+          void fetchBundle();
+        });
+      }
     }
   }, [campaignId]);
 
