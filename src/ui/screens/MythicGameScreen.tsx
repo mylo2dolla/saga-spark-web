@@ -16,8 +16,13 @@ import { useMythicCombat } from "@/hooks/useMythicCombat";
 import { useMythicCombatState } from "@/hooks/useMythicCombatState";
 import { MythicCombatPanel } from "@/components/mythic/MythicCombatPanel";
 import { MythicInventoryPanel } from "@/components/mythic/MythicInventoryPanel";
+import { PixelCombatBoard, type CombatFocus } from "@/components/mythic/combat/PixelCombatBoard";
+import { SkillTray } from "@/components/mythic/combat/SkillTray";
+import { TurnQueueStrip } from "@/components/mythic/combat/TurnQueueStrip";
+import { buildCombatCallouts } from "@/components/mythic/combat/combatNarration";
 import { callEdgeFunction } from "@/lib/edge";
 import { sumStatMods, splitInventory, type MythicInventoryRow } from "@/lib/mythicEquipment";
+import type { MythicSkill } from "@/types/mythic";
 import { toast } from "sonner";
 
 function prettyJson(value: unknown): string {
@@ -249,6 +254,17 @@ export default function MythicGameScreen() {
     return c?.id ?? null;
   }, [combatState.combatants, user]);
 
+  useEffect(() => {
+    // Combat focus is per-session UI state.
+    if (board?.board_type !== "combat") {
+      setCombatFocus(null);
+      setHoveredCombatSkill(null);
+      return;
+    }
+    setCombatFocus(null);
+    setHoveredCombatSkill(null);
+  }, [board?.board_type, combatSessionId]);
+
   const invRowsSafe = useMemo(
     () => (Array.isArray(items) ? (items as unknown as MythicInventoryRow[]) : []),
     [items],
@@ -276,6 +292,8 @@ export default function MythicGameScreen() {
   const [isSavingLoadout, setIsSavingLoadout] = useState(false);
   const [isAdvancingTurn, setIsAdvancingTurn] = useState(false);
   const autoTickKeyRef = useRef<string | null>(null);
+  const [combatFocus, setCombatFocus] = useState<CombatFocus>(null);
+  const [hoveredCombatSkill, setHoveredCombatSkill] = useState<MythicSkill | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<MythicPanelTab>("character");
 
@@ -315,6 +333,28 @@ export default function MythicGameScreen() {
     [board?.board_type, board?.state_json],
   );
   const dmContextSummary = useMemo(() => summarizeDmContextPayload(dm.data), [dm.data]);
+
+  const combatGrid = useMemo(() => {
+    const raw = board?.board_type === "combat" ? (board.state_json as any)?.grid : null;
+    const width = typeof raw?.width === "number" && Number.isFinite(raw.width) ? Math.max(4, Math.floor(raw.width)) : 12;
+    const height = typeof raw?.height === "number" && Number.isFinite(raw.height) ? Math.max(4, Math.floor(raw.height)) : 8;
+    return { width, height };
+  }, [board?.board_type, board?.state_json]);
+
+  const combatBlockedTiles = useMemo(() => {
+    if (board?.board_type !== "combat") return [];
+    const raw = (board.state_json as any)?.blocked_tiles;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((t: any) => ({ x: Number(t?.x), y: Number(t?.y) }))
+      .filter((t) => Number.isFinite(t.x) && Number.isFinite(t.y))
+      .map((t) => ({ x: Math.floor(t.x), y: Math.floor(t.y) }));
+  }, [board?.board_type, board?.state_json]);
+
+  const combatStartedFrom = useMemo(() => {
+    const raw = (combatState.session?.scene_json as any)?.started_from;
+    return raw === "town" || raw === "travel" || raw === "dungeon" ? (raw as any) : null;
+  }, [combatState.session?.scene_json]);
 
   const transitionBoard = async (toBoardType: "town" | "travel" | "dungeon", reason: string) => {
     if (!campaignId) return;
@@ -410,6 +450,10 @@ export default function MythicGameScreen() {
     () => combatState.combatants.find((c) => c.id === combatState.activeTurnCombatantId) ?? null,
     [combatState.activeTurnCombatantId, combatState.combatants],
   );
+  const playerCombatantCount = useMemo(
+    () => combatState.combatants.filter((c) => c.entity_type === "player").length,
+    [combatState.combatants],
+  );
   const canAdvanceNpcTurn = Boolean(
     board?.board_type === "combat" &&
     combatSessionId &&
@@ -417,6 +461,8 @@ export default function MythicGameScreen() {
     activeTurnCombatant &&
     activeTurnCombatant.entity_type !== "player",
   );
+  // Auto-advance NPC turns only in single-player combat to avoid multiplayer races.
+  const shouldAutoAdvanceNpcTurn = Boolean(canAdvanceNpcTurn && playerCombatantCount <= 1);
   const tickCombat = combat.tickCombat;
   const refetchCombatState = combatState.refetch;
   const refetchDm = dm.refetch;
@@ -425,7 +471,12 @@ export default function MythicGameScreen() {
     if (!campaignId || !combatSessionId || !canAdvanceNpcTurn) return;
     setIsAdvancingTurn(true);
     try {
-      const result = await tickCombat({ campaignId, combatSessionId, maxSteps: 1 });
+      const result = await tickCombat({
+        campaignId,
+        combatSessionId,
+        maxSteps: 1,
+        currentTurnIndex: combatState.session?.current_turn_index,
+      });
       await Promise.all([refetchCombatState(), refetch()]);
       if (result.ok && result.data?.ended) {
         await refetchCharacter();
@@ -433,7 +484,49 @@ export default function MythicGameScreen() {
     } finally {
       setIsAdvancingTurn(false);
     }
-  }, [campaignId, canAdvanceNpcTurn, combatSessionId, refetch, refetchCharacter, refetchCombatState, tickCombat]);
+  }, [
+    campaignId,
+    canAdvanceNpcTurn,
+    combatSessionId,
+    combatState.session?.current_turn_index,
+    refetch,
+    refetchCharacter,
+    refetchCombatState,
+    tickCombat,
+  ]);
+
+  const castPlayerSkill = useCallback(
+    async (args: {
+      skillId: string;
+      target:
+        | { kind: "self" }
+        | { kind: "combatant"; combatant_id: string }
+        | { kind: "tile"; x: number; y: number };
+    }) => {
+      if (!campaignId || !combatSessionId || !playerCombatantId) return;
+      const result = await combat.useSkill({
+        campaignId,
+        combatSessionId,
+        actorCombatantId: playerCombatantId,
+        skillId: args.skillId,
+        turnIndex: combatState.session?.current_turn_index,
+        target: args.target,
+      });
+      await Promise.all([combatState.refetch(), refetch()]);
+      if (result.ok && result.ended) {
+        await refetchCharacter();
+      }
+    },
+    [
+      campaignId,
+      combat,
+      combatSessionId,
+      combatState,
+      playerCombatantId,
+      refetch,
+      refetchCharacter,
+    ],
+  );
 
   const bossPhaseLabel = useMemo(() => {
     if (!combatState.events.length) return null;
@@ -442,6 +535,15 @@ export default function MythicGameScreen() {
     const phase = Number((phaseShift.payload as Record<string, unknown>)?.phase ?? 0);
     return phase > 0 ? `Boss Phase ${phase}` : "Boss Phase";
   }, [combatState.events]);
+
+  const combatCallouts = useMemo(() => {
+    if (board?.board_type !== "combat") return [];
+    return buildCombatCallouts({
+      events: combatState.events,
+      combatants: combatState.combatants,
+      limit: 18,
+    });
+  }, [board?.board_type, combatState.combatants, combatState.events]);
 
   const storyActions = useMemo(() => {
     const boardType = board?.board_type ?? "town";
@@ -483,7 +585,7 @@ export default function MythicGameScreen() {
   }, []);
 
   useEffect(() => {
-    if (!canAdvanceNpcTurn || isAdvancingTurn || combat.isTicking) return;
+    if (!shouldAutoAdvanceNpcTurn || isAdvancingTurn || combat.isTicking) return;
     const key = `${combatSessionId}:${combatState.session?.current_turn_index ?? -1}:${activeTurnCombatant?.id ?? "none"}`;
     if (autoTickKeyRef.current === key) return;
     autoTickKeyRef.current = key;
@@ -491,7 +593,7 @@ export default function MythicGameScreen() {
   }, [
     advanceNpcTurn,
     activeTurnCombatant?.id,
-    canAdvanceNpcTurn,
+    shouldAutoAdvanceNpcTurn,
     combat.isTicking,
     combatSessionId,
     combatState.session?.current_turn_index,
@@ -633,6 +735,23 @@ export default function MythicGameScreen() {
                       </Button>
                     </div>
                   ) : null}
+                  {board?.board_type === "combat" && combatCallouts.length > 0 ? (
+                    <div className="overflow-hidden rounded-lg border border-border bg-background/30">
+                      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                        <div className="text-sm font-semibold">Combat Feed</div>
+                        <div className="text-xs text-muted-foreground">local, deterministic</div>
+                      </div>
+                      <div className="max-h-[140px] overflow-auto p-3 text-xs text-muted-foreground">
+                        <div className="space-y-1">
+                          {combatCallouts.map((line, idx) => (
+                            <div key={`${idx}:${line}`} className="truncate">
+                              {line}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="min-h-[420px] overflow-hidden rounded-lg border border-border bg-background/40">
                     <MythicDMChat
                       campaignId={campaignId}
@@ -668,26 +787,44 @@ export default function MythicGameScreen() {
                   </div>
                 </div>
                 <div className="grid min-h-0 gap-3 p-3">
-                  <div className="min-h-[300px] overflow-hidden rounded-lg border border-border bg-background/30 [perspective:1200px]">
-                    <AnimatePresence mode="wait">
-                      <motion.div
-                        key={modeKey}
-                        variants={pageTurn}
-                        initial="initial"
-                        animate="animate"
-                        exit="exit"
-                        transition={{ duration: 0.35, ease: "easeInOut" }}
-                        className="h-full p-3"
-                      >
-                        <pre className="max-h-[320px] overflow-auto text-xs text-muted-foreground">{prettyJson(boardStateSummary)}</pre>
-                      </motion.div>
-                    </AnimatePresence>
-                  </div>
+                  {board.board_type === "combat" && combatSessionId ? (
+                    <div className="min-h-[360px] overflow-hidden rounded-lg border border-border bg-background/30 p-3">
+                      <PixelCombatBoard
+                        grid={combatGrid}
+                        blockedTiles={combatBlockedTiles}
+                        combatants={combatState.combatants}
+                        events={combatState.events}
+                        activeTurnCombatantId={combatState.activeTurnCombatantId}
+                        playerCombatantId={playerCombatantId}
+                        focus={combatFocus}
+                        hoveredSkill={hoveredCombatSkill}
+                        startedFrom={combatStartedFrom}
+                        onSelectCombatant={(combatantId) => setCombatFocus({ kind: "combatant", combatantId })}
+                        onSelectTile={(x, y) => setCombatFocus({ kind: "tile", x, y })}
+                      />
+                    </div>
+                  ) : (
+                    <div className="min-h-[300px] overflow-hidden rounded-lg border border-border bg-background/30 [perspective:1200px]">
+                      <AnimatePresence mode="wait">
+                        <motion.div
+                          key={modeKey}
+                          variants={pageTurn}
+                          initial="initial"
+                          animate="animate"
+                          exit="exit"
+                          transition={{ duration: 0.35, ease: "easeInOut" }}
+                          className="h-full p-3"
+                        >
+                          <pre className="max-h-[320px] overflow-auto text-xs text-muted-foreground">{prettyJson(boardStateSummary)}</pre>
+                        </motion.div>
+                      </AnimatePresence>
+                    </div>
+                  )}
 
                   {board.board_type === "combat" && combatSessionId ? (
                     <div className="min-h-[300px] overflow-hidden rounded-lg border border-border bg-background/30 p-3">
                       <div className="mb-2 flex items-center justify-between">
-                        <div className="text-sm font-semibold">Combat Playback</div>
+                        <div className="text-sm font-semibold">Combat</div>
                         <div className="text-xs text-muted-foreground">
                           {combatState.isLoading ? "loading..." : combatState.error ? "error" : combatState.session?.status ?? "unknown"}
                         </div>
@@ -695,44 +832,153 @@ export default function MythicGameScreen() {
                       {combatState.error ? (
                         <div className="text-sm text-destructive">{combatState.error}</div>
                       ) : (
-                        <MythicCombatPanel
-                          campaignId={campaignId}
-                          combatSessionId={combatSessionId}
-                          combatants={combatState.combatants}
-                          activeTurnCombatantId={combatState.activeTurnCombatantId}
-                          events={combatState.events}
-                          playerCombatantId={playerCombatantId}
-                          currentTurnIndex={combatState.session?.current_turn_index ?? 0}
-                          skills={skills.map((s) => ({
-                            id: s.id,
-                            kind: s.kind,
-                            name: s.name,
-                            description: s.description,
-                            targeting: s.targeting,
-                            range_tiles: s.range_tiles,
-                            cooldown_turns: s.cooldown_turns,
-                          }))}
-                          isActing={combat.isActing}
-                          isTicking={isAdvancingTurn || combat.isTicking}
-                          canTick={canAdvanceNpcTurn}
-                          bossPhaseLabel={bossPhaseLabel}
-                          onTickTurn={async () => {
-                            await advanceNpcTurn();
-                          }}
-                          onUseSkill={async ({ actorCombatantId, skillId, target }) => {
-                            const result = await combat.useSkill({
-                              campaignId,
-                              combatSessionId,
-                              actorCombatantId,
-                              skillId,
-                              target,
-                            });
-                            await Promise.all([combatState.refetch(), refetch()]);
-                            if (result.ok && result.ended) {
-                              await refetchCharacter();
-                            }
-                          }}
-                        />
+                        <div className="grid gap-3">
+                          <TurnQueueStrip
+                            combatants={combatState.combatants}
+                            turnOrder={combatState.turnOrder}
+                            currentTurnIndex={combatState.session?.current_turn_index ?? 0}
+                            playerCombatantId={playerCombatantId}
+                          />
+
+                          <div className="rounded-lg border border-border bg-background/20 p-3">
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <div className="text-xs font-semibold text-muted-foreground">Inspect</div>
+                              <div className="flex gap-2">
+                                {canAdvanceNpcTurn ? (
+                                  <Button
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => void advanceNpcTurn()}
+                                    disabled={isAdvancingTurn || combat.isTicking}
+                                  >
+                                    {isAdvancingTurn || combat.isTicking ? "Advancing..." : "Advance NPC Turn"}
+                                  </Button>
+                                ) : null}
+                                <Button size="sm" variant="outline" onClick={() => setCombatFocus(null)}>
+                                  Clear
+                                </Button>
+                              </div>
+                            </div>
+
+                            {(() => {
+                              if (!combatFocus) {
+                                return (
+                                  <div className="text-xs text-muted-foreground">
+                                    Tap a combatant or a tile to inspect. Then quick-cast from the tray below.
+                                  </div>
+                                );
+                              }
+                              if (combatFocus.kind === "combatant") {
+                                const c = combatState.combatants.find((x) => x.id === combatFocus.combatantId) ?? null;
+                                if (!c) return <div className="text-xs text-muted-foreground">Unknown combatant.</div>;
+                                return (
+                                  <div className="space-y-1 text-xs text-muted-foreground">
+                                    <div className="text-sm font-semibold text-foreground">{c.name}</div>
+                                    <div>
+                                      HP {Math.floor(c.hp)}/{Math.floor(c.hp_max)} · armor {Math.floor(c.armor)} · ({c.x},{c.y})
+                                    </div>
+                                    {Array.isArray(c.statuses) && c.statuses.length > 0 ? (
+                                      <div className="truncate">status: {(c.statuses as any[]).map((s) => String((s as any)?.id ?? "status")).slice(0, 4).join(", ")}</div>
+                                    ) : (
+                                      <div>status: none</div>
+                                    )}
+                                    <div className="flex flex-wrap gap-2 pt-2">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => void mythicDm.sendMessage(`Assess ${c.name} in 1-2 short sentences. Keep it tactical.`)}
+                                      >
+                                        Assess
+                                      </Button>
+                                    </div>
+                                  </div>
+                                );
+                              }
+                              const key = `${combatFocus.x},${combatFocus.y}`;
+                              const blocked = combatBlockedTiles.some((t) => t.x === combatFocus.x && t.y === combatFocus.y);
+                              const moveSkill = skills.find((s) => (s.name ?? "").trim() === "Move" && typeof s.id === "string") ?? null;
+                              return (
+                                <div className="space-y-1 text-xs text-muted-foreground">
+                                  <div className="text-sm font-semibold text-foreground">
+                                    Tile ({combatFocus.x},{combatFocus.y})
+                                  </div>
+                                  <div>{blocked ? "Obstacle / blocked" : "Open ground"}</div>
+                                  <div className="flex flex-wrap gap-2 pt-2">
+                                    {moveSkill ? (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={blocked}
+                                        onClick={() => void castPlayerSkill({ skillId: moveSkill.id as string, target: { kind: "tile", x: combatFocus.x, y: combatFocus.y } })}
+                                      >
+                                        Move Here
+                                      </Button>
+                                    ) : null}
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => void mythicDm.sendMessage(`Inspect tile (${combatFocus.x},${combatFocus.y}) briefly. What matters tactically?`)}
+                                    >
+                                      Inspect
+                                    </Button>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+
+                          <SkillTray
+                            skills={skills}
+                            combatants={combatState.combatants}
+                            blockedTiles={combatBlockedTiles}
+                            currentTurnIndex={combatState.session?.current_turn_index ?? 0}
+                            playerCombatantId={playerCombatantId}
+                            activeTurnCombatantId={combatState.activeTurnCombatantId}
+                            focus={combatFocus}
+                            hoveredSkillId={hoveredCombatSkill?.id ?? null}
+                            onHoverSkill={setHoveredCombatSkill}
+                            onCast={async ({ actorCombatantId, skillId, target }) => {
+                              if (!actorCombatantId) return;
+                              await castPlayerSkill({ skillId, target });
+                            }}
+                          />
+
+                          <details className="rounded-lg border border-border bg-background/20 p-3">
+                            <summary className="cursor-pointer text-xs font-semibold text-muted-foreground">
+                              Details (event log + raw grid)
+                            </summary>
+                            <div className="mt-3">
+                              <MythicCombatPanel
+                                campaignId={campaignId}
+                                combatSessionId={combatSessionId}
+                                combatants={combatState.combatants}
+                                activeTurnCombatantId={combatState.activeTurnCombatantId}
+                                events={combatState.events}
+                                playerCombatantId={playerCombatantId}
+                                currentTurnIndex={combatState.session?.current_turn_index ?? 0}
+                                skills={skills.map((s) => ({
+                                  id: s.id,
+                                  kind: s.kind,
+                                  name: s.name,
+                                  description: s.description,
+                                  targeting: s.targeting,
+                                  range_tiles: s.range_tiles,
+                                  cooldown_turns: s.cooldown_turns,
+                                }))}
+                                isActing={combat.isActing}
+                                isTicking={isAdvancingTurn || combat.isTicking}
+                                canTick={canAdvanceNpcTurn}
+                                bossPhaseLabel={bossPhaseLabel}
+                                onTickTurn={async () => {
+                                  await advanceNpcTurn();
+                                }}
+                                onUseSkill={async ({ actorCombatantId, skillId, target }) => {
+                                  await castPlayerSkill({ skillId, target });
+                                }}
+                              />
+                            </div>
+                          </details>
+                        </div>
                       )}
                     </div>
                   ) : (

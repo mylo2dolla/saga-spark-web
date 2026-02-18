@@ -20,8 +20,10 @@ export function useMythicCombat() {
     try {
       const { result: data } = await runOperation({
         name: "combat.start",
-        timeoutMs: 15_000,
-        maxRetries: 1,
+        // Combat start can legitimately take longer (DB writes + board transition).
+        timeoutMs: 25_000,
+        // Never retry combat start automatically; it risks creating duplicate sessions.
+        maxRetries: 0,
         onUpdate: setStartOperation,
         run: async ({ signal }) => {
           const { data, error } = await callEdgeFunction<{ ok: boolean; combat_session_id: string }>("mythic-combat-start", {
@@ -52,6 +54,7 @@ export function useMythicCombat() {
     combatSessionId: string;
     actorCombatantId: string;
     skillId: string;
+    turnIndex?: number;
     target:
       | { kind: "self" }
       | { kind: "combatant"; combatant_id: string }
@@ -59,6 +62,12 @@ export function useMythicCombat() {
   }) => {
     setIsActing(true);
     try {
+      const compactTarget = (() => {
+        if (args.target.kind === "self") return "self";
+        if (args.target.kind === "combatant") return `c:${args.target.combatant_id}`;
+        return `t:${args.target.x},${args.target.y}`;
+      })();
+      const { turnIndex, ...body } = args;
       const { result: data } = await runOperation({
         name: "combat.use_skill",
         timeoutMs: 15_000,
@@ -70,8 +79,9 @@ export function useMythicCombat() {
             {
               requireAuth: true,
               signal,
-              idempotencyKey: `${args.combatSessionId}:${args.actorCombatantId}:${args.skillId}:${JSON.stringify(args.target)}`,
-              body: args,
+              // Include turn index to prevent duplicate casts under fast taps / replays.
+              idempotencyKey: `${args.combatSessionId}:use:t${Number.isFinite(turnIndex) ? turnIndex : "?"}:a${args.actorCombatantId}:s${args.skillId}:${compactTarget}`,
+              body,
             },
           );
           if (error) throw error;
@@ -94,9 +104,12 @@ export function useMythicCombat() {
     campaignId: string;
     combatSessionId: string;
     maxSteps?: number;
+    currentTurnIndex?: number;
   }) => {
     setIsTicking(true);
     try {
+      const steps = Math.max(1, Math.min(10, Math.floor(args.maxSteps ?? 1)));
+      const compactTurn = Number.isFinite(args.currentTurnIndex) ? Math.floor(args.currentTurnIndex as number) : null;
       const { result: data } = await runOperation({
         name: "combat.tick",
         timeoutMs: 15_000,
@@ -114,11 +127,12 @@ export function useMythicCombat() {
             {
               requireAuth: true,
               signal,
-              idempotencyKey: `${args.combatSessionId}:tick:${Math.max(1, Math.min(10, Math.floor(args.maxSteps ?? 1)))}`,
+              // Include current turn index to prevent duplicate ticks under fast UI retries.
+              idempotencyKey: `${args.combatSessionId}:tick:t${compactTurn ?? "?"}:steps${steps}`,
               body: {
                 campaignId: args.campaignId,
                 combatSessionId: args.combatSessionId,
-                maxSteps: Math.max(1, Math.min(10, Math.floor(args.maxSteps ?? 1))),
+                maxSteps: steps,
               },
             },
           );
