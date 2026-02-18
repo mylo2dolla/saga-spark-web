@@ -1,0 +1,97 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "version: 0.0.0"
+    - generic [ref=e6]: "build: 2026-02-11T10:43:56.581Z"
+    - generic [ref=e7]: "git: b134c35"
+    - generic [ref=e8]: "runId: bff7b1e3-1670-4da4-a083-ef3cf28c41ba"
+    - generic [ref=e9]: "now: 2026-02-11T10:46:05.030Z"
+    - generic [ref=e10]: "base: /"
+    - generic [ref=e11]: "href: http://localhost:8080/login"
+  - generic [ref=e40]:
+    - complementary [ref=e41]:
+      - generic [ref=e42]: Saga Spark
+      - navigation [ref=e43]:
+        - link "Dashboard" [ref=e44] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e45] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Game" [ref=e46] [cursor=pointer]:
+          - /url: /game
+        - link "Servers/Admin" [ref=e47] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e48]:
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - generic [ref=e51]: "Auth: psylus13@gmail.com"
+          - generic [ref=e52]: "DB: ok"
+        - generic [ref=e53]: /game/960d7765-5916-4293-94a9-71c3e566b719/create-character
+      - generic [ref=e54]:
+        - generic [ref=e55]:
+          - generic [ref=e56]:
+            - generic [ref=e57]:
+              - generic [ref=e58]: Mythic Class Forge
+              - generic [ref=e59]: Describe your class. The system generates a real kit in Supabase (mythic schema).
+            - button "Cancel" [ref=e60] [cursor=pointer]
+          - generic [ref=e62]:
+            - generic [ref=e63]:
+              - generic [ref=e64]: Character Name
+              - textbox "Character Name" [ref=e65]:
+                - /placeholder: e.g. Nyx
+                - text: paws
+            - generic [ref=e66]:
+              - generic [ref=e67]: Class Concept
+              - textbox "Class Concept" [active] [ref=e68]:
+                - /placeholder: e.g. "werewolf ninja pyromancer" or "goblin priest of broken vending machines"
+                - text: super deadly ninja
+              - generic [ref=e69]: Violence/gore allowed. Sexual content forbidden.
+            - button "Generate Kit" [ref=e71] [cursor=pointer]
+        - generic [ref=e72]:
+          - generic [ref=e73]: "route: /game/960d7765-5916-4293-94a9-71c3e566b719/create-character"
+          - generic [ref=e74]: "campaignId: 960d7765-5916-4293-94a9-71c3e566b719"
+          - generic [ref=e75]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+          - generic [ref=e76]: "hasSession: yes"
+          - generic [ref=e77]: "authLoading: false"
+          - generic [ref=e78]: "characterLoading: false"
+          - generic [ref=e79]: "characterExists: no"
+          - generic [ref=e80]: "characterError: none"
+          - generic [ref=e81]: "engineReady: yes"
+          - generic [ref=e82]: "lastError: none"
+          - generic [ref=e83]: "lastAction: none"
+        - generic [ref=e84]:
+          - generic [ref=e85]: DEV_DEBUG Overlay
+          - generic [ref=e86]:
+            - button "Force Save Now" [ref=e87] [cursor=pointer]
+            - button "Force Reload From DB" [ref=e88] [cursor=pointer]
+          - button "Supabase Connectivity Self-Test" [ref=e89] [cursor=pointer]
+          - generic [ref=e90]: "{ \"supabaseProjectRef\": \"othlyxwtigxzczeffzee\", \"campaignId\": \"960d7765-5916-4293-94a9-71c3e566b719\", \"loadedFromSupabase\": false, \"lastSavedAt\": 1770806914489, \"lastLoadedAt\": null, \"networkHealth\": { \"requestsPerMinute\": 14, \"lastRequestAt\": 1770806914488, \"lastDbWriteAt\": 1770806914488, \"lastDbReadAt\": 1770806911264, \"lastDbLoadAt\": null, \"lastEdgeCallAt\": 1770806900872, \"lastEdgeResponseAt\": 1770806908986, \"profilesReads\": 1, \"campaignMembersReads\": 0, \"campaignsReads\": 2, \"savesReads\": 0 }, \"locationsSize\": 9, \"locationIds\": [ \"willowdale_village\", \"everia_city\", \"dwarven_mines\", \"goblin_caves\", \"dark_elf_ruins\", \"old_oak_forest\", \"outskirts\", \"town\", \"roadside-shrine\" ], \"locationNames\": [ \"Willowdale Village\", \"Everia City\", \"Dwarven Mines\", \"Goblin Caves\", \"Dark Elf Ruins\", \"Old Oak Forest\", \"Outskirts\", \"Town\", \"Roadside Shrine\" ], \"currentLocationId\": \"willowdale_village\", \"connectedTo\": [ \"everia_city\", \"dark_elf_ruins\", \"old_oak_forest\", \"outskirts\", \"town\", \"roadside-shrine\" ], \"availableDestinationIds\": [ \"everia_city\", \"dark_elf_ruins\", \"old_oak_forest\", \"outskirts\", \"town\", \"roadside-shrine\" ], \"mapMarkers\": [ { \"id\": \"willowdale_village\", \"x\": 100, \"y\": 200 }, { \"id\": \"everia_city\", \"x\": 200, \"y\": 300 }, { \"id\": \"dwarven_mines\", \"x\": 300, \"y\": 100 }, { \"id\": \"goblin_caves\", \"x\": 400, \"y\": 50 }, { \"id\": \"dark_elf_ruins\", \"x\": 500, \"y\": 400 }, { \"id\": \"old_oak_forest\", \"x\": 150, \"y\": 250 }, { \"id\": \"outskirts\", \"x\": 80, \"y\": 413 }, { \"id\": \"town\", \"x\": 276, \"y\": 104 }, { \"id\": \"roadside-shrine\", \"x\": 347, \"y\": 158 } ] }"
+          - generic [ref=e91]:
+            - generic [ref=e92]: "profilesReads: 1"
+            - generic [ref=e93]: "campaignMembersReads: 0"
+            - generic [ref=e94]: "campaignsReads: 2"
+            - generic [ref=e95]: "savesReads: 0"
+      - generic [ref=e97]:
+        - generic [ref=e98]: "Build: unknown"
+        - generic [ref=e99]: "Route: /game/960d7765-5916-4293-94a9-71c3e566b719/create-character"
+        - generic [ref=e100]: "Last API Error: none"
+      - generic [ref=e101]:
+        - generic [ref=e102]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e103]: "Anon key present: yes"
+        - generic [ref=e104]: "Session exists: yes"
+        - generic [ref=e105]: "Access token exists: yes"
+        - generic [ref=e106]: "Last status: -"
+        - generic [ref=e107]: "Last body: -"
+        - button "Test generate-class" [ref=e108] [cursor=pointer]
+      - generic [ref=e109]:
+        - generic [ref=e110]: "FPS: 60"
+        - generic [ref=e111]: "Heap: 19 MB"
+        - generic [ref=e112]: "Long tasks: 0"
+  - generic [ref=e113]:
+    - generic [ref=e114]: "session: yes"
+    - generic [ref=e115]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e116]: "authLoading: false"
+    - generic [ref=e117]: "route: /game/960d7765-5916-4293-94a9-71c3e566b719/create-character"
+    - generic [ref=e118]: "lastAuthError: none"

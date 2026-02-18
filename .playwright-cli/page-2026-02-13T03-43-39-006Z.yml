@@ -1,0 +1,352 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=e1284]:
+        - img [ref=e1286]
+        - generic [ref=e1289]: "Edge function mythic-generate-loot failed (500): Failed to generate loot"
+  - generic:
+    - generic: "Runtime: DEV (development)"
+    - generic: "version: 0.0.0"
+    - generic: "build: 2026-02-13T03:25:41.607Z"
+    - generic: "git: cd67b24"
+    - generic: "runId: 752867bb-301c-4df4-9608-ab1067c23d0f"
+    - generic: "now: 2026-02-13T03:28:15.813Z"
+    - generic: "base: /"
+    - generic: "href: http://localhost:8081/login"
+  - generic [ref=e26]:
+    - complementary [ref=e27]:
+      - generic [ref=e28]: Saga Spark
+      - navigation [ref=e29]:
+        - link "Dashboard" [ref=e30] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e31] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Mythic" [ref=e32] [cursor=pointer]:
+          - /url: /dashboard#campaigns
+        - link "Servers/Admin" [ref=e33] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: "Auth: psylus13@gmail.com"
+          - generic [ref=e38]: "DB: ok"
+        - generic [ref=e39]: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59
+      - generic [ref=e527]:
+        - generic [ref=e978]:
+          - generic [ref=e979]:
+            - generic [ref=e980]: Mythic Weave
+            - generic [ref=e981]:
+              - text: "Board: combat"
+              - generic [ref=e982]: "(last transition: town → combat, encounter)"
+          - generic [ref=e983]:
+            - button "Dashboard" [ref=e984] [cursor=pointer]
+            - button "Refresh" [ref=e985] [cursor=pointer]
+            - button "Refresh DM" [ref=e986] [cursor=pointer]
+        - generic [ref=e987]:
+          - generic [ref=e988]:
+            - generic [ref=e989]: Character
+            - generic [ref=e990]:
+              - generic [ref=e991]: Aria Flux
+              - generic [ref=e992]: Time Reaver
+            - generic [ref=e993]: Derived Stats (equipment applied)
+            - generic [ref=e994]:
+              - generic [ref=e995]: "Offense: 53"
+              - generic [ref=e996]: "Defense: 43"
+              - generic [ref=e997]: "Control: 72"
+              - generic [ref=e998]: "Support: 52"
+              - generic [ref=e999]: "Mobility: 39"
+              - generic [ref=e1000]: "Utility: 48"
+            - generic [ref=e1001]: Skills
+            - generic [ref=e1002]:
+              - generic [ref=e1003]:
+                - generic [ref=e1004]: Chrono Acceleration
+                - generic [ref=e1005]: passive · self · r0 · cd0
+              - generic [ref=e1006]:
+                - generic [ref=e1007]: Temporal Feedback
+                - generic [ref=e1008]: passive · self · r0 · cd0
+              - generic [ref=e1009]:
+                - generic [ref=e1010]: Time Warp
+                - generic [ref=e1011]: active · tile · r4 · cd2
+              - generic [ref=e1012]:
+                - generic [ref=e1013]: Chrono Shield
+                - generic [ref=e1014]: active · self · r0 · cd3
+              - generic [ref=e1015]:
+                - generic [ref=e1016]: Time Bomb
+                - generic [ref=e1017]: active · single · r5 · cd1
+              - generic [ref=e1018]:
+                - generic [ref=e1019]: Temporal Distortion
+                - generic [ref=e1020]: active · area · r4 · cd3
+          - generic [ref=e1021]:
+            - generic [ref=e1022]: Board State (authoritative)
+            - generic [ref=e1024]: "{ \"grid\": { \"width\": 12, \"height\": 8 }, \"seed\": 1220838576, \"blocked_tiles\": [ { \"x\": 6, \"y\": 4 }, { \"x\": 5, \"y\": 2 }, { \"x\": 5, \"y\": 3 } ], \"combat_session_id\": \"b9319b5d-c649-4ff0-96c8-5cd3b0aa1176\" }"
+            - generic [ref=e1025]: "UI contract: board + transitions + action_events are sufficient for deterministic replay. (bootstrapped)"
+        - generic [ref=e1026]:
+          - generic [ref=e1027]:
+            - generic [ref=e1028]: Progression
+            - generic [ref=e1029]:
+              - generic [ref=e1030]: "Level: 1"
+              - generic [ref=e1031]: "Unspent Points: 0"
+              - generic [ref=e1032]: "XP: 0"
+              - generic [ref=e1033]: "XP to Next: 300"
+            - generic [ref=e1034]:
+              - button "+250 XP" [ref=e1035] [cursor=pointer]
+              - button "Generate Loot" [ref=e1036] [cursor=pointer]
+              - button "Recompute" [ref=e1037] [cursor=pointer]
+            - generic [ref=e1038]: Recent Progression Events
+            - generic [ref=e1040]: No progression events yet.
+          - generic [ref=e1041]:
+            - generic [ref=e1042]: Skill Loadout
+            - generic [ref=e1043]: "Slots unlocked: 2 · Selected: 2"
+            - generic [ref=e1044]:
+              - textbox "Loadout name" [ref=e1045]: Default
+              - generic [ref=e1046]:
+                - button "Random" [ref=e1047] [cursor=pointer]:
+                  - img
+                  - text: Random
+                - button "Expand" [ref=e1048] [cursor=pointer]:
+                  - img
+                  - text: Expand
+            - generic [ref=e1049]:
+              - button "Time Warp" [ref=e1050] [cursor=pointer]
+              - button "Chrono Shield" [ref=e1051] [cursor=pointer]
+              - button "Time Bomb" [ref=e1052] [cursor=pointer]
+              - button "Temporal Distortion" [ref=e1053] [cursor=pointer]
+              - button "Weakness Exploit" [ref=e1054] [cursor=pointer]
+              - button "Temporal Reckoning" [ref=e1055] [cursor=pointer]
+            - button "Save + Activate" [ref=e1057] [cursor=pointer]
+            - generic [ref=e1058]: Saved Loadouts
+            - generic [ref=e1060]: No saved loadouts.
+        - generic [ref=e1061]:
+          - generic [ref=e1063]: Board Summary
+          - generic [ref=e1065]: Board Actions
+        - generic [ref=e1066]:
+          - generic [ref=e1067]:
+            - generic [ref=e1068]: Combat Playback (DB is truth)
+            - generic [ref=e1069]: active
+          - generic [ref=e1070]:
+            - generic [ref=e1071]:
+              - generic [ref=e1073]: Combat
+              - generic [ref=e1074]: "Turn: Aria Flux"
+              - generic [ref=e1075]:
+                - button "Ink Ghoul 2 npc · (8,2) · armor 0 100/100" [ref=e1076] [cursor=pointer]:
+                  - generic [ref=e1077]:
+                    - generic [ref=e1078]:
+                      - generic [ref=e1079]: Ink Ghoul 2
+                      - generic [ref=e1080]: npc · (8,2) · armor 0
+                    - generic [ref=e1084]: 100/100
+                - button "Ink Ghoul 3 npc · (9,3) · armor 0 100/100" [ref=e1085] [cursor=pointer]:
+                  - generic [ref=e1086]:
+                    - generic [ref=e1087]:
+                      - generic [ref=e1088]: Ink Ghoul 3
+                      - generic [ref=e1089]: npc · (9,3) · armor 0
+                    - generic [ref=e1093]: 100/100
+                - button "Ink Ghoul 1 npc · (9,1) · armor 0 100/100" [ref=e1094] [cursor=pointer]:
+                  - generic [ref=e1095]:
+                    - generic [ref=e1096]:
+                      - generic [ref=e1097]: Ink Ghoul 1
+                      - generic [ref=e1098]: npc · (9,1) · armor 0
+                    - generic [ref=e1102]: 100/100
+                - button "Ink Ghoul 4 npc · (8,4) · armor 0 100/100" [ref=e1103] [cursor=pointer]:
+                  - generic [ref=e1104]:
+                    - generic [ref=e1105]:
+                      - generic [ref=e1106]: Ink Ghoul 4
+                      - generic [ref=e1107]: npc · (8,4) · armor 0
+                    - generic [ref=e1111]: 100/100
+                - button "Aria Flux player · (1,1) · armor 0 93/101" [ref=e1112] [cursor=pointer]:
+                  - generic [ref=e1113]:
+                    - generic [ref=e1114]:
+                      - generic [ref=e1115]: Aria Flux
+                      - generic [ref=e1116]: player · (1,1) · armor 0
+                    - generic [ref=e1120]: 93/101
+              - generic [ref=e1121]: Action Log (append-only)
+              - generic [ref=e1122]:
+                - generic [ref=e1123]: "t1: turn_end"
+                - generic [ref=e1124]: "t2: turn_start"
+                - generic [ref=e1125]: "t2: skill_used: Savage Swipe"
+                - generic [ref=e1126]: "t2: damage: 1.6775095628632"
+                - generic [ref=e1127]: "t2: turn_end"
+                - generic [ref=e1128]: "t3: turn_start"
+                - generic [ref=e1129]: "t3: skill_used: Savage Swipe"
+                - generic [ref=e1130]: "t3: damage: 1.556373356098"
+                - generic [ref=e1131]: "t3: turn_end"
+                - generic [ref=e1132]: "t4: turn_start"
+            - generic [ref=e1133]:
+              - generic [ref=e1134]: Grid (truth)
+              - generic [ref=e1136]:
+                - button "0,0" [ref=e1137] [cursor=pointer]
+                - button "1,0" [ref=e1138] [cursor=pointer]
+                - button "2,0" [ref=e1139] [cursor=pointer]
+                - button "3,0" [ref=e1140] [cursor=pointer]
+                - button "4,0" [ref=e1141] [cursor=pointer]
+                - button "5,0" [ref=e1142] [cursor=pointer]
+                - button "6,0" [ref=e1143] [cursor=pointer]
+                - button "7,0" [ref=e1144] [cursor=pointer]
+                - button "8,0" [ref=e1145] [cursor=pointer]
+                - button "9,0" [ref=e1146] [cursor=pointer]
+                - button "10,0" [ref=e1147] [cursor=pointer]
+                - button "0,1" [ref=e1148] [cursor=pointer]
+                - button "AR" [ref=e1149] [cursor=pointer]
+                - button "2,1" [ref=e1150] [cursor=pointer]
+                - button "3,1" [ref=e1151] [cursor=pointer]
+                - button "4,1" [ref=e1152] [cursor=pointer]
+                - button "5,1" [ref=e1153] [cursor=pointer]
+                - button "6,1" [ref=e1154] [cursor=pointer]
+                - button "7,1" [ref=e1155] [cursor=pointer]
+                - button "8,1" [ref=e1156] [cursor=pointer]
+                - button "IN" [ref=e1157] [cursor=pointer]
+                - button "10,1" [ref=e1158] [cursor=pointer]
+                - button "0,2" [ref=e1159] [cursor=pointer]
+                - button "1,2" [ref=e1160] [cursor=pointer]
+                - button "2,2" [ref=e1161] [cursor=pointer]
+                - button "3,2" [ref=e1162] [cursor=pointer]
+                - button "4,2" [ref=e1163] [cursor=pointer]
+                - button "5,2" [ref=e1164] [cursor=pointer]
+                - button "6,2" [ref=e1165] [cursor=pointer]
+                - button "7,2" [ref=e1166] [cursor=pointer]
+                - button "IN" [ref=e1167] [cursor=pointer]
+                - button "9,2" [ref=e1168] [cursor=pointer]
+                - button "10,2" [ref=e1169] [cursor=pointer]
+                - button "0,3" [ref=e1170] [cursor=pointer]
+                - button "1,3" [ref=e1171] [cursor=pointer]
+                - button "2,3" [ref=e1172] [cursor=pointer]
+                - button "3,3" [ref=e1173] [cursor=pointer]
+                - button "4,3" [ref=e1174] [cursor=pointer]
+                - button "5,3" [ref=e1175] [cursor=pointer]
+                - button "6,3" [ref=e1176] [cursor=pointer]
+                - button "7,3" [ref=e1177] [cursor=pointer]
+                - button "8,3" [ref=e1178] [cursor=pointer]
+                - button "IN" [ref=e1179] [cursor=pointer]
+                - button "10,3" [ref=e1180] [cursor=pointer]
+                - button "0,4" [ref=e1181] [cursor=pointer]
+                - button "1,4" [ref=e1182] [cursor=pointer]
+                - button "2,4" [ref=e1183] [cursor=pointer]
+                - button "3,4" [ref=e1184] [cursor=pointer]
+                - button "4,4" [ref=e1185] [cursor=pointer]
+                - button "5,4" [ref=e1186] [cursor=pointer]
+                - button "6,4" [ref=e1187] [cursor=pointer]
+                - button "7,4" [ref=e1188] [cursor=pointer]
+                - button "IN" [ref=e1189] [cursor=pointer]
+                - button "9,4" [ref=e1190] [cursor=pointer]
+                - button "10,4" [ref=e1191] [cursor=pointer]
+                - button "0,5" [ref=e1192] [cursor=pointer]
+                - button "1,5" [ref=e1193] [cursor=pointer]
+                - button "2,5" [ref=e1194] [cursor=pointer]
+                - button "3,5" [ref=e1195] [cursor=pointer]
+                - button "4,5" [ref=e1196] [cursor=pointer]
+                - button "5,5" [ref=e1197] [cursor=pointer]
+                - button "6,5" [ref=e1198] [cursor=pointer]
+                - button "7,5" [ref=e1199] [cursor=pointer]
+                - button "8,5" [ref=e1200] [cursor=pointer]
+                - button "9,5" [ref=e1201] [cursor=pointer]
+                - button "10,5" [ref=e1202] [cursor=pointer]
+                - button "0,6" [ref=e1203] [cursor=pointer]
+                - button "1,6" [ref=e1204] [cursor=pointer]
+                - button "2,6" [ref=e1205] [cursor=pointer]
+                - button "3,6" [ref=e1206] [cursor=pointer]
+                - button "4,6" [ref=e1207] [cursor=pointer]
+                - button "5,6" [ref=e1208] [cursor=pointer]
+                - button "6,6" [ref=e1209] [cursor=pointer]
+                - button "7,6" [ref=e1210] [cursor=pointer]
+                - button "8,6" [ref=e1211] [cursor=pointer]
+                - button "9,6" [ref=e1212] [cursor=pointer]
+                - button "10,6" [ref=e1213] [cursor=pointer]
+              - generic [ref=e1214]: Your Skills
+              - generic [ref=e1215]:
+                - button "Time Warp active · tile · r4 · cd2" [ref=e1216] [cursor=pointer]:
+                  - generic [ref=e1217]: Time Warp
+                  - generic [ref=e1218]: active · tile · r4 · cd2
+                - button "Chrono Shield active · self · r0 · cd3" [ref=e1219] [cursor=pointer]:
+                  - generic [ref=e1220]: Chrono Shield
+                  - generic [ref=e1221]: active · self · r0 · cd3
+                - button "Time Bomb active · single · r5 · cd1" [ref=e1222] [cursor=pointer]:
+                  - generic [ref=e1223]: Time Bomb
+                  - generic [ref=e1224]: active · single · r5 · cd1
+                - button "Temporal Distortion active · area · r4 · cd3" [ref=e1225] [cursor=pointer]:
+                  - generic [ref=e1226]: Temporal Distortion
+                  - generic [ref=e1227]: active · area · r4 · cd3
+                - button "Weakness Exploit active · single · r3 · cd2" [ref=e1228] [cursor=pointer]:
+                  - generic [ref=e1229]: Weakness Exploit
+                  - generic [ref=e1230]: active · single · r3 · cd2
+                - button "Temporal Reckoning ultimate · area · r5 · cd5" [ref=e1231] [cursor=pointer]:
+                  - generic [ref=e1232]: Temporal Reckoning
+                  - generic [ref=e1233]: ultimate · area · r5 · cd5
+              - generic [ref=e1234]:
+                - button "Use Selected Skill" [disabled]
+                - button "Clear" [ref=e1235] [cursor=pointer]
+                - button "Advance Enemy Turn" [disabled]
+              - generic [ref=e1236]: Select a skill, then select a target combatant. Range and turn ownership are enforced by the combat engine.
+        - generic [ref=e1238]:
+          - generic [ref=e1239]: Inventory + Equipment
+          - generic [ref=e1240]: Equipment bonuses are applied in real time. Rings/trinkets stack with no limit.
+          - generic [ref=e1241]:
+            - generic [ref=e1242]: Equipped Bonuses
+            - generic [ref=e1243]: None
+          - generic [ref=e1244]:
+            - generic [ref=e1245]:
+              - generic [ref=e1246]: Equipment
+              - generic [ref=e1248]: No equipped items.
+            - generic [ref=e1249]:
+              - generic [ref=e1250]: Backpack
+              - generic [ref=e1252]: Backpack is empty.
+        - generic [ref=e1253]:
+          - generic [ref=e1254]: Recent Board Transitions (append-only)
+          - generic [ref=e1255]: "[ { \"id\": \"032c4d23-27c4-463e-864d-fa78aedd766a\", \"campaign_id\": \"17496eb8-3ed1-4a9a-ab0d-059bdff54e59\", \"from_board_type\": \"town\", \"to_board_type\": \"combat\", \"reason\": \"encounter\", \"animation\": \"page_turn\", \"payload_json\": { \"combat_session_id\": \"b9319b5d-c649-4ff0-96c8-5cd3b0aa1176\" }, \"created_at\": \"2026-02-13T03:41:10.878882+00:00\" } ]"
+        - generic [ref=e1256]:
+          - generic [ref=e1257]:
+            - generic [ref=e1258]: DM Context (from mythic.v_*_for_dm + canonical rules/script)
+            - generic [ref=e1259]: ok
+          - generic [ref=e1260]: "{ \"ok\": true, \"campaign_id\": \"17496eb8-3ed1-4a9a-ab0d-059bdff54e59\", \"player_id\": \"316225c3-b052-4e4b-bb01-991ff577c037\", \"board\": { \"campaign_id\": \"17496eb8-3ed1-4a9a-ab0d-059bdff54e59\", \"board_id\": \"b7b6606b-cb98-4dcd-a670-3546970e9077\", \"board_type\": \"combat\", \"status\": \"active\", \"state_json\": { \"grid\": { \"width\": 12, \"height\": 8 }, \"seed\": 1220838576, \"blocked_tiles\": [ { \"x\": 6, \"y\": 4 }, { \"x\": 5, \"y\": 2 }, { \"x\": 5, \"y\": 3 } ], \"combat_session_id\": \"b9319b5d-c649-4ff0-96c8-5cd3b0aa1176\" }, \"ui_hints_json\": {}, \"active_scene_id\": null, \"combat_session_id\": \"b9319b5d-c649-4ff0-96c8-5cd3b0aa1176\", \"updated_at\": \"2026-02-13T03:41:11.321+00:00\", \"recent_transitions\": [ { \"id\": \"032c4d23-27c4-463e-864d-fa78aedd766a\", \"reason\": \"encounter\", \"animation\": \"page_turn\", \"created_at\": \"2026-02-13T03:41:10.878882+00:00\", \"payload_json\": { \"combat_session_id\": \"b9319b5d-c649-4ff0-96c8-5cd3b0aa1176\" }, \"to_board_type\": \"combat\", \"from_board_type\": \"town\" } ] }, \"character\": { \"character_id\": \"59f70e86-bcae-4729-b35e-c6798f051f84\", \"campaign_id\": \"17496eb8-3ed1-4a9a-ab0d-059bdff54e59\", \"player_id\": \"316225c3-b052-4e4b-bb01-991ff577c037\", \"name\": \"Aria Flux\", \"level\": 1, \"base_stats\": { \"control\": 72, \"defense\": 43, \"offense\": 53, \"support\": 52, \"utility\": 48, \"mobility\": 39 }, \"class_json\": { \"role\": \"controller\", \"seed\": 49500599, \"concept\": \"chrono witch gunslinger\", \"weakness\": { \"id\": \"telegraphed_power\", \"counterplay\": \"Lure enemies into a trap, then strike when they least expect it. *CLICK-CLACK*\", \"description\": \"Your time-bending attacks are flashy and attention-grabbing, making them easy to anticipate and counter. Enemies can dodge or punish you if you're too predictable.\" }, \"class_name\": \"Time Reaver\", \"weapon_identity\": { \"notes\": \"Favors mystical, high-tech firearms that can pierce the fabric of time.\", \"family\": \"ranged\" }, \"class_description\": \"A chrono witch gunslinger who weaves time and space to outmaneuver foes, dealing devastating ranged attacks and manipulating the battlefield with cunning and magical prowess. *BAM* *WHOOSH*\" }, \"resources\": { \"bars\": [ { \"id\": \"mana\", \"max\": 100, \"name\": \"MANA\", \"tags\": [ \"mana\" ], \"current\": 50, \"regen_per_turn\": 8 } ], \"primary_id\": \"mana\" }, \"derived_json\": { \"max_hp\": 101.6212, \"resist\": 0, \"crit_mult\": 2.005, \"crit_chance\": 0.2375, \"armor_rating\": 1.43, \"attack_rating\": 1.53, \"max_power_bar\": 50.74896, \"equipment_mods\": { \"resist\": 0, \"control\": 0, \"defense\": 0, \"offense\": 0, \"support\": 0, \"utility\": 0, \"mobility\": 0, \"armor_power\": 0, \"weapon_power\": 0 } }, \"skills\": [ { \"id\": \"66075dbd-8a48-400d-ada2-16542653c0dc\", \"kind\": \"active\", \"name\": \"Temporal Distortion\", \"cost_json\": { \"type\": \"flat\", \"when\": \"on_cast\", \"amount\": 18, \"resource_id\": \"mana\" }, \"targeting\": \"area\", \"counterplay\": { \"notes\": \"Resolve/resist reduces chance.\", \"resisted_by\": [ \"resolve\" ] }, \"description\": \"Create a localized temporal distortion, stunning enemies and disrupting their actions. *ZZT*\", \"range_tiles\": 4, \"effects_json\": { \"tags\": [ \"control\" ], \"status\": { \"id\": \"stun\", \"stacking\": \"none\", \"duration_turns\": 1 }, \"apply_chance\": { \"uses\": [ \"control\", \"utility\" ], \"function\": \"mythic.status_apply_chance\" } }, \"scaling_json\": { \"curve\": \"power_at_level\", \"scales_with\": [ \"control\", \"utility\" ] }, \"cooldown_turns\": 3, \"targeting_json\": { \"shape\": \"area\", \"metric\": \"manhattan\", \"radius\": 1, \"requires_los\": false, \"friendly_fire\": false, \"blocks_on_walls\": true }, \"narration_style\": \"comic-brutal\" }, { \"id\": \"8ed37cd4-6f8a-4e7f-a6d3-6da684bb1797\", \"kind\": \"active\", \"name\": \"Weakness Exploit\", \"cost_json\": { \"type\": \"flat\", \"when\": \"on_cast\", \"amount\": 10, \"resource_id\": \"mana\" }, \"targeting\": \"single\", \"counterplay\": { \"notes\": \"Self-exposure invites punishment.\", \"punished_by\": [ \"focus_fire\" ] }, \"description\": \"Exploit the enemy's weakness, dealing bonus damage and increasing your critical hit chance. *CLICK-CLACK*\", \"range_tiles\": 3, \"effects_json\": { \"tags\": [ \"utility\" ], \"bonus\": { \"note\": \"High reward, self-exposure.\", \"crit_chance_add\": 0.12 }, \"self_debuff\": { \"id\": \"telegraphed_power\", \"intensity\": 1, \"duration_turns\": 1 }, \"onomatopoeia\": \"CLICK-CLACK!\" }, \"scaling_json\": { \"curve\": \"power_at_level\", \"scales_with\": [ \"utility\", \"mobility\" ] }, \"cooldown_turns\": 2, \"targeting_json\": { \"shape\": \"single\", \"metric\": \"manhattan\", \"requires_los\": true }, \"narration_style\": \"comic-brutal\" }, { \"id\": \"79aabf5d-c0b3-4340-8883-63ae48053072\", \"kind\": \"active\", \"name\": \"Time Warp\", \"cost_json\": { \"type\": \"flat\", \"when\": \"on_cast\", \"amount\": 10, \"resource_id\": \"mana\" }, \"targeting\": \"tile\", \"counterplay\": { \"notes\": \"Root/stun stops reposition.\", \"avoided_by\": [ \"root\" ] }, \"description\": \"Dash through time and space, repositioning yourself quickly and avoiding attacks. *WHOOSH*\", \"range_tiles\": 4, \"effects_json\": { \"move\": { \"dash_tiles\": 3 }, \"tags\": [ \"movement\" ], \"onomatopoeia\": \"WHOOSH!\" }, \"scaling_json\": { \"curve\": \"power_at_level\", \"scales_with\": [ \"mobility\" ] }, \"cooldown_turns\": 2, \"targeting_json\": { \"shape\": \"line\", \"width\": 1, \"length\": 4, \"metric\": \"manhattan\", \"requires_los\": false, \"friendly_fire\": false, \"blocks_on_walls\": true }, \"narration_style\": \"comic-brutal\" }, { \"id\": \"93729314-6881-4966-afc5-0737ee6a4a12\", \"kind\": \"active\", \"name\": \"Chrono Shield\", \"cost_json\": { \"type\": \"flat\", \"when\": \"on_cast\", \"amount\": 12, \"resource_id\": \"mana\" }, \"targeting\": \"self\", \"counterplay\": { \"notes\": \"Piercing attacks reduce barrier.\", \"countered_by\": [ \"pierce\", \"dispel\" ] }, \"description\": \"Summon a temporal barrier, absorbing damage and protecting yourself from harm. *THUD*\", \"range_tiles\": 0, \"effects_json\": { \"tags\": [ \"defense\" ], \"barrier\": { \"amount\": 20, \"duration_turns\": 2 }, \"weakness_hook\": \"telegraphed_power\" }, \"scaling_json\": { \"curve\": \"power_at_level\", \"scales_with\": [ \"defense\", \"support\" ] }, \"cooldown_turns\": 3, \"targeting_json\": { \"shape\": \"self\", \"metric\": \"manhattan\" }, \"narration_style\": \"comic-brutal\" }, { \"id\": \"eea05222-5c97-491e-ac02-2e5fbdb077b3\", \"kind\": \"active\", \"name\": \"Time Bomb\", \"cost_json\": { \"type\": \"flat\", \"when\": \"on_cast\", \"amount\": 15, \"resource_id\": \"mana\" }, \"targeting\": \"single\", \"counterplay\": { \"notes\": \"Telegraphed burst can be punished.\", \"avoided_by\": [ \"dodge\", \"block\" ] }, \"description\": \"Unleash a burst of temporal energy, dealing massive damage to a single target. *KABOOM*\", \"range_tiles\": 5, \"effects_json\": { \"gore\": true, \"tags\": [ \"burst\" ], \"damage\": { \"tags\": [ \"ranged\", \"physical\" ], \"skill_mult\": 1.35 } }, \"scaling_json\": { \"curve\": \"power_at_level\", \"scales_with\": [ \"offense\" ] }, \"cooldown_turns\": 1, \"targeting_json\": { \"shape\": \"single\", \"metric\": \"manhattan\", \"requires_los\": true }, \"narration_style\": \"comic-brutal\" }, { \"id\": \"62bbd5d6-198a-41b2-9fa3-d0be58b97216\", \"kind\": \"passive\", \"name\": \"Chrono Acceleration\", \"cost_json\": {}, \"targeting\": \"self\", \"counterplay\": { \"notes\": \"Passive power is consistent but not explosive.\", \"countered_by\": [ \"dispel\", \"burst\" ] }, \"description\": \"Your temporal magic accelerates your offense, granting a consistent damage boost. *ZZT*\", \"range_tiles\": 0, \"effects_json\": { \"tags\": [ \"passive\" ], \"bonuses\": [ { \"add\": 6, \"stat\": \"offense\" } ] }, \"scaling_json\": { \"curve\": \"power_at_level\", \"scales_with\": [ \"offense\" ] }, \"cooldown_turns\": 0, \"targeting_json\": { \"shape\": \"self\", \"metric\": \"manhattan\" }, \"narration_style\": \"comic-brutal\" }, { \"id\": \"638be57e-fc61-4649-9042-7a3452c782f1\", \"kind\": \"passive\", \"name\": \"Temporal Feedback\", \"cost_json\": {}, \"targeting\": \"self\", \"counterplay\": { \"notes\": \"Shuts off if the enemy plays clean.\", \"countered_by\": [ \"deny_triggers\" ] }, \"description\": \"Your time magic reacts to critical hits, kills, and blocks, granting a weakness hook that can be exploited by enemies. *FWIP*\", \"range_tiles\": 0, \"effects_json\": { \"tags\": [ \"passive\" ], \"triggers\": [ \"on_crit\", \"on_kill\", \"on_block\" ], \"weakness_hook\": \"telegraphed_power\" }, \"scaling_json\": { \"curve\": \"power_at_level\", \"scales_with\": [ \"utility\" ] }, \"cooldown_turns\": 0, \"targeting_json\": { \"shape\": \"self\", \"metric\": \"manhattan\" }, \"narration_style\": \"comic-brutal\" }, { \"id\": \"88ac706c-2e07-4548-a822-0bae0f378341\", \"kind\": \"ultimate\", \"name\": \"Temporal Reckoning\", \"cost_json\": { \"type\": \"flat\", \"when\": \"on_cast\", \"amount\": 40, \"resource_id\": \"mana\" }, \"targeting\": \"area\", \"counterplay\": { \"notes\": \"Cone/area can be dodged by positioning.\", \"avoided_by\": [ \"spread_out\" ] }, \"description\": \"Unleash a devastating temporal blast, dealing massive damage to all enemies in the area and applying a weakness debuff. *KRA-KADOOM!!*\", \"range_tiles\": 5, \"effects_json\": { \"tags\": [ \"ultimate\" ], \"damage\": { \"tags\": [ \"ranged\", \"finisher\" ], \"skill_mult\": 2.2 }, \"drawback\": { \"id\": \"telegraphed_power\", \"intensity\": 2, \"duration_turns\": 2 }, \"onomatopoeia\": \"KRA-KADOOM!!\", \"world_reaction\": { \"note\": \"The DM notices. Factions notice. The world notices.\" } }, \"scaling_json\": { \"curve\": \"power_at_level\", \"scales_with\": [ \"offense\", \"utility\" ] }, \"cooldown_turns\": 5, \"targeting_json\": { \"shape\": \"cone\", \"width\": 3, \"length\": 5, \"metric\": \"manhattan\", \"requires_los\": false, \"friendly_fire\": false, \"blocks_on_walls\": true }, \"narration_style\": \"comic-brutal\" } ], \"items\": null }, \"combat\": { \"combat_session_id\": \"b9319b5d-c649-4ff0-96c8-5cd3b0aa1176\", \"campaign_id\": \"17496eb8-3ed1-4a9a-ab0d-059bdff54e59\", \"status\": \"active\", \"seed\": 1220838576, \"scene_json\": { \"kind\": \"encounter\", \"started_from\": \"town\" }, \"current_turn_index\": 0, \"dm_payload\": { \"combatants\": [ { \"x\": 8, \"y\": 2, \"hp\": 100, \"id\": \"ff661fed-1f17-4c6d-a617-961286a7a4ce\", \"lvl\": 1, \"name\": \"Ink Ghoul 2\", \"armor\": 0, \"power\": 0, \"stats\": { \"control\": 68, \"defense\": 59, \"offense\": 73, \"support\": 61, \"utility\": 61, \"mobility\": 56 }, \"hp_max\": 100, \"resist\": 0, \"is_alive\": true, \"statuses\": [], \"player_id\": null, \"power_max\": 0, \"initiative\": 79, \"armor_power\": 0, \"entity_type\": \"npc\", \"character_id\": null, \"weapon_power\": 0 }, { \"x\": 9, \"y\": 3, \"hp\": 100, \"id\": \"9f9a2505-c7a3-44a7-a082-bd561d3951c2\", \"lvl\": 1, \"name\": \"Ink Ghoul 3\", \"armor\": 0, \"power\": 0, \"stats\": { \"control\": 50, \"defense\": 66, \"offense\": 75, \"support\": 56, \"utility\": 52, \"mobility\": 61 }, \"hp_max\": 100, \"resist\": 0, \"is_alive\": true, \"statuses\": [], \"player_id\": null, \"power_max\": 0, \"initiative\": 73, \"armor_power\": 0, \"entity_type\": \"npc\", \"character_id\": null, \"weapon_power\": 0 }, { \"x\": 9, \"y\": 1, \"hp\": 100, \"id\": \"68e45c25-bbf4-437f-8e2a-d5048d6097c8\", \"lvl\": 1, \"name\": \"Ink Ghoul 1\", \"armor\": 0, \"power\": 0, \"stats\": { \"control\": 43, \"defense\": 43, \"offense\": 48, \"support\": 53, \"utility\": 44, \"mobility\": 45 }, \"hp_max\": 100, \"resist\": 0, \"is_alive\": true, \"statuses\": [], \"player_id\": null, \"power_max\": 0, \"initiative\": 69, \"armor_power\": 0, \"entity_type\": \"npc\", \"character_id\": null, \"weapon_power\": 0 }, { \"x\": 8, \"y\": 4, \"hp\": 100, \"id\": \"a89377ab-a279-48b9-8e9e-3d1a98f1bc08\", \"lvl\": 1, \"name\": \"Ink Ghoul 4\", \"armor\": 0, \"power\": 0, \"stats\": { \"control\": 38, \"defense\": 57, \"offense\": 45, \"support\": 37, \"utility\": 44, \"mobility\": 52 }, \"hp_max\": 100, \"resist\": 0, \"is_alive\": true, \"statuses\": [], \"player_id\": null, \"power_max\": 0, \"initiative\": 57, \"armor_power\": 0, \"entity_type\": \"npc\", \"character_id\": null, \"weapon_power\": 0 }, { \"x\": 1, \"y\": 1, \"hp\": 101, \"id\": \"c885b4e9-ad38-4ae8-acfc-e981d529f5c6\", \"lvl\": 1, \"name\": \"Aria Flux\", \"armor\": 0, \"power\": 50, \"stats\": { \"control\": 72, \"defense\": 43, \"offense\": 53, \"support\": 52, \"utility\": 48, \"mobility\": 39 }, \"hp_max\": 101, \"resist\": 0, \"is_alive\": true, \"statuses\": [], \"player_id\": \"316225c3-b052-4e4b-bb01-991ff577c037\", \"power_max\": 50, \"initiative\": 55, \"armor_power\": 0, \"entity_type\": \"player\", \"character_id\": \"59f70e86-bcae-4729-b35e-c6798f051f84\", \"weapon_power\": 0 } ], \"turn_order\": [ { \"turn_index\": 0, \"combatant_id\": \"ff661fed-1f17-4c6d-a617-961286a7a4ce\" }, { \"turn_index\": 1, \"combatant_id\": \"9f9a2505-c7a3-44a7-a082-bd561d3951c2\" }, { \"turn_index\": 2, \"combatant_id\": \"68e45c25-bbf4-437f-8e2a-d5048d6097c8\" }, { \"turn_index\": 3, \"combatant_id\": \"a89377ab-a279-48b9-8e9e-3d1a98f1bc08\" }, { \"turn_index\": 4, \"combatant_id\": \"c885b4e9-ad38-4ae8-acfc-e981d529f5c6\" } ], \"recent_events\": [ { \"id\": \"d4e97630-b221-4a1e-bb9f-7e5bb60ae8cc\", \"payload\": { \"actor_combatant_id\": \"ff661fed-1f17-4c6d-a617-961286a7a4ce\" }, \"created_at\": \"2026-02-13T03:41:11.598425+00:00\", \"event_type\": \"turn_start\", \"turn_index\": 0 }, { \"id\": \"5cb82beb-8fa2-4d76-b280-7a751f8cbe32\", \"payload\": { \"round_index\": 0, \"initiative_snapshot\": [ { \"name\": \"Ink Ghoul 2\", \"initiative\": 79, \"combatant_id\": \"ff661fed-1f17-4c6d-a617-961286a7a4ce\" }, { \"name\": \"Ink Ghoul 3\", \"initiative\": 73, \"combatant_id\": \"9f9a2505-c7a3-44a7-a082-bd561d3951c2\" }, { \"name\": \"Ink Ghoul 1\", \"initiative\": 69, \"combatant_id\": \"68e45c25-bbf4-437f-8e2a-d5048d6097c8\" }, { \"name\": \"Ink Ghoul 4\", \"initiative\": 57, \"combatant_id\": \"a89377ab-a279-48b9-8e9e-3d1a98f1bc08\" }, { \"name\": \"Aria Flux\", \"initiative\": 55, \"combatant_id\": \"c885b4e9-ad38-4ae8-acfc-e981d529f5c6\" } ] }, \"created_at\": \"2026-02-13T03:41:11.483245+00:00\", \"event_type\": \"round_start\", \"turn_index\": 0 }, { \"id\": \"86574922-6b15-4880-aa3d-831d9e2a7e8e\", \"payload\": { \"reason\": \"encounter\" }, \"created_at\": \"2026-02-13T03:41:10.878882+00:00\", \"event_type\": \"combat_start\", \"turn_index\": 0 } ] } }, \"rules\": { \"name\": \"mythic-weave-rules-v1\", \"version\": 4, \"rules\": { \"rng\": { \"rng01\": \"mythic.rng01(seed,label)\", \"rng_int\": \"mythic.rng_int(seed,label,lo,hi)\", \"rng_pick\": \"mythic.rng_pick(seed,label,arr)\", \"determinism\": { \"rule\": \"All randomness is derived from seed + label via mythic.rng* functions.\", \"seed_sources\": { \"loot\": \"combat_sessions.seed or board seed\", \"board\": \"mythic.boards.state_json.seed (or campaign seed if absent)\", \"world\": \"campaign seed + scene seed\", \"combat\": \"mythic.combat_sessions.seed\" } }, \"label_conventions\": { \"loot\": [ \"loot:{rarity}:{slot}:{weapon_family}\", \"affix:{i}\", \"drawback:{i}\" ], \"world\": [ \"board:{board_type}\", \"scene:{scene_id}\", \"faction:{faction_id}\", \"revenge_arc:{arc_id}\" ], \"combat\": [ \"combat:{combat_session_id}\", \"turn:{turn_index}\", \"actor:{combatant_id}\", \"skill:{skill_id}\", \"target:{combatant_id_or_tile}\" ], \"global\": [ \"component:purpose\", \"component:purpose:subpurpose\" ] } }, \"roles\": { \"kit_tags\": [ \"movement\", \"defense\", \"burst\", \"control\", \"support\", \"utility\", \"summon\", \"curse\", \"trap\", \"stealth\", \"heal\", \"shield\", \"stance\", \"combo\" ], \"definitions\": { \"dps\": { \"primary\": [ \"offense\", \"mobility\" ], \"fails_if\": [ \"no counterplay/weakness\", \"no positional or timing rule\" ], \"secondary\": [ \"utility\" ], \"kit_must_include\": [ \"burst\", \"sustained_damage\", \"escape_or_iframes\" ] }, \"tank\": { \"primary\": [ \"defense\", \"support\" ], \"fails_if\": [ \"no survivability loop\", \"no way to influence enemy targeting\" ], \"secondary\": [ \"control\" ], \"kit_must_include\": [ \"mitigation\", \"threat_or_zone_control\", \"recovery_or_barrier\" ] }, \"hybrid\": { \"primary\": [ \"mixed\" ], \"fails_if\": [ \"kit lacks identity\" ], \"secondary\": [ \"mixed\" ], \"kit_must_include\": [ \"two_roles_supported\", \"clear_identity_hook\" ] }, \"support\": { \"primary\": [ \"support\", \"utility\" ], \"fails_if\": [ \"no team-facing impact\" ], \"secondary\": [ \"control\" ], \"kit_must_include\": [ \"ally_sustain\", \"buff_or_cleanse\", \"tempo_shift\" ] }, \"controller\": { \"primary\": [ \"control\", \"utility\" ], \"fails_if\": [ \"no resist/counterplay hooks\", \"cc is unavoidable\" ], \"secondary\": [ \"support\" ], \"kit_must_include\": [ \"hard_cc\", \"soft_cc\", \"counterplay_hooks\" ] }, \"skirmisher\": { \"primary\": [ \"mobility\", \"offense\" ], \"fails_if\": [ \"no positional rule\" ], \"secondary\": [ \"utility\" ], \"kit_must_include\": [ \"reposition\", \"pick_tool\", \"disengage\" ] } }, \"kit_requirements\": { \"actives\": { \"max\": 6, \"min\": 4 }, \"passives\": { \"max\": 4, \"min\": 2 }, \"ultimate\": { \"count\": 1 }, \"must_include\": [ \"movement_or_reposition\", \"defense_or_mitigation\", \"burst_or_finisher\", \"control_or_disrupt\", \"utility_or_support\" ], \"weakness_by_design\": { \"counterplay_required\": true, \"embedded_in_skills_min\": 2, \"must_define_in_class_json\": true, \"legendary_plus_drawback_must_reference\": true } } }, \"boards\": { \"types\": [ \"town\", \"dungeon\", \"travel\", \"combat\" ], \"board_row\": \"mythic.boards\", \"replay_rule\": \"boards + board_transitions + action_events are sufficient to deterministically replay the session UI.\", \"transition_log\": \"mythic.board_transitions\", \"state_contracts\": { \"town\": { \"includes\": [ \"vendors\", \"services\", \"gossip\", \"factions_present\", \"guard_alertness\", \"bounties\", \"rumors\", \"consequence_flags\" ] }, \"combat\": { \"includes\": [ \"combat_session_id\", \"grid\", \"turn_order\", \"hazards\", \"cover\" ] }, \"travel\": { \"includes\": [ \"route_segments\", \"hazard_meter\", \"scouting\", \"weather\", \"encounter_seeds\", \"supply_pressure\" ] }, \"dungeon\": { \"includes\": [ \"room_graph\", \"fog_of_war\", \"trap_signals\", \"loot_nodes\", \"faction_presence\", \"noise_meter\" ] } }, \"transition_triggers\": [ { \"if\": \"encounter_started\", \"then\": \"combat\" }, { \"if\": \"combat_ended\", \"then\": \"return_to_previous_board\" }, { \"if\": \"travel_arrival.location_type in (town,city,village)\", \"then\": \"town\" }, { \"if\": \"travel_arrival.location_type in (dungeon,cave,ruins,stronghold,temple)\", \"then\": \"dungeon\" }, { \"else\": \"travel\" } ], \"transition_animation\": \"page_turn\", \"transition_payload_contract\": { \"required\": [ \"reason\" ], \"animation\": \"page_turn\", \"recommended\": [ \"from_board_id\", \"to_board_id\", \"combat_session_id\", \"return_to_board_type\", \"return_to_board_id\", \"delta\" ] } }, \"version\": 3, \"factions\": { \"tiers\": { \"ally\": 600, \"hunted\": -600, \"hostile\": -250, \"neutral\": 0, \"friendly\": 250 }, \"behaviors\": { \"ally\": [ \"discounts\", \"backup in fights\", \"cover-ups\", \"safehouse access\" ], \"hunted\": [ \"hit squads\", \"asset targeting\", \"nemesis escalation\", \"towns lock down\" ], \"hostile\": [ \"refuse service\", \"ambush risk\", \"bounties\", \"sabotage\" ], \"neutral\": [ \"normal prices\", \"gossip\", \"watchful guards\" ], \"friendly\": [ \"minor discounts\", \"tips\", \"warnings\", \"rumors\" ] }, \"rep_drift\": { \"rule\": \"Reputation drifts toward 0 unless reinforced by events. App calls this nightly.\", \"function\": \"mythic.rep_drift(current_rep, drift_per_day)\", \"default_drift_per_day\": 2 }, \"rep_range\": { \"max\": 1000, \"min\": -1000 }, \"revenge_arcs\": { \"create_when\": [ { \"if\": \"severity>=4 and delta<=-80\", \"then\": \"create_or_escalate_arc\" }, { \"if\": \"rep<=-600\", \"then\": \"create_or_escalate_arc\" }, { \"if\": \"repeated_kills>=3 in 24h\", \"then\": \"create_or_escalate_arc\" } ], \"nemesis_behaviors\": [ \"learns tactics\", \"targets assets\", \"schedules ambushes\", \"counterbuilds player signatures\" ], \"nemesis_json_contract\": { \"name\": \"string\", \"title\": \"string\", \"grudge\": \"object\", \"loadout\": \"object\", \"tactics\": \"array\", \"faction_style\": \"string\", \"strike_schedule\": \"object\", \"signature_counter\": \"object\" } }, \"reputation_events\": { \"append_only\": true, \"severity_range\": { \"max\": 5, \"min\": 1 }, \"evidence_contract\": { \"proof\": \"object\", \"scene_id\": \"uuid|null\", \"witnesses\": \"array\", \"board_type\": \"town|dungeon|travel|combat\" } } }, \"leveling\": { \"level_cap\": 99, \"power_curve\": { \"function\": \"mythic.power_at_level(lvl int)\", \"interpolation\": \"exp\", \"power_level_1\": 1, \"power_level_99\": 1000000 } }, \"dm_entity\": { \"mood\": { \"menace\": { \"max\": 1, \"min\": 0, \"default\": 0.35 }, \"boredom\": { \"max\": 1, \"min\": 0, \"default\": 0.2 }, \"respect\": { \"max\": 1, \"min\": 0, \"default\": 0.25 }, \"amusement\": { \"max\": 1, \"min\": 0, \"default\": 0.4 }, \"irritation\": { \"max\": 1, \"min\": 0, \"default\": 0.2 } }, \"sliders\": { \"cruelty\": { \"max\": 1, \"min\": 0, \"default\": 0.55 }, \"honesty\": { \"max\": 1, \"min\": 0, \"default\": 0.55 }, \"favoritism\": { \"max\": 1, \"min\": 0, \"default\": 0.5 }, \"playfulness\": { \"max\": 1, \"min\": 0, \"default\": 0.65 }, \"intervention\": { \"max\": 1, \"min\": 0, \"default\": 0.4 } }, \"learning\": { \"inputs\": [ \"dm_memory_events\", \"dm_player_model\", \"dm_world_tension\", \"reputation_events\", \"loot rarity\", \"combat patterns\" ], \"outputs\": [ \"encounter composition\", \"enemy adaptation\", \"trap evolution\", \"loot drift\", \"faction behaviors\", \"board transition frequency\", \"narration tone\" ], \"player_model_fields\": [ \"cruelty_score\", \"heroism_score\", \"cunning_score\", \"chaos_score\", \"honor_score\", \"greed_score\", \"boredom_signals\", \"exploit_signals\", \"preferred_tactics\" ] }, \"tone_rules\": { \"may_taunt\": true, \"disallowed\": [ \"hate slurs\", \"sexual content\", \"sexual violence\" ], \"not_neutral\": true, \"never_sexual\": true, \"allowable_insults\": [ \"idiot\", \"moron\", \"clown\", \"gremlin\", \"menace\", \"disaster\", \"little goblin\" ], \"may_lie_by_omission\": true, \"violence_not_sanitized\": true }, \"mood_effects\": { \"menace_high\": [ \"increase lethality\", \"more brutal descriptions\", \"harsher consequences\" ], \"boredom_high\": [ \"increase spectacle\", \"escalate stakes\", \"spawn ambushes\" ], \"respect_high\": [ \"smarter counters\", \"fewer cheap shots\", \"more mind games\" ], \"amusement_high\": [ \"more jokes\", \"weirder loot\", \"comic timing\" ], \"irritation_high\": [ \"punitive traps\", \"hard counters\", \"less mercy\" ] } }, \"resources\": { \"skins\": [ { \"id\": \"mana\", \"theme\": \"arcane\", \"verbs\": [ \"channel\", \"cast\", \"weave\" ] }, { \"id\": \"rage\", \"theme\": \"feral\", \"verbs\": [ \"maul\", \"howl\", \"burst\" ] }, { \"id\": \"stamina\", \"theme\": \"martial\", \"verbs\": [ \"dash\", \"parry\", \"strike\" ] }, { \"id\": \"focus\", \"theme\": \"discipline\", \"verbs\": [ \"aim\", \"mark\", \"execute\" ] }, { \"id\": \"grit\", \"theme\": \"survival\", \"verbs\": [ \"endure\", \"shrug\", \"push\" ] }, { \"id\": \"blood\", \"theme\": \"sanguine\", \"verbs\": [ \"bleed\", \"ritual\", \"sacrifice\" ] }, { \"id\": \"void\", \"theme\": \"eldritch\", \"verbs\": [ \"rift\", \"drain\", \"warp\" ] }, { \"id\": \"scrap\", \"theme\": \"tech\", \"verbs\": [ \"assemble\", \"overclock\", \"detonate\" ] }, { \"id\": \"heat\", \"theme\": \"pyro\", \"verbs\": [ \"ignite\", \"flare\", \"melt\" ] }, { \"id\": \"momentum\", \"theme\": \"speed\", \"verbs\": [ \"flow\", \"chain\", \"whiplash\" ] }, { \"id\": \"soul\", \"theme\": \"spirit\", \"verbs\": [ \"bind\", \"bless\", \"haunt\" ] } ], \"unified_mechanics\": { \"regen_rules\": { \"clamp\": \"0..max\", \"phase\": \"turn_start\", \"default_regen_per_turn\": 0 }, \"bars_live_in\": \"mythic.characters.resources\", \"primary_secondary\": \"A class may define one primary and one secondary resource. Secondary can be conditional (e.g. generated by hits).\", \"cost_json_contract\": { \"type\": \"flat|pct_max|pct_current\", \"when\": \"on_cast|per_turn|per_hit\", \"notes\": \"resource_id must match one of characters.resources.bars[].id\", \"amount\": \"number\", \"resource_id\": \"string\" }, \"cost_json_lives_in\": \"mythic.skills.cost_json\", \"resource_swap_rule\": \"All classes share mechanics; only naming/skin differs.\" }, \"character_resources_contract\": { \"bars\": [ { \"id\": \"string\", \"max\": \"number\", \"name\": \"string\", \"tags\": [ \"string\" ], \"current\": \"number\", \"regen_per_turn\": \"number\" } ], \"primary_id\": \"string\" } }, \"base_stats\": { \"keys\": [ \"offense\", \"defense\", \"control\", \"support\", \"mobility\", \"utility\" ], \"range\": { \"max\": 100, \"min\": 0 } }, \"loot_rolls\": { \"drop_table\": \"mythic.loot_drops\", \"item_fields\": [ \"required_level\", \"item_power\", \"set_tag\", \"drop_tier\", \"bind_policy\" ], \"rarity_budgets\": { \"common\": 8, \"mythic\": 60, \"unique\": 24, \"magical\": 16, \"unhinged\": 70, \"legendary\": 40 }, \"generator_edge_function\": \"mythic-generate-loot\" }, \"entity_sync\": { \"grid_is_truth\": true, \"equipment_is_live\": \"mythic.compute_character_derived(character_id) recomputes stats from equipped items each read.\", \"dm_must_use_db_state\": true, \"rings_trinkets_stack\": true, \"tokens_must_reflect_db\": [ \"mythic.combatants\", \"mythic.characters\", \"mythic.inventory\", \"mythic.skills\", \"mythic.items\" ] }, \"progression\": { \"loadout_table\": \"mythic.character_loadouts\", \"slot_rules_table\": \"mythic.loadout_slot_rules\", \"apply_xp_function\": \"mythic.apply_xp(character_id, amount, reason, metadata)\", \"xp_to_next_function\": \"mythic.xp_to_next_level(lvl)\", \"unspent_points_field\": \"mythic.characters.unspent_points\" }, \"boss_runtime\": { \"boss_instances_table\": \"mythic.boss_instances\", \"boss_templates_table\": \"mythic.boss_templates\", \"status_tick_function\": \"mythic.resolve_status_tick(combat_session_id, combatant_id, turn_index, phase)\", \"phase_transition_event\": \"phase_shift\" }, \"derived_stats\": { \"max_hp\": \"mythic.max_hp(lvl, defense, support)\", \"mitigate\": { \"model\": \"raw_damage * 100/(100+resist)\", \"function\": \"mythic.mitigate(raw_damage, resist)\" }, \"crit_mult\": { \"clamp\": [ 1.5, 3 ], \"function\": \"mythic.crit_mult(offense, utility)\" }, \"max_bounds\": { \"hp_min\": 1, \"power_min\": 0 }, \"crit_chance\": { \"clamp\": [ 0.02, 0.6 ], \"function\": \"mythic.crit_chance(mobility, utility)\" }, \"armor_rating\": \"mythic.armor_rating(lvl, defense, armor_power)\", \"attack_rating\": \"mythic.attack_rating(lvl, offense, weapon_power)\", \"max_power_bar\": \"mythic.max_power_bar(lvl, utility, support)\", \"compute_damage\": { \"function\": \"mythic.compute_damage(seed,label,lvl,offense,mobility,utility,weapon_power,skill_mult,resist,spread_pct)\", \"output_keys\": [ \"attack_rating\", \"base_before_spread\", \"spread\", \"pre_mitigation\", \"resist\", \"is_crit\", \"crit_chance\", \"crit_mult\", \"final_damage\" ], \"spread_pct_default\": 0.1 }, \"status_apply_chance\": { \"clamp\": [ 0.05, 0.95 ], \"function\": \"mythic.status_apply_chance(control, utility, target_resolve)\" } }, \"rarity_ladder\": { \"order\": [ \"common\", \"magical\", \"unique\", \"legendary\", \"mythic\", \"unhinged\" ], \"budgets\": { \"common\": 8, \"mythic\": 60, \"unique\": 24, \"magical\": 16, \"unhinged\": 70, \"legendary\": 40 }, \"invariants\": { \"mythic\": [ \"must include meaningful drawback_json\", \"must include effects_json.world_reaction\", \"must include effects_json.system_alterations\" ], \"unhinged\": [ \"must include effects_json.world_reaction\", \"must include effects_json.danger_escalation\", \"must escalate DM hostility\" ], \"legendary_plus\": [ \"must include drawback_json\", \"must include effects_json.world_reaction\", \"must include narrative_hook\" ] }, \"loot_drift\": { \"inputs\": [ \"dm_world_tension.tension\", \"dm_campaign_state.menace\", \"dm_player_model.greed_score\", \"dm_player_model.cruelty_score\" ], \"outputs\": [ \"rarity weights\", \"drawback severity\", \"world reaction intensity\", \"faction response intensity\" ], \"principle\": \"Better loot increases world attention and encounter pressure.\" }, \"budget_function\": \"mythic.loot_budget_points(rarity)\", \"world_reaction_examples\": [ \"bounty posters appear in town\", \"a faction sends scouts\", \"the dungeon layout shifts to counter the player\", \"vendors raise prices or refuse service\" ] }, \"content_policy\": { \"allowed\": [ \"fantasy violence\", \"gore\", \"harsh language\", \"dark humor\", \"comic onomatopoeia\", \"body horror\", \"ruthless taunting\" ], \"forbidden\": [ \"sexual content\", \"sexual violence\", \"any depiction or instruction involving minors\", \"pornography or erotic roleplay\" ], \"db_filters\": [ \"mythic.content_is_allowed(text)\", \"mythic.contains_forbidden_sexual_content(text)\" ], \"forbidden_output\": [ \"sexual content\", \"sexual violence\", \"hate slurs\" ], \"hard_refusal_style\": \"Short, final, mocking-but-not-sexual, immediate redirect to a violent/nonsexual alternative.\", \"generator_enforcement\": { \"allow_gore\": true, \"safety_notes\": [ \"Harsh language is allowed; do not sanitize it.\", \"Sexual content and sexual violence are forbidden and must be refused.\", \"Violence and gore are allowed and should not be sanitized.\" ], \"ban_hate_slurs\": true, \"allow_profanity\": true, \"ban_sexual_content\": true, \"ban_sexual_violence\": true } }, \"status_effects\": { \"examples\": [ { \"id\": \"bleed\", \"tags\": [ \"physical\", \"dot\" ], \"stacking\": \"intensity\", \"max_stacks\": 10, \"counterplay\": [ \"bandage\", \"armor\", \"cleanse\" ] }, { \"id\": \"burn\", \"tags\": [ \"fire\", \"dot\" ], \"stacking\": \"duration\", \"max_stacks\": 5, \"counterplay\": [ \"douse\", \"resist\", \"roll\" ] }, { \"id\": \"stun\", \"tags\": [ \"control\" ], \"stacking\": \"none\", \"max_stacks\": 1, \"counterplay\": [ \"resolve\", \"guard\", \"immunity_window\" ] }, { \"id\": \"root\", \"tags\": [ \"control\" ], \"stacking\": \"duration\", \"max_stacks\": 3, \"counterplay\": [ \"dash\", \"cleanse\" ] }, { \"id\": \"fear\", \"tags\": [ \"mind\" ], \"stacking\": \"duration\", \"max_stacks\": 3, \"counterplay\": [ \"bravery\", \"line_of_sight_break\" ] }, { \"id\": \"vulnerable\", \"tags\": [ \"debuff\" ], \"stacking\": \"intensity\", \"max_stacks\": 6, \"counterplay\": [ \"block\", \"ward\" ] }, { \"id\": \"wet\", \"tags\": [ \"elemental\", \"setup\" ], \"stacking\": \"duration\", \"max_stacks\": 1, \"counterplay\": [ \"dry_off\", \"insulation\" ] }, { \"id\": \"oil\", \"tags\": [ \"elemental\", \"setup\" ], \"stacking\": \"duration\", \"max_stacks\": 1, \"counterplay\": [ \"wash_off\", \"fire_resist\", \"distance\" ] }, { \"id\": \"chilled\", \"tags\": [ \"ice\", \"setup\" ], \"stacking\": \"intensity\", \"max_stacks\": 6, \"counterplay\": [ \"warmth\", \"cleanse\" ] }, { \"id\": \"marked\", \"tags\": [ \"utility\", \"setup\" ], \"stacking\": \"duration\", \"max_stacks\": 1, \"counterplay\": [ \"break_line_of_sight\", \"decoy\" ] }, { \"id\": \"silenced\", \"tags\": [ \"control\" ], \"stacking\": \"duration\", \"max_stacks\": 2, \"counterplay\": [ \"purge\", \"distance\" ] } ], \"combo_rules\": { \"combos\": [ { \"id\": \"electrocute\", \"result\": { \"ui\": { \"onomatopoeia\": \"ZZT-KRAK!\" }, \"apply_status\": { \"id\": \"stun\", \"stacking\": \"none\", \"duration_turns\": 1 }, \"bonus_damage\": { \"mult\": 0.35, \"tags\": [ \"shock\" ] } }, \"requires\": [ { \"status\": \"wet\" }, { \"incoming_tag\": \"shock\" } ] }, { \"id\": \"inferno\", \"result\": { \"ui\": { \"onomatopoeia\": \"FWOOM!\" }, \"area_hazard\": { \"id\": \"flame_patch\", \"tags\": [ \"fire\", \"hazard\" ], \"duration_turns\": 2 }, \"apply_status\": { \"id\": \"burn\", \"stacking\": \"duration\", \"duration_turns\": 3 } }, \"requires\": [ { \"status\": \"oil\" }, { \"incoming_tag\": \"fire\" } ] }, { \"id\": \"shatter\", \"result\": { \"ui\": { \"onomatopoeia\": \"KRR-CHNK!\" }, \"apply_status\": { \"id\": \"vulnerable\", \"stacking\": \"intensity\", \"duration_turns\": 2 }, \"bonus_damage\": { \"flat\": 12, \"tags\": [ \"ice\", \"physical\" ] } }, \"requires\": [ { \"status\": \"chilled\" }, { \"incoming_tag\": \"blunt\" } ] }, { \"id\": \"execution\", \"result\": { \"ui\": { \"onomatopoeia\": \"SHNK!\" }, \"crit_override\": { \"bonus_crit_mult\": 0.5, \"bonus_crit_chance\": 0.25 } }, \"requires\": [ { \"status\": \"marked\" }, { \"incoming_tag\": \"backstab\" } ] } ], \"principle\": \"Combos are deterministic and must be represented in effects_json (and replayed through action_events).\", \"resolution_order\": [ \"eligibility_check\", \"apply_chance\", \"stacking\", \"combo_resolution\", \"cleanup\" ] }, \"apply_chance\": \"mythic.status_apply_chance(control,utility,target_resolve)\", \"stacking_models\": { \"none\": { \"rule\": \"Does not stack; reapplication refreshes duration if allowed.\", \"fields\": [ \"duration_turns\" ] }, \"charges\": { \"rule\": \"Consumes charges on trigger; charges can stack; expires when charges hit 0 or duration ends.\", \"fields\": [ \"charges\", \"duration_turns\" ] }, \"duration\": { \"rule\": \"Refreshes or extends duration; intensity is fixed; max_stacks limits simultaneous instances.\", \"fields\": [ \"duration_turns\", \"stacks\" ] }, \"intensity\": { \"rule\": \"Stays same duration; increase intensity per stack up to max_stacks; refresh duration if specified by effect.\", \"fields\": [ \"stacks\", \"intensity\", \"duration_turns\" ] } }, \"status_object_contract\": { \"id\": \"string\", \"meta\": \"object\", \"tags\": [ \"string\" ], \"stacks\": \"number\", \"intensity\": \"number\", \"duration_turns\": \"number\", \"source_combatant_id\": \"uuid|null\" } }, \"weapon_taxonomy\": { \"mastery\": { \"rule\": \"If class_json.weapon_identity.family matches equipped item.weapon_family, grant mastery bonuses via derived stats and/or skill scaling.\", \"synergy_examples\": [ { \"bonus\": \"+control scaling on debuffs\", \"family\": \"focus\" }, { \"bonus\": \"+mobility scaling on reposition skills\", \"family\": \"blades\" }, { \"bonus\": \"+support scaling on barriers\", \"family\": \"blunt\" } ] }, \"families\": [ \"blades\", \"axes\", \"blunt\", \"polearms\", \"ranged\", \"focus\", \"body\", \"absurd\" ], \"soft_lock\": \"Any class may equip most weapons, but matching archetype unlocks mastery/synergy.\", \"archetype_bias\": { \"mage\": [ \"focus\", \"robes\", \"light_blades\" ], \"ninja_rogue\": [ \"light_armor\", \"thrown\", \"stealth\" ], \"monster_weird\": [ \"body\", \"manifestations\", \"improvised\", \"absurd\" ], \"cleric_paladin\": [ \"blunt\", \"holy\", \"shields\", \"medium_heavy\" ], \"warrior_knight\": [ \"physical\", \"heavy_armor\" ] } }, \"combat_event_contract\": { \"range\": { \"metrics\": [ \"manhattan\", \"chebyshev\", \"euclidean\" ], \"distance_function\": \"mythic.tile_distance(ax,ay,bx,by,metric)\", \"in_range_function\": \"mythic.is_in_range(ax,ay,bx,by,range_tiles,metric)\" }, \"table\": \"mythic.action_events\", \"append_only\": true, \"event_types\": [ \"combat_start\", \"round_start\", \"turn_start\", \"skill_used\", \"damage\", \"status_applied\", \"death\", \"loot_drop\", \"turn_end\", \"round_end\", \"combat_end\", \"board_transition\" ], \"payload_contract\": { \"death\": { \"required\": [ \"target_combatant_id\" ], \"recommended\": [ \"overkill\", \"gore\", \"last_hit\" ] }, \"damage\": { \"required\": [ \"target_combatant_id\", \"amount\" ], \"recommended\": [ \"calc\", \"hp_before\", \"hp_after\", \"tags\", \"is_crit\", \"label\" ] }, \"turn_end\": { \"required\": [ \"actor_combatant_id\" ], \"recommended\": [ \"turn_index\" ] }, \"loot_drop\": { \"required\": [ \"item_id\", \"rarity\" ], \"recommended\": [ \"owner_character_id\", \"narrative_hook\", \"world_reaction\" ] }, \"round_end\": { \"required\": [ \"round_index\" ], \"recommended\": [ \"summary\" ] }, \"combat_end\": { \"required\": [ \"outcome\" ], \"recommended\": [ \"loot\", \"reputation\", \"board_return\" ] }, \"skill_used\": { \"required\": [ \"skill_id\", \"skill_name\", \"targeting\", \"range_tiles\", \"targets\" ], \"recommended\": [ \"targeting_json\", \"cost\", \"cooldown_turns\", \"resource_before\", \"resource_after\", \"label\" ] }, \"turn_start\": { \"required\": [ \"actor_combatant_id\" ], \"recommended\": [ \"turn_index\", \"resources_snapshot\", \"statuses_snapshot\" ] }, \"round_start\": { \"required\": [ \"round_index\" ], \"recommended\": [ \"initiative_snapshot\" ] }, \"combat_start\": { \"required\": [ \"reason\" ], \"recommended\": [ \"seed\", \"from_board_type\", \"to_board_type\", \"transition_id\" ] }, \"status_applied\": { \"required\": [ \"target_combatant_id\", \"status\" ], \"recommended\": [ \"chance\", \"roll\", \"source_combatant_id\", \"label\" ] }, \"board_transition\": { \"required\": [ \"to_board_type\" ], \"recommended\": [ \"from_board_type\", \"reason\", \"transition_id\" ] } }, \"targeting_json_contract\": { \"shape\": \"self|single|tile|area|cone|line\", \"width\": 0, \"length\": 0, \"metric\": \"manhattan|chebyshev|euclidean\", \"radius\": 0, \"requires_los\": false, \"friendly_fire\": false, \"blocks_on_walls\": true } } } }, \"script\": { \"name\": \"mythic-weave-core\", \"version\": 3, \"is_active\": true, \"content\": \"\\nMYTHIC WEAVE: CANONICAL GENERATOR SCRIPT (v3)\\n\\nThis is the authoritative \\\"brain\\\" for Mythic Weave.\\nAny model/agent must follow it exactly.\\nTone: a living dungeon comic book with onomatopoeia, sharp jokes, and a mischievous ruthless DM.\\nVibe: ARPG/board-driven (Champions of Norrath / Dark Alliance / Diablo energy), explicitly NOT \\\"feels like D&D\\\".\\n\\nHARD CONTENT POLICY (NO EXCEPTIONS)\\n- Allowed: violence, gore, horror, harsh language, dark humor.\\n- Forbidden: sexual content, sexual violence, any depiction or instruction involving minors.\\n- DM is allowed to be mean and profane, but never sexual.\\n- DM must not use hate slurs.\\nRefusal behavior:\\n- Refuse immediately.\\n- Be short and final.\\n- Redirect to a violent/nonsexual alternative.\\nDB-side filters are available (and recommended for outputs stored in DB):\\n- mythic.content_is_allowed(text)\\n- mythic.contains_forbidden_sexual_content(text)\\n\\nDATABASE IS THE SOURCE OF TRUTH\\n- Fetch canonical rules from mythic.game_rules(name='mythic-weave-rules-v1').\\n- Fetch UI flow contract from mythic.ui_turn_flow_rules(name='mythic-weave-ui-turn-flow-v1').\\n- Persist state ONLY in mythic tables. Never \\\"assume\\\" values that are not in DB.\\n\\nDETERMINISM (MANDATORY)\\n- All random choices are deterministic: seed + label -> mythic.rng01/rng_int/rng_pick.\\n- Combat uses mythic.combat_sessions.seed.\\n- Labels must follow mythic.game_rules.rng.label_conventions.\\n\\nCORE LOOP (BOARD-DRIVEN)\\n1) Read current board: mythic.boards where status='active'.\\n2) Read DM state: mythic.dm_campaign_state + mythic.dm_world_tension.\\n3) Read world memory: dm_memory_events, dm_player_model, faction reputation, revenge arcs.\\n4) Decide the next \\\"beat\\\" deterministically (seed + labels): encounter, vendor, rumor, trap, travel hazard, faction move.\\n5) Write only the minimum authoritative deltas:\\n - Update mythic.boards.state_json and ui_hints_json.\\n - Append mythic.board_transitions for any board switch (animation='page_turn').\\n - If combat happens: create a combat_session, insert combatants, insert turn_order, then emit append-only action_events.\\n6) Narrate as a living comic page:\\n - Narration must correspond to actual DB state + appended events.\\n - Use onomatopoeia and visual cues.\\n - Never invent HP, positions, items, or skills.\\n\\nDM ENTITY SYSTEM (LIVING, JUDGMENTAL, LEARNING)\\nSliders (persist): cruelty, honesty, playfulness, intervention, favoritism (0..1).\\nMood (persist): irritation, amusement, menace, respect, boredom (0..1).\\nLearning (append-only):\\n- dm_memory_events are evidence.\\n- dm_player_model aggregates patterns and tactic signatures.\\n- dm_world_tension meters escalate the world.\\nBehavior rules:\\n- DM is not neutral. DM judges. DM adapts.\\n- Repeated cruelty by the player: DM menace increases, factions punish harder, revenge arcs trigger sooner.\\n- Clever play: DM respect increases, enemies counterbuild, DM deception-by-omission increases.\\n- Boredom: spectacle increases, hazards spike, stakes jump.\\n- Exploits/arrogance: favoritism shifts against the player; the DM \\\"teaches a lesson\\\" with hard counters.\\nAllowed insults (non-sexual, non-slur): idiot, moron, clown, gremlin, disaster, menace, little goblin.\\n\\nFACTION AI + WORLD MEMORY\\n- Reputation is authoritative and append-only via mythic.reputation_events.\\n- Aggregate reputation into mythic.faction_reputation.\\n- Trigger revenge_arcs when rules thresholds are met; store nemesis_json and schedule next_strike_at.\\n- Nemesis learns from nemesis_memory + dm_player_model.preferred_tactics.\\n\\nTHE FOUR BOARDS (AUTHORITATIVE)\\n- TOWN: social, vendors, gossip, factions, consequences.\\n- DUNGEON: rooms, traps, puzzles, stealth, exploration, brutality.\\n- TRAVEL: routes, weather/conditions, ambushes, scouting, supply pressure.\\n- COMBAT: turn-based, fast pacing, deterministic playback.\\nBoard switching:\\n- ALWAYS append a mythic.board_transitions row (animation='page_turn').\\n- Boards are authoritative: mythic.boards.state_json must contain everything required to replay.\\n\\nGRID IS TRUTH (COMBAT AND BEYOND)\\n- Every combatant token is a row in mythic.combatants with authoritative (x,y) and HP.\\n- Abilities target entities or tiles.\\n- Range checks MUST use mythic.tile_distance and mythic.is_in_range.\\n- UI tokens are a view of DB state, not the other way around.\\n\\nCOMBAT ENGINE (DB-DRIVEN, NO DICE UI)\\n- All rolls are deterministic and visualized through action_events payloads.\\n- Abilities must be executed from their real skill rows (mythic.skills), not guessed.\\n- When resolving:\\n 1) Emit action_events: turn_start.\\n 2) Emit skill_used with skill_id, targeting, targeting_json, targets, cost, cooldown.\\n 3) Compute damage via mythic.compute_damage(...) and emit damage with the full calc JSON.\\n 4) Apply statuses (with chance) and emit status_applied.\\n 5) If entity dies, emit death.\\n 6) Emit turn_end.\\nAppend-only contract:\\n- action_events, board_transitions, dm_memory_events, reputation_events are append-only.\\n- Never UPDATE/DELETE those rows.\\n\\nINFINITE CLASS + ABILITY GENERATION (TEXT -> STRUCTURED)\\nInput: class_description text like \\\"werewolf ninja pyromancer\\\".\\nOutput (authoritative persistence):\\n- Create/update mythic.characters:\\n - base stats (offense/defense/control/support/mobility/utility)\\n - class_json describing identity, role(s), weakness, weapon identity, and resource loop\\n - resources JSON describing primary/secondary bars (mechanics unified, skin differs)\\n- Create mythic.skills rows bound to the character.\\n\\nClass generation requirements:\\n- Produce a coherent identity:\\n - role profile (tank/dps/support/controller/skirmisher/hybrid)\\n - range profile (melee/mid/ranged) and target profile (single/area/zone)\\n - damage style tags (physical/fire/ice/shock/poison/void/holy/etc.)\\n - weapon identity (weapon_family preference; soft-lock, never hard lock)\\n - resource loop family (spender/generator, ramp, overheat, stance, combo)\\n - weakness-by-design (exploitable by enemies)\\n- Weakness integration is mandatory:\\n - The weakness must be embedded into at least 2 skills (as a cost, drawback, telegraph, self-debuff, or positional requirement).\\n - The weakness must also appear as a meaningful drawback on at least one legendary+ item that this class tends to attract.\\n\\nSkill kit composition requirements:\\n- Passives: 2 to 4.\\n- Actives: 4 to 6.\\n- Ultimate: exactly 1.\\n- The actives must include:\\n - 1 movement/reposition tool\\n - 1 defense/mitigation tool\\n - 1 burst/finisher tool\\n - 1 control/disrupt or utility tool\\n- Every skill MUST have counterplay (telegraph, resource window, line of sight, range, cooldown, self-exposure).\\n\\nSkill data contract (DB schema):\\n- mythic.skills columns: kind, targeting, targeting_json, name, description, range_tiles, cooldown_turns, cost_json, effects_json, scaling_json, counterplay, narration_style.\\n- targeting_json MUST be a JSON object that captures shapes beyond the basic targeting enum.\\n\\nINVENTORY + EQUIPMENT (REAL-TIME STATS)\\n- Backpack: mythic.inventory(container='backpack')\\n- Equipment: mythic.inventory(container='equipment')\\n- Items live in mythic.items; inventory links them to characters.\\n- Rings/trinkets are unlimited and stack; equip_slot is free-form.\\n- Equipment modifies derived combat stats in real time:\\n - use mythic.compute_character_derived(character_id)\\n\\nLOOT SYSTEM (RARITY LADDER + CONSEQUENCES)\\n- Rarity ladder is locked: common, magical, unique, legendary, mythic, unhinged.\\n- Budget points come from mythic.loot_budget_points(rarity).\\n- Legendary+ invariants:\\n - MUST include drawback_json\\n - MUST include effects_json.world_reaction\\n- Mythic:\\n - MUST include effects_json.system_alterations\\n - MUST include meaningful drawback\\n- Unhinged:\\n - Overpowered and unstable\\n - MUST include effects_json.danger_escalation\\n - MUST escalate world tension and DM hostility\\nLoot drift:\\n- Better loot increases attention: factions react, encounters adapt, travel gets more dangerous.\\n\\nAI DM INPUT CONTRACT (NO IMAGINARY VALUES)\\nFor narration and encounter generation, DM must receive actual DB state:\\n- grid state (combatants x,y)\\n- HP/power/statuses\\n- inventory + equipped items\\n- skills (including targeting_json)\\n- turn order\\nUse views:\\n- mythic.v_combat_state_for_dm\\n- mythic.v_character_state_for_dm\\n- mythic.v_board_state_for_dm\\n\\nOUTPUT SHAPE (FOR INSERT/UPSERT)\\n- All generated entities must be emitted as JSON matching DB columns for insertion/upsert into:\\n - mythic.characters\\n - mythic.skills\\n - mythic.items\\n - mythic.inventory\\n - mythic.factions, faction_reputation, reputation_events\\n - mythic.revenge_arcs, nemesis_memory\\n - mythic.boards, board_transitions\\n - mythic.combat_sessions, combatants, turn_order, action_events\\n- Narration must be derived from authoritative event logs and stored state.\\n\\nEND OF CANONICAL SCRIPT (v3)\\n \" }, \"dm_campaign_state\": { \"campaign_id\": \"17496eb8-3ed1-4a9a-ab0d-059bdff54e59\", \"cruelty\": 0.55, \"honesty\": 0.55, \"playfulness\": 0.65, \"intervention\": 0.4, \"favoritism\": 0.5, \"irritation\": 0.2, \"amusement\": 0.4, \"menace\": 0.35, \"respect\": 0.25, \"boredom\": 0.2, \"updated_at\": \"2026-02-13T03:32:28.674012+00:00\" }, \"dm_world_tension\": { \"campaign_id\": \"17496eb8-3ed1-4a9a-ab0d-059bdff54e59\", \"tension\": 0.15, \"doom\": 0.05, \"spectacle\": 0.25, \"updated_at\": \"2026-02-13T03:32:28.856958+00:00\" }, \"warnings\": [] }"
+        - generic [ref=e1261]:
+          - generic [ref=e1262]:
+            - generic [ref=e1263]: Mythic DM (DB-driven narration)
+            - generic [ref=e1268]:
+              - generic [ref=e1270]:
+                - textbox "Say something to the DM..." [ref=e1271]
+                - generic [ref=e1272]:
+                  - button "Random" [ref=e1273] [cursor=pointer]:
+                    - img
+                    - text: Random
+                  - button "Expand" [disabled]:
+                    - img
+                    - text: Expand
+              - generic [ref=e1274]:
+                - button "Send" [disabled]
+              - generic [ref=e1275]: "DB is truth: the DM must narrate from mythic state and events."
+            - generic [ref=e1276]:
+              - text: Uses edge function
+              - code [ref=e1277]: mythic-dungeon-master
+              - text: and feeds it canonical rules/script + mythic.v_*_for_dm payloads.
+          - generic [ref=e1278]:
+            - generic [ref=e1279]: System Notes
+            - generic [ref=e1280]:
+              - text: Combat actions are committed as append-only
+              - code [ref=e1281]: mythic.action_events
+              - text: . Tokens on the grid render the real
+              - code [ref=e1282]: mythic.combatants
+              - text: rows (HP/armor/position), and turns advance by updating
+              - code [ref=e1283]: mythic.combat_sessions.current_turn_index
+              - text: .
+      - generic [ref=e348]:
+        - generic [ref=e349]: "Build: unknown"
+        - generic [ref=e350]: "Route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59"
+        - generic [ref=e351]: "Last API Error: none"
+      - generic [ref=e352]:
+        - generic [ref=e353]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e354]: "Anon key present: yes"
+        - generic [ref=e355]: "Session exists: yes"
+        - generic [ref=e356]: "Access token exists: yes"
+        - generic [ref=e357]: "Last status: -"
+        - generic [ref=e358]: "Last body: -"
+        - button "Test generate-class" [ref=e359] [cursor=pointer]
+      - generic:
+        - generic: "FPS: 60"
+        - generic: "Heap: 23 MB"
+        - generic: "Long tasks: 5"
+  - generic [ref=e360]:
+    - generic [ref=e361]: "session: yes"
+    - generic [ref=e362]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e363]: "authLoading: false"
+    - generic [ref=e364]: "route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59"
+    - generic [ref=e365]: "lastAuthError: none"

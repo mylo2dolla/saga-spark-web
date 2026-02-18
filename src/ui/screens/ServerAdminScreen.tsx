@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { callEdgeFunctionRaw } from "@/lib/edge";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/ui/data/async";
-import { useDiagnostics } from "@/ui/data/diagnostics";
+import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useNetworkHealth } from "@/ui/data/networkHealth";
+import { createLogger } from "@/lib/observability/logger";
 
 interface ServerNodeRow {
   id: string;
@@ -27,10 +28,18 @@ interface WorldEventRow {
   created_at: string;
 }
 
+const normalizeNodeStatus = (value: string | null | undefined): ServerNodeRow["status"] => {
+  if (value === "online" || value === "offline" || value === "degraded") {
+    return value;
+  }
+  return "degraded";
+};
+
 export default function ServerAdminScreen() {
   const { user, isLoading: authLoading } = useAuth();
-  const { setLastError, engineSnapshot, lastError, lastErrorAt } = useDiagnostics();
+  const { setLastError, engineSnapshot, lastError, lastErrorAt, healthChecks, exportDebugBundle } = useDiagnostics();
   const networkHealth = useNetworkHealth(1000);
+  const logger = useMemo(() => createLogger("server-admin-screen"), []);
   const [nodes, setNodes] = useState<ServerNodeRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,17 +71,15 @@ export default function ServerAdminScreen() {
         .order("last_heartbeat", { ascending: false });
 
       if (response.error) {
-        console.error("[server_nodes] supabase error", {
-          message: response.error.message,
-          code: response.error.code,
-          details: response.error.details,
-          hint: response.error.hint,
-          status: response.error.status,
-        });
+        logger.error("server_nodes.fetch.failed", response.error);
         throw response.error;
       }
 
-      setNodes(response.data ?? []);
+      const nextNodes = (response.data ?? []).map((row) => ({
+        ...row,
+        status: normalizeNodeStatus((row as { status?: string }).status),
+      }));
+      setNodes(nextNodes);
     } catch (err) {
       const message = formatError(err, "Failed to load server nodes");
       setError(message);
@@ -80,7 +87,7 @@ export default function ServerAdminScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [setLastError, user]);
+  }, [logger, setLastError, user]);
 
   useEffect(() => {
     fetchNodes();
@@ -137,7 +144,7 @@ export default function ServerAdminScreen() {
     try {
       const response = await supabase.from("campaigns").select("id").limit(1);
       if (response.error) {
-        setDbTest({ ok: false, status: response.error.status, message: response.error.message });
+        setDbTest({ ok: false, message: response.error.message });
         return;
       }
       setDbTest({ ok: true, status: 200, message: "ok" });
@@ -237,16 +244,20 @@ export default function ServerAdminScreen() {
         "postgres_changes",
         { event: "*", schema: "public", table: "server_nodes" },
         payload => {
-          const row = payload.new as ServerNodeRow | undefined;
+          const row = payload.new as (ServerNodeRow & { status?: string }) | undefined;
           if (row && row.node_name) {
+            const normalizedRow: ServerNodeRow = {
+              ...row,
+              status: normalizeNodeStatus(row.status),
+            };
             setNodes(prev => {
-              const idx = prev.findIndex(item => item.id === row.id);
+              const idx = prev.findIndex(item => item.id === normalizedRow.id);
               if (idx >= 0) {
                 const next = [...prev];
-                next[idx] = row;
+                next[idx] = normalizedRow;
                 return next;
               }
-              return [row, ...prev];
+              return [normalizedRow, ...prev];
             });
           }
         },
@@ -259,26 +270,12 @@ export default function ServerAdminScreen() {
   }, [user]);
 
   if (authLoading) {
-    console.info("[auth] log", {
-      step: "auth_guard",
-      path: "/servers",
-      hasSession: Boolean(user),
-      userId: user?.id ?? null,
-      isLoading: authLoading,
-      reason: "auth_loading",
-    });
+    logger.debug("auth.guard.loading", { path: "/servers", has_session: Boolean(user) });
     return <div className="text-sm text-muted-foreground">Loading session...</div>;
   }
 
   if (!user) {
-    console.info("[auth] log", {
-      step: "auth_guard",
-      path: "/servers",
-      hasSession: false,
-      userId: null,
-      isLoading: authLoading,
-      reason: "no_user",
-    });
+    logger.debug("auth.guard.no_user", { path: "/servers" });
     return <div className="text-sm text-muted-foreground">Login required.</div>;
   }
 
@@ -370,6 +367,21 @@ export default function ServerAdminScreen() {
             <Button variant="outline" onClick={handleDbTest} disabled={isTesting}>
               Test DB
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const blob = new Blob([exportDebugBundle()], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const anchor = document.createElement("a");
+                const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+                anchor.href = url;
+                anchor.download = `mythic-debug-bundle-${stamp}.json`;
+                anchor.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              Export Debug Bundle
+            </Button>
             {DEV_DEBUG ? (
               <Button variant="outline" onClick={handleEdgeTest} disabled={isTesting || !SUPABASE_URL}>
                 Test generate-class
@@ -382,6 +394,20 @@ export default function ServerAdminScreen() {
           {edgeTest ? (
             <div>Edge test: {edgeTest.ok ? "ok" : "error"} {edgeTest.status ? `(${edgeTest.status})` : ""}</div>
           ) : null}
+          <div className="space-y-1 rounded-md border border-border p-2">
+            <div className="font-semibold text-foreground">Subsystem health</div>
+            {Object.keys(healthChecks).length === 0 ? (
+              <div>No subsystem probes yet.</div>
+            ) : (
+              Object.values(healthChecks).map((snapshot) => (
+                <div key={snapshot.subsystem}>
+                  {snapshot.subsystem}: {snapshot.status}
+                  {snapshot.last_latency_ms !== null ? ` · ${snapshot.last_latency_ms}ms` : ""}
+                  {snapshot.last_success_at ? ` · last ok ${new Date(snapshot.last_success_at).toLocaleTimeString()}` : ""}
+                </div>
+              ))
+            )}
+          </div>
         </CardContent>
       </Card>
 

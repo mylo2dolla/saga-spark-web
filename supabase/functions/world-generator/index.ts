@@ -1,10 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 interface CampaignSeed {
@@ -186,40 +187,108 @@ This should feel like a rich, living world ready for adventure.
 Respond with JSON only.`;
 }
 
+const getRequestId = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
+
+const respondJson = (payload: unknown, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  const requestId = crypto.randomUUID();
+  const requestId = getRequestId(req);
+  const expectedEnvKeys = [
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "AI_GATEWAY_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_MODEL",
+    "GROQ_API_KEY",
+    "GROQ_BASE_URL",
+    "GROQ_MODEL",
+    "LLM_PROVIDER",
+    "LLM_MODEL",
+  ];
+  const envStatus = expectedEnvKeys.reduce<Record<string, "set" | "missing">>((acc, key) => {
+    acc[key] = Deno.env.get(key) ? "set" : "missing";
+    return acc;
+  }, {});
+  console.log("world-generator expected env keys", envStatus);
   const errorResponse = (
     status: number,
     code: string,
     message: string,
     details?: unknown
   ) =>
-    new Response(
-      JSON.stringify({ ok: false, code, message, details, requestId }),
-      { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    respondJson({ ok: false, code, message, details, requestId }, status);
 
   try {
+    let payload: GenerationRequest;
+    try {
+      payload = (await req.json()) as GenerationRequest;
+    } catch (error) {
+      console.error("world-generator invalid json", {
+        requestId,
+        error: error instanceof Error ? error.message : error,
+      });
+      return errorResponse(400, "invalid_json", "Request body must be valid JSON");
+    }
+
+    const { type, campaignSeed, context } = payload ?? {};
+    const allowedTypes = ["npc", "quest", "dialog", "faction", "location", "initial_world"];
+    if (!type || !allowedTypes.includes(type)) {
+      return errorResponse(400, "invalid_type", "Unsupported generation type", { type });
+    }
+    if (!campaignSeed || typeof campaignSeed.title !== "string" || typeof campaignSeed.description !== "string") {
+      return errorResponse(
+        400,
+        "invalid_campaign_seed",
+        "campaignSeed.title and campaignSeed.description are required",
+        { campaignSeed }
+      );
+    }
+
+    const missingRequired = ["SUPABASE_URL", "SUPABASE_ANON_KEY"].filter(
+      key => !Deno.env.get(key)
+    );
+    const hasOpenAI = Boolean(Deno.env.get("OPENAI_API_KEY"));
+    const hasGroq = Boolean(Deno.env.get("GROQ_API_KEY"));
+    if (!hasOpenAI && !hasGroq) {
+      missingRequired.push("OPENAI_API_KEY|GROQ_API_KEY");
+    }
+    if (missingRequired.length > 0) {
+      return errorResponse(
+        500,
+        "missing_env",
+        `Missing required env vars: ${missingRequired.join(", ")}`,
+        { expectedEnvKeys, missingRequired }
+      );
+    }
+
     const authHeader = req.headers.get("Authorization") ?? "";
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     let userId: string | null = null;
     if (supabaseUrl && anonKey && authHeader) {
-      const supabase = createClient(supabaseUrl, anonKey, {
-        global: { headers: { Authorization: authHeader } },
-      });
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      const authToken = authHeader.replace("Bearer ", "");
+      const supabase = createClient(supabaseUrl, anonKey);
+      const { data: { user }, error: userError } = await supabase.auth.getUser(authToken);
       if (userError) {
         console.error("world-generator auth lookup failed", { requestId, error: userError.message });
       } else {
         userId = user?.id ?? null;
       }
     }
-    const { type, campaignSeed, context } = (await req.json()) as GenerationRequest;
     const campaignId = context?.campaignId ?? null;
     
     let prompt: string;
@@ -243,7 +312,7 @@ serve(async (req) => {
         prompt = getInitialWorldPrompt(campaignSeed);
         break;
       default:
-        throw new Error(`Unknown generation type: ${type}`);
+        return errorResponse(400, "invalid_type", `Unknown generation type: ${type}`);
     }
 
     console.log("Generating world content", {
@@ -254,12 +323,12 @@ serve(async (req) => {
       campaignTitle: campaignSeed.title,
     });
 
-    const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
+    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
     let data;
     try {
-      console.log("Groq model:", GROQ_MODEL);
-      data = await groqChatCompletions({
-        model: GROQ_MODEL,
+      console.log("LLM model:", model);
+      data = await aiChatCompletions({
+        model,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },
@@ -273,8 +342,11 @@ serve(async (req) => {
         userId,
         campaignId,
         error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
       });
-      return errorResponse(500, "groq_error", "AI generation failed", error);
+      return errorResponse(500, "llm_error", "AI generation failed", {
+        message: error instanceof Error ? error.message : error,
+      });
     }
     const content = data.choices?.[0]?.message?.content;
 
@@ -528,14 +600,12 @@ serve(async (req) => {
 
     console.log(`Successfully generated ${type}`);
 
-    return new Response(
-      JSON.stringify({ ok: true, type, content: parsed, requestId }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return respondJson({ ok: true, type, content: parsed, requestId }, 200);
   } catch (error) {
     console.error("World generator error:", {
       requestId,
       error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return errorResponse(
       500,

@@ -1,10 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 interface ContentEntry {
@@ -92,25 +93,42 @@ const createDeterministicPosition = (seed: string) => {
   };
 };
 
+const getRequestId = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
+
+const respondJson = (payload: unknown, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
 serve(async (req) => {
+  const { pathname } = new URL(req.url);
+  const requestId = getRequestId(req);
+  console.log("world-content-writer request", { method: req.method, pathname, requestId });
+  const hasAuthHeader = Boolean(req.headers.get("Authorization"));
+  console.log("world-content-writer auth header present", { present: hasAuthHeader, requestId });
+
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  const requestId = crypto.randomUUID();
   const errorResponse = (
     status: number,
     code: string,
     message: string,
     details?: unknown
   ) =>
-    new Response(
-      JSON.stringify({ ok: false, code, message, details, requestId }),
-      { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    respondJson({ ok: false, code, message, details, requestId }, status);
 
   try {
     const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return errorResponse(401, "auth_required", "Missing Authorization header");
+    }
     if (!authHeader?.startsWith("Bearer ")) {
       return errorResponse(401, "auth_required", "Authentication required");
     }
@@ -119,29 +137,57 @@ serve(async (req) => {
     const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !SUPABASE_SERVICE_ROLE_KEY) {
-      return errorResponse(500, "missing_env", "Supabase env vars are not configured");
+      return errorResponse(500, "missing_env", "Supabase env vars are not configured", {
+        hasUrl: Boolean(SUPABASE_URL),
+        hasAnon: Boolean(SUPABASE_ANON_KEY),
+        hasServiceRole: Boolean(SUPABASE_SERVICE_ROLE_KEY),
+      });
     }
 
-    const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-    });
-    const { data: { user }, error: userError } = await authClient.auth.getUser();
+    const authToken = authHeader.replace("Bearer ", "");
+    const authClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
       return errorResponse(401, "invalid_token", "Invalid authentication token", userError?.message);
     }
 
-    const body = (await req.json()) as ContentPayload;
-    if (!body?.campaignId) {
+    let body: ContentPayload;
+    try {
+      body = (await req.json()) as ContentPayload;
+    } catch (error) {
+      console.error("world-content-writer invalid json", {
+        requestId,
+        error: error instanceof Error ? error.message : error,
+      });
+      return errorResponse(400, "invalid_json", "Request body must be valid JSON");
+    }
+    if (!body?.campaignId || typeof body.campaignId !== "string") {
       return errorResponse(400, "missing_campaign", "campaignId is required");
     }
 
-    const { data: campaign, error: campaignError } = await authClient
+    if (Array.isArray(body.content)) {
+      const invalidContent = body.content.find(
+        entry =>
+          !entry
+          || typeof entry.content_type !== "string"
+          || typeof entry.content_id !== "string"
+          || entry.content === null
+          || entry.content === undefined
+      );
+      if (invalidContent) {
+        return errorResponse(400, "invalid_content", "Each content entry must include content_type, content_id, and content");
+      }
+    }
+
+    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const { data: campaign, error: campaignError } = await serviceClient
       .from("campaigns")
       .select("id, owner_id")
       .eq("id", body.campaignId)
       .maybeSingle();
 
-    const { data: member, error: memberError } = await authClient
+    const { data: member, error: memberError } = await serviceClient
       .from("campaign_members")
       .select("id")
       .eq("campaign_id", body.campaignId)
@@ -158,7 +204,6 @@ serve(async (req) => {
       return errorResponse(403, "access_denied", "Access denied");
     }
 
-    const serviceClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
     let insertedCount = 0;
 
     if (Array.isArray(body.content) && body.content.length > 0) {
@@ -181,8 +226,11 @@ serve(async (req) => {
     }
 
     if (body.action) {
-      if (!body.actionHash) {
+      if (!body.actionHash || typeof body.actionHash !== "string") {
         return errorResponse(400, "missing_action_hash", "actionHash is required for action mutations");
+      }
+      if (!body.action.text || typeof body.action.text !== "string") {
+        return errorResponse(400, "invalid_action", "action.text is required for action mutations");
       }
       const existingEvent = await serviceClient
         .from("world_events")
@@ -207,8 +255,8 @@ serve(async (req) => {
         );
       }
 
-      const GROQ_MODEL = Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile";
-      console.log("Groq model:", GROQ_MODEL);
+      const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
+      console.log("LLM model:", model);
 
       const promptPayload = {
         action: body.action,
@@ -217,8 +265,8 @@ serve(async (req) => {
 
       const prompt = `${SYSTEM_PROMPT}\n\nPlayer action:\n${body.action.text}\n\nCurrent context:\n${JSON.stringify(promptPayload, null, 2)}`;
 
-      const data = await groqChatCompletions({
-        model: GROQ_MODEL,
+      const data = await aiChatCompletions({
+        model,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },
@@ -252,25 +300,27 @@ serve(async (req) => {
             ? raw.id
             : toKebab(name);
           if (!baseId) return null;
-        const connectedTo = Array.isArray(raw.connectedTo) ? raw.connectedTo.filter((id) => typeof id === "string") : [];
-        const withCurrent = currentLocationId && !connectedTo.includes(currentLocationId)
-          ? [currentLocationId, ...connectedTo]
-          : connectedTo;
-        const position = typeof raw.position === "object" && raw.position
-          ? raw.position as { x?: number; y?: number }
-          : {};
-        const resolvedPosition = typeof position.x === "number" && typeof position.y === "number"
-          ? { x: position.x, y: position.y }
-          : createDeterministicPosition(baseId);
-        return {
-          ...raw,
-          id: baseId,
-          name,
-          connectedTo: withCurrent,
-          position: resolvedPosition,
-        };
-      })
-      .filter((loc): loc is Record<string, unknown> => Boolean(loc));
+          const connectedTo = Array.isArray(raw.connectedTo)
+            ? raw.connectedTo.filter((id) => typeof id === "string")
+            : [];
+          const withCurrent = currentLocationId && !connectedTo.includes(currentLocationId)
+            ? [currentLocationId, ...connectedTo]
+            : connectedTo;
+          const position = typeof raw.position === "object" && raw.position
+            ? raw.position as { x?: number; y?: number }
+            : {};
+          const resolvedPosition = typeof position.x === "number" && typeof position.y === "number"
+            ? { x: position.x, y: position.y }
+            : createDeterministicPosition(baseId);
+          return {
+            ...raw,
+            id: baseId,
+            name,
+            connectedTo: withCurrent,
+            position: resolvedPosition,
+          };
+        })
+        .filter((loc): loc is Record<string, unknown> => Boolean(loc));
 
       const newLocationIds = normalizedLocations.map((loc) => loc.id);
       const updatedLocationEntries: ContentEntry[] = normalizedLocations.map((loc) => ({
@@ -389,33 +439,31 @@ serve(async (req) => {
         return errorResponse(500, "event_insert_failed", "Failed to persist action event", eventError.message);
       }
 
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          deduped: false,
-          inserted: payload.length,
-          delta: parsed,
-          event: eventRow,
-          requestId,
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return respondJson({
+        ok: true,
+        deduped: false,
+        inserted: payload.length,
+        delta: parsed,
+        event: eventRow,
+        requestId,
+      });
     }
 
-    return new Response(
-      JSON.stringify({ ok: true, success: true, inserted: insertedCount, requestId }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return respondJson({ ok: true, success: true, inserted: insertedCount, requestId });
   } catch (error) {
-    console.error("World content writer error:", error);
-    return new Response(
-      JSON.stringify({
+    console.error("World content writer error:", {
+      requestId,
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    return respondJson(
+      {
         ok: false,
         code: "unexpected_error",
         message: error instanceof Error ? error.message : "Unknown error",
         requestId,
-      }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      },
+      500
     );
   }
 });

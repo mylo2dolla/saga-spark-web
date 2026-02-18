@@ -1,5 +1,4 @@
 import { Outlet, useParams } from "react-router-dom";
-import { GameSessionProvider } from "@/contexts/GameSessionContext";
 import NotFound from "@/pages/NotFound";
 import DevDebugOverlay from "@/components/debug/DevDebugOverlay";
 import { useAuth } from "@/hooks/useAuth";
@@ -20,9 +19,9 @@ export default function GameSessionRoute() {
   }
 
   return (
-    <GameSessionProvider campaignId={campaignId}>
+    <>
       <Outlet />
       <DevDebugOverlay />
-    </GameSessionProvider>
+    </>
   );
 }

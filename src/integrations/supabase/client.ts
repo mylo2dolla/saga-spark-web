@@ -2,36 +2,113 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { recordNetworkRequest } from "@/ui/data/networkHealth";
+import { createLogger } from "@/lib/observability/logger";
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
+const RAW_SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+const RAW_SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SUPABASE_PUBLISHABLE_KEY = RAW_SUPABASE_PUBLISHABLE_KEY?.trim() || undefined;
+const SUPABASE_ANON_KEY = RAW_SUPABASE_ANON_KEY?.trim() || undefined;
+const SUPABASE_KEY = SUPABASE_ANON_KEY ?? SUPABASE_PUBLISHABLE_KEY;
+const SUPABASE_KEY_SOURCE = SUPABASE_ANON_KEY
+  ? (import.meta.env.VITE_SUPABASE_ANON_KEY ? "VITE_SUPABASE_ANON_KEY" : "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+  : SUPABASE_PUBLISHABLE_KEY
+    ? (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ? "VITE_SUPABASE_PUBLISHABLE_KEY" : "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
+    : null;
 const DEV_DEBUG = import.meta.env.DEV;
+const DEV_SUPABASE_FETCH_DEBUG = DEV_DEBUG && import.meta.env.VITE_DEBUG_SUPABASE_FETCH === "true";
+const logger = createLogger("supabase-client");
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
 if (DEV_DEBUG) {
   const projectRef = SUPABASE_URL?.replace("https://", "").split(".")[0] ?? null;
-  console.info("DEV_DEBUG supabase config", {
+  const keyType = SUPABASE_KEY?.startsWith("eyJ")
+    ? "anon"
+    : SUPABASE_KEY?.startsWith("sb_publishable_")
+      ? "publishable"
+      : "unknown";
+  logger.info("supabase.config", {
     hasUrl: Boolean(SUPABASE_URL),
-    hasKey: Boolean(SUPABASE_ANON_KEY),
+    hasKey: Boolean(SUPABASE_KEY),
+    keySource: SUPABASE_KEY_SOURCE,
     projectRef,
-    url: SUPABASE_URL ?? null,
+    keyType,
   });
+  if (SUPABASE_ANON_KEY && !SUPABASE_ANON_KEY.startsWith("eyJ")) {
+    logger.warn("supabase.anon_key.format", {
+      keySource: SUPABASE_KEY_SOURCE,
+      keyType: SUPABASE_ANON_KEY.startsWith("sb_publishable_") ? "publishable" : "unknown",
+    });
+  }
 }
 
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  throw new Error(
+    "Missing Supabase configuration. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (preferred) or VITE_SUPABASE_PUBLISHABLE_KEY."
+  );
+}
+
+const createSafeStorage = () => {
+  if (typeof window !== "undefined" && window.localStorage) {
+    return window.localStorage;
+  }
+  const store = new Map<string, string>();
+  return {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+  } as Storage;
+};
+
 const baseFetch = globalThis.fetch.bind(globalThis);
+
+const withTimeout = (timeoutMs: number) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return { controller, timeoutId };
+};
+
+const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
+  const anyFn = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  if (anyFn) return anyFn([a, b]);
+  // Fallback: if init already has a signal, we honor it and still abort on timeout via a manual bridge.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  a.addEventListener("abort", onAbort, { once: true });
+  b.addEventListener("abort", onAbort, { once: true });
+  return controller.signal;
+};
+
+const fetchWithHardTimeout: typeof fetch = async (input, init) => {
+  // Prevent the UI from hanging forever on bad networks/router weirdness.
+  const timeoutMs = 15_000;
+  const { controller, timeoutId } = withTimeout(timeoutMs);
+  const signal = init?.signal ? combineSignals(init.signal, controller.signal) : controller.signal;
+
+  try {
+    return await baseFetch(input, { ...(init ?? {}), signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 const debugFetch: typeof fetch = async (input, init) => {
   const url = typeof input === "string" ? input : input.url;
   const method = init?.method ?? "GET";
-  if (DEV_DEBUG) {
-    console.info("DEV_DEBUG supabase fetch start", { method, url });
+  if (DEV_SUPABASE_FETCH_DEBUG) {
+    logger.debug("supabase.fetch.start", { method, url });
   }
 
   try {
-    const response = await baseFetch(input, init);
-    if (DEV_DEBUG) {
-      console.info("DEV_DEBUG supabase fetch response", {
+    const response = await fetchWithHardTimeout(input, init);
+    if (DEV_SUPABASE_FETCH_DEBUG) {
+      logger.debug("supabase.fetch.response", {
         method,
         url,
         status: response.status,
@@ -40,22 +117,22 @@ const debugFetch: typeof fetch = async (input, init) => {
     recordNetworkRequest();
     return response;
   } catch (error) {
-    if (DEV_DEBUG) {
-      console.error("DEV_DEBUG supabase fetch error", { method, url, error });
+    if (DEV_SUPABASE_FETCH_DEBUG) {
+      logger.error("supabase.fetch.error", error, { method, url });
     }
     recordNetworkRequest();
     throw error;
   }
 };
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
-    storage: localStorage,
+    storage: createSafeStorage(),
     persistSession: true,
     autoRefreshToken: true,
   },
   global: {
-    fetch: DEV_DEBUG ? debugFetch : baseFetch,
+    fetch: DEV_DEBUG ? debugFetch : fetchWithHardTimeout,
   },
 });
 
@@ -69,21 +146,21 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, 
     authAny.signInWithPassword = async (...args) => {
       const allowed = (globalThis as { __authSubmitInProgress?: boolean }).__authSubmitInProgress === true;
       if (DEV_DEBUG && !allowed) {
-        console.warn("[auth] signIn called outside AuthScreen", {
+        logger.warn("auth.sign_in.outside_auth_screen", {
           route: globalThis.location?.pathname ?? null,
         });
       }
       if (inFlight) {
         if (DEV_DEBUG) {
           const count = ((globalThis as { __authTokenGrantCount?: number }).__authTokenGrantCount ?? 0);
-          console.info("[auth] log", { step: "sign_in_dedupe", count });
+          logger.info("auth.sign_in.dedupe", { count });
         }
         return inFlight;
       }
       if (DEV_DEBUG) {
         const globalRef = (globalThis as { __authTokenGrantCount?: number });
         globalRef.__authTokenGrantCount = (globalRef.__authTokenGrantCount ?? 0) + 1;
-        console.info("[auth] log", { step: "sign_in_start", count: globalRef.__authTokenGrantCount });
+        logger.info("auth.sign_in.start", { count: globalRef.__authTokenGrantCount });
       }
       const promise = originalSignIn(...args);
       inFlight = promise;
@@ -92,7 +169,7 @@ export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, 
       } finally {
         inFlight = null;
         if (DEV_DEBUG) {
-          console.info("[auth] log", { step: "sign_in_end" });
+          logger.info("auth.sign_in.end");
         }
       }
     };

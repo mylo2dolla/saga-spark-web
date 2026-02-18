@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { toast } from "sonner";
 import { formatError } from "@/ui/data/async";
 
@@ -69,41 +70,85 @@ export interface CharacterPayload {
   backpack: Record<string, unknown>[];
 }
 
-const mapCharacterRow = (data: Character) => ({
-  ...data,
-  stats: data.stats as unknown as CharacterStats,
-  abilities: (data.abilities as unknown as CharacterAbility[]) ?? [],
-  inventory: (data.inventory as unknown as Record<string, unknown>[]) ?? [],
-  position: data.position as unknown as { x: number; y: number } | null,
-});
+type CharacterRow = Database["public"]["Tables"]["characters"]["Row"];
+
+const DEFAULT_STATS: CharacterStats = {
+  strength: 10,
+  dexterity: 10,
+  constitution: 10,
+  intelligence: 10,
+  wisdom: 10,
+  charisma: 10,
+};
+
+const readObject = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+
+const mapCharacterRow = (data: CharacterRow): Character => {
+  const statsObj = readObject(data.stats);
+  const positionObj = readObject(data.position);
+  return {
+    ...data,
+    stats: {
+      strength: Number(statsObj.strength ?? DEFAULT_STATS.strength),
+      dexterity: Number(statsObj.dexterity ?? DEFAULT_STATS.dexterity),
+      constitution: Number(statsObj.constitution ?? DEFAULT_STATS.constitution),
+      intelligence: Number(statsObj.intelligence ?? DEFAULT_STATS.intelligence),
+      wisdom: Number(statsObj.wisdom ?? DEFAULT_STATS.wisdom),
+      charisma: Number(statsObj.charisma ?? DEFAULT_STATS.charisma),
+    },
+    abilities: Array.isArray(data.abilities) ? (data.abilities as unknown as CharacterAbility[]) : [],
+    inventory: Array.isArray(data.inventory) ? (data.inventory as unknown as Record<string, unknown>[]) : [],
+    status_effects: Array.isArray(data.status_effects) ? data.status_effects : [],
+    position:
+      typeof positionObj.x === "number" && typeof positionObj.y === "number"
+        ? { x: positionObj.x, y: positionObj.y }
+        : null,
+  };
+};
 
 export function useCharacter(campaignId: string | undefined) {
   const [character, setCharacter] = useState<Character | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const isMountedRef = useRef(true);
+  const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
   const fetchCharacter = useCallback(async () => {
+    if (E2E_BYPASS_AUTH) {
+      if (isMountedRef.current) {
+        setIsLoading(false);
+        setError(null);
+        setCharacter(null);
+      }
+      return;
+    }
     if (!campaignId) {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
       return;
     }
 
     try {
-      setIsLoading(true);
-      setError(null);
+      if (isMountedRef.current) {
+        setIsLoading(true);
+        setError(null);
+      }
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError) {
         console.error("[character] supabase error", {
           message: userError.message,
           code: userError.code,
-          details: userError.details,
-          hint: userError.hint,
-          status: userError.status,
         });
         throw userError;
       }
       if (!user) {
-        setIsLoading(false);
+        if (isMountedRef.current) {
+          setIsLoading(false);
+        }
         return;
       }
 
@@ -121,7 +166,6 @@ export function useCharacter(campaignId: string | undefined) {
           code: error.code,
           details: error.details,
           hint: error.hint,
-          status: error.status,
         });
         throw error;
       }
@@ -130,7 +174,9 @@ export function useCharacter(campaignId: string | undefined) {
         if (!data.stats) {
           throw new Error("Character stats missing");
         }
-        setCharacter(mapCharacterRow(data as Character));
+        if (isMountedRef.current) {
+          setCharacter(mapCharacterRow(data));
+        }
         if (import.meta.env.DEV) {
           console.info("[character]", {
             step: "loaded_from_db",
@@ -146,12 +192,16 @@ export function useCharacter(campaignId: string | undefined) {
       const message = status === 401 || status === 403
         ? `Unauthorized (${status}): ${baseMessage}`
         : baseMessage;
-      setError(message);
+      if (isMountedRef.current) {
+        setError(message);
+      }
       console.error("[character] fetch error", { message, status });
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
-  }, [campaignId]);
+  }, [E2E_BYPASS_AUTH, campaignId]);
 
   const updateCharacter = useCallback(async (updates: Partial<Character>) => {
     if (!character) throw new Error("No character loaded");
@@ -200,18 +250,25 @@ export function useCharacter(campaignId: string | undefined) {
     };
 
     const query = existingId
-      ? supabase.from("characters").update(dbPayload).eq("id", existingId)
-      : supabase.from("characters").insert([dbPayload]);
+      ? supabase.from("characters").update(dbPayload as Database["public"]["Tables"]["characters"]["Update"]).eq("id", existingId)
+      : supabase.from("characters").insert(dbPayload as Database["public"]["Tables"]["characters"]["Insert"]);
 
-    const { data, error } = await query.select("*").single();
+    const { data, error } = await query.select("*").maybeSingle();
     if (error) throw error;
-    const next = mapCharacterRow(data as Character);
+    if (!data) {
+      throw new Error("Character save returned no data");
+    }
+    const next = mapCharacterRow(data);
     setCharacter(next);
     return next;
   }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
     fetchCharacter();
+    return () => {
+      isMountedRef.current = false;
+    };
   }, [fetchCharacter]);
 
   return {

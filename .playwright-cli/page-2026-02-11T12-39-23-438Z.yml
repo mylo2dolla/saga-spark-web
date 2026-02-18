@@ -1,0 +1,96 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic [ref=e3]:
+    - generic [ref=e4]: "Runtime: DEV (development)"
+    - generic [ref=e5]: "version: 0.0.0"
+    - generic [ref=e6]: "build: 2026-02-11T12:15:22.225Z"
+    - generic [ref=e7]: "git: 982608b"
+    - generic [ref=e8]: "runId: f41e5e79-a917-4477-b644-a7a93e9621a2"
+    - generic [ref=e9]: "now: 2026-02-11T12:30:57.151Z"
+    - generic [ref=e10]: "base: /"
+    - generic [ref=e11]: "href: http://localhost:8080/login"
+  - generic [ref=e32]:
+    - complementary [ref=e33]:
+      - generic [ref=e34]: Saga Spark
+      - navigation [ref=e35]:
+        - link "Dashboard" [ref=e36] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e37] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Game" [ref=e38] [cursor=pointer]:
+          - /url: /game
+        - link "Servers/Admin" [ref=e39] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e40]:
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]: "Auth: psylus13@gmail.com"
+          - generic [ref=e44]: "DB: ok"
+        - generic [ref=e45]: /game/392a4ddd-dc01-4292-9fe9-91c544264f0d/create-character
+      - generic [ref=e46]:
+        - generic [ref=e116]:
+          - generic [ref=e117]:
+            - generic [ref=e118]:
+              - generic [ref=e119]: Mythic Class Forge
+              - generic [ref=e120]: Describe your class. The system generates a real kit in Supabase (mythic schema).
+            - button "Cancel" [ref=e121] [cursor=pointer]
+          - generic [ref=e123]:
+            - generic [ref=e124]:
+              - generic [ref=e125]: Character Name
+              - textbox "Character Name" [ref=e126]:
+                - /placeholder: e.g. Nyx
+            - generic [ref=e127]:
+              - generic [ref=e128]: Class Concept
+              - textbox "Class Concept" [ref=e129]:
+                - /placeholder: e.g. "werewolf ninja pyromancer" or "goblin priest of broken vending machines"
+              - generic [ref=e130]: Violence/gore allowed. Sexual content forbidden.
+            - generic [ref=e131]:
+              - button "Generate Kit" [disabled]
+        - generic [ref=e132]:
+          - generic [ref=e133]: "route: /game/392a4ddd-dc01-4292-9fe9-91c544264f0d/create-character"
+          - generic [ref=e134]: "campaignId: 392a4ddd-dc01-4292-9fe9-91c544264f0d"
+          - generic [ref=e135]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+          - generic [ref=e136]: "hasSession: yes"
+          - generic [ref=e137]: "authLoading: false"
+          - generic [ref=e138]: "characterLoading: false"
+          - generic [ref=e139]: "characterExists: no"
+          - generic [ref=e140]: "characterError: none"
+          - generic [ref=e141]: "engineReady: yes"
+          - generic [ref=e142]: "lastError: none"
+          - generic [ref=e143]: "lastAction: none"
+        - generic [ref=e144]:
+          - generic [ref=e145]: DEV_DEBUG Overlay
+          - generic [ref=e146]:
+            - button "Force Save Now" [ref=e147] [cursor=pointer]
+            - button "Force Reload From DB" [ref=e148] [cursor=pointer]
+          - button "Supabase Connectivity Self-Test" [ref=e149] [cursor=pointer]
+          - generic [ref=e150]: "{ \"supabaseProjectRef\": \"othlyxwtigxzczeffzee\", \"campaignId\": \"392a4ddd-dc01-4292-9fe9-91c544264f0d\", \"loadedFromSupabase\": false, \"lastSavedAt\": 1770813352903, \"lastLoadedAt\": null, \"networkHealth\": { \"requestsPerMinute\": 0, \"lastRequestAt\": null, \"lastDbWriteAt\": 1770813352903, \"lastDbReadAt\": 1770813350335, \"lastDbLoadAt\": null, \"lastEdgeCallAt\": 1770813335842, \"lastEdgeResponseAt\": 1770813341160, \"profilesReads\": 2, \"campaignMembersReads\": 0, \"campaignsReads\": 2, \"savesReads\": 0 }, \"locationsSize\": 9, \"locationIds\": [ \"willowdale_village\", \"golden_haven\", \"ashen_outpost\", \"ember_tower\", \"moonwhisper_grove\", \"ravenhand_camp\", \"outskirts\", \"town\", \"roadside-shrine\" ], \"locationNames\": [ \"Willowdale Village\", \"Golden Haven\", \"Ashen Outpost\", \"Ember Tower\", \"Moonwhisper Grove\", \"Ravenhand Camp\", \"Outskirts\", \"Town\", \"Roadside Shrine\" ], \"currentLocationId\": \"willowdale_village\", \"connectedTo\": [ \"golden_haven\", \"moonwhisper_grove\", \"ashen_outpost\", \"outskirts\", \"town\", \"roadside-shrine\" ], \"availableDestinationIds\": [ \"golden_haven\", \"moonwhisper_grove\", \"ashen_outpost\", \"outskirts\", \"town\", \"roadside-shrine\" ], \"mapMarkers\": [ { \"id\": \"willowdale_village\", \"x\": 120, \"y\": 300 }, { \"id\": \"golden_haven\", \"x\": 200, \"y\": 200 }, { \"id\": \"ashen_outpost\", \"x\": 100, \"y\": 400 }, { \"id\": \"ember_tower\", \"x\": 250, \"y\": 150 }, { \"id\": \"moonwhisper_grove\", \"x\": 150, \"y\": 250 }, { \"id\": \"ravenhand_camp\", \"x\": 50, \"y\": 450 }, { \"id\": \"outskirts\", \"x\": 80, \"y\": 413 }, { \"id\": \"town\", \"x\": 276, \"y\": 104 }, { \"id\": \"roadside-shrine\", \"x\": 347, \"y\": 158 } ] }"
+          - generic [ref=e151]:
+            - generic [ref=e152]: "profilesReads: 2"
+            - generic [ref=e153]: "campaignMembersReads: 0"
+            - generic [ref=e154]: "campaignsReads: 2"
+            - generic [ref=e155]: "savesReads: 0"
+      - generic [ref=e82]:
+        - generic [ref=e83]: "Build: unknown"
+        - generic [ref=e84]: "Route: /game/392a4ddd-dc01-4292-9fe9-91c544264f0d/create-character"
+        - generic [ref=e85]: "Last API Error: none"
+      - generic [ref=e86]:
+        - generic [ref=e87]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e88]: "Anon key present: yes"
+        - generic [ref=e89]: "Session exists: yes"
+        - generic [ref=e90]: "Access token exists: yes"
+        - generic [ref=e91]: "Last status: -"
+        - generic [ref=e92]: "Last body: -"
+        - button "Test generate-class" [ref=e93] [cursor=pointer]
+      - generic [ref=e94]:
+        - generic [ref=e95]: "FPS: 60"
+        - generic [ref=e96]: "Heap: 19 MB"
+        - generic [ref=e97]: "Long tasks: 1"
+  - generic [ref=e98]:
+    - generic [ref=e99]: "session: yes"
+    - generic [ref=e100]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e101]: "authLoading: false"
+    - generic [ref=e102]: "route: /game/392a4ddd-dc01-4292-9fe9-91c544264f0d/create-character"
+    - generic [ref=e103]: "lastAuthError: none"

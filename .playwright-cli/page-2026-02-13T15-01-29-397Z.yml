@@ -1,0 +1,227 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic:
+    - generic: "Runtime: DEV (development)"
+    - generic: "version: 0.0.0"
+    - generic: "build: 2026-02-13T14:53:03.873Z"
+    - generic: "git: f80deca"
+    - generic: "runId: 231ae533-fbdc-4267-8aeb-51321233736d"
+    - generic: "now: 2026-02-13T14:54:44.944Z"
+    - generic: "base: /"
+    - generic: "href: http://localhost:8080/login"
+  - generic [ref=e26]:
+    - complementary [ref=e27]:
+      - generic [ref=e28]: Saga Spark
+      - navigation [ref=e29]:
+        - link "Dashboard" [ref=e30] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e31] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Mythic" [ref=e32] [cursor=pointer]:
+          - /url: /dashboard#campaigns
+        - link "Servers/Admin" [ref=e33] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: "Auth: psylus13@gmail.com"
+          - generic [ref=e38]: "DB: ok"
+          - generic [ref=e39]: "DB probe: 206 · 1707ms"
+        - generic [ref=e40]: /dashboard
+      - generic [ref=e42]:
+        - generic [ref=e43]:
+          - heading "Dashboard" [level=1] [ref=e44]
+          - paragraph [ref=e45]: Your campaigns and access codes.
+          - generic [ref=e46]: "Auth: session | userId: 316225c3-b052-4e4b-bb01-991ff577c037 | DB: ok"
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - heading "Campaigns" [level=3] [ref=e50]
+            - generic [ref=e52]:
+              - generic [ref=e54]:
+                - generic [ref=e55]:
+                  - generic [ref=e56]: Mythic Auto Campaign 2
+                  - generic [ref=e57]: "Invite: 95f131e5"
+                  - generic [ref=e58]: "Members: 1"
+                - button "Open" [ref=e59] [cursor=pointer]
+              - generic [ref=e61]:
+                - generic [ref=e62]:
+                  - generic [ref=e63]: Playwright Create Verify
+                  - generic [ref=e64]: "Invite: b39d52b7"
+                  - generic [ref=e65]: "Members: 1"
+                - button "Open" [ref=e66] [cursor=pointer]
+              - generic [ref=e68]:
+                - generic [ref=e69]:
+                  - generic [ref=e70]: blood everywhere
+                  - generic [ref=e71]: "Invite: d5343e2e"
+                  - generic [ref=e72]: "Members: 1"
+                - button "Open" [ref=e73] [cursor=pointer]
+              - generic [ref=e75]:
+                - generic [ref=e76]:
+                  - generic [ref=e77]: Mythic Auto Campaign 3
+                  - generic [ref=e78]: "Invite: 1258eabe"
+                  - generic [ref=e79]: "Members: 1"
+                - button "Open" [ref=e80] [cursor=pointer]
+              - generic [ref=e82]:
+                - generic [ref=e83]:
+                  - generic [ref=e84]: Playwright End-to-End Campaign
+                  - generic [ref=e85]: "Invite: 24d92a03"
+                  - generic [ref=e86]: "Members: 1"
+                - button "Open" [ref=e87] [cursor=pointer]
+              - generic [ref=e89]:
+                - generic [ref=e90]:
+                  - generic [ref=e91]: Playwright Fresh Create 2026-02-11
+                  - generic [ref=e92]: "Invite: e9926952"
+                  - generic [ref=e93]: "Members: 1"
+                - button "Open" [ref=e94] [cursor=pointer]
+              - generic [ref=e96]:
+                - generic [ref=e97]:
+                  - generic [ref=e98]: Playwright LockIn Campaign
+                  - generic [ref=e99]: "Invite: 81644087"
+                  - generic [ref=e100]: "Members: 1"
+                - button "Open" [ref=e101] [cursor=pointer]
+              - generic [ref=e103]:
+                - generic [ref=e104]:
+                  - generic [ref=e105]: RPC Wrapper Combat Verify
+                  - generic [ref=e106]: "Invite: d5d698e0"
+                  - generic [ref=e107]: "Members: 1"
+                - button "Open" [ref=e108] [cursor=pointer]
+              - generic [ref=e110]:
+                - generic [ref=e111]:
+                  - generic [ref=e112]: probe-1770845964005
+                  - generic [ref=e113]: "Invite: 0c08667f"
+                  - generic [ref=e114]: "Members: 1"
+                - button "Open" [ref=e115] [cursor=pointer]
+              - generic [ref=e117]:
+                - generic [ref=e118]:
+                  - generic [ref=e119]: probe
+                  - generic [ref=e120]: "Invite: 335f84b4"
+                  - generic [ref=e121]: "Members: 1"
+                - button "Open" [ref=e122] [cursor=pointer]
+              - generic [ref=e124]:
+                - generic [ref=e125]:
+                  - generic [ref=e126]: for real this time
+                  - generic [ref=e127]: "Invite: 9a42cca5"
+                  - generic [ref=e128]: "Members: 1"
+                - button "Open" [ref=e129] [cursor=pointer]
+              - generic [ref=e131]:
+                - generic [ref=e132]:
+                  - generic [ref=e133]: Playwright Smoke Campaign
+                  - generic [ref=e134]: "Invite: f8f52748"
+                  - generic [ref=e135]: "Members: 1"
+                - button "Open" [ref=e136] [cursor=pointer]
+              - generic [ref=e138]:
+                - generic [ref=e139]:
+                  - generic [ref=e140]: Playwright Ready Lock In
+                  - generic [ref=e141]: "Invite: 45baed76"
+                  - generic [ref=e142]: "Members: 1"
+                - button "Open" [ref=e143] [cursor=pointer]
+              - generic [ref=e145]:
+                - generic [ref=e146]:
+                  - generic [ref=e147]: Playwright Full Verify 2026-02-11
+                  - generic [ref=e148]: "Invite: 5b97abb9"
+                  - generic [ref=e149]: "Members: 1"
+                - button "Open" [ref=e150] [cursor=pointer]
+              - generic [ref=e152]:
+                - generic [ref=e153]:
+                  - generic [ref=e154]: codex-1770852795969
+                  - generic [ref=e155]: "Invite: 0c1ecc0e"
+                  - generic [ref=e156]: "Members: 1"
+                - button "Open" [ref=e157] [cursor=pointer]
+              - generic [ref=e159]:
+                - generic [ref=e160]:
+                  - generic [ref=e161]: Playwright Repro 2026-02-11
+                  - generic [ref=e162]: "Invite: 56c8028a"
+                  - generic [ref=e163]: "Members: 1"
+                - button "Open" [ref=e164] [cursor=pointer]
+              - generic [ref=e166]:
+                - generic [ref=e167]:
+                  - generic [ref=e168]: Autocheck Campaign 2026-02-11T23-56
+                  - generic [ref=e169]: "Invite: db227d37"
+                  - generic [ref=e170]: "Members: 1"
+                - button "Open" [ref=e171] [cursor=pointer]
+              - generic [ref=e173]:
+                - generic [ref=e174]:
+                  - generic [ref=e175]: Reliability Patch Campaign
+                  - generic [ref=e176]: "Invite: 7a673ed6"
+                  - generic [ref=e177]: "Members: 1"
+                - button "Open" [ref=e178] [cursor=pointer]
+              - generic [ref=e180]:
+                - generic [ref=e181]:
+                  - generic [ref=e182]: Live Repro Campaign
+                  - generic [ref=e183]: "Invite: 9decf8e0"
+                  - generic [ref=e184]: "Members: 1"
+                - button "Open" [ref=e185] [cursor=pointer]
+              - generic [ref=e187]:
+                - generic [ref=e188]:
+                  - generic [ref=e189]: Finish Verify 2026-02-12
+                  - generic [ref=e190]: "Invite: 9a453a3e"
+                  - generic [ref=e191]: "Members: 1"
+                - button "Open" [ref=e192] [cursor=pointer]
+              - generic [ref=e194]:
+                - generic [ref=e195]:
+                  - generic [ref=e196]: Edge Auth Timeout Fix Verify
+                  - generic [ref=e197]: "Invite: 2153529d"
+                  - generic [ref=e198]: "Members: 1"
+                - button "Open" [ref=e199] [cursor=pointer]
+              - generic [ref=e201]:
+                - generic [ref=e202]:
+                  - generic [ref=e203]: Finish Campaign 2026-02-12
+                  - generic [ref=e204]: "Invite: 766828dc"
+                  - generic [ref=e205]: "Members: 1"
+                - button "Open" [ref=e206] [cursor=pointer]
+              - generic [ref=e208]:
+                - generic [ref=e209]:
+                  - generic [ref=e210]: "Whisker Apocalypse: Feline Empire Rises"
+                  - generic [ref=e211]: "Invite: 68a2ecb9"
+                  - generic [ref=e212]: "Members: 1"
+                - button "Open" [ref=e213] [cursor=pointer]
+              - generic [ref=e215]:
+                - generic [ref=e216]:
+                  - generic [ref=e217]: Playwright Final Verify
+                  - generic [ref=e218]: "Invite: 849ebdfc"
+                  - generic [ref=e219]: "Members: 1"
+                - button "Open" [ref=e220] [cursor=pointer]
+          - generic [ref=e221]:
+            - generic [ref=e222]:
+              - heading "Auth" [level=3] [ref=e224]
+              - generic [ref=e226]:
+                - generic [ref=e227]: Signed in as
+                - generic [ref=e228]: psylus13@gmail.com
+                - generic [ref=e229]: 316225c3-b052-4e4b-bb01-991ff577c037
+                - button "Sign out" [ref=e230] [cursor=pointer]
+            - generic [ref=e231]:
+              - heading "Create campaign" [level=3] [ref=e233]
+              - generic [ref=e234]:
+                - textbox "Campaign name" [ref=e235]
+                - generic [ref=e261]: Campaign name is required.
+                - textbox "Campaign description" [active] [ref=e236]: Branch Merge Smoke 2026-02-13Campaign creation smoke after active branch merge
+                - button "Create" [disabled]
+            - generic [ref=e237]:
+              - heading "Join campaign" [level=3] [ref=e239]
+              - generic [ref=e240]:
+                - textbox "Invite code" [ref=e241]
+                - button "Join" [disabled]
+      - generic [ref=e243]:
+        - generic [ref=e244]: "Build: unknown"
+        - generic [ref=e245]: "Route: /dashboard"
+        - generic [ref=e246]: "Last API Error: none"
+      - generic [ref=e247]:
+        - generic [ref=e248]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e249]: "Anon key present: yes"
+        - generic [ref=e250]: "Session exists: yes"
+        - generic [ref=e251]: "Access token exists: yes"
+        - generic [ref=e252]: "Last status: -"
+        - generic [ref=e253]: "Last body: -"
+        - button "Test generate-class" [ref=e254] [cursor=pointer]
+      - generic:
+        - generic: "FPS: 60"
+        - generic: "Heap: 19 MB"
+        - generic: "Long tasks: 5"
+  - generic [ref=e255]:
+    - generic [ref=e256]: "session: yes"
+    - generic [ref=e257]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e258]: "authLoading: false"
+    - generic [ref=e259]: "route: /dashboard"
+    - generic [ref=e260]: "lastAuthError: none"
