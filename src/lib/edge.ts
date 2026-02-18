@@ -30,6 +30,9 @@ interface AuthContext {
 const logger = createLogger("edge");
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
 const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+// Optional override for running functions on a non-Supabase host (e.g. VPS).
+// Expected format: "https://api.example.com/functions/v1" (no trailing slash required).
+const FUNCTIONS_BASE_URL = (import.meta.env.VITE_MYTHIC_FUNCTIONS_BASE_URL ?? "").trim();
 const DEFAULT_EDGE_TIMEOUT_MS = 20_000;
 const AUTH_CALL_TIMEOUT_MS = 4_000;
 const REFRESH_BUFFER_MS = 60_000;
@@ -174,6 +177,10 @@ const buildHeaders = async (
 
 const buildUrl = (name: string) => {
   ensureEnv();
+  if (FUNCTIONS_BASE_URL) {
+    const base = FUNCTIONS_BASE_URL.replace(/\/+$/, "");
+    return `${base}/${name}`;
+  }
   return `${SUPABASE_URL}/functions/v1/${name}`;
 };
 
