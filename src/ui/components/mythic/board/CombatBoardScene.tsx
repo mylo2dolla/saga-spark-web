@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { MythicCombatantRow, MythicActionEventRow, MythicCombatSessionRow } from "@/hooks/useMythicCombatState";
+import type { BoardInspectTarget } from "@/ui/components/mythic/board/inspectTypes";
 import { PixelBoardCanvas } from "@/ui/components/mythic/board/pixel/PixelBoardCanvas";
 import { pixelPalette } from "@/ui/components/mythic/board/pixel/pixelPalette";
-import { drawDamageText, drawOutlineRect, drawPixelRect } from "@/ui/components/mythic/board/pixel/pixelSprites";
+import { drawDamageText, drawHumanoid, drawOutlineRect, drawPixelRect } from "@/ui/components/mythic/board/pixel/pixelSprites";
+import { deriveFxFromEvent, type CombatFx } from "@/ui/components/mythic/board/combat/combatFx";
 
 type Target =
   | { kind: "self" }
@@ -34,6 +36,7 @@ interface CombatBoardSceneProps {
   onTickTurn: () => Promise<void>;
   onUseSkill: (args: { actorCombatantId: string; skillId: string; target: Target }) => Promise<void>;
   onFocusCombatant?: (combatantId: string | null) => void;
+  onInspect: (target: BoardInspectTarget) => void;
 }
 
 interface TokenNode {
@@ -69,6 +72,8 @@ function findEventNumber(event: MythicActionEventRow): number | null {
 
 export function CombatBoardScene(props: CombatBoardSceneProps) {
   const [focusedCombatantId, setFocusedCombatantId] = useState<string | null>(null);
+  const fxRef = useRef<CombatFx[]>([]);
+  const lastEventIdRef = useRef<string | null>(null);
 
   const grid = useMemo(() => {
     const maxX = Math.max(10, ...props.combatants.map((entry) => Number(entry.x)));
@@ -91,6 +96,34 @@ export function CombatBoardScene(props: CombatBoardSceneProps) {
     () => (focusedCombatantId ? props.combatants.find((entry) => entry.id === focusedCombatantId) ?? null : null),
     [focusedCombatantId, props.combatants],
   );
+
+  useEffect(() => {
+    const startedAt = typeof performance !== "undefined" ? performance.now() / 1000 : Date.now() / 1000;
+    const events = props.events;
+    if (events.length === 0) {
+      lastEventIdRef.current = null;
+      fxRef.current = [];
+      return;
+    }
+
+    let startIndex = 0;
+    const lastId = lastEventIdRef.current;
+    if (lastId) {
+      const idx = events.findIndex((e) => e.id === lastId);
+      startIndex = idx >= 0 ? idx + 1 : Math.max(0, events.length - 12);
+    } else {
+      startIndex = Math.max(0, events.length - 12);
+    }
+
+    const nextFx = [...fxRef.current];
+    for (let i = startIndex; i < events.length; i += 1) {
+      const event = events[i]!;
+      nextFx.push(...deriveFxFromEvent(event, startedAt));
+    }
+    // Clamp to avoid unbounded growth if a session is long.
+    fxRef.current = nextFx.slice(-48);
+    lastEventIdRef.current = events[events.length - 1]!.id;
+  }, [props.events]);
 
   const recentEventTexts = useMemo(() => {
     return props.events.slice(-6).map((event) => {
@@ -138,16 +171,21 @@ export function CombatBoardScene(props: CombatBoardSceneProps) {
             }
 
             for (const token of tokens) {
-              const x = token.tileX * 10 + 1;
-              const y = token.tileY * 10 + 1;
+              const baseX = token.tileX * 10 + 1;
+              const baseY = token.tileY * 10 + 1;
               const isFocused = focusedCombatantId === token.combatant.id;
               const isActive = props.activeTurnCombatantId === token.combatant.id;
               const hp = pct(token.combatant.hp, token.combatant.hp_max);
+              const power = pct(token.combatant.power, token.combatant.power_max);
               const bodyColor = token.combatant.entity_type === "player"
                 ? pixelPalette.green
                 : token.combatant.entity_type === "npc"
                   ? pixelPalette.red
                   : pixelPalette.cyan;
+
+              const bob = Math.round(Math.sin(frame.t * 2.1 + token.tileX * 0.7 + token.tileY * 0.4) * 1);
+              const x = baseX;
+              const y = baseY + bob;
 
               drawOutlineRect(
                 ctx,
@@ -158,8 +196,9 @@ export function CombatBoardScene(props: CombatBoardSceneProps) {
                 "rgba(10,13,20,0.55)",
                 isFocused ? "rgba(242,197,107,0.95)" : isActive ? "rgba(232,236,255,0.95)" : "rgba(232,236,255,0.35)",
               );
-              drawPixelRect(ctx, x + 2, y + 2, 4, 4, bodyColor);
+              drawHumanoid(ctx, x, y, bodyColor, Math.sin(frame.t * 4 + token.tileX));
               drawPixelRect(ctx, x + 1, y + 7, Math.max(1, Math.floor(6 * hp)), 1, pixelPalette.amber);
+              drawPixelRect(ctx, x + 1, y + 0, Math.max(0, Math.floor(6 * power)), 1, pixelPalette.cyan);
 
               const statuses = Array.isArray(token.combatant.statuses) ? token.combatant.statuses : [];
               if (statuses.length > 0) {
@@ -169,24 +208,56 @@ export function CombatBoardScene(props: CombatBoardSceneProps) {
               }
             }
 
-            const recentEvents = props.events.slice(-8);
-            for (let i = 0; i < recentEvents.length; i += 1) {
-              const event = recentEvents[i]!;
-              const targetId = findEventTargetId(event) ?? event.actor_combatant_id;
-              if (!targetId) continue;
-              const target = tokens.find((token) => token.combatant.id === targetId);
+            // FX overlays (damage/heal/status bursts).
+            const fxNext: CombatFx[] = [];
+            for (const fx of fxRef.current) {
+              const age = frame.t - fx.startedAt;
+              if (age < 0 || age > fx.duration) continue;
+              fxNext.push(fx);
+              const target = tokens.find((t) => t.combatant.id === fx.targetCombatantId) ?? null;
               if (!target) continue;
-              const value = findEventNumber(event);
-              if (value === null) continue;
-              const bob = ((frame.t * 28 + i * 4) % 14);
-              drawDamageText(
-                ctx,
-                `${Math.floor(value)}`,
-                target.tileX * 10 + 1,
-                target.tileY * 10 - bob,
-                value > 0 ? pixelPalette.red : pixelPalette.green,
-              );
+              const px = target.tileX * 10 + 5;
+              const py = target.tileY * 10 + 5;
+              const phase = fx.duration <= 0 ? 1 : age / fx.duration;
+
+              const drawBurst = (color: string, radius: number) => {
+                for (let i = 0; i < 10; i += 1) {
+                  const ang = (i / 10) * Math.PI * 2;
+                  const r = radius * (0.35 + 0.75 * phase);
+                  const bx = px + Math.cos(ang) * r + Math.sin(frame.t * 7 + i) * 0.6;
+                  const by = py + Math.sin(ang) * r + Math.cos(frame.t * 6 + i) * 0.6;
+                  drawPixelRect(ctx, bx, by, 1, 1, color);
+                }
+              };
+
+              if (fx.kind === "damage") {
+                drawBurst("rgba(239,107,107,0.85)", 5);
+                if (fx.text) {
+                  drawDamageText(ctx, fx.text, px - 6, py - 8 - phase * 10, pixelPalette.red);
+                }
+              } else if (fx.kind === "healed") {
+                drawBurst("rgba(124,227,148,0.8)", 5);
+                if (fx.text) {
+                  drawDamageText(ctx, fx.text, px - 6, py - 8 - phase * 10, pixelPalette.green);
+                }
+              } else if (fx.kind === "status") {
+                drawBurst("rgba(176,135,255,0.75)", 4);
+                drawBurst("rgba(106,200,232,0.55)", 3);
+              } else if (fx.kind === "armor_shred") {
+                drawBurst("rgba(242,197,107,0.75)", 4);
+              } else if (fx.kind === "power") {
+                drawBurst("rgba(106,200,232,0.8)", 4);
+                if (fx.text) {
+                  drawDamageText(ctx, fx.text, px - 6, py - 8 - phase * 10, pixelPalette.cyan);
+                }
+              } else if (fx.kind === "death") {
+                const alpha = 0.25 + 0.35 * (1 - phase);
+                drawPixelRect(ctx, px - 6, py - 3, 12, 6, `rgba(239,107,107,${alpha})`);
+              } else if (fx.kind === "moved") {
+                drawBurst("rgba(194,166,121,0.45)", 3);
+              }
             }
+            fxRef.current = fxNext;
           }}
           onClickPixel={(x, y) => {
             const tileX = Math.floor(x / 10);
@@ -195,6 +266,43 @@ export function CombatBoardScene(props: CombatBoardSceneProps) {
             const next = hit?.combatant.id ?? null;
             setFocusedCombatantId(next);
             props.onFocusCombatant?.(next);
+            if (hit) {
+              const statuses = Array.isArray(hit.combatant.statuses) ? hit.combatant.statuses : [];
+              props.onInspect({
+                kind: "combatant",
+                id: hit.combatant.id,
+                title: hit.combatant.name,
+                subtitle: `${Math.max(0, Math.floor(hit.combatant.hp))}/${Math.max(0, Math.floor(hit.combatant.hp_max))} HP · armor ${Math.max(0, Math.floor(hit.combatant.armor))}`,
+                actions: [
+                  {
+                    id: `combatant-assess:${hit.combatant.id}`,
+                    label: "Assess Target",
+                    intent: "dm_prompt",
+                    prompt: `I assess ${hit.combatant.name} for injuries, threat level, and weaknesses.`,
+                    payload: { target_combatant_id: hit.combatant.id, action: "assess_target" },
+                  },
+                  {
+                    id: `combatant-open-skills:${hit.combatant.id}`,
+                    label: "Open Skills",
+                    intent: "open_panel",
+                    panel: "skills",
+                  },
+                ],
+                meta: {
+                  entity_type: hit.combatant.entity_type,
+                  hp: Math.max(0, Math.floor(hit.combatant.hp)),
+                  hp_max: Math.max(0, Math.floor(hit.combatant.hp_max)),
+                  armor: Math.max(0, Math.floor(hit.combatant.armor)),
+                  resist: Math.max(0, Math.floor(hit.combatant.resist)),
+                  power: Math.max(0, Math.floor(hit.combatant.power)),
+                  power_max: Math.max(0, Math.floor(hit.combatant.power_max)),
+                  statuses: statuses.length,
+                  x: hit.combatant.x,
+                  y: hit.combatant.y,
+                },
+                rect: { x: tileX * 10, y: tileY * 10, w: 10, h: 10 },
+              });
+            }
           }}
         />
       </div>
