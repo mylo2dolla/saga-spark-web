@@ -1,8 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 interface CampaignSeed {
@@ -24,6 +27,7 @@ interface GenerationRequest {
     npcPersonality?: string[];
     playerRelationship?: string;
     worldState?: Record<string, unknown>;
+    campaignId?: string;
   };
 }
 
@@ -160,40 +164,133 @@ Generate a complete starting world with:
 
 1. factions: array of 3-4 factions (see faction schema above)
 
-2. startingLocation: the town/area where the adventure begins with:
+2. locations: array of 4-6 locations, each with:
+   - id: stable unique id (kebab_case, e.g. "ashen_outpost")
    - name, description, type
+   - dangerLevel: 1-10
+   - position: { x: number, y: number } in a 0-500 range
+   - connectedTo: array of location ids (not names)
+
+3. startingLocationId: id of the starting location (must match one of the locations above)
    
-3. npcs: array of 3-5 starting NPCs with:
+4. npcs: array of 3-5 starting NPCs with:
    - name, title, personality traits, factionId
    - canTrade, greeting dialogue
    - a questHook each might offer
 
-4. initialQuest: the first quest to hook the player with:
+5. initialQuest: the first quest to hook the player with:
    - title, description, objectives, rewards
    
-5. worldHooks: 3-4 story seeds that can develop into future quests
+6. worldHooks: 3-4 story seeds that can develop into future quests
 
 This should feel like a rich, living world ready for adventure.
 Respond with JSON only.`;
 }
 
+const getRequestId = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
+
+const respondJson = (payload: unknown, status = 200) =>
+  new Response(JSON.stringify(payload), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  const requestId = getRequestId(req);
+  const expectedEnvKeys = [
+    "SUPABASE_URL",
+    "SUPABASE_ANON_KEY",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "AI_GATEWAY_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "OPENAI_MODEL",
+    "GROQ_API_KEY",
+    "GROQ_BASE_URL",
+    "GROQ_MODEL",
+    "LLM_PROVIDER",
+    "LLM_MODEL",
+  ];
+  const envStatus = expectedEnvKeys.reduce<Record<string, "set" | "missing">>((acc, key) => {
+    acc[key] = Deno.env.get(key) ? "set" : "missing";
+    return acc;
+  }, {});
+  console.log("world-generator expected env keys", envStatus);
+  const errorResponse = (
+    status: number,
+    code: string,
+    message: string,
+    details?: unknown
+  ) =>
+    respondJson({ ok: false, code, message, details, requestId }, status);
+
   try {
-    const { type, campaignSeed, context } = (await req.json()) as GenerationRequest;
-    
-    const AI_GATEWAY_API_KEY = Deno.env.get("AI_GATEWAY_API_KEY");
-    const AI_GATEWAY_URL = Deno.env.get("AI_GATEWAY_URL");
-    if (!AI_GATEWAY_API_KEY) {
-      throw new Error("AI_GATEWAY_API_KEY is not configured");
-    }
-    if (!AI_GATEWAY_URL) {
-      throw new Error("AI_GATEWAY_URL is not configured");
+    let payload: GenerationRequest;
+    try {
+      payload = (await req.json()) as GenerationRequest;
+    } catch (error) {
+      console.error("world-generator invalid json", {
+        requestId,
+        error: error instanceof Error ? error.message : error,
+      });
+      return errorResponse(400, "invalid_json", "Request body must be valid JSON");
     }
 
+    const { type, campaignSeed, context } = payload ?? {};
+    const allowedTypes = ["npc", "quest", "dialog", "faction", "location", "initial_world"];
+    if (!type || !allowedTypes.includes(type)) {
+      return errorResponse(400, "invalid_type", "Unsupported generation type", { type });
+    }
+    if (!campaignSeed || typeof campaignSeed.title !== "string" || typeof campaignSeed.description !== "string") {
+      return errorResponse(
+        400,
+        "invalid_campaign_seed",
+        "campaignSeed.title and campaignSeed.description are required",
+        { campaignSeed }
+      );
+    }
+
+    const missingRequired = ["SUPABASE_URL", "SUPABASE_ANON_KEY"].filter(
+      key => !Deno.env.get(key)
+    );
+    const hasOpenAI = Boolean(Deno.env.get("OPENAI_API_KEY"));
+    const hasGroq = Boolean(Deno.env.get("GROQ_API_KEY"));
+    if (!hasOpenAI && !hasGroq) {
+      missingRequired.push("OPENAI_API_KEY|GROQ_API_KEY");
+    }
+    if (missingRequired.length > 0) {
+      return errorResponse(
+        500,
+        "missing_env",
+        `Missing required env vars: ${missingRequired.join(", ")}`,
+        { expectedEnvKeys, missingRequired }
+      );
+    }
+
+    const authHeader = req.headers.get("Authorization") ?? "";
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+    let userId: string | null = null;
+    if (supabaseUrl && anonKey && authHeader) {
+      const authToken = authHeader.replace("Bearer ", "");
+      const supabase = createClient(supabaseUrl, anonKey);
+      const { data: { user }, error: userError } = await supabase.auth.getUser(authToken);
+      if (userError) {
+        console.error("world-generator auth lookup failed", { requestId, error: userError.message });
+      } else {
+        userId = user?.id ?? null;
+      }
+    }
+    const campaignId = context?.campaignId ?? null;
+    
     let prompt: string;
     switch (type) {
       case "npc":
@@ -215,47 +312,42 @@ serve(async (req) => {
         prompt = getInitialWorldPrompt(campaignSeed);
         break;
       default:
-        throw new Error(`Unknown generation type: ${type}`);
+        return errorResponse(400, "invalid_type", `Unknown generation type: ${type}`);
     }
 
-    console.log(`Generating ${type} for campaign: ${campaignSeed.title}`);
+    console.log("Generating world content", {
+      requestId,
+      userId,
+      campaignId,
+      type,
+      campaignTitle: campaignSeed.title,
+    });
 
-    const response = await fetch(`${AI_GATEWAY_URL}/v1/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${AI_GATEWAY_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" });
+    let data;
+    try {
+      console.log("LLM model:", model);
+      data = await aiChatCompletions({
+        model,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: prompt },
         ],
         temperature: 0.8,
         max_tokens: 4096,
-      }),
-    });
-
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Rate limit exceeded. Please try again later." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Usage limit reached. Please add credits." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      const errorText = await response.text();
-      console.error("AI Gateway error:", response.status, errorText);
-      throw new Error(`AI Gateway error: ${response.status}`);
+      });
+    } catch (error) {
+      console.error("world-generator downstream error", {
+        requestId,
+        userId,
+        campaignId,
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      return errorResponse(500, "llm_error", "AI generation failed", {
+        message: error instanceof Error ? error.message : error,
+      });
     }
-
-    const data = await response.json();
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
@@ -273,17 +365,253 @@ serve(async (req) => {
       throw new Error("Invalid JSON response from AI");
     }
 
+    const toKebab = (value: string): string =>
+      value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+
+    const createDeterministicPosition = (seed: string) => {
+      let hash = 0;
+      for (let i = 0; i < seed.length; i++) {
+        hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+      }
+      return {
+        x: 50 + (hash % 400),
+        y: 50 + ((hash >>> 16) % 400),
+      };
+    };
+
+    if (type === "initial_world") {
+      if (!Array.isArray(parsed.locations) || parsed.locations.length === 0) {
+        const fallbackName =
+          typeof parsed.startingLocation?.name === "string"
+            ? parsed.startingLocation.name
+            : campaignSeed.title || "Starting Location";
+        const fallbackDescription =
+          typeof parsed.startingLocation?.description === "string"
+            ? parsed.startingLocation.description
+            : campaignSeed.description || "A place to begin the journey.";
+        const fallbackType =
+          typeof parsed.startingLocation?.type === "string"
+            ? parsed.startingLocation.type.toLowerCase()
+            : "town";
+        parsed.locations = [
+          {
+            id: toKebab(fallbackName) || "starting-location",
+            name: fallbackName,
+            description: fallbackDescription,
+            type: fallbackType,
+            dangerLevel: 1,
+            position: createDeterministicPosition(fallbackName),
+            connectedTo: [],
+          },
+        ];
+      }
+    }
+
+    if (type === "initial_world" && Array.isArray(parsed.locations)) {
+      const seenIds = new Set<string>();
+      const nameToId = new Map<string, string>();
+      parsed.locations = parsed.locations.map((location: { id?: string; name?: string; position?: { x?: number; y?: number } }) => {
+        const baseName = typeof location.name === "string" ? location.name : "location";
+        let id = typeof location.id === "string" && location.id.trim().length > 0
+          ? location.id
+          : toKebab(baseName);
+
+        if (!id) {
+          id = `location-${seenIds.size + 1}`;
+        }
+        if (id === "starting_location") {
+          id = toKebab(baseName) || `location-${seenIds.size + 1}`;
+        }
+
+        let uniqueId = id;
+        let suffix = 1;
+        while (seenIds.has(uniqueId)) {
+          uniqueId = `${id}-${suffix}`;
+          suffix += 1;
+        }
+        seenIds.add(uniqueId);
+        nameToId.set(baseName.toLowerCase(), uniqueId);
+
+        const pos = location.position;
+        const position =
+          typeof pos?.x === "number" && typeof pos?.y === "number"
+            ? { x: pos.x, y: pos.y }
+            : createDeterministicPosition(uniqueId);
+
+        const normalizedType =
+          typeof (location as { type?: string }).type === "string"
+            ? (location as { type?: string }).type?.toLowerCase()
+            : "town";
+
+        return {
+          ...location,
+          id: uniqueId,
+          position,
+          type: normalizedType,
+        };
+      });
+
+      parsed.locations = parsed.locations.map((location: { id: string; name?: string; connectedTo?: string[] }) => {
+        const connectedTo = Array.isArray(location.connectedTo)
+          ? location.connectedTo
+              .map((entry) => {
+                if (typeof entry !== "string") return null;
+                if (seenIds.has(entry)) return entry;
+                return nameToId.get(entry.toLowerCase()) ?? null;
+              })
+              .filter((entry): entry is string => Boolean(entry))
+          : [];
+
+        return {
+          ...location,
+          connectedTo,
+        };
+      });
+
+      const ensureNamedLocation = (name: string, fallbackType: string) => {
+        const existing = parsed.locations.find((loc: { name?: string }) =>
+          typeof loc.name === "string" && loc.name.toLowerCase() === name.toLowerCase()
+        );
+        if (existing) return existing.id;
+        const id = toKebab(name) || `location-${parsed.locations.length + 1}`;
+        let uniqueId = id;
+        let suffix = 1;
+        while (seenIds.has(uniqueId)) {
+          uniqueId = `${id}-${suffix}`;
+          suffix += 1;
+        }
+        seenIds.add(uniqueId);
+        nameToId.set(name.toLowerCase(), uniqueId);
+        parsed.locations.push({
+          id: uniqueId,
+          name,
+          description: `${name} stands as a notable waypoint within ${campaignSeed.description || "the campaign"}.`,
+          type: fallbackType,
+          dangerLevel: 1,
+          position: createDeterministicPosition(uniqueId),
+          connectedTo: [],
+        });
+        return uniqueId;
+      };
+
+      const outskirtsId = ensureNamedLocation("Outskirts", "wilderness");
+      const townId = ensureNamedLocation("Town", "town");
+      ensureNamedLocation("Roadside Shrine", "temple");
+
+      const locations = parsed.locations as Array<{
+        id: string;
+        name?: string;
+        description?: string;
+        type?: string;
+        dangerLevel?: number;
+        position?: { x: number; y: number };
+        connectedTo?: string[];
+      }>;
+      const locationTypes = ["town", "wilderness", "ruins", "temple", "cave", "castle"];
+      const minimumLocations = 5;
+
+      if (locations.length < minimumLocations) {
+        for (let i = locations.length; i < minimumLocations; i++) {
+          const suffix = i % locationTypes.length;
+          const name = `${campaignSeed.title} ${locationTypes[suffix]}`;
+          let id = toKebab(name) || `location-${i + 1}`;
+          if (id === "starting_location") {
+            id = `location-${i + 1}`;
+          }
+          let uniqueId = id;
+          let counter = 1;
+          while (seenIds.has(uniqueId)) {
+            uniqueId = `${id}-${counter}`;
+            counter += 1;
+          }
+          seenIds.add(uniqueId);
+          nameToId.set(name.toLowerCase(), uniqueId);
+
+          locations.push({
+            id: uniqueId,
+            name,
+            description: `${name} stands as a notable waypoint within ${campaignSeed.description || "the campaign"}.`,
+            type: locationTypes[suffix],
+            dangerLevel: 1 + (i % 5),
+            position: createDeterministicPosition(uniqueId),
+            connectedTo: [],
+          });
+        }
+      }
+
+      if (locations.length > 1) {
+        const byId = new Map(locations.map(location => [location.id, location]));
+        for (const location of locations) {
+          if (!Array.isArray(location.connectedTo) || location.connectedTo.length === 0) {
+            const target = locations.find(candidate => candidate.id !== location.id);
+            if (target) {
+              location.connectedTo = [target.id];
+            }
+          }
+        }
+        for (const location of locations) {
+          const connections = new Set(location.connectedTo ?? []);
+          for (const targetId of connections) {
+            const target = byId.get(targetId);
+            if (target && target.id !== location.id) {
+              const targetConnections = new Set(target.connectedTo ?? []);
+              if (!targetConnections.has(location.id)) {
+                targetConnections.add(location.id);
+                target.connectedTo = Array.from(targetConnections);
+              }
+            }
+          }
+          location.connectedTo = Array.from(connections);
+        }
+      }
+
+      const startId = typeof parsed.startingLocationId === "string" ? parsed.startingLocationId : outskirtsId;
+      const startLocation = locations.find(loc => loc.id === startId) ?? locations[0];
+      if (startLocation && townId) {
+        const connected = new Set(startLocation.connectedTo ?? []);
+        connected.add(townId);
+        startLocation.connectedTo = Array.from(connected);
+        const townLocation = locations.find(loc => loc.id === townId);
+        if (townLocation) {
+          const townConnections = new Set(townLocation.connectedTo ?? []);
+          townConnections.add(startLocation.id);
+          townLocation.connectedTo = Array.from(townConnections);
+        }
+      }
+
+      if (typeof parsed.startingLocationId !== "string" || !seenIds.has(parsed.startingLocationId)) {
+        parsed.startingLocationId = parsed.locations[0]?.id ?? null;
+      }
+    }
+
+    if (type === "initial_world") {
+      parsed.schemaVersion = "v2";
+      const locations = Array.isArray(parsed.locations) ? parsed.locations : [];
+      const locationIds = locations.map((loc: { id?: string }) => loc?.id).filter(Boolean);
+      console.log("Initial world payload", {
+        locationsCount: locations.length,
+        locationIds,
+        startingLocationId: parsed.startingLocationId ?? null,
+      });
+    }
+
     console.log(`Successfully generated ${type}`);
 
-    return new Response(
-      JSON.stringify({ type, content: parsed }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return respondJson({ ok: true, type, content: parsed, requestId }, 200);
   } catch (error) {
-    console.error("World generator error:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    console.error("World generator error:", {
+      requestId,
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    return errorResponse(
+      500,
+      "world_generator_error",
+      error instanceof Error ? error.message : "Unknown error",
+      error
     );
   }
 });

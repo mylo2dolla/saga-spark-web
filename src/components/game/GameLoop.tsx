@@ -29,6 +29,7 @@ import { CombatArena } from "@/components/combat";
 import { useGamePersistence } from "@/hooks/useGamePersistence";
 import { useWorldGenerator } from "@/hooks/useWorldGenerator";
 import { processAITurns, generateNarrativeAction } from "@/engine/AI";
+import { createInventory, createEquipment } from "@/engine/narrative/Item";
 import { toast } from "sonner";
 import type { GameEvent, Faction } from "@/engine";
 import type { WorldEvent, NPC, EnhancedStatus, Inventory, Equipment, CharacterProgression } from "@/engine/narrative/types";
@@ -48,7 +49,6 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
   const [selectedNPC, setSelectedNPC] = useState<NPC | null>(null);
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [playtimeSeconds, setPlaytimeSeconds] = useState(0);
-  const autosaveRef = useRef<string | null>(null);
   const playtimeIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Track playtime
@@ -67,16 +67,11 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
   // Autosave every 2 minutes
   useEffect(() => {
     const autosaveInterval = setInterval(async () => {
-      if (autosaveRef.current) {
-        await persistence.updateSave(autosaveRef.current, engine.unified, playtimeSeconds);
-      } else {
-        const saveId = await persistence.saveGame(engine.unified, engine.travelState, "Autosave", playtimeSeconds);
-        if (saveId) autosaveRef.current = saveId;
-      }
+      await persistence.saveGame(engine.unified, engine.travelState, "Autosave", playtimeSeconds);
     }, 120000);
 
     return () => clearInterval(autosaveInterval);
-  }, [engine.unified, persistence, playtimeSeconds]);
+  }, [engine.unified, engine.travelState, persistence, playtimeSeconds]);
 
   // Handle engine events
   const handleGameEvent = useCallback((event: GameEvent) => {
@@ -143,7 +138,7 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
     };
     
     processAI();
-  }, [engine.currentTurn?.id, engine.isInCombat]);
+  }, [engine, engine.currentTurn?.id, engine.isInCombat]);
 
   // Talk to an NPC
   const handleTalkToNPC = useCallback((npc: NPC) => {
@@ -194,9 +189,8 @@ export function GameLoop({ campaignId, userId, playerId }: GameLoopProps) {
     triggers: [],
   })) ?? [];
 
-  // Get inventory and equipment (mock for now - would come from world state)
-  const playerInventory: Inventory = { slots: [], maxSlots: 20, gold: 100 };
-  const playerEquipment: Equipment = {};
+  const playerInventory: Inventory = playerProgression?.inventory ?? createInventory();
+  const playerEquipment: Equipment = playerProgression?.equipment ?? createEquipment();
 
   // Filter entities for combat (only player and enemy factions)
   const combatEntities = engine.entities

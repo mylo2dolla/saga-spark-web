@@ -1,14 +1,22 @@
 import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { callEdgeFunction } from "@/lib/edge";
 import { toast } from "sonner";
 import type { GeneratedClass } from "@/types/game";
-
-const GENERATE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-class`;
+import { recordEdgeCall, recordEdgeResponse } from "@/ui/data/networkHealth";
 
 export function useClassGenerator() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedClass, setGeneratedClass] = useState<GeneratedClass | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const edgeFunctionName = "generate-class";
+  const edgeFunctionUrl = import.meta.env.VITE_SUPABASE_URL
+    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${edgeFunctionName}`
+    : null;
+
+  const logFetchError = useCallback((context: string, payload: Record<string, unknown>) => {
+    console.error(context, payload);
+  }, []);
 
   const generateClass = useCallback(async (description: string): Promise<GeneratedClass | null> => {
     if (!description.trim()) {
@@ -20,38 +28,57 @@ export function useClassGenerator() {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        throw new Error("You must be logged in to generate a class");
+      const startedAt = Date.now();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) {
+        console.error("[auth] supabase error", {
+          message: sessionError.message,
+          code: sessionError.code,
+        });
       }
-
-      const response = await fetch(GENERATE_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ classDescription: description }),
+      console.info("[generateClass] start", {
+        userId: session?.user?.id ?? null,
+        timestamp: new Date().toISOString(),
       });
+      recordEdgeCall();
+      const { data, error: edgeError, status } = await callEdgeFunction<GeneratedClass>(
+        edgeFunctionName,
+        { body: { classDescription: description }, requireAuth: false }
+      );
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Request failed: ${response.status}`);
+      if (edgeError) {
+        logFetchError("[generateClass] fetch error", {
+          status,
+          message: edgeError.message,
+        });
+        throw edgeError;
       }
 
-      const data: GeneratedClass = await response.json();
+      if (!data) {
+        throw new Error("Empty response");
+      }
+      recordEdgeResponse();
       setGeneratedClass(data);
       toast.success(`Generated: ${data.className}`);
+      console.info("[generateClass] success", {
+        durationMs: Date.now() - startedAt,
+      });
       return data;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to generate class";
       setError(message);
-      toast.error(message);
+      setGeneratedClass(null);
+      toast.error(`Failed to generate class — ${message}`);
+      logFetchError("[generateClass] failure", {
+        url: edgeFunctionUrl ?? "unresolved",
+        edgeFunctionName,
+        message,
+      });
       return null;
     } finally {
       setIsGenerating(false);
     }
-  }, []);
+  }, [edgeFunctionName, edgeFunctionUrl, logFetchError]);
 
   const clearClass = useCallback(() => {
     setGeneratedClass(null);

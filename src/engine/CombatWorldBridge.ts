@@ -13,6 +13,8 @@ import type {
   NPC,
   CharacterProgression,
   Item,
+  ItemType,
+  Rarity,
 } from "./narrative/types";
 import type { TravelWorldState, CombatResult } from "./narrative/TravelPersistence";
 import type { TravelState } from "./narrative/Travel";
@@ -306,8 +308,8 @@ export function applyCombatOutcome(
       id: item.itemId,
       name: item.name,
       description: `${item.rarity} ${item.type}`,
-      type: item.type as any,
-      rarity: item.rarity as any,
+      type: item.type as ItemType,
+      rarity: item.rarity as Rarity,
       value: item.value,
       weight: 1,
       stackable: item.type === "currency" || item.type === "consumable",

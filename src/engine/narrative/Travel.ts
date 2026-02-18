@@ -511,7 +511,7 @@ export function processLocationEvents(
   entityId: string
 ): { world: WorldState; events: WorldEvent[] } {
   const events: WorldEvent[] = [];
-  let newWorld = world;
+  const newWorld = world;
   
   const location = world.locations.get(travelState.currentLocationId) as EnhancedLocation | undefined;
   if (!location) return { world, events };

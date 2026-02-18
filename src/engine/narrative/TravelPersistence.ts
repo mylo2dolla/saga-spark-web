@@ -82,7 +82,7 @@ export function deserializeTravelWorldState(json: string): TravelWorldState {
   };
 }
 
-function getFirstLocationId(data: any): string {
+function getFirstLocationId(data: { locations?: unknown }): string {
   const entries = normalizeLocationEntries(data.locations);
   if (entries.length > 0) {
     // locations is array of [id, location] tuples

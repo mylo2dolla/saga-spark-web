@@ -3,7 +3,7 @@
  * Includes full travel state persistence.
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { 
   serializeUnifiedState, 
@@ -15,6 +15,9 @@ import { type TravelState, createTravelState } from "@/engine/narrative/Travel";
 import { toast } from "sonner";
 import type { Json } from "@/integrations/supabase/types";
 import type { GameState, Entity } from "@/engine/types";
+import { recordDbLoad, recordDbRead, recordDbWrite } from "@/ui/data/networkHealth";
+
+const DEV_DEBUG = import.meta.env.DEV;
 
 export interface GameSave {
   id: string;
@@ -37,18 +40,48 @@ export interface UseGamePersistenceOptions {
   userId: string;
 }
 
+interface SaveOptions {
+  refreshList?: boolean;
+  silent?: boolean;
+}
+
 export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOptions) {
   const [saves, setSaves] = useState<GameSave[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const lastFetchAtRef = useRef<number | null>(null);
+  const fetchInFlightRef = useRef(false);
+
+  const logPersistenceSnapshot = useCallback((
+    label: string,
+    state: UnifiedState,
+    travelState?: TravelState
+  ) => {
+    if (!DEV_DEBUG) return;
+    const locations = Array.from(state.world.locations.values());
+    console.info(label, {
+      locationsSize: state.world.locations.size,
+      locationIds: locations.slice(0, 5).map(location => location.id),
+      currentLocationId: travelState?.currentLocationId ?? null,
+    });
+  }, []);
 
   const getFallbackTravelState = useCallback((state: UnifiedState) => {
     const firstLocationId = Array.from(state.world.locations.keys())[0];
-    return createTravelState(firstLocationId ?? "starting_location");
+    if (!firstLocationId) {
+      throw new Error("Cannot persist travel state without a location");
+    }
+    return createTravelState(firstLocationId);
   }, []);
 
   // Fetch all saves for this campaign
-  const fetchSaves = useCallback(async () => {
+  const fetchSaves = useCallback(async (force = false) => {
+    if (fetchInFlightRef.current) return;
+    const now = Date.now();
+    if (!force && lastFetchAtRef.current && now - lastFetchAtRef.current < 15000) {
+      return;
+    }
+    fetchInFlightRef.current = true;
     setIsLoading(true);
     try {
       const { data, error } = await supabase
@@ -59,12 +92,15 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
         .order("updated_at", { ascending: false });
 
       if (error) throw error;
+      lastFetchAtRef.current = now;
+      recordDbRead();
       setSaves(data || []);
     } catch (error) {
       console.error("Failed to fetch saves:", error);
       toast.error("Failed to load saves");
     } finally {
       setIsLoading(false);
+      fetchInFlightRef.current = false;
     }
   }, [campaignId, userId]);
 
@@ -73,11 +109,19 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     state: UnifiedState,
     travelState: TravelState | undefined,
     saveName: string = "Quicksave",
-    playtimeSeconds: number = 0
+    playtimeSeconds: number = 0,
+    options?: SaveOptions
   ): Promise<string | null> => {
     setIsSaving(true);
     try {
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG persistence backend", {
+          backend: "supabase",
+          usesLocalStorage: false,
+        });
+      }
       // Serialize the state
+      logPersistenceSnapshot("DEV_DEBUG persistence save start", state, travelState);
       const serialized = serializeUnifiedState(state);
       const parsedSerialized = JSON.parse(serialized);
       
@@ -100,7 +144,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
 
       const { data, error } = await supabase
         .from("game_saves")
-        .insert({
+        .upsert({
           campaign_id: campaignId,
           user_id: userId,
           save_name: saveName,
@@ -110,32 +154,50 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
           player_level: playerLevel,
           total_xp: totalXp,
           playtime_seconds: playtimeSeconds,
+        }, {
+          onConflict: "campaign_id,user_id,save_name",
         })
         .select("id")
         .single();
 
       if (error) throw error;
-      
-      toast.success(`Game saved: ${saveName}`);
-      await fetchSaves();
+      logPersistenceSnapshot("DEV_DEBUG persistence save success", state, travelState);
+      recordDbWrite();
+
+      if (!options?.silent) {
+        toast.success(`Game saved: ${saveName}`);
+      }
+      if (options?.refreshList !== false) {
+        await fetchSaves(true);
+      }
       return data.id;
     } catch (error) {
       console.error("Failed to save game:", error);
-      toast.error("Failed to save game");
+      if (!options?.silent) {
+        toast.error("Failed to save game");
+      }
       return null;
     } finally {
       setIsSaving(false);
     }
-  }, [campaignId, userId, fetchSaves, getFallbackTravelState]);
+  }, [campaignId, userId, fetchSaves, getFallbackTravelState, logPersistenceSnapshot]);
   // Update an existing save - includes travel state
   const updateSave = useCallback(async (
     saveId: string,
     state: UnifiedState,
     playtimeSeconds: number = 0,
-    travelState?: TravelState
+    travelState?: TravelState,
+    options?: SaveOptions
   ): Promise<boolean> => {
     setIsSaving(true);
     try {
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG persistence backend", {
+          backend: "supabase",
+          usesLocalStorage: false,
+        });
+      }
+      logPersistenceSnapshot("DEV_DEBUG persistence update start", state, travelState);
       const serialized = serializeUnifiedState(state);
       const parsedSerialized = JSON.parse(serialized);
       
@@ -169,6 +231,8 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
         .eq("user_id", userId);
 
       if (error) throw error;
+      logPersistenceSnapshot("DEV_DEBUG persistence update success", state, travelState);
+      recordDbWrite();
       return true;
     } catch (error) {
       console.error("Failed to update save:", error);
@@ -176,46 +240,53 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     } finally {
       setIsSaving(false);
     }
-  }, [userId, getFallbackTravelState]);
+  }, [userId, getFallbackTravelState, logPersistenceSnapshot]);
 
   // Load a saved game
-  const loadGame = useCallback(async (saveId: string): Promise<UnifiedState | null> => {
+  const buildUnifiedStateFromRow = useCallback((data: {
+    game_state: Json;
+    world_state: Json;
+  }): UnifiedState => {
+    const gameStateData = data.game_state as Record<string, unknown>;
+    const entitiesArray = (gameStateData.entities ?? []) as Array<[string, Entity]>;
+
+    const gameState: GameState = {
+      tick: (gameStateData.tick as number) ?? 0,
+      entities: new Map<string, Entity>(entitiesArray),
+      board: gameStateData.board as GameState["board"],
+      turnOrder: (gameStateData.turnOrder as GameState["turnOrder"]) ?? { order: [], currentIndex: 0, roundNumber: 1 },
+      isInCombat: (gameStateData.isInCombat as boolean) ?? false,
+      pendingEvents: [],
+    };
+
+    const worldState = TravelPersistence.deserializeTravelWorldState(
+      JSON.stringify(data.world_state)
+    );
+
+    const unifiedState: UnifiedState = {
+      game: gameState,
+      world: worldState,
+      pendingWorldEvents: [],
+    };
+    logPersistenceSnapshot("DEV_DEBUG persistence load", unifiedState, worldState.travelState);
+    return unifiedState;
+  }, [logPersistenceSnapshot]);
+
+  const loadGameFromRow = useCallback(async (row: {
+    id: string;
+    game_state: Json;
+    world_state: Json;
+  }): Promise<UnifiedState | null> => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("game_saves")
-        .select("*")
-        .eq("id", saveId)
-        .eq("user_id", userId)
-        .single();
-
-      if (error) throw error;
-      if (!data) throw new Error("Save not found");
-
-      // Cast the JSON data to proper types
-      const gameStateData = data.game_state as Record<string, unknown>;
-      const entitiesArray = (gameStateData.entities ?? []) as Array<[string, Entity]>;
-      
-      // Reconstruct the unified state
-      const gameState: GameState = {
-        tick: (gameStateData.tick as number) ?? 0,
-        entities: new Map<string, Entity>(entitiesArray),
-        board: gameStateData.board as GameState["board"],
-        turnOrder: (gameStateData.turnOrder as GameState["turnOrder"]) ?? { order: [], currentIndex: 0, roundNumber: 1 },
-        isInCombat: (gameStateData.isInCombat as boolean) ?? false,
-        pendingEvents: [],
-      };
-
-      const worldState = TravelPersistence.deserializeTravelWorldState(
-        JSON.stringify(data.world_state)
-      );
-
-      const unifiedState: UnifiedState = {
-        game: gameState,
-        world: worldState,
-        pendingWorldEvents: [],
-      };
-
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG persistence backend", {
+          backend: "supabase",
+          usesLocalStorage: false,
+        });
+      }
+      const unifiedState = buildUnifiedStateFromRow(row);
+      recordDbLoad();
       toast.success("Game loaded!");
       return unifiedState;
     } catch (error) {
@@ -225,7 +296,40 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     } finally {
       setIsLoading(false);
     }
-  }, [userId]);
+  }, [buildUnifiedStateFromRow]);
+
+  const loadGame = useCallback(async (saveId: string): Promise<UnifiedState | null> => {
+    setIsLoading(true);
+    try {
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG persistence backend", {
+          backend: "supabase",
+          usesLocalStorage: false,
+        });
+      }
+      const { data, error } = await supabase
+        .from("game_saves")
+        .select("*")
+        .eq("id", saveId)
+        .eq("user_id", userId)
+        .single();
+
+      if (error) throw error;
+      if (!data) throw new Error("Save not found");
+      recordDbRead();
+
+      const unifiedState = buildUnifiedStateFromRow(data);
+      recordDbLoad();
+      toast.success("Game loaded!");
+      return unifiedState;
+    } catch (error) {
+      console.error("Failed to load game:", error);
+      toast.error("Failed to load game");
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [userId, buildUnifiedStateFromRow]);
 
   // Delete a save
   const deleteSave = useCallback(async (saveId: string): Promise<boolean> => {
@@ -275,6 +379,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     saveGame,
     updateSave,
     loadGame,
+    loadGameFromRow,
     deleteSave,
     getOrCreateAutosave,
   };

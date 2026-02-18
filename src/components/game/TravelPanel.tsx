@@ -4,7 +4,7 @@
  * current location, destination, and combat interrupts.
  */
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MapPin,
@@ -40,6 +40,11 @@ interface TravelPanelProps {
   onTravelStateUpdate: (travelState: TravelState) => void;
   onCombatStart: (entities: readonly Entity[], encounter?: CombatEncounter | null) => void;
   onWorldEvent?: (event: WorldEvent) => void;
+  onTravelComplete?: (payload: {
+    world: TravelWorldState;
+    travelState: TravelState;
+    destination: EnhancedLocation | null;
+  }) => void;
 }
 
 export function TravelPanel({
@@ -50,8 +55,10 @@ export function TravelPanel({
   onTravelStateUpdate,
   onCombatStart,
   onWorldEvent,
+  onTravelComplete,
 }: TravelPanelProps) {
-  const DEBUG = false;
+  const DEV_DEBUG = import.meta.env.DEV;
+  const lastLogAtRef = useRef(0);
   const [isTraveling, setIsTraveling] = useState(false);
   const [selectedDestination, setSelectedDestination] = useState<string | null>(null);
   const [travelResult, setTravelResult] = useState<BeginTravelResult | null>(null);
@@ -75,38 +82,27 @@ export function TravelPanel({
       .filter((loc): loc is EnhancedLocation => loc !== undefined);
   }, [currentLocation, world.locations]);
 
-  if (DEBUG) {
-    console.info("TravelPanel render", {
+  useEffect(() => {
+    if (!DEV_DEBUG) return;
+    const now = Date.now();
+    if (now - lastLogAtRef.current < 1000) return;
+    lastLogAtRef.current = now;
+    console.info("DEV_DEBUG travelPanel render", {
       locationsSize: world.locations.size,
       currentLocationId: travelState.currentLocationId,
       currentLocationName: currentLocation?.name,
       connectedTo: currentLocation?.connectedTo ?? [],
+      connectedToCount: currentLocation?.connectedTo?.length ?? 0,
+      availableDestinationsCount: reachableLocations.length,
     });
-  }
-
-  useEffect(() => {
-    if (!currentLocation) return;
-    if (currentLocation.connectedTo.length > 0 || world.locations.size <= 1) return;
-    const fallbackDestinationId = Array.from(world.locations.keys())
-      .find(id => id !== currentLocation.id);
-    if (!fallbackDestinationId) return;
-    const fallbackDestination = world.locations.get(fallbackDestinationId);
-    if (!fallbackDestination) return;
-    const updatedCurrent = {
-      ...currentLocation,
-      connectedTo: [fallbackDestinationId],
-    };
-    const updatedDestination = fallbackDestination.connectedTo.includes(currentLocation.id)
-      ? fallbackDestination
-      : {
-          ...fallbackDestination,
-          connectedTo: [...fallbackDestination.connectedTo, currentLocation.id],
-        };
-    const nextLocations = new Map(world.locations);
-    nextLocations.set(currentLocation.id, updatedCurrent);
-    nextLocations.set(fallbackDestinationId, updatedDestination);
-    onWorldUpdate({ ...world, locations: nextLocations });
-  }, [currentLocation, world, onWorldUpdate]);
+  }, [
+    DEV_DEBUG,
+    world.locations.size,
+    travelState.currentLocationId,
+    currentLocation?.name,
+    currentLocation?.connectedTo,
+    reachableLocations.length,
+  ]);
 
   // Check if can travel to selected destination
   const canTravelToSelected = useMemo(() => {
@@ -144,6 +140,11 @@ export function TravelPanel({
       // Arrived at destination
       toast.success(result.message);
       setSelectedDestination(null);
+      onTravelComplete?.({
+        world: result.world,
+        travelState: result.travelState,
+        destination: result.world.locations.get(result.travelState.currentLocationId) as EnhancedLocation | null,
+      });
     }
 
     setIsTraveling(false);
@@ -156,6 +157,7 @@ export function TravelPanel({
     onTravelStateUpdate,
     onCombatStart,
     onWorldEvent,
+    onTravelComplete,
   ]);
 
   // Handle resuming travel after combat
@@ -169,11 +171,16 @@ export function TravelPanel({
 
       if (result.arrived) {
         toast.success(result.message);
+        onTravelComplete?.({
+          world: result.world,
+          travelState: result.travelState,
+          destination: result.world.locations.get(result.travelState.currentLocationId) as EnhancedLocation | null,
+        });
       } else {
         toast.info(result.message);
       }
     },
-    [world, playerId, onWorldUpdate, onTravelStateUpdate, onWorldEvent]
+    [world, playerId, onWorldUpdate, onTravelStateUpdate, onWorldEvent, onTravelComplete]
   );
 
   // Get danger level badge color

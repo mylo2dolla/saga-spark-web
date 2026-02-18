@@ -2,52 +2,74 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Index from "./pages/Index";
-import Login from "./pages/Login";
-import Signup from "./pages/Signup";
-import Dashboard from "./pages/Dashboard";
-import Game from "./pages/Game";
-import CreateCharacter from "./pages/CreateCharacter";
-import NewCampaign from "./pages/NewCampaign";
-import LocationView from "./pages/LocationView";
-import WorldMap from "./pages/WorldMap";
-import NPCView from "./pages/NPCView";
-import QuestView from "./pages/QuestView";
-import CombatView from "./pages/CombatView";
-import ServerDashboard from "./pages/ServerDashboard";
-import NotFound from "./pages/NotFound";
+import { BrowserRouter, Routes, Route, Navigate, useParams } from "react-router-dom";
+import AppShell from "@/ui/app-shell/AppShell";
+import { ErrorBoundary } from "@/ui/components/ErrorBoundary";
+import EnvGuard from "@/ui/components/EnvGuard";
+import { DiagnosticsProvider } from "@/ui/data/diagnostics";
+import { AuthProvider } from "@/contexts/AuthContext";
+import AuthScreen from "@/ui/screens/AuthScreen";
+import DashboardScreen from "@/ui/screens/DashboardScreen";
+import MythicCharacterScreen from "@/ui/screens/MythicCharacterScreen";
+import MythicGameScreen from "@/ui/screens/MythicGameScreen";
+import ServerAdminScreen from "@/ui/screens/ServerAdminScreen";
+import LandingScreen from "@/ui/screens/LandingScreen";
 import GameSessionRoute from "./routes/GameSessionRoute";
+import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
+
+function LegacyGameRedirect() {
+  const { campaignId } = useParams();
+  if (!campaignId) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <Navigate to={`/mythic/${campaignId}`} replace />;
+}
+
+function LegacyCharacterRedirect() {
+  const { campaignId } = useParams();
+  if (!campaignId) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return <Navigate to={`/mythic/${campaignId}/create-character`} replace />;
+}
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/new-campaign" element={<NewCampaign />} />
-          <Route path="/game/:campaignId" element={<GameSessionRoute />}>
-            <Route index element={<Game />} />
-            <Route path="create-character" element={<CreateCharacter />} />
-            <Route path="map" element={<WorldMap />} />
-            <Route path="location/:locationId" element={<LocationView />} />
-            <Route path="npc/:npcId" element={<NPCView />} />
-            <Route path="quest/:questId" element={<QuestView />} />
-            <Route path="combat" element={<CombatView />} />
-          </Route>
-          <Route path="/admin" element={<ServerDashboard />} />
-          <Route path="/servers" element={<ServerDashboard />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
+      <EnvGuard>
+        <AuthProvider>
+          <BrowserRouter>
+            <DiagnosticsProvider>
+              <ErrorBoundary>
+                <Routes>
+                  <Route path="/" element={<LandingScreen />} />
+                  <Route path="/game" element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/login" element={<AuthScreen mode="login" />} />
+                  <Route path="/signup" element={<AuthScreen mode="signup" />} />
+                  <Route path="/auth" element={<Navigate to="/login" replace />} />
+                  <Route element={<AppShell />}>
+                    <Route path="/dashboard" element={<DashboardScreen />} />
+                    <Route path="/servers" element={<ServerAdminScreen />} />
+                    <Route path="/admin" element={<ServerAdminScreen />} />
+                    <Route path="/mythic/:campaignId" element={<GameSessionRoute />}>
+                      <Route index element={<MythicGameScreen />} />
+                      <Route path="create-character" element={<MythicCharacterScreen />} />
+                    </Route>
+                    <Route path="/game/:campaignId" element={<LegacyGameRedirect />} />
+                    <Route path="/game/:campaignId/create-character" element={<LegacyCharacterRedirect />} />
+                  </Route>
+                  {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </ErrorBoundary>
+            </DiagnosticsProvider>
+          </BrowserRouter>
+        </AuthProvider>
+      </EnvGuard>
     </TooltipProvider>
   </QueryClientProvider>
 );

@@ -33,11 +33,12 @@ interface UseServerHeartbeatOptions {
 
 // Generate a stable client node name based on session
 function generateNodeName(): string {
-  const stored = sessionStorage.getItem("server_node_name");
+  const storage = typeof window !== "undefined" ? window.sessionStorage : null;
+  const stored = storage?.getItem("server_node_name");
   if (stored) return stored;
-  
+
   const name = `Client-${Math.random().toString(36).slice(2, 8)}`;
-  sessionStorage.setItem("server_node_name", name);
+  storage?.setItem("server_node_name", name);
   return name;
 }
 
@@ -46,7 +47,7 @@ export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
   const {
     campaignId,
     nodeName = generateNodeName(),
-    heartbeatInterval = 30000,
+    heartbeatInterval = 10000,
   } = options;
 
   const [nodeId, setNodeId] = useState<string | null>(null);
@@ -54,81 +55,72 @@ export function useServerHeartbeat(options: UseServerHeartbeatOptions = {}) {
   const [latency, setLatency] = useState(0);
   const heartbeatRef = useRef<NodeJS.Timeout | null>(null);
   const nodeNameRef = useRef(nodeName);
+  const isMountedRef = useRef(true);
 
   // Send heartbeat using UPSERT with unique constraint (user_id, node_name)
   const sendHeartbeat = useCallback(async () => {
     if (!user) return;
 
-    const startTime = Date.now();
-
     try {
-      // First check if node exists
-      const { data: existingNode } = await supabase
+      const t0 = performance.now();
+      await supabase
         .from("server_nodes")
         .select("id")
         .eq("user_id", user.id)
         .eq("node_name", nodeNameRef.current)
-        .maybeSingle();
+        .limit(1);
+      const currentLatency = Math.round(performance.now() - t0);
 
-      const currentLatency = Date.now() - startTime;
-      
-      if (existingNode) {
-        // Update existing node
-        const { error: updateError } = await supabase
-          .from("server_nodes")
-          .update({
-            campaign_id: campaignId ?? null,
-            status: "online",
-            last_heartbeat: new Date().toISOString(),
-            database_latency_ms: currentLatency,
-            memory_usage: Math.random() * 50 + 30,
-            cpu_usage: Math.random() * 30 + 10,
-            active_campaigns: campaignId ? 1 : 0,
-          })
-          .eq("id", existingNode.id);
-
-        if (!updateError) {
-          setNodeId(existingNode.id);
-          setLatency(currentLatency);
-          setIsConnected(true);
-          return;
-        }
-      }
-
-      // Insert new node if doesn't exist
       const { data, error } = await supabase
         .from("server_nodes")
-        .insert({
+        .upsert({
           node_name: nodeNameRef.current,
           user_id: user.id,
           campaign_id: campaignId ?? null,
           status: "online",
           last_heartbeat: new Date().toISOString(),
-          active_players: 1,
+          active_players: campaignId ? 1 : 0,
           active_campaigns: campaignId ? 1 : 0,
-          realtime_connections: 1,
+          realtime_connections: 0,
           database_latency_ms: currentLatency,
-          memory_usage: Math.random() * 50 + 30,
-          cpu_usage: Math.random() * 30 + 10,
+          memory_usage: 0,
+          cpu_usage: 0,
+        }, {
+          onConflict: "user_id,node_name",
         })
         .select("id")
-        .single();
+        .maybeSingle();
 
       if (error) {
         console.error("Heartbeat insert failed:", error);
-        setIsConnected(false);
+        if (isMountedRef.current) {
+          setIsConnected(false);
+        }
       } else if (data) {
-        setNodeId(data.id);
-        setLatency(currentLatency);
-        setIsConnected(true);
+        if (isMountedRef.current) {
+          setNodeId(data.id);
+          setLatency(currentLatency);
+          setIsConnected(true);
+        }
+      } else if (isMountedRef.current) {
+        setIsConnected(false);
       }
     } catch (err) {
       console.error("Heartbeat failed:", err);
-      setIsConnected(false);
+      if (isMountedRef.current) {
+        setIsConnected(false);
+      }
     }
   }, [user, campaignId]);
 
   // Register/update node on mount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   useEffect(() => {
     if (!user) return;
 

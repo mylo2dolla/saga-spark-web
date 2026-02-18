@@ -12,6 +12,7 @@ interface DMChatProps {
   currentResponse: string;
   onSendMessage: (message: string) => void;
   suggestions?: string[];
+  error?: string | null;
 }
 
 const RollDisplay = ({ roll }: { roll: DMResponse["rolls"][0] }) => (
@@ -168,7 +169,7 @@ const MessageContent = ({ message }: { message: DMMessage }) => {
   );
 };
 
-export function DMChat({ messages, isLoading, currentResponse, onSendMessage, suggestions }: DMChatProps) {
+export function DMChat({ messages, isLoading, currentResponse, onSendMessage, suggestions, error }: DMChatProps) {
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -285,6 +286,9 @@ export function DMChat({ messages, isLoading, currentResponse, onSendMessage, su
             {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
           </Button>
         </div>
+        {error ? (
+          <div className="mt-2 text-xs text-destructive">{error}</div>
+        ) : null}
       </div>
     </div>
   );

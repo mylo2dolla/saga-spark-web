@@ -55,13 +55,26 @@ CREATE POLICY "Users can create their own saves"
 ON public.game_saves FOR INSERT
 WITH CHECK (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can update their own saves" ON public.game_saves;
 CREATE POLICY "Users can update their own saves"
 ON public.game_saves FOR UPDATE
-USING (auth.uid() = user_id);
+USING (auth.uid() = user_id)
+WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can delete their own saves"
 ON public.game_saves FOR DELETE
 USING (auth.uid() = user_id);
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'game_saves_campaign_user_save_name_key'
+  ) THEN
+    ALTER TABLE public.game_saves
+    ADD CONSTRAINT game_saves_campaign_user_save_name_key UNIQUE (campaign_id, user_id, save_name);
+  END IF;
+END $$;
 
 -- Create table for generated AI content
 CREATE TABLE public.ai_generated_content (

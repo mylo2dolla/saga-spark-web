@@ -194,34 +194,12 @@ export function AICharacterCreator({ campaignId, onComplete, onCancel }: Charact
                       id="classDesc"
                       value={classDescription}
                       onChange={(e) => setClassDescription(e.target.value)}
-                      placeholder='e.g., "A werewolf ninja who uses shadow magic and rage" or "An elven druid who shapeshifts into storm elementals"'
+                      placeholder="Describe your class concept"
                       className="min-h-[120px] bg-input border-border"
                     />
                     <p className="text-xs text-muted-foreground">
                       Be creative! Mix archetypes, add themes, describe playstyle.
                     </p>
-                  </div>
-                  
-                  <div className="flex flex-wrap gap-2">
-                    <span className="text-xs text-muted-foreground">Ideas:</span>
-                    {[
-                      "Shadow assassin monk",
-                      "Arcane gunslinger",
-                      "Necromancer bard",
-                      "Holy berserker",
-                      "Chronomancer rogue",
-                    ].map(idea => (
-                      <Button
-                        key={idea}
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setClassDescription(idea)}
-                        className="text-xs"
-                      >
-                        <Dices className="w-3 h-3 mr-1" />
-                        {idea}
-                      </Button>
-                    ))}
                   </div>
                 </div>
               </motion.div>
@@ -440,19 +418,6 @@ export function AICharacterCreator({ campaignId, onComplete, onCancel }: Charact
                     />
                   </div>
                   
-                  <div className="flex flex-wrap gap-2 justify-center">
-                    {["Shadowfang", "Azura", "Grimrock", "Kira", "Valdris", "Zephyr"].map(name => (
-                      <Button
-                        key={name}
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setCharacterName(name)}
-                        className="text-xs"
-                      >
-                        {name}
-                      </Button>
-                    ))}
-                  </div>
                 </div>
               </motion.div>
             )}

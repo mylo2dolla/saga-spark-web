@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 /**
  * React context for the unified physics + narrative engine.
  * Provides both game state and world state to all child components.

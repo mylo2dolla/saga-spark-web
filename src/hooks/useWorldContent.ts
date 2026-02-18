@@ -6,9 +6,12 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import type { WorldState, NPC, Quest, Location, FactionInfo, Alignment, PersonalityTrait } from "@/engine/narrative/types";
+import type { WorldState, NPC, Quest, Location, FactionInfo, Alignment, PersonalityTrait, StoryFlag } from "@/engine/narrative/types";
 import type { EnhancedLocation, LocationService } from "@/engine/narrative/Travel";
 import { toast } from "sonner";
+import { recordDbRead } from "@/ui/data/networkHealth";
+
+const DEV_DEBUG = import.meta.env.DEV;
 
 interface WorldContent {
   factions: FactionInfo[];
@@ -16,18 +19,13 @@ interface WorldContent {
   quests: Quest[];
   locations: EnhancedLocation[];
   worldHooks: string[];
+  storyFlags: StoryFlag[];
 }
 
 interface UseWorldContentOptions {
   campaignId: string;
 }
 
-const MOCK_NARRATIVE_PATTERN = /\b(test|demo|sample|placeholder)\b/i;
-const MOCK_NARRATIVE_PHRASES = [
-  "Test your new",
-  "Swap places with the Clone",
-  "Gelatinous Clone",
-];
 
 // Valid personality traits
 const VALID_TRAITS: PersonalityTrait[] = [
@@ -64,6 +62,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
         .order("created_at", { ascending: true });
 
       if (fetchError) throw fetchError;
+      recordDbRead();
       if (!data || data.length === 0) {
         return null;
       }
@@ -74,6 +73,8 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
       const quests: Quest[] = [];
       const locations: EnhancedLocation[] = [];
       const worldHooks: string[] = [];
+      const storyFlags: StoryFlag[] = [];
+      const rawLocationSamples: Array<{ contentId: string; rawId?: string; rawName?: string }> = [];
 
       for (const item of data) {
         const raw = item.content as Record<string, unknown>;
@@ -108,6 +109,11 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
             }
           case "location":
             {
+              rawLocationSamples.push({
+                contentId: item.content_id,
+                rawId: getString(raw.id) || undefined,
+                rawName: getString(raw.name) || undefined,
+              });
               const location = convertToLocation(raw, item.content_id);
               if (location) {
                 locations.push(location);
@@ -121,10 +127,48 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
               );
             }
             break;
+          case "story_flag":
+            {
+              const flag = convertToStoryFlag(raw, item.content_id);
+              if (flag) {
+                storyFlags.push(flag);
+              }
+              break;
+            }
         }
       }
 
-      const result: WorldContent = { factions, npcs, quests, locations, worldHooks };
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG worldContent raw locations", {
+          rawLocationsCount: rawLocationSamples.length,
+          sample: rawLocationSamples.slice(0, 3),
+        });
+      }
+
+      const result: WorldContent = { factions, npcs, quests, locations, worldHooks, storyFlags };
+      if (DEV_DEBUG) {
+        const locationPositions = result.locations.slice(0, 3).map(location => ({
+          id: location.id,
+          x: location.position.x,
+          y: location.position.y,
+        }));
+        const connectedToLengths = result.locations.slice(0, 3).map(location => ({
+          id: location.id,
+          connectedToCount: location.connectedTo.length,
+        }));
+        console.info("DEV_DEBUG worldContent loaded", {
+          locationsCount: result.locations.length,
+          npcsCount: result.npcs.length,
+          questsCount: result.quests.length,
+          itemsCount: 0,
+          locationIds: result.locations.slice(0, 10).map(location => location.id),
+          locationPositions,
+          connectedToLengths,
+        });
+        if (result.locations.length === 1) {
+          toast.error("World generation returned 1 location");
+        }
+      }
       setContent(result);
       return result;
     } catch (err) {
@@ -144,45 +188,65 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     baseWorld: WorldState,
     worldContent: WorldContent
   ): WorldState => {
+    const contentNPCs = Array.isArray(worldContent?.npcs) ? worldContent.npcs : [];
+    const contentQuests = Array.isArray(worldContent?.quests) ? worldContent.quests : [];
+    const contentLocations = Array.isArray(worldContent?.locations) ? worldContent.locations : [];
+    const contentStoryFlags = Array.isArray(worldContent?.storyFlags) ? worldContent.storyFlags : [];
+    const contentFactions = Array.isArray(worldContent?.factions) ? worldContent.factions : [];
+
     const newNPCs = new Map(baseWorld.npcs);
     const newQuests = new Map(baseWorld.quests);
-    const newLocations = new Map(baseWorld.locations);
-    const contentLocationIds = new Set(worldContent.locations.map(location => location.id));
-    if (worldContent.locations.length > 0 && !contentLocationIds.has("starting_location")) {
+    const newLocations = new Map(baseWorld.locations as ReadonlyMap<string, EnhancedLocation>);
+    const newStoryFlags = new Map(baseWorld.storyFlags);
+    const hasRealContentLocations = contentLocations.some(
+      location => location.id !== "starting_location"
+    );
+    if (contentLocations.length > 0 && hasRealContentLocations) {
       newLocations.delete("starting_location");
     }
 
     // Merge NPCs (avoid duplicates by ID)
-    for (const npc of worldContent.npcs) {
+    for (const npc of contentNPCs) {
       if (!newNPCs.has(npc.id)) {
         newNPCs.set(npc.id, npc);
       }
     }
 
     // Merge Quests
-    for (const quest of worldContent.quests) {
+    for (const quest of contentQuests) {
       if (!newQuests.has(quest.id)) {
         newQuests.set(quest.id, quest);
       }
     }
 
     // Merge Locations
-    for (const location of worldContent.locations) {
+    for (const location of contentLocations) {
+      if (hasRealContentLocations && location.id === "starting_location") {
+        continue;
+      }
       newLocations.set(location.id, location);
     }
+
+    // Merge Story Flags
+    for (const flag of contentStoryFlags) {
+      newStoryFlags.set(flag.id, flag);
+    }
+
+    const resolvedLocations = resolveLocationConnections(newLocations);
 
     // Update campaign seed with factions if not already present
     const existingFactionIds = new Set(baseWorld.campaignSeed.factions?.map(f => f.id) ?? []);
     const newFactions = [
       ...(baseWorld.campaignSeed.factions ?? []),
-      ...worldContent.factions.filter(f => !existingFactionIds.has(f.id)),
+      ...contentFactions.filter(f => !existingFactionIds.has(f.id)),
     ];
 
     return {
       ...baseWorld,
       npcs: newNPCs,
       quests: newQuests,
-      locations: newLocations,
+      locations: resolvedLocations as unknown as ReadonlyMap<string, Location>,
+      storyFlags: newStoryFlags,
       campaignSeed: {
         ...baseWorld.campaignSeed,
         factions: newFactions,
@@ -212,6 +276,16 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
 }
 
 // ============= Converters =============
+
+function convertToStoryFlag(raw: Record<string, unknown>, contentId: string): StoryFlag | null {
+  const id = getString(raw.id) || contentId;
+  if (!id) return null;
+  const value = raw.value as StoryFlag["value"];
+  if (value === undefined) return null;
+  const setAt = typeof raw.setAt === "number" ? raw.setAt : Date.now();
+  const source = getString(raw.source) || "action";
+  return { id, value, setAt, source };
+}
 
 function convertToFaction(raw: Record<string, unknown>, contentId: string): FactionInfo | null {
   const name = getString(raw.name);
@@ -389,54 +463,12 @@ function getString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function containsMockNarrative(text?: string): boolean {
-  if (!text) return false;
-  if (MOCK_NARRATIVE_PATTERN.test(text)) return true;
-  return MOCK_NARRATIVE_PHRASES.some((phrase) => text.includes(phrase));
+function containsMockNarrative(_text?: string): boolean {
+  return false;
 }
 
-function isMockContent(contentType: string, raw: Record<string, unknown>): boolean {
-  switch (contentType) {
-    case "quest": {
-      const objectiveDescriptions = Array.isArray(raw.objectives)
-        ? (raw.objectives as Array<{ description?: string }>).map(obj => getString(obj.description))
-        : [];
-      return [
-        getString(raw.title),
-        getString(raw.description),
-        getString(raw.briefDescription),
-        ...objectiveDescriptions,
-      ].some(containsMockNarrative);
-    }
-    case "npc": {
-      const dialogue = raw.dialogue as { text?: string; responses?: Array<{ text?: string }> } | undefined;
-      const responseTexts = dialogue?.responses?.map(resp => getString(resp.text)) ?? [];
-      const goals = Array.isArray(raw.goals)
-        ? (raw.goals as Array<{ description?: string }>).map(goal => getString(goal.description))
-        : [];
-      return [
-        getString(raw.name),
-        getString(raw.title),
-        getString(dialogue?.text),
-        ...responseTexts,
-        ...goals,
-      ].some(containsMockNarrative);
-    }
-    case "location":
-      return [
-        getString(raw.name),
-        getString(raw.description),
-        getString(raw.ambientDescription),
-      ].some(containsMockNarrative);
-    case "faction":
-      return [getString(raw.name), getString(raw.description)].some(containsMockNarrative);
-    case "world_hooks":
-      return Array.isArray(raw)
-        ? (raw as string[]).some((hook) => containsMockNarrative(getString(hook)))
-        : false;
-    default:
-      return false;
-  }
+function isMockContent(_contentType: string, _raw: Record<string, unknown>): boolean {
+  return false;
 }
 
 function hashString(value: string): number {
@@ -454,10 +486,138 @@ function createDeterministicPosition(seed: string): { x: number; y: number } {
   return { x, y };
 }
 
+function normalizeKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function resolveLocationConnections(
+  locations: Map<string, EnhancedLocation>
+): Map<string, EnhancedLocation> {
+  if (locations.size === 0) return locations;
+
+  const idSet = new Set(locations.keys());
+  const nameToIds = new Map<string, string[]>();
+  const typeToIds = new Map<string, string[]>();
+
+  for (const location of locations.values()) {
+    const nameKey = normalizeKey(location.name);
+    if (!nameToIds.has(nameKey)) {
+      nameToIds.set(nameKey, []);
+    }
+    nameToIds.get(nameKey)?.push(location.id);
+
+    const typeKey = location.type.toLowerCase();
+    if (!typeToIds.has(typeKey)) {
+      typeToIds.set(typeKey, []);
+    }
+    typeToIds.get(typeKey)?.push(location.id);
+  }
+
+  let didChange = false;
+  const nextLocations = new Map(locations);
+  let hasAnyConnections = false;
+
+  for (const location of locations.values()) {
+    if (location.connectedTo.length === 0) continue;
+    hasAnyConnections = true;
+
+    const resolved = new Set<string>();
+    for (const raw of location.connectedTo) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      if (idSet.has(trimmed)) {
+        resolved.add(trimmed);
+        continue;
+      }
+
+      const nameMatches = nameToIds.get(normalizeKey(trimmed));
+      if (nameMatches && nameMatches.length > 0) {
+        nameMatches.forEach(id => resolved.add(id));
+        continue;
+      }
+
+      const typeMatches = typeToIds.get(trimmed.toLowerCase());
+      if (typeMatches && typeMatches.length > 0) {
+        typeMatches.forEach(id => resolved.add(id));
+      }
+    }
+
+    resolved.delete(location.id);
+    const resolvedIds = Array.from(resolved);
+    const normalizedCurrent = location.connectedTo.filter(id => idSet.has(id));
+
+    const sameConnections =
+      normalizedCurrent.length === resolvedIds.length &&
+      normalizedCurrent.every(id => resolved.has(id));
+
+    if (!sameConnections) {
+      didChange = true;
+      const nextTravelTime = { ...location.travelTime };
+      for (const id of resolvedIds) {
+        if (typeof nextTravelTime[id] !== "number") {
+          nextTravelTime[id] = 1;
+        }
+      }
+      nextLocations.set(location.id, {
+        ...location,
+        connectedTo: resolvedIds,
+        travelTime: nextTravelTime,
+      });
+    }
+  }
+
+  if (!hasAnyConnections && locations.size > 1) {
+    const locationList = Array.from(nextLocations.values());
+    const getDistance = (a: EnhancedLocation, b: EnhancedLocation) => {
+      const dx = a.position.x - b.position.x;
+      const dy = a.position.y - b.position.y;
+      return Math.hypot(dx, dy);
+    };
+
+    for (const location of locationList) {
+      const nearest = locationList
+        .filter(candidate => candidate.id !== location.id)
+        .sort((a, b) => getDistance(location, a) - getDistance(location, b))[0];
+      if (!nearest) continue;
+
+      const currentConnections = new Set(location.connectedTo);
+      currentConnections.add(nearest.id);
+      const nextTravelTime = { ...location.travelTime };
+      if (typeof nextTravelTime[nearest.id] !== "number") {
+        nextTravelTime[nearest.id] = 1;
+      }
+      nextLocations.set(location.id, {
+        ...location,
+        connectedTo: Array.from(currentConnections),
+        travelTime: nextTravelTime,
+      });
+
+      const nearestConnections = new Set(nextLocations.get(nearest.id)?.connectedTo ?? []);
+      if (!nearestConnections.has(location.id)) {
+        const nearestTravelTime = { ...nearest.travelTime };
+        if (typeof nearestTravelTime[location.id] !== "number") {
+          nearestTravelTime[location.id] = 1;
+        }
+        nextLocations.set(nearest.id, {
+          ...nearest,
+          connectedTo: Array.from(nearestConnections).concat(location.id),
+          travelTime: nearestTravelTime,
+        });
+      }
+
+      didChange = true;
+    }
+  }
+
+  return didChange ? nextLocations : locations;
+}
+
 function convertToLocation(raw: Record<string, unknown>, contentId: string): EnhancedLocation | null {
-  const locationId = contentId === "starting_location"
-    ? "starting_location"
-    : ((raw.id as string) ?? contentId);
+  const locationId = (raw.id as string) ?? contentId;
   const fallbackPosition = createDeterministicPosition(locationId);
   const rawPosition = raw.position as { x?: number; y?: number } | undefined;
   
@@ -477,7 +637,7 @@ function convertToLocation(raw: Record<string, unknown>, contentId: string): Enh
       ? { x: rawPosition.x, y: rawPosition.y }
       : fallbackPosition,
     radius: 30,
-    discovered: locationId === "starting_location",
+    discovered: raw.isStartingLocation === true || raw.isStarting === true,
     items: [],
     // Enhanced fields
     dangerLevel: typeof raw.dangerLevel === "number" ? raw.dangerLevel : 1,

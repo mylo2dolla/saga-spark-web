@@ -32,9 +32,11 @@ CREATE POLICY "Users can create own node heartbeat"
   WITH CHECK (auth.uid() = user_id);
 
 -- Users can update their own heartbeat
+DROP POLICY IF EXISTS "Users can update own node heartbeat" ON public.server_nodes;
 CREATE POLICY "Users can update own node heartbeat"
   ON public.server_nodes FOR UPDATE
-  USING (auth.uid() = user_id);
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
 
 -- Users can delete their own heartbeat
 CREATE POLICY "Users can delete own node heartbeat"
