@@ -21,6 +21,9 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
       "@typescript-eslint/no-unused-vars": "off",
+      // typescript-eslint wraps the core rule; ensure options are always present
+      // so the underlying core rule doesn't crash on empty context.options.
+      "@typescript-eslint/no-unused-expressions": ["error", {}],
       "@typescript-eslint/no-explicit-any": "off",
     },
   },
