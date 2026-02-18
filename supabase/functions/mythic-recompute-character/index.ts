@@ -239,6 +239,53 @@ serve(async (req) => {
       }
     }
 
+    // Ensure every character has a default Move skill (server-authoritative).
+    // This keeps combat tactics usable even when older characters were created before Move existed.
+    const moveRange = clampStat(3 + Math.floor(Number(derivedStats.mobility ?? 0) / 25));
+    const moveRangeClamped = Math.min(6, Math.max(3, moveRange));
+    const { data: existingMoveSkill, error: moveLookupErr } = await svc
+      .schema("mythic")
+      .from("skills")
+      .select("id, range_tiles")
+      .eq("character_id", (character as any).id)
+      .eq("name", "Move")
+      .maybeSingle();
+    if (moveLookupErr) throw moveLookupErr;
+
+    if (!existingMoveSkill?.id) {
+      const { error: moveInsertErr } = await svc
+        .schema("mythic")
+        .from("skills")
+        .insert({
+          campaign_id: campaignId,
+          character_id: (character as any).id,
+          kind: "active",
+          targeting: "tile",
+          targeting_json: { shape: "tile", metric: "manhattan", requires_los: false, blocks_on_walls: true },
+          name: "Move",
+          description: "Reposition up to your move range. Cannot end on blocked or occupied tiles.",
+          range_tiles: moveRangeClamped,
+          cooldown_turns: 0,
+          cost_json: { amount: 0, type: "flat", when: "on_cast" },
+          effects_json: { move: { dash_tiles: moveRangeClamped }, onomatopoeia: "step" },
+          scaling_json: {},
+          counterplay: { notes: "Positioning is power. Deny lanes with obstacles and body-blocking." },
+          narration_style: "tactical-brief",
+        });
+      if (moveInsertErr) throw moveInsertErr;
+    } else if (Number(existingMoveSkill.range_tiles ?? 0) !== moveRangeClamped) {
+      const { error: moveUpdateErr } = await svc
+        .schema("mythic")
+        .from("skills")
+        .update({
+          range_tiles: moveRangeClamped,
+          effects_json: { move: { dash_tiles: moveRangeClamped }, onomatopoeia: "step" },
+        } as any)
+        .eq("id", existingMoveSkill.id)
+        .eq("character_id", (character as any).id);
+      if (moveUpdateErr) throw moveUpdateErr;
+    }
+
     return new Response(JSON.stringify({ ok: true, derived: derivedJson }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -113,6 +113,16 @@ function toBlockedSet(blocked: Array<{ x: number; y: number }>) {
   return new Set(blocked.map((t) => `${t.x},${t.y}`));
 }
 
+function toOccupiedSet(combatants: CombatantRow[], excludeIds: Set<string>) {
+  const occupied = new Set<string>();
+  for (const c of combatants) {
+    if (!c?.is_alive) continue;
+    if (excludeIds.has(c.id)) continue;
+    occupied.add(`${c.x},${c.y}`);
+  }
+  return occupied;
+}
+
 function hasLineOfSight(
   ax: number,
   ay: number,
@@ -135,6 +145,7 @@ function advanceAlongLine(
   endY: number,
   steps: number,
   blocked: Set<string>,
+  occupied: Set<string> | null,
 ): { x: number; y: number } {
   const line = bresenhamLine(startX, startY, endX, endY);
   if (line.length <= 1) return { x: startX, y: startY };
@@ -142,7 +153,9 @@ function advanceAlongLine(
   let last = line[0]!;
   for (let i = 1; i <= maxIdx; i++) {
     const p = line[i]!;
-    if (blocked.has(`${p.x},${p.y}`)) break;
+    const key = `${p.x},${p.y}`;
+    if (blocked.has(key)) break;
+    if (occupied && occupied.has(key)) break;
     last = p;
   }
   return { x: last.x, y: last.y };
@@ -155,6 +168,7 @@ function stepAway(
   targetY: number,
   steps: number,
   blocked: Set<string>,
+  occupied: Set<string> | null,
 ): { x: number; y: number } {
   const dx = targetX - fromX;
   const dy = targetY - fromY;
@@ -162,7 +176,7 @@ function stepAway(
   const stepY = dy === 0 ? 0 : dy / Math.abs(dy);
   const endX = targetX + stepX * Math.max(0, Math.floor(steps));
   const endY = targetY + stepY * Math.max(0, Math.floor(steps));
-  return advanceAlongLine(targetX, targetY, endX, endY, steps, blocked);
+  return advanceAlongLine(targetX, targetY, endX, endY, steps, blocked, occupied);
 }
 
 function getTargetsForShape(args: {
@@ -597,6 +611,13 @@ serve(async (req) => {
     const isAlly = (a: CombatantRow, b: CombatantRow) => a.entity_type === b.entity_type && a.player_id === b.player_id;
     const filteredTargets = friendlyFire ? allTargets : allTargets.filter((t) => !isAlly(actor, t) || t.id === actor.id);
 
+    const allCombatantRows = (allCombatants ?? []) as CombatantRow[];
+    // Occupancy is authoritative for legality checks: never end movement on occupied tiles.
+    const occupied = toOccupiedSet(allCombatantRows, new Set([actor.id]));
+    let actorX = actor.x;
+    let actorY = actor.y;
+    occupied.add(`${actorX},${actorY}`);
+
     // Spend resource.
     const nextPower = Math.max(0, Math.floor(actor.power - cost.amount));
     const updates: Partial<CombatantRow> = { power: nextPower };
@@ -627,22 +648,25 @@ serve(async (req) => {
     const move = asObject(effects.move);
     if (Object.keys(move).length > 0 && typeof move.dash_tiles === "number") {
       const dash = Math.max(0, Math.floor(move.dash_tiles));
-      // For now: snap actor to the targeted tile, clamped by dash and skill range.
-      const dx = resolved.tx - actor.x;
-      const dy = resolved.ty - actor.y;
-      const stepX = dx === 0 ? 0 : dx / Math.abs(dx);
-      const stepY = dy === 0 ? 0 : dy / Math.abs(dy);
       const steps = Math.min(dash, Math.ceil(dist));
-      const nx = actor.x + stepX * steps;
-      const ny = actor.y + stepY * steps;
-      updates.x = nx;
-      updates.y = ny;
-      events.push({
-        event_type: "moved",
-        payload: { from: { x: actor.x, y: actor.y }, to: { x: nx, y: ny }, dash_tiles: dash, onomatopoeia: effects.onomatopoeia ?? null },
-        actor_id: actor.id,
-        turn_index: turnIndex,
-      });
+      // Dash towards the targeted tile, but never end on blocked or occupied tiles.
+      const next = advanceAlongLine(actorX, actorY, resolved.tx, resolved.ty, steps, blockedSet, occupied);
+      if (next.x !== actorX || next.y !== actorY) {
+        const fromKey = `${actorX},${actorY}`;
+        updates.x = next.x;
+        updates.y = next.y;
+        events.push({
+          event_type: "moved",
+          payload: { from: { x: actorX, y: actorY }, to: { x: next.x, y: next.y }, dash_tiles: dash, onomatopoeia: effects.onomatopoeia ?? null },
+          actor_id: actor.id,
+          turn_index: turnIndex,
+        });
+        // Mark the actor's new tile as occupied for subsequent forced movement legality.
+        occupied.delete(fromKey);
+        occupied.add(`${next.x},${next.y}`);
+        actorX = next.x;
+        actorY = next.y;
+      }
     }
 
     // Teleport actor to targeted tile.
@@ -650,15 +674,21 @@ serve(async (req) => {
     if (Object.keys(teleport).length > 0) {
       const tx = resolved.tx;
       const ty = resolved.ty;
-      if (!blockedSet.has(`${tx},${ty}`)) {
+      const key = `${tx},${ty}`;
+      if (!blockedSet.has(key) && !occupied.has(key)) {
+        // Ensure the current actor tile is not treated as occupied for the swap.
+        occupied.delete(`${actorX},${actorY}`);
         updates.x = tx;
         updates.y = ty;
         events.push({
           event_type: "moved",
-          payload: { from: { x: actor.x, y: actor.y }, to: { x: tx, y: ty }, teleport: true },
+          payload: { from: { x: actorX, y: actorY }, to: { x: tx, y: ty }, teleport: true },
           actor_id: actor.id,
           turn_index: turnIndex,
         });
+        occupied.add(key);
+        actorX = tx;
+        actorY = ty;
       }
     }
 
@@ -668,8 +698,12 @@ serve(async (req) => {
       const tiles = Math.max(0, Math.floor(Number(pull.tiles)));
       const targets = filteredTargets.filter((t) => t.id !== actor.id);
       for (const target of targets) {
-        const next = advanceAlongLine(target.x, target.y, actor.x, actor.y, tiles, blockedSet);
-        if (next.x === target.x && next.y === target.y) continue;
+        occupied.delete(`${target.x},${target.y}`);
+        const next = advanceAlongLine(target.x, target.y, actorX, actorY, tiles, blockedSet, occupied);
+        if (next.x === target.x && next.y === target.y) {
+          occupied.add(`${target.x},${target.y}`);
+          continue;
+        }
         const { error: moveErr } = await svc
           .schema("mythic")
           .from("combatants")
@@ -677,6 +711,7 @@ serve(async (req) => {
           .eq("id", target.id)
           .eq("combat_session_id", combatSessionId);
         if (moveErr) throw moveErr;
+        occupied.add(`${next.x},${next.y}`);
         events.push({
           event_type: "moved",
           payload: { target_combatant_id: target.id, from: { x: target.x, y: target.y }, to: next, forced: "pull" },
@@ -691,8 +726,12 @@ serve(async (req) => {
       const tiles = Math.max(0, Math.floor(Number(push.tiles)));
       const targets = filteredTargets.filter((t) => t.id !== actor.id);
       for (const target of targets) {
-        const next = stepAway(actor.x, actor.y, target.x, target.y, tiles, blockedSet);
-        if (next.x === target.x && next.y === target.y) continue;
+        occupied.delete(`${target.x},${target.y}`);
+        const next = stepAway(actorX, actorY, target.x, target.y, tiles, blockedSet, occupied);
+        if (next.x === target.x && next.y === target.y) {
+          occupied.add(`${target.x},${target.y}`);
+          continue;
+        }
         const { error: moveErr } = await svc
           .schema("mythic")
           .from("combatants")
@@ -700,6 +739,7 @@ serve(async (req) => {
           .eq("id", target.id)
           .eq("combat_session_id", combatSessionId);
         if (moveErr) throw moveErr;
+        occupied.add(`${next.x},${next.y}`);
         events.push({
           event_type: "moved",
           payload: { target_combatant_id: target.id, from: { x: target.x, y: target.y }, to: next, forced: "push" },

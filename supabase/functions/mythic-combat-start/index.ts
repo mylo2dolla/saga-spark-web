@@ -188,6 +188,47 @@ serve(async (req) => {
       return acc;
     }, {} as Record<StatKey, number>);
 
+    // Ensure the character has a default Move skill (older characters may predate it).
+    const moveRange = clampInt(3 + Math.floor(Number(derivedStats.mobility ?? 0) / 25), 3, 6);
+    const { data: moveSkill, error: moveLookupErr } = await svc
+      .schema("mythic")
+      .from("skills")
+      .select("id, range_tiles")
+      .eq("character_id", character.id)
+      .eq("name", "Move")
+      .maybeSingle();
+    throwIfError(moveLookupErr, "move skill lookup");
+    if (!moveSkill?.id) {
+      const { error: moveInsertErr } = await svc
+        .schema("mythic")
+        .from("skills")
+        .insert({
+          campaign_id: campaignId,
+          character_id: character.id,
+          kind: "active",
+          targeting: "tile",
+          targeting_json: { shape: "tile", metric: "manhattan", requires_los: false, blocks_on_walls: true },
+          name: "Move",
+          description: "Reposition up to your move range. Cannot end on blocked or occupied tiles.",
+          range_tiles: moveRange,
+          cooldown_turns: 0,
+          cost_json: { amount: 0, type: "flat", when: "on_cast" },
+          effects_json: { move: { dash_tiles: moveRange }, onomatopoeia: "step" },
+          scaling_json: {},
+          counterplay: { notes: "Positioning is power. Deny lanes with obstacles and body-blocking." },
+          narration_style: "tactical-brief",
+        });
+      throwIfError(moveInsertErr, "move skill insert");
+    } else if (Number(moveSkill.range_tiles ?? 0) !== moveRange) {
+      const { error: moveUpdateErr } = await svc
+        .schema("mythic")
+        .from("skills")
+        .update({ range_tiles: moveRange, effects_json: { move: { dash_tiles: moveRange }, onomatopoeia: "step" } } as any)
+        .eq("id", moveSkill.id)
+        .eq("character_id", character.id);
+      throwIfError(moveUpdateErr, "move skill update");
+    }
+
     const weaponPower = Math.max(0, num(equipBonuses.weapon_power, 0));
     const armorPower = Math.max(0, num(equipBonuses.armor_power, 0));
     const resistBonus = Math.max(0, num(equipBonuses.resist, 0));

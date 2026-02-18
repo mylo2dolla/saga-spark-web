@@ -619,13 +619,31 @@ serve(async (req) => {
       warnings.push("llm_unavailable:fallback_without_exception");
     }
 
+    const llmSkills = refinedData.skills.filter((s) => s?.name?.trim().toLowerCase() !== "move");
+    const moveRange = clampInt(3 + Math.floor(refinedData.base_stats.mobility / 25), 3, 6);
+    const moveSkill = {
+      kind: "active" as const,
+      targeting: "tile" as const,
+      targeting_json: { shape: "tile", metric: "manhattan", requires_los: false, blocks_on_walls: true },
+      name: "Move",
+      description: "Reposition up to your move range. Cannot end on blocked or occupied tiles.",
+      range_tiles: moveRange,
+      cooldown_turns: 0,
+      cost_json: { amount: 0, type: "flat", when: "on_cast" },
+      effects_json: { move: { dash_tiles: moveRange }, onomatopoeia: "step" },
+      scaling_json: {},
+      counterplay: { notes: "Positioning is power. Deny lanes with obstacles and body-blocking." },
+      narration_style: "tactical-brief",
+    };
+    const allSkills = [...llmSkills, moveSkill];
+
     // Enforce content policy on stored text fields.
     assertContentAllowed([
       { path: "class_name", value: refinedData.class_name },
       { path: "class_description", value: refinedData.class_description },
       { path: "weakness.description", value: refinedData.weakness.description },
       { path: "weakness.counterplay", value: refinedData.weakness.counterplay },
-      ...refinedData.skills.flatMap((s, idx) => [
+      ...allSkills.flatMap((s, idx) => [
         { path: `skills[${idx}].name`, value: s.name },
         { path: `skills[${idx}].description`, value: s.description },
       ]),
@@ -706,7 +724,7 @@ serve(async (req) => {
       characterId = inserted.id as string;
     }
 
-    const skillRows = refinedData.skills.map((s) => ({
+    const skillRows = allSkills.map((s) => ({
       campaign_id: campaignId,
       character_id: characterId,
       kind: s.kind,
@@ -743,7 +761,7 @@ serve(async (req) => {
           base_stats: refinedData.base_stats,
           resources: refinedData.resources,
         },
-        skills: refinedData.skills,
+        skills: allSkills,
         skill_ids: insertedSkills?.map((r) => r.id) ?? [],
         warnings,
       }),
