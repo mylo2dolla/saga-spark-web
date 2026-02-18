@@ -86,3 +86,24 @@ export function drawDamageText(
   ctx.fillText(text, Math.floor(x), Math.floor(y));
 }
 
+export function drawRuin(ctx: CanvasRenderingContext2D, x: number, y: number, pulse: number) {
+  const wall = pulse > 0.5 ? pixelPalette.gray : pixelPalette.road;
+  drawPixelRect(ctx, x + 1, y + 5, 10, 5, wall);
+  drawPixelRect(ctx, x + 2, y + 3, 8, 2, wall);
+  drawPixelRect(ctx, x + 4, y + 1, 3, 2, wall);
+  drawPixelRect(ctx, x + 5, y + 6, 2, 3, pixelPalette.black);
+}
+
+export function drawMonolith(ctx: CanvasRenderingContext2D, x: number, y: number, glow: number) {
+  drawPixelRect(ctx, x + 3, y + 1, 4, 9, pixelPalette.stoneB);
+  drawPixelRect(ctx, x + 4, y + 2, 2, 7, glow > 0.5 ? pixelPalette.cyan : pixelPalette.amberDim);
+  drawPixelRect(ctx, x + 2, y + 10, 6, 2, pixelPalette.road);
+}
+
+export function drawCaveMouth(ctx: CanvasRenderingContext2D, x: number, y: number, flicker: number) {
+  drawOutlineRect(ctx, x, y, 12, 9, "rgba(14,14,20,0.85)", "rgba(176,135,255,0.55)");
+  drawPixelRect(ctx, x + 2, y + 3, 8, 4, "rgba(8,8,14,0.9)");
+  if (flicker > 0.5) {
+    drawPixelRect(ctx, x + 5, y + 2, 2, 1, pixelPalette.amber);
+  }
+}
