@@ -500,7 +500,32 @@ export const mythicCreateCharacter: FunctionHandler = {
       const canonicalScript = scriptRow?.content ?? "";
 
       // Ask OpenAI to rewrite names/descriptions only; mechanics stay deterministic.
-      const systemPrompt = `You are generating a Mythic Weave class kit.\\n\\nCANONICAL GENERATOR SCRIPT (authoritative):\\n${canonicalScript}\\n\\nCANONICAL RULES JSON (authoritative):\\n${canonicalRules}\\n\\nTASK:\\n- You will receive a deterministic mechanics skeleton JSON (numbers, cooldowns, targeting, costs, effects_json/scaling_json/counterplay).\\n- Do NOT change any numeric values, cooldowns, range_tiles, targeting, targeting_json, or cost_json.\\n- Improve ONLY these fields: class_name, class_description, weapon_identity.notes (optional), weakness.description/counterplay (may rephrase but keep meaning), each skill.name, each skill.description.\\n- Tone: living comic book, mischievous ruthless DM energy. Use onomatopoeia inside descriptions sparingly.\\n- NO sexual content. NO sexual violence. Violence/gore allowed. Profanity allowed.\\n\\nOutput MUST be ONLY valid JSON matching this schema:\\n{\\n  \"class_name\": string,\\n  \"class_description\": string,\\n  \"weapon_identity\": {\"family\": string, \"notes\"?: string},\\n  \"role\": string,\\n  \"base_stats\": {offense:int, defense:int, control:int, support:int, mobility:int, utility:int},\\n  \"resources\": object,\\n  \"weakness\": {id:string, description:string, counterplay:string},\\n  \"skills\": [ {kind, targeting, targeting_json, name, description, range_tiles, cooldown_turns, cost_json, effects_json, scaling_json, counterplay, narration_style} ]\\n}`;
+      const systemPrompt = `You are generating a Mythic Weave class kit.
+
+CANONICAL GENERATOR SCRIPT (authoritative):
+${canonicalScript}
+
+CANONICAL RULES JSON (authoritative):
+${canonicalRules}
+
+TASK:
+- You will receive a deterministic mechanics skeleton JSON (numbers, cooldowns, targeting, costs, effects_json/scaling_json/counterplay).
+- Do NOT change any numeric values, cooldowns, range_tiles, targeting, targeting_json, or cost_json.
+- Improve ONLY these fields: class_name, class_description, weapon_identity.notes (optional), weakness.description/counterplay (may rephrase but keep meaning), each skill.name, each skill.description.
+- Tone: living comic book, mischievous ruthless DM energy. Use onomatopoeia inside descriptions sparingly.
+- NO sexual content. NO sexual violence. Violence/gore allowed. Profanity allowed.
+
+Output MUST be ONLY valid JSON matching this schema:
+{
+  "class_name": string,
+  "class_description": string,
+  "weapon_identity": {"family": string, "notes"?: string},
+  "role": string,
+  "base_stats": {offense:int, defense:int, control:int, support:int, mobility:int, utility:int},
+  "resources": object,
+  "weakness": {id:string, description:string, counterplay:string},
+  "skills": [ {kind, targeting, targeting_json, name, description, range_tiles, cooldown_turns, cost_json, effects_json, scaling_json, counterplay, narration_style} ]
+}`;
 
       const skeleton = {
         class_name: "",
