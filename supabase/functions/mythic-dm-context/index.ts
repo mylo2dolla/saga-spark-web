@@ -15,6 +15,11 @@ const RequestSchema = z.object({
   campaignId: z.string().uuid(),
 });
 const logger = createLogger("mythic-dm-context");
+const requestIdFrom = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
 
 const errMessage = (err: unknown, fallback: string) => {
   if (err instanceof Error && err.message) return err.message;
@@ -90,6 +95,10 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
     return {
       weather: raw.weather ?? null,
       hazard_meter: raw.hazard_meter ?? null,
+      travel_goal: raw.travel_goal ?? null,
+      search_target: raw.search_target ?? null,
+      dungeon_traces_found: raw.dungeon_traces_found ?? null,
+      discovery_flags: raw.discovery_flags ?? null,
       segment_count: Array.isArray(raw.route_segments) ? raw.route_segments.length : 0,
       encounter_seed_count: Array.isArray(raw.encounter_seeds) ? raw.encounter_seeds.length : 0,
     };
@@ -236,9 +245,10 @@ function compactCombatPayload(combat: unknown) {
 }
 
 serve(async (req) => {
+  const requestId = requestIdFrom(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+    return new Response(JSON.stringify({ error: "Method not allowed", code: "method_not_allowed", requestId }), {
       status: 405,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -256,7 +266,7 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Authentication required" }), {
+      return new Response(JSON.stringify({ error: "Authentication required", code: "auth_required", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -274,7 +284,7 @@ serve(async (req) => {
     const authClient = createClient(supabaseUrl, anonKey);
     const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
+      return new Response(JSON.stringify({ error: "Invalid or expired authentication token", code: "auth_invalid", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -282,7 +292,7 @@ serve(async (req) => {
 
     const parsed = RequestSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
-      return new Response(JSON.stringify({ error: "Invalid request", details: parsed.error.flatten() }), {
+      return new Response(JSON.stringify({ error: "Invalid request", code: "invalid_request", details: parsed.error.flatten(), requestId }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -302,7 +312,8 @@ serve(async (req) => {
         .from("v_board_state_for_dm")
         .select("*")
         .eq("campaign_id", campaignId)
-        .maybeSingle();
+        .order("updated_at", { ascending: false })
+        .limit(2);
       if (error) {
         warnings.push(`v_board_state_for_dm unavailable: ${errMessage(error, "query failed")}`);
         const fallback = await svc
@@ -312,15 +323,22 @@ serve(async (req) => {
           .eq("campaign_id", campaignId)
           .eq("status", "active")
           .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+          .limit(2);
         if (fallback.error) {
           warnings.push(`boards fallback failed: ${errMessage(fallback.error, "query failed")}`);
         } else {
-          board = (fallback.data as Record<string, unknown> | null) ?? null;
+          const fallbackRows = ((fallback.data ?? []) as Record<string, unknown>[]);
+          if (fallbackRows.length > 1) {
+            warnings.push("duplicate_active_boards_detected:using_latest_board_row");
+          }
+          board = fallbackRows[0] ?? null;
         }
       } else {
-        board = (data as Record<string, unknown> | null) ?? null;
+        const rows = ((data ?? []) as Record<string, unknown>[]);
+        if (rows.length > 1) {
+          warnings.push("duplicate_active_boards_detected:using_latest_view_row");
+        }
+        board = rows[0] ?? null;
       }
     }
 
@@ -452,8 +470,12 @@ serve(async (req) => {
       is_active: scriptRow?.is_active ?? null,
       policy: {
         allow_gore: true,
-        ban_sexual_content: true,
+        allow_mild_sexuality: true,
+        ban_sexual_content: false,
         ban_sexual_violence: true,
+        ban_coercion: true,
+        ban_underage: true,
+        ban_explicit_porn: true,
       },
     };
 
@@ -470,16 +492,18 @@ serve(async (req) => {
         dm_campaign_state: dmState.data ?? null,
         dm_world_tension: tension.data ?? null,
         warnings,
+        requestId,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
     const normalized = sanitizeError(error);
-    logger.error("dm_context.failed", error);
+    logger.error("dm_context.failed", error, { request_id: requestId });
     return new Response(
       JSON.stringify({
         error: errMessage(error, normalized.message || "Failed to load mythic DM context"),
         code: normalized.code ?? "dm_context_failed",
+        requestId,
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
