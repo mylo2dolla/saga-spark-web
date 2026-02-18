@@ -96,11 +96,11 @@ test("mythic combat loop supports move then skill then rewards then return to ex
   await expect(page.getByText("Combat Playback (DB is truth)")).toBeVisible();
   await expect(page.getByText("Isometric Tactics Board")).toBeVisible();
 
-  await page.getByRole("button", { name: "Move" }).click();
+  await page.getByRole("button", { name: /^Move$/ }).click();
   await page.getByTitle("(2,1)").click();
   await page.getByRole("button", { name: "Confirm Move" }).click();
 
-  await page.getByRole("button", { name: "Skill" }).click();
+  await page.getByRole("button", { name: /^Skill$/ }).click();
   await page.getByRole("button", { name: "Momentum Slash" }).click();
   await page.getByTitle(/Ink Ghoul/).click();
   await page.getByRole("button", { name: "Use Selected Skill" }).click();

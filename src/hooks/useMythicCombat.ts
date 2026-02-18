@@ -3,11 +3,11 @@ import { toast } from "sonner";
 import { callEdgeFunction } from "@/lib/edge";
 import {
   claimMythicE2ECombatRewards,
+  executeItemMythicE2E,
+  executeSkillMythicE2E,
   isMythicE2E,
   moveMythicE2ECombat,
   startMythicE2ECombat,
-  useItemMythicE2E,
-  useSkillMythicE2E,
 } from "@/ui/e2e/mythicState";
 
 export type MythicCombatTarget =
@@ -107,7 +107,7 @@ export function useMythicCombat() {
     setIsActing(true);
     try {
       if (isMythicE2E(args.campaignId)) {
-        const data = useSkillMythicE2E(args);
+        const data = executeSkillMythicE2E(args);
         if (!data.ok) throw new Error(data.error ?? "Skill failed");
         return {
           ok: true,
@@ -163,7 +163,7 @@ export function useMythicCombat() {
     setIsActing(true);
     try {
       if (isMythicE2E(args.campaignId)) {
-        const data = useItemMythicE2E(args);
+        const data = executeItemMythicE2E(args);
         if (!data.ok) throw new Error(data.error ?? "Item failed");
         return {
           ok: true,
