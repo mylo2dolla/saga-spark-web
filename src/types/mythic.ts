@@ -100,3 +100,9 @@ export interface MythicBootstrapRequest {
 export interface MythicBootstrapResponse {
   ok: boolean;
 }
+
+export interface MythicQuestThreadRow {
+  id: string;
+  title: string;
+  detail?: string | null;
+}

@@ -14,6 +14,16 @@ export interface MythicDMMessage {
   parsed?: MythicDmTurnResponse;
 }
 
+export interface MythicUiAction {
+  id: string;
+  label: string;
+  intent?: string;
+  prompt?: string;
+  actionTags?: string[];
+  payload?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 interface SendOptions {
   appendUser?: boolean;
   actionTags?: string[];
