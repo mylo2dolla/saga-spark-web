@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { formatError } from "@/ui/data/async";
 import { getGrantedAbilities, splitInventory, sumStatMods, type MythicInventoryRow } from "@/lib/mythicEquipment";
+import { callEdgeFunction } from "@/lib/edge";
 
 function itemSummary(row: MythicInventoryRow) {
   const item = row.item;
@@ -11,7 +11,19 @@ function itemSummary(row: MythicInventoryRow) {
   return `${label} · ${item.slot} · ${item.rarity}`;
 }
 
+function topStatMods(item: MythicInventoryRow["item"], limit = 6): Array<{ key: string; value: number }> {
+  if (!item) return [];
+  const raw = item.stat_mods ?? {};
+  const entries = Object.entries(raw)
+    .map(([key, value]) => ({ key, value: Number(value) }))
+    .filter((x) => x.key.length > 0 && Number.isFinite(x.value) && x.value !== 0);
+  entries.sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+  return entries.slice(0, limit);
+}
+
 export function MythicInventoryPanel(props: {
+  campaignId: string;
+  characterId: string;
   rows: MythicInventoryRow[];
   onChanged: () => Promise<void>;
 }) {
@@ -24,27 +36,17 @@ export function MythicInventoryPanel(props: {
     setIsWorking(true);
     setError(null);
     try {
-      const itemSlot = row.item.slot ?? "other";
-      const isUnlimited = itemSlot === "ring" || itemSlot === "trinket";
-      if (!isUnlimited) {
-        // Unequip any existing item in the same slot.
-        const equippedSameSlot = equipment.filter((e) => e.item?.slot === itemSlot);
-        if (equippedSameSlot.length > 0) {
-          const { error: uneqErr } = await supabase
-            .schema("mythic")
-            .from("inventory")
-            .update({ container: "backpack", equip_slot: null, equipped_at: null })
-            .in("id", equippedSameSlot.map((e) => e.id));
-          if (uneqErr) throw uneqErr;
-        }
-      }
-
-      const { error: eqErr } = await supabase
-        .schema("mythic")
-        .from("inventory")
-        .update({ container: "equipment", equip_slot: itemSlot, equipped_at: new Date().toISOString() })
-        .eq("id", row.id);
+      const { data, error: eqErr } = await callEdgeFunction<{ ok: boolean }>("mythic-inventory-equip", {
+        requireAuth: true,
+        idempotencyKey: `equip:${props.characterId}:${row.id}`,
+        body: {
+          campaignId: props.campaignId,
+          characterId: props.characterId,
+          inventoryId: row.id,
+        },
+      });
       if (eqErr) throw eqErr;
+      if (!data?.ok) throw new Error("Equip failed");
       await props.onChanged();
     } catch (e) {
       setError(formatError(e, "Failed to equip item"));
@@ -57,12 +59,17 @@ export function MythicInventoryPanel(props: {
     setIsWorking(true);
     setError(null);
     try {
-      const { error: uneqErr } = await supabase
-        .schema("mythic")
-        .from("inventory")
-        .update({ container: "backpack", equip_slot: null, equipped_at: null })
-        .eq("id", row.id);
+      const { data, error: uneqErr } = await callEdgeFunction<{ ok: boolean }>("mythic-inventory-unequip", {
+        requireAuth: true,
+        idempotencyKey: `unequip:${props.characterId}:${row.id}`,
+        body: {
+          campaignId: props.campaignId,
+          characterId: props.characterId,
+          inventoryId: row.id,
+        },
+      });
       if (uneqErr) throw uneqErr;
+      if (!data?.ok) throw new Error("Unequip failed");
       await props.onChanged();
     } catch (e) {
       setError(formatError(e, "Failed to unequip item"));
@@ -107,6 +114,23 @@ export function MythicInventoryPanel(props: {
               equipment.map((row) => (
                 <div key={row.id} className="rounded-md border border-border bg-background/30 p-2">
                   <div className="text-sm font-medium">{itemSummary(row)}</div>
+                  <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                    {row.item?.required_level ? <span className="rounded bg-muted px-2 py-0.5">req lvl {row.item.required_level}</span> : null}
+                    {row.item?.item_power ? <span className="rounded bg-muted px-2 py-0.5">power {row.item.item_power}</span> : null}
+                    {row.item?.bind_policy ? <span className="rounded bg-muted px-2 py-0.5">{row.item.bind_policy}</span> : null}
+                    {row.item?.drop_tier ? <span className="rounded bg-muted px-2 py-0.5">{row.item.drop_tier}</span> : null}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-2 text-[11px]">
+                    {topStatMods(row.item).length === 0 ? (
+                      <span className="text-muted-foreground">no stat mods</span>
+                    ) : (
+                      topStatMods(row.item).map((m) => (
+                        <span key={m.key} className="rounded bg-muted px-2 py-0.5 text-foreground">
+                          {m.key}: {m.value >= 0 ? "+" : ""}{Math.floor(m.value)}
+                        </span>
+                      ))
+                    )}
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     abilities: {getGrantedAbilities(row.item).join(", ") || "none"}
                   </div>
@@ -130,6 +154,23 @@ export function MythicInventoryPanel(props: {
               backpack.map((row) => (
                 <div key={row.id} className="rounded-md border border-border bg-background/30 p-2">
                   <div className="text-sm font-medium">{itemSummary(row)}</div>
+                  <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                    {row.item?.required_level ? <span className="rounded bg-muted px-2 py-0.5">req lvl {row.item.required_level}</span> : null}
+                    {row.item?.item_power ? <span className="rounded bg-muted px-2 py-0.5">power {row.item.item_power}</span> : null}
+                    {row.item?.bind_policy ? <span className="rounded bg-muted px-2 py-0.5">{row.item.bind_policy}</span> : null}
+                    {row.item?.drop_tier ? <span className="rounded bg-muted px-2 py-0.5">{row.item.drop_tier}</span> : null}
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-2 text-[11px]">
+                    {topStatMods(row.item).length === 0 ? (
+                      <span className="text-muted-foreground">no stat mods</span>
+                    ) : (
+                      topStatMods(row.item).map((m) => (
+                        <span key={m.key} className="rounded bg-muted px-2 py-0.5 text-foreground">
+                          {m.key}: {m.value >= 0 ? "+" : ""}{Math.floor(m.value)}
+                        </span>
+                      ))
+                    )}
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     abilities: {getGrantedAbilities(row.item).join(", ") || "none"}
                   </div>

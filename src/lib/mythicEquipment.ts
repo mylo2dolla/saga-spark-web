@@ -7,6 +7,12 @@ export interface MythicItemRow {
   stat_mods: Record<string, unknown>;
   effects_json: Record<string, unknown>;
   rarity: string;
+  required_level?: number | null;
+  item_power?: number | null;
+  drop_tier?: string | null;
+  bind_policy?: string | null;
+  narrative_hook?: string | null;
+  created_at?: string | null;
 }
 
 export interface MythicInventoryRow {
@@ -46,4 +52,3 @@ export function getGrantedAbilities(item: MythicItemRow | null): string[] {
   }
   return [];
 }
-

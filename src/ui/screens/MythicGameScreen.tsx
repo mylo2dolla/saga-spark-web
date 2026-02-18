@@ -274,8 +274,6 @@ export default function MythicGameScreen() {
   const [loadoutName, setLoadoutName] = useState("Default");
   const [selectedLoadoutSkillIds, setSelectedLoadoutSkillIds] = useState<string[]>([]);
   const [isSavingLoadout, setIsSavingLoadout] = useState(false);
-  const [isApplyingXp, setIsApplyingXp] = useState(false);
-  const [isRollingLoot, setIsRollingLoot] = useState(false);
   const [isAdvancingTurn, setIsAdvancingTurn] = useState(false);
   const autoTickKeyRef = useRef<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -408,55 +406,6 @@ export default function MythicGameScreen() {
     }
   };
 
-  const applyXp = async (amount: number) => {
-    if (!campaignId || !character) return;
-    setIsApplyingXp(true);
-    try {
-      const { data, error } = await callEdgeFunction<{ ok: boolean }>("mythic-apply-xp", {
-        requireAuth: true,
-        body: {
-          campaignId,
-          characterId: character.id,
-          amount,
-          reason: "manual_progression",
-          metadata: { source: "mythic_screen_quick_action" },
-        },
-      });
-      if (error) throw error;
-      if (!data?.ok) throw new Error("Failed to apply XP");
-      await refetchCharacter();
-      toast.success(`Applied ${amount} XP`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to apply XP");
-    } finally {
-      setIsApplyingXp(false);
-    }
-  };
-
-  const generateLoot = async () => {
-    if (!campaignId || !character) return;
-    setIsRollingLoot(true);
-    try {
-      const { data, error } = await callEdgeFunction<{ ok: boolean; count: number }>("mythic-generate-loot", {
-        requireAuth: true,
-        body: {
-          campaignId,
-          characterId: character.id,
-          count: 1,
-          source: "manual_debug_drop",
-        },
-      });
-      if (error) throw error;
-      if (!data?.ok) throw new Error("Failed to generate loot");
-      await refetchCharacter();
-      toast.success("Loot generated.");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to generate loot");
-    } finally {
-      setIsRollingLoot(false);
-    }
-  };
-
   const activeTurnCombatant = useMemo(
     () => combatState.combatants.find((c) => c.id === combatState.activeTurnCombatantId) ?? null,
     [combatState.activeTurnCombatantId, combatState.combatants],
@@ -476,12 +425,15 @@ export default function MythicGameScreen() {
     if (!campaignId || !combatSessionId || !canAdvanceNpcTurn) return;
     setIsAdvancingTurn(true);
     try {
-      await tickCombat({ campaignId, combatSessionId, maxSteps: 1 });
+      const result = await tickCombat({ campaignId, combatSessionId, maxSteps: 1 });
       await Promise.all([refetchCombatState(), refetch()]);
+      if (result.ok && result.data?.ended) {
+        await refetchCharacter();
+      }
     } finally {
       setIsAdvancingTurn(false);
     }
-  }, [campaignId, canAdvanceNpcTurn, combatSessionId, refetch, refetchCombatState, tickCombat]);
+  }, [campaignId, canAdvanceNpcTurn, combatSessionId, refetch, refetchCharacter, refetchCombatState, tickCombat]);
 
   const bossPhaseLabel = useMemo(() => {
     if (!combatState.events.length) return null;
@@ -768,14 +720,17 @@ export default function MythicGameScreen() {
                             await advanceNpcTurn();
                           }}
                           onUseSkill={async ({ actorCombatantId, skillId, target }) => {
-                            await combat.useSkill({
+                            const result = await combat.useSkill({
                               campaignId,
                               combatSessionId,
                               actorCombatantId,
                               skillId,
                               target,
                             });
-                            await combatState.refetch();
+                            await Promise.all([combatState.refetch(), refetch()]);
+                            if (result.ok && result.ended) {
+                              await refetchCharacter();
+                            }
                           }}
                         />
                       )}
@@ -900,6 +855,8 @@ export default function MythicGameScreen() {
 
             {activePanel === "gear" ? (
               <MythicInventoryPanel
+                campaignId={campaignId ?? ""}
+                characterId={character.id}
                 rows={invRowsSafe}
                 onChanged={async () => {
                   await recomputeCharacter();
@@ -999,23 +956,12 @@ export default function MythicGameScreen() {
 
             {activePanel === "progression" ? (
               <div className="rounded-lg border border-border bg-background/30 p-3">
-                <div className="mb-2 text-sm font-semibold">Progression Runtime</div>
+                <div className="mb-2 text-sm font-semibold">Progression</div>
                 <div className="mb-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                   <div>Level: {character.level}</div>
                   <div>Unspent Points: {character.unspent_points ?? 0}</div>
                   <div>XP: {character.xp ?? 0}</div>
                   <div>XP to Next: {character.xp_to_next ?? 0}</div>
-                </div>
-                <div className="mb-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => void applyXp(250)} disabled={isApplyingXp}>
-                    {isApplyingXp ? "Applying XP..." : "+250 XP"}
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void generateLoot()} disabled={isRollingLoot}>
-                    {isRollingLoot ? "Rolling..." : "Generate Loot"}
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => void recomputeCharacter()}>
-                    Recompute
-                  </Button>
                 </div>
                 <div className="space-y-1">
                   {progressionEvents.length === 0 ? (
@@ -1024,7 +970,26 @@ export default function MythicGameScreen() {
                     progressionEvents.map((event) => (
                       <div key={event.id} className="rounded border border-border bg-background/20 px-2 py-1 text-xs text-muted-foreground">
                         <div className="font-medium text-foreground">{event.event_type}</div>
-                        <div>{new Date(event.created_at).toLocaleTimeString()}</div>
+                        <div className="flex flex-wrap gap-2">
+                          <span>{new Date(event.created_at).toLocaleTimeString()}</span>
+                          {(() => {
+                            const payload = (event.payload ?? {}) as Record<string, unknown>;
+                            const amt = Number((payload as any).amount ?? (payload as any).xp_amount ?? (payload as any).xp ?? NaN);
+                            if (event.event_type === "xp_applied" && Number.isFinite(amt) && amt > 0) {
+                              return <span className="rounded bg-muted px-2 py-0.5 text-foreground">XP +{Math.floor(amt)}</span>;
+                            }
+                            return null;
+                          })()}
+                          {(() => {
+                            const payload = (event.payload ?? {}) as Record<string, unknown>;
+                            const meta = (payload as any).metadata;
+                            const combatSessionId = meta && typeof meta === "object" ? String((meta as any).combat_session_id ?? "") : "";
+                            if (combatSessionId) {
+                              return <span className="rounded bg-muted px-2 py-0.5">combat {combatSessionId.slice(0, 8)}</span>;
+                            }
+                            return null;
+                          })()}
+                        </div>
                       </div>
                     ))
                   )}
