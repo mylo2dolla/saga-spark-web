@@ -86,7 +86,7 @@ export default function MythicGameScreen() {
   }, [combatState.combatants, user]);
 
   const invRowsSafe = useMemo(
-    () => (Array.isArray(items) ? (items as MythicInventoryRow[]) : []),
+    () => (Array.isArray(items) ? (items as unknown as MythicInventoryRow[]) : []),
     [items],
   );
   const { equipment } = splitInventory(invRowsSafe);

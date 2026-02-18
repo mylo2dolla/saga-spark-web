@@ -29,6 +29,7 @@ export default function GameScreen() {
   const [combatState, setCombatState] = useState<"idle" | "active">("idle");
   const [combatMessage, setCombatMessage] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const timelineRef = useRef<HTMLDivElement | null>(null);
   const DEV_DEBUG = import.meta.env.DEV;
   const { character } = useCharacter(campaignId);
@@ -65,7 +66,7 @@ export default function GameScreen() {
       });
       navigate("/login");
     }
-  }, [authLoading, campaignId, navigate, user]);
+  }, [E2E_BYPASS_AUTH, authLoading, campaignId, navigate, user]);
 
   const locations = useMemo(() => {
     const raw = gameSession.unifiedState?.world?.locations as unknown;
@@ -214,17 +215,36 @@ export default function GameScreen() {
         {
           title: gameSession.campaignSeed.title,
           description: gameSession.campaignSeed.description ?? "",
-          themes: gameSession.campaignSeed.themes ?? [],
+          themes: Array.from(gameSession.campaignSeed.themes ?? []),
         },
         { campaignId, worldState: { currentLocationId: location.id } }
       );
       if (generated) {
         const newId = normalizeId(generated.id || generated.name || `location-${existingIds.size + 1}`);
-        newLocations.push({
-          ...generated,
+        const nextLocation: EnhancedLocation = {
           id: newId,
+          name: generated.name,
+          description: generated.description,
+          type: (generated.type as EnhancedLocation["type"]) ?? "wilderness",
+          position: generated.position ?? { x: 100, y: 100 },
+          radius: 24,
+          discovered: true,
+          npcs: [],
+          items: [],
           connectedTo: [location.id],
-        } as EnhancedLocation);
+          factionControl: null,
+          dangerLevel: generated.dangerLevel ?? 1,
+          travelTime: {},
+          questHooks: [],
+          ambientDescription: generated.description ?? generated.name,
+          shops: [],
+          inn: false,
+          services: [],
+          currentEvents: [],
+        };
+        newLocations.push({
+          ...nextLocation,
+        });
       }
     }
 
@@ -466,7 +486,7 @@ export default function GameScreen() {
       knownLocations: Array.from(safeWorld.locations.keys()),
       storyFlags: Array.from(safeWorld.storyFlags.keys()),
       activeQuests: Array.from(safeWorld.quests.values())
-        .filter(quest => quest.status !== "completed")
+        .filter(quest => quest.state !== "completed")
         .map(quest => quest.title),
       travel: {
         currentLocationId: gameSession.travelState?.currentLocationId ?? null,
@@ -638,11 +658,7 @@ export default function GameScreen() {
             <Button
               variant="outline"
               onClick={() => {
-                if (engine?.tick) {
-                  engine.tick();
-                } else {
-                  setUiTick(Date.now());
-                }
+                engine?.tick?.();
               }}
             >
               Tick
@@ -720,145 +736,155 @@ export default function GameScreen() {
         </div>
 
         <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Inspector</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-xs text-muted-foreground">
-              <div className="text-sm font-semibold text-foreground">
-                {selectedNode?.name ?? "Select a location"}
-              </div>
-              <div>ID: {selectedNode?.id ?? "-"}</div>
-              <div>Position: {selectedNode?.x != null ? `${Math.round(selectedNode.x)}, ${Math.round(selectedNode.y)}` : "-"}</div>
-              <div>Current: {selectedNode?.id === currentLocation?.id ? "yes" : "no"}</div>
-              <div>Connected: {destinations.length}</div>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-between rounded-md border border-border bg-card/40 px-3 py-2 text-xs">
+            <span className="text-muted-foreground">Advanced session data</span>
+            <Button size="sm" variant="outline" onClick={() => setShowAdvanced(prev => !prev)}>
+              {showAdvanced ? "Hide" : "Show"}
+            </Button>
+          </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">World Events</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-xs">
-              {gameSession.worldEventsStatus === "loading" ? (
-                <div className="text-muted-foreground">Loading events...</div>
-              ) : null}
-              {gameSession.worldEventsError ? (
-                <div className="text-destructive">DB: {gameSession.worldEventsError}</div>
-              ) : null}
-              {gameSession.worldEvents.length === 0 && gameSession.worldEventsStatus === "ok" ? (
-                <div className="text-muted-foreground">No world events yet.</div>
-              ) : null}
-              <div ref={timelineRef} className="max-h-[320px] overflow-auto space-y-3">
-                {gameSession.isReplayingEvents ? (
-                  <div className="text-muted-foreground">Replaying events...</div>
-                ) : null}
-                {groupedEvents.map(group => (
-                  <div key={group.label} className="space-y-2">
-                    <div className="text-xs uppercase text-muted-foreground">{group.label}</div>
-                    {group.events.map((event) => {
-                      const counts = formatEventCounts(event.delta);
-                      const expanded = expandedEvents.has(event.id);
-                      const summary =
-                        typeof (event.delta as { summary?: string } | null)?.summary === "string"
-                          ? (event.delta as { summary?: string }).summary
-                          : event.responseText ?? event.actionText;
-                      const eventType = "Action";
-                      return (
-                        <div key={event.id} className="rounded-md border border-border p-2">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="space-y-1">
-                              <div className="text-xs text-muted-foreground">
-                                {new Date(event.createdAt).toLocaleTimeString()} · {eventType}
-                              </div>
-                              <div className="text-sm font-medium text-foreground">{summary}</div>
-                              {event.locationName ? (
-                                <div className="text-xs text-muted-foreground">Location: {event.locationName}</div>
-                              ) : null}
-                              {counts ? (
-                                <div className="text-xs text-muted-foreground">
-                                  +{counts.locations} locs, +{counts.npcs} npcs, +{counts.quests} quests, +{counts.flags} flags
+          {showAdvanced ? (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Inspector</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-xs text-muted-foreground">
+                  <div className="text-sm font-semibold text-foreground">
+                    {selectedNode?.name ?? "Select a location"}
+                  </div>
+                  <div>ID: {selectedNode?.id ?? "-"}</div>
+                  <div>Position: {selectedNode?.x != null ? `${Math.round(selectedNode.x)}, ${Math.round(selectedNode.y)}` : "-"}</div>
+                  <div>Current: {selectedNode?.id === currentLocation?.id ? "yes" : "no"}</div>
+                  <div>Connected: {destinations.length}</div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">World Events</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 text-xs">
+                  {gameSession.worldEventsStatus === "loading" ? (
+                    <div className="text-muted-foreground">Loading events...</div>
+                  ) : null}
+                  {gameSession.worldEventsError ? (
+                    <div className="text-destructive">DB: {gameSession.worldEventsError}</div>
+                  ) : null}
+                  {gameSession.worldEvents.length === 0 && gameSession.worldEventsStatus === "ok" ? (
+                    <div className="text-muted-foreground">No world events yet.</div>
+                  ) : null}
+                  <div ref={timelineRef} className="max-h-[320px] overflow-auto space-y-3">
+                    {gameSession.isReplayingEvents ? (
+                      <div className="text-muted-foreground">Replaying events...</div>
+                    ) : null}
+                    {groupedEvents.map(group => (
+                      <div key={group.label} className="space-y-2">
+                        <div className="text-xs uppercase text-muted-foreground">{group.label}</div>
+                        {group.events.map((event) => {
+                          const counts = formatEventCounts(event.delta);
+                          const expanded = expandedEvents.has(event.id);
+                          const summary =
+                            typeof (event.delta as { summary?: string } | null)?.summary === "string"
+                              ? (event.delta as { summary?: string }).summary
+                              : event.responseText ?? event.actionText;
+                          return (
+                            <div key={event.id} className="rounded-md border border-border p-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="space-y-1">
+                                  <div className="text-xs text-muted-foreground">
+                                    {new Date(event.createdAt).toLocaleTimeString()} · Action
+                                  </div>
+                                  <div className="text-sm font-medium text-foreground">{summary}</div>
+                                  {event.locationName ? (
+                                    <div className="text-xs text-muted-foreground">Location: {event.locationName}</div>
+                                  ) : null}
+                                  {counts ? (
+                                    <div className="text-xs text-muted-foreground">
+                                      +{counts.locations} locs, +{counts.npcs} npcs, +{counts.quests} quests, +{counts.flags} flags
+                                    </div>
+                                  ) : null}
                                 </div>
+                                <Button size="sm" variant="outline" onClick={() => toggleEvent(event.id)}>
+                                  {expanded ? "Hide" : "Show"}
+                                </Button>
+                              </div>
+                              {expanded ? (
+                                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2">
+                                  {JSON.stringify(event.delta, null, 2)}
+                                </pre>
                               ) : null}
                             </div>
-                            <Button size="sm" variant="outline" onClick={() => toggleEvent(event.id)}>
-                              {expanded ? "Hide" : "Show"}
-                            </Button>
-                          </div>
-                          {expanded ? (
-                            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2">
-                              {JSON.stringify(event.delta, null, 2)}
-                            </pre>
-                          ) : null}
-                        </div>
-                      );
-                    })}
+                          );
+                        })}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              {DEV_DEBUG && gameSession.lastActionError ? (
-                <details className="rounded-md border border-border p-2 text-xs">
-                  <summary className="cursor-pointer">Last error (dev)</summary>
-                  <pre className="mt-2 whitespace-pre-wrap">
-                    {JSON.stringify({ error: gameSession.lastActionError, actionHash: gameSession.lastActionHash }, null, 2)}
-                  </pre>
-                </details>
-              ) : null}
-            </CardContent>
-          </Card>
+                  {DEV_DEBUG && gameSession.lastActionError ? (
+                    <details className="rounded-md border border-border p-2 text-xs">
+                      <summary className="cursor-pointer">Last error (dev)</summary>
+                      <pre className="mt-2 whitespace-pre-wrap">
+                        {JSON.stringify({ error: gameSession.lastActionError, actionHash: gameSession.lastActionHash }, null, 2)}
+                      </pre>
+                    </details>
+                  ) : null}
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Session</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-xs">
-              <div>Locations: {safeWorld.locations.size}</div>
-              <div>NPCs: {safeWorld.npcs.size}</div>
-              <div>Quests: {safeWorld.quests.size}</div>
-              <div>Items: {safeWorld.items.size}</div>
-              <div>Current: {currentLocation?.name ?? "Unknown"}</div>
-              {gameSession.lastActionEvent ? (
-                <div className="pt-2 text-muted-foreground">
-                  <div className="font-medium text-foreground">Last action</div>
-                  <div>{gameSession.lastActionEvent.actionText}</div>
-                  {lastActionSummary ? <div className="mt-1">{lastActionSummary}</div> : null}
-                  {lastActionCounts ? (
-                    <div className="mt-1">
-                      Changes: +{lastActionCounts.locations} locations, +{lastActionCounts.npcs} npcs, +{lastActionCounts.quests} quests, +{lastActionCounts.storyFlags} flags
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Session</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 text-xs">
+                  <div>Locations: {safeWorld.locations.size}</div>
+                  <div>NPCs: {safeWorld.npcs.size}</div>
+                  <div>Quests: {safeWorld.quests.size}</div>
+                  <div>Items: {safeWorld.items.size}</div>
+                  <div>Current: {currentLocation?.name ?? "Unknown"}</div>
+                  {gameSession.lastActionEvent ? (
+                    <div className="pt-2 text-muted-foreground">
+                      <div className="font-medium text-foreground">Last action</div>
+                      <div>{gameSession.lastActionEvent.actionText}</div>
+                      {lastActionSummary ? <div className="mt-1">{lastActionSummary}</div> : null}
+                      {lastActionCounts ? (
+                        <div className="mt-1">
+                          Changes: +{lastActionCounts.locations} locations, +{lastActionCounts.npcs} npcs, +{lastActionCounts.quests} quests, +{lastActionCounts.storyFlags} flags
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
-                </div>
-              ) : null}
-              {gameSession.lastActionError ? (
-                <div className="text-destructive">Action failed: {gameSession.lastActionError}</div>
-              ) : null}
-              {encounterFlagForCurrent?.value === true ? (
-                <div className="text-muted-foreground">You sense something nearby.</div>
-              ) : null}
-              {encounterFlagForCurrent?.value === true && encounterChoiceFlagForCurrent?.value == null ? (
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button size="sm" variant="outline" onClick={() => handleEncounterChoice("investigate")}>
-                    Investigate
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => handleEncounterChoice("avoid")}>
-                    Avoid
-                  </Button>
-                </div>
-              ) : null}
-              {encounterOutcomeFlagForCurrent?.value === "combat" ? (
-                <div className="text-muted-foreground">Combat encounter pending.</div>
-              ) : null}
-              {encounterOutcomeFlagForCurrent?.value === "npc" ? (
-                <div className="text-muted-foreground">NPC encounter pending.</div>
-              ) : null}
-              {encounterOutcomeFlagForCurrent?.value === "loot" ? (
-                <div className="text-muted-foreground">You found something.</div>
-              ) : null}
-              {encounterOutcomeFlagForCurrent?.value === "nothing" ? (
-                <div className="text-muted-foreground">False alarm.</div>
-              ) : null}
-            </CardContent>
-          </Card>
+                  {gameSession.lastActionError ? (
+                    <div className="text-destructive">Action failed: {gameSession.lastActionError}</div>
+                  ) : null}
+                  {encounterFlagForCurrent?.value === true ? (
+                    <div className="text-muted-foreground">You sense something nearby.</div>
+                  ) : null}
+                  {encounterFlagForCurrent?.value === true && encounterChoiceFlagForCurrent?.value == null ? (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <Button size="sm" variant="outline" onClick={() => handleEncounterChoice("investigate")}>
+                        Investigate
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => handleEncounterChoice("avoid")}>
+                        Avoid
+                      </Button>
+                    </div>
+                  ) : null}
+                  {encounterOutcomeFlagForCurrent?.value === "combat" ? (
+                    <div className="text-muted-foreground">Combat encounter pending.</div>
+                  ) : null}
+                  {encounterOutcomeFlagForCurrent?.value === "npc" ? (
+                    <div className="text-muted-foreground">NPC encounter pending.</div>
+                  ) : null}
+                  {encounterOutcomeFlagForCurrent?.value === "loot" ? (
+                    <div className="text-muted-foreground">You found something.</div>
+                  ) : null}
+                  {encounterOutcomeFlagForCurrent?.value === "nothing" ? (
+                    <div className="text-muted-foreground">False alarm.</div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            </>
+          ) : null}
 
           {combatState === "active" && travelWorldState ? (
             <Card className="border border-border">

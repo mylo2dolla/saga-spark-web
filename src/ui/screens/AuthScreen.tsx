@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { formatError, withTimeout } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useAuth } from "@/hooks/useAuth";
+import type { AuthTokenResponsePassword } from "@supabase/supabase-js";
 
 interface AuthScreenProps {
   mode: "login" | "signup";
@@ -55,7 +56,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     return await Promise.race([signInPromise, timeoutPromise]);
   };
 
-  const signInWithManualToken = async () => {
+  const signInWithManualToken = async (): Promise<AuthTokenResponsePassword> => {
     const trimmedEmail = email.trim();
     if (!supabaseUrl || !supabaseAnonKey) {
       throw new Error("Supabase env is not configured");
@@ -123,7 +124,21 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       }
     }
 
-    return { data: { session: { access_token }, user: sessionPayload.user }, error: null } as const;
+    const { data: sessionData, error: sessionError } = await withTimeout(
+      supabase.auth.getSession(),
+      3000,
+    );
+    if (sessionError) throw sessionError;
+    const session = sessionData.session;
+    if (!session) throw new Error("Session not available after manual token sign-in");
+
+    return {
+      data: {
+        session,
+        user: session.user,
+      },
+      error: null,
+    };
   };
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {

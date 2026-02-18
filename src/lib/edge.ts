@@ -5,7 +5,7 @@ type EdgeHeaders = Record<string, string>;
 interface EdgeOptions {
   body?: unknown;
   headers?: EdgeHeaders;
-  method?: string;
+  method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   requireAuth?: boolean;
   accessToken?: string | null;
   signal?: AbortSignal;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { callEdgeFunctionRaw } from "@/lib/edge";
 import { useAuth } from "@/hooks/useAuth";
 import { formatError } from "@/ui/data/async";
@@ -18,6 +19,8 @@ interface ServerNodeRow {
   realtime_connections: number;
   database_latency_ms: number;
 }
+
+type ServerNodeDbRow = Database["public"]["Tables"]["server_nodes"]["Row"];
 
 interface WorldEventRow {
   id: string;
@@ -48,6 +51,11 @@ export default function ServerAdminScreen() {
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
   const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+  const normalizeNodeStatus = (value: string): ServerNodeRow["status"] => {
+    if (value === "online" || value === "offline" || value === "degraded") return value;
+    return "offline";
+  };
+
   const fetchNodes = useCallback(async () => {
     if (!user) return;
     setIsLoading(true);
@@ -67,12 +75,22 @@ export default function ServerAdminScreen() {
           code: response.error.code,
           details: response.error.details,
           hint: response.error.hint,
-          status: response.error.status,
+          status: (response.error as { status?: number }).status,
         });
         throw response.error;
       }
 
-      setNodes(response.data ?? []);
+      const nextNodes = (response.data ?? []).map((row: ServerNodeDbRow): ServerNodeRow => ({
+        id: row.id,
+        node_name: row.node_name,
+        status: normalizeNodeStatus(row.status),
+        last_heartbeat: row.last_heartbeat,
+        active_players: row.active_players,
+        active_campaigns: row.active_campaigns,
+        realtime_connections: row.realtime_connections,
+        database_latency_ms: row.database_latency_ms,
+      }));
+      setNodes(nextNodes);
     } catch (err) {
       const message = formatError(err, "Failed to load server nodes");
       setError(message);
@@ -137,7 +155,11 @@ export default function ServerAdminScreen() {
     try {
       const response = await supabase.from("campaigns").select("id").limit(1);
       if (response.error) {
-        setDbTest({ ok: false, status: response.error.status, message: response.error.message });
+        setDbTest({
+          ok: false,
+          status: (response.error as { status?: number }).status,
+          message: response.error.message,
+        });
         return;
       }
       setDbTest({ ok: true, status: 200, message: "ok" });

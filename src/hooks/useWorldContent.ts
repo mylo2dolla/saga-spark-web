@@ -190,7 +190,9 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
   ): WorldState => {
     const newNPCs = new Map(baseWorld.npcs);
     const newQuests = new Map(baseWorld.quests);
-    const newLocations = new Map(baseWorld.locations);
+    const newLocations = new Map<string, EnhancedLocation>(
+      baseWorld.locations as unknown as ReadonlyMap<string, EnhancedLocation>
+    );
     const newStoryFlags = new Map(baseWorld.storyFlags);
     const contentLocationIds = new Set(worldContent.locations.map(location => location.id));
     const hasRealContentLocations = worldContent.locations.some(

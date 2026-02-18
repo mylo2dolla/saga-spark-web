@@ -50,7 +50,6 @@ export function MythicCombatPanel(props: {
     () => props.skills.find((s) => s.id === selectedSkillId) ?? null,
     [props.skills, selectedSkillId],
   );
-  const selectedCooldown = selectedSkill ? (cooldowns.get(selectedSkill.id) ?? 0) : 0;
 
   const byId = useMemo(() => {
     const m = new Map<string, MythicCombatantRow>();
@@ -76,6 +75,8 @@ export function MythicCombatPanel(props: {
     }
     return map;
   }, [playerActor, props.currentTurnIndex]);
+
+  const selectedCooldown = selectedSkill ? (cooldowns.get(selectedSkill.id) ?? 0) : 0;
 
   const gridSize = useMemo(() => {
     const maxX = Math.max(9, ...combatants.map((c) => c.x));

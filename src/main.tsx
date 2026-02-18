@@ -17,7 +17,12 @@ if (DEV_DEBUG && !devWindow.__devFetchWrapped) {
 
   window.fetch = async (...args) => {
     const [input, init] = args;
-    const url = typeof input === "string" ? input : input.url;
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
     const method = init?.method ?? "GET";
     if (url.includes("supabase.co")) {
       console.info("DEV_DEBUG fetch start", { method, url });

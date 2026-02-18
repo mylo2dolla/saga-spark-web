@@ -4,6 +4,7 @@ import { callEdgeFunction } from "@/lib/edge";
 import { toast } from "sonner";
 import type { GeneratedClass } from "@/types/game";
 import { recordEdgeCall, recordEdgeResponse } from "@/ui/data/networkHealth";
+import { getSupabaseErrorInfo } from "@/lib/supabaseError";
 
 export function useClassGenerator() {
   const [isGenerating, setIsGenerating] = useState(false);
@@ -31,12 +32,13 @@ export function useClassGenerator() {
       const startedAt = Date.now();
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) {
+        const errorInfo = getSupabaseErrorInfo(sessionError, "Failed to fetch auth session");
         console.error("[auth] supabase error", {
-          message: sessionError.message,
-          code: sessionError.code,
-          details: sessionError.details,
-          hint: sessionError.hint,
-          status: sessionError.status,
+          message: errorInfo.message,
+          code: errorInfo.code,
+          details: errorInfo.details,
+          hint: errorInfo.hint,
+          status: errorInfo.status,
         });
       }
       console.info("[generateClass] start", {

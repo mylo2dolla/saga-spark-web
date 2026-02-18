@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { recordCampaignsRead } from "@/ui/data/networkHealth";
 import { callEdgeFunction } from "@/lib/edge";
 import type { Json } from "@/integrations/supabase/types";
 import type { GeneratedWorld } from "@/hooks/useWorldGenerator";
+import { createDeterministicPosition, toKebab } from "@/lib/worldSeed";
 
 interface Campaign {
   id: string;
@@ -71,28 +72,6 @@ export default function DashboardScreen() {
   const loadUserId = authLoading ? null : (session?.user?.id ?? null);
   const dbEnabled = !authLoading && Boolean(activeUserId);
   const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled, activeAccessToken);
-
-  const toKebab = (value: string): string =>
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "");
-
-  const hashString = (value: string): number => {
-    let hash = 0;
-    for (let i = 0; i < value.length; i += 1) {
-      hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
-    }
-    return hash;
-  };
-
-  const createDeterministicPosition = (seed: string): { x: number; y: number } => {
-    const hashed = hashString(seed);
-    return {
-      x: 50 + (hashed % 400),
-      y: 50 + ((hashed >>> 16) % 400),
-    };
-  };
 
   const normalizeLocations = (locations: GeneratedWorld["locations"]) => {
     const seenIds = new Set<string>();
@@ -203,7 +182,7 @@ export default function DashboardScreen() {
   }, [activeAccessToken]);
 
   const withTimeout = useCallback(async <T,>(
-    promise: Promise<T>,
+    promise: PromiseLike<T>,
     ms: number,
     label: string
   ): Promise<T> => {
@@ -488,7 +467,7 @@ export default function DashboardScreen() {
         lastLoadedUserIdRef.current = loadUserId;
       }
     }
-  }, [activeAccessToken, authLoading, loadUserId, setLastError, withTimeout]);
+  }, [activeAccessToken, authLoading, loadUserId, restSelect, setLastError, withTimeout]);
 
   const handleRetry = useCallback(() => {
     lastLoadedUserIdRef.current = null;
@@ -899,7 +878,7 @@ export default function DashboardScreen() {
           code: response.error.code,
           details: response.error.details,
           hint: response.error.hint,
-          status: response.error.status,
+          status: (response.error as { status?: number }).status,
         });
         throw response.error;
       }
@@ -1013,7 +992,7 @@ export default function DashboardScreen() {
     }
   };
 
-  const content = useMemo(() => {
+  const content = (() => {
     if (isLoading) {
       return (
         <div className="space-y-2 text-sm text-muted-foreground">
@@ -1073,18 +1052,7 @@ export default function DashboardScreen() {
         ))}
       </div>
     );
-  }, [
-    activeUserId,
-    campaigns,
-    error,
-    handleDeleteCampaign,
-    handleRetry,
-    isDeleting,
-    isLoading,
-    membersByCampaign,
-    membersError,
-    navigate,
-  ]);
+  })();
 
   const dbStatusLabel = dbEnabled ? dbStatus : "paused";
 
