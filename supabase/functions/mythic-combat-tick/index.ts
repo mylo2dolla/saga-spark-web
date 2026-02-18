@@ -118,6 +118,7 @@ async function grantSimpleLoot(args: {
   const { data: item, error: itemErr } = await svc.schema("mythic").from("items").insert({
     campaign_id: campaignId,
     owner_character_id: characterId,
+    name,
     rarity,
     item_type: "gear",
     slot,
@@ -150,7 +151,7 @@ async function grantSimpleLoot(args: {
     rarity,
     budget_points: rarity === "mythic" ? 60 : rarity === "legendary" ? 40 : 24,
     item_ids: [item.id],
-    payload: { generated_by: "mythic-combat-tick" },
+    payload: { generated_by: "mythic-combat-tick", character_id: characterId },
   });
   if (dropErr) throw dropErr;
 
@@ -513,36 +514,63 @@ serve(async (req) => {
         const xpPer = won ? 180 + (aliveRows?.length ?? 0) * 35 + (bossAlive ? 0 : 220) : 0;
 
         if (won) {
+          const { data: existingLootDrops, error: existingLootErr } = await svc
+            .schema("mythic")
+            .from("loot_drops")
+            .select("id,payload")
+            .eq("combat_session_id", combatSessionId)
+            .order("created_at", { ascending: false })
+            .limit(50);
+          if (existingLootErr) throw existingLootErr;
+
           for (const p of alivePlayers) {
             if (!p.character_id) continue;
-            const { data: xpResult } = await svc.rpc("mythic_apply_xp", {
-              character_id: p.character_id,
-              amount: xpPer,
-              reason: "combat_settlement",
-              metadata: { combat_session_id: combatSessionId },
-            });
-            await appendEvent(svc, combatSessionId, turnIndex, null, "xp_gain", {
-              character_id: p.character_id,
-              amount: xpPer,
-              result: xpResult ?? null,
-            });
+            const characterId = String(p.character_id);
+
+            const { data: xpEvents, error: xpEventsErr } = await svc
+              .schema("mythic")
+              .from("progression_events")
+              .select("id,payload")
+              .eq("character_id", characterId)
+              .eq("event_type", "xp_applied")
+              .order("created_at", { ascending: false })
+              .limit(25);
+            if (xpEventsErr) throw xpEventsErr;
+            const alreadyXp = (xpEvents ?? []).some((row: any) => row?.payload?.metadata?.combat_session_id === combatSessionId);
+
+            if (!alreadyXp) {
+              const { data: xpResult } = await svc.rpc("mythic_apply_xp", {
+                character_id: characterId,
+                amount: xpPer,
+                reason: "combat_settlement",
+                metadata: { combat_session_id: combatSessionId },
+              });
+              await appendEvent(svc, combatSessionId, turnIndex, null, "xp_gain", {
+                character_id: characterId,
+                amount: xpPer,
+                result: xpResult ?? null,
+              });
+            }
 
             const rarity = xpPer > 420 ? "legendary" : xpPer > 280 ? "unique" : "magical";
-            const lootItem = await grantSimpleLoot({
-              svc,
-              seed,
-              campaignId,
-              combatSessionId,
-              characterId: p.character_id,
-              level: Math.max(1, Number(p.lvl ?? 1)),
-              rarity,
-            });
-            await appendEvent(svc, combatSessionId, turnIndex, null, "loot_drop", {
-              character_id: p.character_id,
-              item_id: lootItem.id,
-              rarity: lootItem.rarity,
-              name: lootItem.name,
-            });
+            const alreadyLoot = (existingLootDrops ?? []).some((row: any) => row?.payload?.character_id === characterId);
+            if (!alreadyLoot) {
+              const lootItem = await grantSimpleLoot({
+                svc,
+                seed,
+                campaignId,
+                combatSessionId,
+                characterId,
+                level: Math.max(1, Number(p.lvl ?? 1)),
+                rarity,
+              });
+              await appendEvent(svc, combatSessionId, turnIndex, null, "loot_drop", {
+                character_id: characterId,
+                item_id: lootItem.id,
+                rarity: lootItem.rarity,
+                name: lootItem.name,
+              });
+            }
           }
         }
 

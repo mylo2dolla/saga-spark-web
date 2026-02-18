@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
 import { bresenhamLine, distanceTiles, type Metric } from "../_shared/mythic_grid.ts";
-import { rng01 } from "../_shared/mythic_rng.ts";
+import { rng01, rngInt, rngPick } from "../_shared/mythic_rng.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 import { createLogger } from "../_shared/logger.ts";
 import {
@@ -256,6 +256,71 @@ function stripStatuses(statuses: StatusEntry[], removeIds: string[] | null): Sta
   }
   const toRemove = new Set(removeIds);
   return statuses.filter((s) => !toRemove.has(s.id));
+}
+
+async function grantSimpleLoot(args: {
+  svc: ReturnType<typeof createClient>;
+  seed: number;
+  campaignId: string;
+  combatSessionId: string;
+  characterId: string;
+  level: number;
+  rarity: "magical" | "unique" | "legendary" | "mythic";
+}) {
+  const { svc, seed, campaignId, combatSessionId, characterId, level, rarity } = args;
+  const namesA = ["Ash", "Iron", "Dread", "Storm", "Velvet", "Blood", "Wyrm", "Night"];
+  const namesB = ["Edge", "Ward", "Pulse", "Maw", "Spur", "Bite", "Halo", "Crown"];
+  const slot = rngPick(seed, `loot:${characterId}:slot`, ["weapon", "armor", "ring", "trinket"] as const);
+  const name = `${rngPick(seed, `loot:${characterId}:a`, namesA)} ${rngPick(seed, `loot:${characterId}:b`, namesB)}`;
+  const statMods: Record<string, number> = {
+    offense: rngInt(seed, `loot:${characterId}:off`, 1, 8),
+    defense: rngInt(seed, `loot:${characterId}:def`, 1, 8),
+  };
+  if (slot === "weapon") statMods.weapon_power = rngInt(seed, `loot:${characterId}:wp`, 2, 12);
+  if (slot === "armor") statMods.armor_power = rngInt(seed, `loot:${characterId}:ap`, 2, 10);
+  if (slot === "ring" || slot === "trinket") statMods.utility = rngInt(seed, `loot:${characterId}:ut`, 2, 10);
+
+  const { data: item, error: itemErr } = await svc.schema("mythic").from("items").insert({
+    campaign_id: campaignId,
+    owner_character_id: characterId,
+    name,
+    rarity,
+    item_type: "gear",
+    slot,
+    stat_mods: statMods,
+    effects_json: {},
+    drawback_json: rarity === "legendary" || rarity === "mythic"
+      ? { id: "volatile_reverb", description: "Draws danger toward its bearer.", world_reaction: true }
+      : {},
+    narrative_hook: `${name} was torn from the fight while metal was still screaming.`,
+    durability_json: { current: 100, max: 100, decay_per_use: 1 },
+    required_level: Math.max(1, level - 1),
+    item_power: Math.max(1, Math.floor(level * (rarity === "mythic" ? 3.4 : rarity === "legendary" ? 2.6 : 1.8))),
+    drop_tier: rarity === "mythic" ? "mythic" : rarity === "legendary" ? "boss" : "elite",
+    bind_policy: rarity === "magical" ? "unbound" : "bind_on_equip",
+  }).select("id,name,slot,rarity").single();
+  if (itemErr) throw itemErr;
+
+  const { error: invErr } = await svc.schema("mythic").from("inventory").insert({
+    character_id: characterId,
+    item_id: item.id,
+    container: "backpack",
+    quantity: 1,
+  });
+  if (invErr) throw invErr;
+
+  const { error: dropErr } = await svc.schema("mythic").from("loot_drops").insert({
+    campaign_id: campaignId,
+    combat_session_id: combatSessionId,
+    source: "combat_use_skill",
+    rarity,
+    budget_points: rarity === "mythic" ? 60 : rarity === "legendary" ? 40 : 24,
+    item_ids: [item.id],
+    payload: { generated_by: "mythic-combat-use-skill", character_id: characterId },
+  });
+  if (dropErr) throw dropErr;
+
+  return item;
 }
 
 function effectiveAttackerStats(c: CombatantRow): { offense: number; mobility: number; utility: number } {
@@ -1019,20 +1084,92 @@ serve(async (req) => {
       }
     }
 
-    // End-of-combat check: only one side left? For now, end if no NPCs alive or player dead.
+    // End-of-combat check: only one side left? For now, end if no NPCs alive or players wiped.
     const { data: aliveCombatants, error: aliveCombatantsErr } = await svc
       .schema("mythic")
       .from("combatants")
-      .select("id, entity_type, is_alive")
+      .select("id, entity_type, is_alive, character_id, lvl")
       .eq("combat_session_id", combatSessionId);
     if (aliveCombatantsErr) throw aliveCombatantsErr;
-    const alivePlayers = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "player").length;
-    const aliveNpcs = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "npc").length;
-    if (alivePlayers === 0 || aliveNpcs === 0) {
+    const alivePlayers = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "player");
+    const aliveNpcs = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "npc");
+    if (alivePlayers.length === 0 || aliveNpcs.length === 0) {
       await svc.rpc("mythic_end_combat_session", {
         combat_session_id: combatSessionId,
-        outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs },
+        outcome: { alive_players: alivePlayers.length, alive_npcs: aliveNpcs.length },
       });
+
+      const won = alivePlayers.length > 0 && aliveNpcs.length === 0;
+      const bossAlive = (aliveCombatants ?? []).some((r: any) => r.entity_type === "npc" && r.is_alive);
+      const xpPer = won ? 180 + (aliveCombatants?.length ?? 0) * 35 + (bossAlive ? 0 : 220) : 0;
+
+      if (won) {
+        const { data: existingLootDrops, error: existingLootErr } = await svc
+          .schema("mythic")
+          .from("loot_drops")
+          .select("id,payload")
+          .eq("combat_session_id", combatSessionId)
+          .order("created_at", { ascending: false })
+          .limit(50);
+        if (existingLootErr) throw existingLootErr;
+
+        for (const p of alivePlayers) {
+          if (!p.character_id) continue;
+          const characterId = String(p.character_id);
+
+          const { data: xpEvents, error: xpEventsErr } = await svc
+            .schema("mythic")
+            .from("progression_events")
+            .select("id,payload")
+            .eq("character_id", characterId)
+            .eq("event_type", "xp_applied")
+            .order("created_at", { ascending: false })
+            .limit(25);
+          if (xpEventsErr) throw xpEventsErr;
+          const alreadyXp = (xpEvents ?? []).some((row: any) => row?.payload?.metadata?.combat_session_id === combatSessionId);
+
+          if (!alreadyXp) {
+            const { data: xpResult, error: xpErr } = await svc.rpc("mythic_apply_xp", {
+              character_id: characterId,
+              amount: xpPer,
+              reason: "combat_settlement",
+              metadata: { combat_session_id: combatSessionId },
+            });
+            if (xpErr) throw xpErr;
+            const { error: xpEventErr } = await svc.rpc("mythic_append_action_event", {
+              combat_session_id: combatSessionId,
+              turn_index: turnIndex,
+              actor_combatant_id: null,
+              event_type: "xp_gain",
+              payload: { character_id: characterId, amount: xpPer, result: xpResult ?? null },
+            });
+            if (xpEventErr) throw xpEventErr;
+          }
+
+          const rarity = xpPer > 420 ? "legendary" : xpPer > 280 ? "unique" : "magical";
+          const alreadyLoot = (existingLootDrops ?? []).some((row: any) => row?.payload?.character_id === characterId);
+          if (!alreadyLoot) {
+            const lootItem = await grantSimpleLoot({
+              svc,
+              seed,
+              campaignId,
+              combatSessionId,
+              characterId,
+              level: Math.max(1, Number(p.lvl ?? 1)),
+              rarity,
+            });
+            const { error: lootEventErr } = await svc.rpc("mythic_append_action_event", {
+              combat_session_id: combatSessionId,
+              turn_index: turnIndex,
+              actor_combatant_id: null,
+              event_type: "loot_drop",
+              payload: { character_id: characterId, item_id: lootItem.id, rarity: lootItem.rarity, name: lootItem.name },
+            });
+            if (lootEventErr) throw lootEventErr;
+          }
+        }
+      }
+
       // Reactivate the most recent non-combat board and log a page-turn transition.
       const { data: lastBoard } = await svc
         .schema("mythic")
@@ -1052,10 +1189,17 @@ serve(async (req) => {
           to_board_type: (lastBoard as any).board_type,
           reason: "combat_end",
           animation: "page_turn",
-          payload_json: { combat_session_id: combatSessionId, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } },
+          payload_json: {
+            combat_session_id: combatSessionId,
+            outcome: { alive_players: alivePlayers.length, alive_npcs: aliveNpcs.length, won },
+          },
         });
       }
-      const response = new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } }), {
+      const response = new Response(JSON.stringify({
+        ok: true,
+        ended: true,
+        outcome: { alive_players: alivePlayers.length, alive_npcs: aliveNpcs.length, won },
+      }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
