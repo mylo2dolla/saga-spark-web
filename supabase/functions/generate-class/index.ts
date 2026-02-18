@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { groqChatCompletions } from "../_shared/groq.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiChatCompletions, resolveModel } from "../_shared/ai_provider.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -54,6 +54,12 @@ serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
   }
+  if (req.method !== "POST") {
+    return new Response(
+      JSON.stringify({ error: "Method not allowed" }),
+      { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
 
   try {
     // Authentication check
@@ -83,7 +89,8 @@ serve(async (req) => {
     );
 
     if (!isAnonMode) {
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      const authToken = bearerToken;
+      const { data: { user }, error: userError } = await supabase.auth.getUser(authToken);
       if (userError || !user) {
         return new Response(
           JSON.stringify({ error: "Invalid authentication token" }),
@@ -92,7 +99,41 @@ serve(async (req) => {
       }
     }
 
-    const { classDescription } = await req.json();
+    const contentType = req.headers.get("content-type") ?? "";
+    if (!contentType.includes("application/json")) {
+      return new Response(
+        JSON.stringify({ error: "Expected application/json body" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const rawBody = await req.text();
+    if (!rawBody) {
+      return new Response(
+        JSON.stringify({ error: "Request body is required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    let parsedBody: unknown;
+    try {
+      parsedBody = JSON.parse(rawBody);
+    } catch (parseError) {
+      console.error("Generate class invalid JSON:", parseError);
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON body" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!parsedBody || typeof parsedBody !== "object") {
+      return new Response(
+        JSON.stringify({ error: "Invalid request body" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { classDescription } = parsedBody as { classDescription?: unknown };
     
     if (!classDescription || typeof classDescription !== "string") {
       return new Response(
@@ -158,8 +199,9 @@ You MUST respond with ONLY a valid JSON object matching this structure:
   "baseAC": 12
 }`;
 
-    const data = await groqChatCompletions({
-      model: "llama-3.1-8b-instant",
+    const model = resolveModel({ openai: "gpt-4o-mini", groq: "llama-3.1-8b-instant" });
+    const data = await aiChatCompletions({
+      model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: `Create a class based on this description: "${classDescription}"` },

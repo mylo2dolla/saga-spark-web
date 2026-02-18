@@ -9,10 +9,14 @@ export function useClassGenerator() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedClass, setGeneratedClass] = useState<GeneratedClass | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const edgeFunctionName = "generate-class";
+  const edgeFunctionUrl = import.meta.env.VITE_SUPABASE_URL
+    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${edgeFunctionName}`
+    : null;
 
-  const logFetchError = (context: string, payload: Record<string, unknown>) => {
+  const logFetchError = useCallback((context: string, payload: Record<string, unknown>) => {
     console.error(context, payload);
-  };
+  }, []);
 
   const generateClass = useCallback(async (description: string): Promise<GeneratedClass | null> => {
     if (!description.trim()) {
@@ -30,9 +34,6 @@ export function useClassGenerator() {
         console.error("[auth] supabase error", {
           message: sessionError.message,
           code: sessionError.code,
-          details: sessionError.details,
-          hint: sessionError.hint,
-          status: sessionError.status,
         });
       }
       console.info("[generateClass] start", {
@@ -41,7 +42,7 @@ export function useClassGenerator() {
       });
       recordEdgeCall();
       const { data, error: edgeError, status } = await callEdgeFunction<GeneratedClass>(
-        "generate-class",
+        edgeFunctionName,
         { body: { classDescription: description }, requireAuth: false }
       );
 
@@ -66,16 +67,18 @@ export function useClassGenerator() {
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to generate class";
       setError(message);
+      setGeneratedClass(null);
       toast.error(`Failed to generate class — ${message}`);
       logFetchError("[generateClass] failure", {
-        url: GENERATE_URL,
+        url: edgeFunctionUrl ?? "unresolved",
+        edgeFunctionName,
         message,
       });
       return null;
     } finally {
       setIsGenerating(false);
     }
-  }, []);
+  }, [edgeFunctionName, edgeFunctionUrl, logFetchError]);
 
   const clearClass = useCallback(() => {
     setGeneratedClass(null);

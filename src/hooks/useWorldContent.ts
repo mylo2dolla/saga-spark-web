@@ -26,12 +26,6 @@ interface UseWorldContentOptions {
   campaignId: string;
 }
 
-const MOCK_NARRATIVE_PATTERN = /\b(test|demo|sample|placeholder)\b/i;
-const MOCK_NARRATIVE_PHRASES = [
-  "Test your new",
-  "Swap places with the Clone",
-  "Gelatinous Clone",
-];
 
 // Valid personality traits
 const VALID_TRAITS: PersonalityTrait[] = [
@@ -194,34 +188,39 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     baseWorld: WorldState,
     worldContent: WorldContent
   ): WorldState => {
+    const contentNPCs = Array.isArray(worldContent?.npcs) ? worldContent.npcs : [];
+    const contentQuests = Array.isArray(worldContent?.quests) ? worldContent.quests : [];
+    const contentLocations = Array.isArray(worldContent?.locations) ? worldContent.locations : [];
+    const contentStoryFlags = Array.isArray(worldContent?.storyFlags) ? worldContent.storyFlags : [];
+    const contentFactions = Array.isArray(worldContent?.factions) ? worldContent.factions : [];
+
     const newNPCs = new Map(baseWorld.npcs);
     const newQuests = new Map(baseWorld.quests);
-    const newLocations = new Map(baseWorld.locations);
+    const newLocations = new Map(baseWorld.locations as ReadonlyMap<string, EnhancedLocation>);
     const newStoryFlags = new Map(baseWorld.storyFlags);
-    const contentLocationIds = new Set(worldContent.locations.map(location => location.id));
-    const hasRealContentLocations = worldContent.locations.some(
+    const hasRealContentLocations = contentLocations.some(
       location => location.id !== "starting_location"
     );
-    if (worldContent.locations.length > 0 && hasRealContentLocations) {
+    if (contentLocations.length > 0 && hasRealContentLocations) {
       newLocations.delete("starting_location");
     }
 
     // Merge NPCs (avoid duplicates by ID)
-    for (const npc of worldContent.npcs) {
+    for (const npc of contentNPCs) {
       if (!newNPCs.has(npc.id)) {
         newNPCs.set(npc.id, npc);
       }
     }
 
     // Merge Quests
-    for (const quest of worldContent.quests) {
+    for (const quest of contentQuests) {
       if (!newQuests.has(quest.id)) {
         newQuests.set(quest.id, quest);
       }
     }
 
     // Merge Locations
-    for (const location of worldContent.locations) {
+    for (const location of contentLocations) {
       if (hasRealContentLocations && location.id === "starting_location") {
         continue;
       }
@@ -229,7 +228,7 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     }
 
     // Merge Story Flags
-    for (const flag of worldContent.storyFlags) {
+    for (const flag of contentStoryFlags) {
       newStoryFlags.set(flag.id, flag);
     }
 
@@ -239,14 +238,14 @@ export function useWorldContent({ campaignId }: UseWorldContentOptions) {
     const existingFactionIds = new Set(baseWorld.campaignSeed.factions?.map(f => f.id) ?? []);
     const newFactions = [
       ...(baseWorld.campaignSeed.factions ?? []),
-      ...worldContent.factions.filter(f => !existingFactionIds.has(f.id)),
+      ...contentFactions.filter(f => !existingFactionIds.has(f.id)),
     ];
 
     return {
       ...baseWorld,
       npcs: newNPCs,
       quests: newQuests,
-      locations: resolvedLocations,
+      locations: resolvedLocations as unknown as ReadonlyMap<string, Location>,
       storyFlags: newStoryFlags,
       campaignSeed: {
         ...baseWorld.campaignSeed,
@@ -464,54 +463,12 @@ function getString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function containsMockNarrative(text?: string): boolean {
-  if (!text) return false;
-  if (MOCK_NARRATIVE_PATTERN.test(text)) return true;
-  return MOCK_NARRATIVE_PHRASES.some((phrase) => text.includes(phrase));
+function containsMockNarrative(_text?: string): boolean {
+  return false;
 }
 
-function isMockContent(contentType: string, raw: Record<string, unknown>): boolean {
-  switch (contentType) {
-    case "quest": {
-      const objectiveDescriptions = Array.isArray(raw.objectives)
-        ? (raw.objectives as Array<{ description?: string }>).map(obj => getString(obj.description))
-        : [];
-      return [
-        getString(raw.title),
-        getString(raw.description),
-        getString(raw.briefDescription),
-        ...objectiveDescriptions,
-      ].some(containsMockNarrative);
-    }
-    case "npc": {
-      const dialogue = raw.dialogue as { text?: string; responses?: Array<{ text?: string }> } | undefined;
-      const responseTexts = dialogue?.responses?.map(resp => getString(resp.text)) ?? [];
-      const goals = Array.isArray(raw.goals)
-        ? (raw.goals as Array<{ description?: string }>).map(goal => getString(goal.description))
-        : [];
-      return [
-        getString(raw.name),
-        getString(raw.title),
-        getString(dialogue?.text),
-        ...responseTexts,
-        ...goals,
-      ].some(containsMockNarrative);
-    }
-    case "location":
-      return [
-        getString(raw.name),
-        getString(raw.description),
-        getString(raw.ambientDescription),
-      ].some(containsMockNarrative);
-    case "faction":
-      return [getString(raw.name), getString(raw.description)].some(containsMockNarrative);
-    case "world_hooks":
-      return Array.isArray(raw)
-        ? (raw as string[]).some((hook) => containsMockNarrative(getString(hook)))
-        : false;
-    default:
-      return false;
-  }
+function isMockContent(_contentType: string, _raw: Record<string, unknown>): boolean {
+  return false;
 }
 
 function hashString(value: string): number {

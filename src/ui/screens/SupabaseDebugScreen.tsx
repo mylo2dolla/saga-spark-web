@@ -25,6 +25,7 @@ export default function SupabaseDebugScreen() {
   const config = getSupabaseConfigInfo();
   const [authHealth, setAuthHealth] = useState<TestResult>({});
   const [restHealth, setRestHealth] = useState<TestResult>({});
+  const [dbProbe, setDbProbe] = useState<TestResult>({});
   const [sessionResult, setSessionResult] = useState<TestResult>({});
   const [signInResult, setSignInResult] = useState<TestResult>({});
   const [email, setEmail] = useState("");
@@ -78,6 +79,22 @@ export default function SupabaseDebugScreen() {
     }
   }, [config.anonKey, config.url]);
 
+  const runDbProbe = useCallback(async () => {
+    try {
+      const { error, count } = await supabase
+        .from("campaigns")
+        .select("id", { head: true, count: "exact" })
+        .limit(1);
+      if (error) {
+        setDbProbe({ ok: false, error: formatError(error) });
+        return;
+      }
+      setDbProbe({ ok: true, text: `count=${count ?? "unknown"}` });
+    } catch (error) {
+      setDbProbe({ error: formatError(error) });
+    }
+  }, []);
+
   const runGetSession = useCallback(async () => {
     try {
       const { data, error } = await supabase.auth.getSession();
@@ -102,21 +119,23 @@ export default function SupabaseDebugScreen() {
     try {
       const result = await supabase.auth.signInWithPassword({ email, password });
       if (result.error) {
+        const authError = result.error;
         setSignInResult({
           error: {
-            name: (result.error as { name?: string })?.name,
-            message: result.error.message,
+            name: authError.name,
+            message: authError.message,
             cause: {
-              status: (result.error as { status?: number })?.status,
-              __isAuthError: (result.error as { __isAuthError?: boolean })?.__isAuthError,
+              status: (authError as { status?: number })?.status,
+              code: (authError as { code?: string })?.code,
             },
           },
         });
         return;
       }
+      const nextSession = result.data.session;
       setSignInResult({
-        ok: Boolean(result.session),
-        text: result.session ? `user ${result.user?.id}` : "no session",
+        ok: Boolean(nextSession),
+        text: nextSession ? `user ${result.data.user?.id ?? nextSession.user?.id}` : "no session",
       });
     } catch (error) {
       setSignInResult({ error: formatError(error) });
@@ -127,9 +146,10 @@ export default function SupabaseDebugScreen() {
     setIsRunning(true);
     await runAuthHealth();
     await runRestHealth();
+    await runDbProbe();
     await runGetSession();
     setIsRunning(false);
-  }, [runAuthHealth, runGetSession, runRestHealth]);
+  }, [runAuthHealth, runDbProbe, runGetSession, runRestHealth]);
 
   if (!DEV_DEBUG) {
     return (
@@ -165,6 +185,9 @@ export default function SupabaseDebugScreen() {
         <Button variant="outline" onClick={runRestHealth} disabled={isRunning}>
           REST HEAD
         </Button>
+        <Button variant="outline" onClick={runDbProbe} disabled={isRunning}>
+          DB probe
+        </Button>
         <Button variant="outline" onClick={runGetSession} disabled={isRunning}>
           getSession
         </Button>
@@ -182,6 +205,10 @@ export default function SupabaseDebugScreen() {
           <div>
             <div className="font-semibold text-foreground">REST HEAD</div>
             <pre className="whitespace-pre-wrap text-xs">{JSON.stringify(restHealth, null, 2)}</pre>
+          </div>
+          <div>
+            <div className="font-semibold text-foreground">DB probe</div>
+            <pre className="whitespace-pre-wrap text-xs">{JSON.stringify(dbProbe, null, 2)}</pre>
           </div>
           <div>
             <div className="font-semibold text-foreground">getSession</div>

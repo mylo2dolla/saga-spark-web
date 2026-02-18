@@ -22,39 +22,50 @@ function DevDebugOverlayAuthedStats() {
   const { campaignId } = useParams();
   const networkHealth = useNetworkHealth(1000);
 
+  const locationsMap = useMemo(() => {
+    const raw = world?.locations as unknown;
+    if (raw instanceof Map) return raw as Map<string, EnhancedLocation>;
+    if (Array.isArray(raw)) return new Map(raw as Array<[string, EnhancedLocation]>);
+    if (raw && typeof raw === "object") {
+      return new Map(Object.entries(raw as Record<string, EnhancedLocation>));
+    }
+    return new Map<string, EnhancedLocation>();
+  }, [world]);
+
   const locations = useMemo(() => {
     if (!world) return [] as EnhancedLocation[];
-    return Array.from(world.locations.values()) as EnhancedLocation[];
-  }, [world]);
+    return Array.from(locationsMap.values()) as EnhancedLocation[];
+  }, [locationsMap, world]);
 
   const currentLocation = useMemo(() => {
     if (!world || !travelState) return undefined;
-    return world.locations.get(travelState.currentLocationId) as EnhancedLocation | undefined;
-  }, [world, travelState]);
+    return locationsMap.get(travelState.currentLocationId) as EnhancedLocation | undefined;
+  }, [locationsMap, travelState, world]);
 
   const availableDestinationIds = useMemo(() => {
     if (!currentLocation || !world) return [];
     return (currentLocation.connectedTo ?? [])
-      .map(id => world.locations.get(id))
+      .map(id => locationsMap.get(id))
       .filter((loc): loc is EnhancedLocation => Boolean(loc))
       .map(loc => loc.id);
-  }, [currentLocation, world]);
+  }, [currentLocation, locationsMap, world]);
 
   const [persistenceReport, setPersistenceReport] = useState<string | null>(null);
   const [connectivityReport, setConnectivityReport] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const buildSnapshot = useCallback((label: string) => {
     if (!world) {
       return { label, locationsSize: 0, locationIds: [], currentLocationId: null };
     }
-    const locationsList = Array.from(world.locations.values()) as EnhancedLocation[];
+    const locationsList = Array.from(locationsMap.values()) as EnhancedLocation[];
     return {
       label,
-      locationsSize: world.locations.size,
+      locationsSize: locationsMap.size,
       locationIds: locationsList.slice(0, 10).map(location => location.id),
       currentLocationId: travelState?.currentLocationId ?? null,
     };
-  }, [world, travelState]);
+  }, [locationsMap, travelState, world]);
 
   const handleForceSave = useCallback(async () => {
     if (!session.autosaveNow) return;
@@ -83,6 +94,7 @@ function DevDebugOverlayAuthedStats() {
       hasAnonKey: boolean;
       authSession?: { hasSession: boolean; error: string | null };
       authHealth?: { ok: boolean; status: number | null; body?: string | null; error?: string | null };
+      dbHealth?: { ok: boolean; status: number | null; error?: string | null };
       error?: string;
     } = {
       action: "supabase-self-test",
@@ -121,6 +133,22 @@ function DevDebugOverlayAuthedStats() {
       }
     }
 
+    try {
+      const { error } = await supabase
+        .from("campaigns")
+        .select("id", { head: true, count: "exact" })
+        .limit(1);
+      report.dbHealth = error
+        ? { ok: false, status: (error as { status?: number })?.status ?? null, error: error.message }
+        : { ok: true, status: 200, error: null };
+    } catch (error) {
+      report.dbHealth = {
+        ok: false,
+        status: null,
+        error: error instanceof Error ? error.message : "unknown error",
+      };
+    }
+
     console.info("DEV_DEBUG supabase connectivity", report);
     setConnectivityReport(JSON.stringify(report, null, 2));
   }, []);
@@ -136,22 +164,22 @@ function DevDebugOverlayAuthedStats() {
         networkHealth,
         locationsSize: 0,
         locationIds: [],
-      locationNames: [],
-      currentLocationId: travelState?.currentLocationId ?? null,
+        locationNames: [],
+        currentLocationId: travelState?.currentLocationId ?? null,
         connectedTo: [],
         availableDestinationIds: [],
         mapMarkers: [],
       };
     }
 
-      return {
-        supabaseProjectRef: getProjectRef(SUPABASE_URL),
-        campaignId: campaignId ?? null,
-        loadedFromSupabase: session.loadedFromSupabase ?? false,
-        lastSavedAt: session.lastSavedAt ?? null,
-        lastLoadedAt: session.lastLoadedAt ?? null,
-        networkHealth,
-        locationsSize: world.locations.size,
+    return {
+      supabaseProjectRef: getProjectRef(SUPABASE_URL),
+      campaignId: campaignId ?? null,
+      loadedFromSupabase: session.loadedFromSupabase ?? false,
+      lastSavedAt: session.lastSavedAt ?? null,
+      lastLoadedAt: session.lastLoadedAt ?? null,
+      networkHealth,
+      locationsSize: locationsMap.size,
       locationIds: locations.map(location => location.id),
       locationNames: locations.map(location => location.name),
       currentLocationId: travelState.currentLocationId,
@@ -167,22 +195,46 @@ function DevDebugOverlayAuthedStats() {
     world,
     travelState,
     locations,
+    locationsMap,
     currentLocation,
     availableDestinationIds,
     campaignId,
     session.loadedFromSupabase,
     session.lastSavedAt,
     session.lastLoadedAt,
+    networkHealth,
   ]);
 
   if (!DEV_DEBUG) return null;
+
+  if (!expanded) {
+    return (
+      <button
+        id="dev-debug-toggle"
+        type="button"
+        onClick={() => setExpanded(true)}
+        className="fixed bottom-4 right-4 z-[9999] rounded-md border border-border bg-card/95 px-3 py-2 text-[11px] font-semibold text-foreground shadow-xl hover:bg-accent"
+      >
+        DEV_DEBUG
+      </button>
+    );
+  }
 
   return (
     <div
       id="dev-debug-overlay"
       className="fixed bottom-4 right-4 z-[9999] max-h-[70vh] w-[360px] overflow-auto rounded-lg border border-border bg-card/95 p-3 text-xs shadow-xl"
     >
-      <div className="mb-2 font-semibold text-foreground">DEV_DEBUG Overlay</div>
+      <div className="mb-2 flex items-center justify-between">
+        <div className="font-semibold text-foreground">DEV_DEBUG Overlay</div>
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="rounded-md border border-border bg-background px-2 py-1 text-[10px] font-medium text-foreground hover:bg-accent"
+        >
+          Hide
+        </button>
+      </div>
       <div className="mb-2 flex gap-2">
         <button
           type="button"
@@ -233,6 +285,7 @@ export default function DevDebugOverlay() {
   const location = useLocation();
   const { user, isLoading } = useAuth();
   const isLoginRoute = location.pathname === "/login" || location.pathname === "/signup";
+  const hasGameSessionProvider = /^\/game\/[^/]+$/.test(location.pathname);
 
   useEffect(() => {
     if (!DEV_DEBUG) return;
@@ -248,6 +301,9 @@ export default function DevDebugOverlay() {
 
   if (!DEV_DEBUG) return null;
   if (isLoading || !user || isLoginRoute) {
+    return null;
+  }
+  if (!hasGameSessionProvider) {
     return null;
   }
 
