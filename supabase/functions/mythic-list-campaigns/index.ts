@@ -39,10 +39,19 @@ const toIsoDesc = (a: CampaignRow, b: CampaignRow) =>
   new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
 const logger = createLogger("mythic-list-campaigns");
 
+const nowMs = () => performance.now();
+const requestIdFrom = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
+
 serve(async (req) => {
+  const requestId = requestIdFrom(req);
+  const startMs = nowMs();
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ ok: false, error: "Method not allowed" }), {
+    return new Response(JSON.stringify({ ok: false, error: "Method not allowed", code: "method_not_allowed", requestId }), {
       status: 405,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -60,7 +69,7 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ ok: false, error: "Authentication required" }), {
+      return new Response(JSON.stringify({ ok: false, error: "Authentication required", code: "auth_required", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -77,14 +86,16 @@ serve(async (req) => {
     const authClient = createClient(supabaseUrl, anonKey);
     const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
-      return new Response(JSON.stringify({ ok: false, error: "Invalid or expired authentication token" }), {
+      return new Response(JSON.stringify({ ok: false, error: "Invalid or expired authentication token", code: "auth_invalid", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
     const svc = createClient(supabaseUrl, serviceRoleKey);
+    const warnings: string[] = [];
 
+    const ownedStart = nowMs();
     const [
       { data: ownedCampaigns, error: ownedError },
       { data: memberships, error: membershipError },
@@ -98,6 +109,7 @@ serve(async (req) => {
         .select("campaign_id,is_dm")
         .eq("user_id", user.id),
     ]);
+    logger.info("list_campaigns.segment", { request_id: requestId, segment: "owned_and_memberships", elapsed_ms: Math.round(nowMs() - ownedStart) });
 
     if (ownedError) throw ownedError;
     if (membershipError) throw membershipError;
@@ -107,12 +119,19 @@ serve(async (req) => {
 
     let memberCampaigns: CampaignRow[] = [];
     if (memberCampaignIds.length > 0) {
+      const memberStart = nowMs();
       const { data, error } = await svc
         .from("campaigns")
         .select("id,name,description,invite_code,owner_id,is_active,updated_at")
         .in("id", memberCampaignIds);
       if (error) throw error;
       memberCampaigns = (data ?? []) as CampaignRow[];
+      logger.info("list_campaigns.segment", {
+        request_id: requestId,
+        segment: "member_campaigns",
+        elapsed_ms: Math.round(nowMs() - memberStart),
+        campaign_count: memberCampaigns.length,
+      });
     }
 
     const campaignsMap = new Map<string, CampaignRow>();
@@ -121,7 +140,7 @@ serve(async (req) => {
 
     const campaigns = Array.from(campaignsMap.values()).sort(toIsoDesc);
     if (campaigns.length === 0) {
-      return new Response(JSON.stringify({ ok: true, campaigns: [] }), {
+      return new Response(JSON.stringify({ ok: true, campaigns: [], requestId, warnings }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -146,7 +165,9 @@ serve(async (req) => {
     if (activeBoardsError) throw activeBoardsError;
 
     let worldProfiles: Array<{ campaign_id: string }> = [];
+    let degraded = false;
     {
+      const profileStart = nowMs();
       const primary = await svc
         .schema("mythic")
         .from("world_profiles")
@@ -158,11 +179,22 @@ serve(async (req) => {
           .from("campaign_world_profiles")
           .select("campaign_id")
           .in("campaign_id", ids);
-        if (fallback.error) throw fallback.error;
-        worldProfiles = (fallback.data ?? []) as Array<{ campaign_id: string }>;
+        if (fallback.error) {
+          degraded = true;
+          warnings.push(`world_profile_lookup_failed:${fallback.error.message ?? "unknown"}`);
+          worldProfiles = [];
+        } else {
+          worldProfiles = (fallback.data ?? []) as Array<{ campaign_id: string }>;
+        }
       } else {
         worldProfiles = (primary.data ?? []) as Array<{ campaign_id: string }>;
       }
+      logger.info("list_campaigns.segment", {
+        request_id: requestId,
+        segment: "world_profiles",
+        elapsed_ms: Math.round(nowMs() - profileStart),
+        degraded,
+      });
     }
 
     const memberCounts: Record<string, number> = {};
@@ -201,8 +233,14 @@ serve(async (req) => {
       };
     });
 
-    logger.info("list_campaigns.success", { user_id: user.id, campaign_count: summaries.length });
-    return new Response(JSON.stringify({ ok: true, campaigns: summaries }), {
+    logger.info("list_campaigns.success", {
+      user_id: user.id,
+      request_id: requestId,
+      campaign_count: summaries.length,
+      degraded,
+      elapsed_ms: Math.round(nowMs() - startMs),
+    });
+    return new Response(JSON.stringify({ ok: true, campaigns: summaries, degraded, warnings, requestId }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -210,7 +248,7 @@ serve(async (req) => {
     const normalized = sanitizeError(error);
     logger.error("list_campaigns.failed", error);
     const message = normalized.message || "Failed to list campaigns";
-    return new Response(JSON.stringify({ ok: false, error: message }), {
+    return new Response(JSON.stringify({ ok: false, error: message, code: "list_failed", requestId }), {
       status: 500,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

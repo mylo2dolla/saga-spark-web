@@ -22,6 +22,9 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENAI_TTS_MODEL: ${OPENAI_TTS_MODEL:-tts-1}
 
+      # Deterministic turn seed salt (required for replay-safe turn engine).
+      MYTHIC_TURN_SALT: ${MYTHIC_TURN_SALT:-}
+
       # Optional (legacy/non-Mythic) generation paths.
       LLM_PROVIDER: ${LLM_PROVIDER:-}
       LLM_MODEL: ${LLM_MODEL:-}
@@ -43,6 +46,7 @@ services:
       - "443:443"
     environment:
       MYTHIC_API_DOMAIN: ${MYTHIC_API_DOMAIN}
+      CADDY_EMAIL: ${CADDY_EMAIL:-}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -52,4 +56,3 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-

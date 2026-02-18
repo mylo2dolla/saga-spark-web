@@ -9,12 +9,13 @@ This service replaces Supabase Edge Functions with a self-hosted API while prese
 - Supabase project (Auth + Postgres)
 - `SUPABASE_SERVICE_ROLE_KEY` available on the server
 - OpenAI configured for Mythic DM + TTS endpoints (`OPENAI_API_KEY`)
+- Deterministic turn salt configured (`MYTHIC_TURN_SALT`) for replay-safe turn resolution
 
 ## Local Dev
 ```bash
 cd services/mythic-api
 cp .env.example .env
-# Fill SUPABASE_URL / SUPABASE_PROJECT_REF / SUPABASE_SERVICE_ROLE_KEY (+ OPENAI_API_KEY)
+# Fill SUPABASE_URL / SUPABASE_PROJECT_REF / SUPABASE_SERVICE_ROLE_KEY (+ OPENAI_API_KEY + MYTHIC_TURN_SALT)
 npm install
 npm run dev
 ```
@@ -43,4 +44,3 @@ See `./scripts/README.md` and run:
 ```bash
 bash ./scripts/smoke-all.sh
 ```
-

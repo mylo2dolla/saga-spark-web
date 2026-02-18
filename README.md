@@ -7,8 +7,16 @@ Saga Spark is a fantasy RPG companion web app built with Vite, React, and Supaba
 Install dependencies and start the dev server:
 
 ```bash
+nvm use 20
 npm install
 npm run dev
+```
+
+If `nvm` is not installed, use Homebrew `node@20`:
+
+```bash
+brew install node@20
+export PATH="$(brew --prefix node@20)/bin:$PATH"
 ```
 
 ## Vault source-of-truth sync
@@ -87,6 +95,8 @@ supabase db reset
 Push migrations to remote:
 
 ```bash
+export SUPABASE_DB_PASSWORD="<your-db-password>"
+supabase migration list
 supabase db push
 ```
 
@@ -140,11 +150,32 @@ Run the baseline production checks before shipping:
 npm run lint
 npm run typecheck
 npm run build
-npm run smoke:prod
 ```
 
 Full manual checklist:
 - `docs/PRODUCTION_SMOKE_TEST.md`
+
+## Auth 522 incident runbook
+
+If login/campaign create fails with `auth_gateway_timeout` or `Supabase auth gateway unreachable`, treat it as upstream auth connectivity:
+
+1. Probe auth directly and capture request ids:
+
+```bash
+curl -i -X POST "https://othlyxwtigxzczeffzee.supabase.co/auth/v1/token?grant_type=password" \
+  -H "apikey: $VITE_SUPABASE_ANON_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"<email>","password":"<password>"}'
+```
+
+2. Record:
+- HTTP status
+- `sb-request-id`
+- `cf-ray`
+3. Check [Supabase Status](https://status.supabase.com/).
+4. Retry from alternate network if 522 persists.
+
+Campaign-create failures during auth 522 are expected infra-path failures, not schema mismatch bugs.
 
 ## Mythic backup and restore
 
@@ -161,50 +192,21 @@ export SUPABASE_DB_URL="postgresql://postgres:<password>@db.<project-ref>.supaba
 ./scripts/restore-mythic.sh backups/mythic-backup-YYYYMMDD-HHMMSS.sql
 ```
 
-## Debug bundle and redaction
+## Verify OpenAI API access (Mythic)
 
-`Servers/Admin` includes `Export Debug Bundle`, which downloads a redacted JSON bundle with:
-- build metadata
-- health checks
-- operation history
-- recent surfaced errors
-
-Redaction covers auth headers, JWT-like tokens, and API keys.
-
-## Verify Groq API access
-
-Set your API key in the environment (or a local `.env.local` file) and run the verification script:
+Set your API key in the environment (or local `.env`/`.env.local`) for Mythic generation/runtime functions:
 
 ```bash
-export GROQ_API_KEY="your_api_key"
-npm run verify:groq
+export OPENAI_API_KEY="your_api_key"
 ```
+
+Mythic edge functions fail fast with:
+- `openai_not_configured` when key/model is missing
+- `openai_request_failed` when OpenAI request fails
 
 ## RLS smoke test (optional)
 
 In the Supabase SQL editor, run `supabase/smoke-test.sql` after replacing `__USER_UUID__` with your user id.
-
-## Playwright smoke test (optional)
-
-Run once to install browsers:
-
-```bash
-npm run test:e2e:install
-```
-
-Then run the smoke test:
-
-```bash
-npm run test:e2e
-```
-
-Notes for Codespaces:
-- If `playwright install --with-deps` fails due to the Yarn apt repo signature, remove `/etc/apt/sources.list.d/yarn.list` and run `sudo npx playwright install-deps`.
-- Alternatively install the missing libs listed by Playwright (e.g. `libatk1.0-0t64`, `libgtk-3-0t64`) and rerun `npm run test:e2e`.
-- You can also run `npm run test:e2e:deps` to apply the workaround automatically.
-
-CI:
-- The Playwright HTML report is uploaded as a workflow artifact named `playwright-report`.
 
 ## generate-class curl checks
 

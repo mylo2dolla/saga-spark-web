@@ -3,9 +3,6 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Session, User } from "@supabase/supabase-js";
 import { recordProfilesRead } from "@/ui/data/networkHealth";
 
-const DEV_DEBUG = import.meta.env.DEV;
-const AUTH_DEBUG = DEV_DEBUG && import.meta.env.VITE_DEBUG_AUTH === "true";
-const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 const PROFILE_TTL_MS = 60000;
 const AUTH_TIMEOUT_MS = 20000;
 const AUTH_FAILSAFE_MS = 30000;
@@ -54,11 +51,6 @@ const initialState: AuthState = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const logAuthDebug = (payload: Record<string, unknown>) => {
-  if (!AUTH_DEBUG) return;
-  console.debug("[auth] log", payload);
-};
-
 const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<T>((_, reject) => {
@@ -86,7 +78,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [updateState]);
 
   const fetchProfileInternal = useCallback(async (userId: string) => {
-    logAuthDebug({ step: "profile_fetch_start", userId });
     try {
       const cached = profileCache.get(userId);
       const now = Date.now();
@@ -155,7 +146,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         updateState({ profile: createResult.data });
       }
     } finally {
-      logAuthDebug({ step: "profile_fetch_end", userId });
       updateState({ isProfileCreating: false, isLoading: false });
     }
   }, [notifyAuthError, updateState]);
@@ -167,34 +157,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       updateState({ isLoading: false, isProfileCreating: false });
       notifyAuthError({ message: "Auth bootstrap timed out", status: null });
     }, AUTH_FAILSAFE_MS);
-
-    if (E2E_BYPASS_AUTH) {
-      const fakeUser = {
-        id: "e2e-user",
-        email: "e2e@example.com",
-      } as User;
-      setState({
-        session: { user: fakeUser } as Session,
-        user: fakeUser,
-        profile: {
-          id: "e2e-profile",
-          user_id: "e2e-user",
-          display_name: "E2E Tester",
-          avatar_url: null,
-        },
-        isLoading: false,
-        isProfileCreating: false,
-        lastAuthError: null,
-      });
-      clearTimeout(failsafeId);
-      return () => {
-        isActive = false;
-      };
-    }
-
-    if (DEV_DEBUG) {
-      console.count("[auth] init");
-    }
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
@@ -216,9 +178,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
 
     const bootstrap = async () => {
-      if (DEV_DEBUG) {
-        console.count("[auth] getSession");
-      }
       try {
         const { data: { session }, error } = await withTimeout(
           supabase.auth.getSession(),
@@ -259,13 +218,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [fetchProfileInternal, notifyAuthError, updateState]);
 
   const signOut = useCallback(async () => {
-    if (E2E_BYPASS_AUTH) return;
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   }, []);
 
   const updateProfile = useCallback(async (updates: Partial<Profile>) => {
-    if (E2E_BYPASS_AUTH) return;
     if (!state.user) throw new Error("Not authenticated");
 
     const { error } = await supabase

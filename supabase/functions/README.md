@@ -1,23 +1,27 @@
 # Supabase Edge Functions - AI Provider Configuration
 
-These functions call Groq directly from the server. No AI keys are ever sent to the client.
+Mythic runtime functions are locked to OpenAI. No AI keys are ever sent to the client.
 
-Required secrets:
+Required secrets for Mythic:
 
-```
-npx supabase secrets set GROQ_API_KEY="your_groq_key"
-```
-
-Optional base URL override (defaults to `https://api.groq.com/openai`):
-
-```
-npx supabase secrets set GROQ_BASE_URL="https://api.groq.com/openai"
+```bash
+npx supabase secrets set OPENAI_API_KEY="your_openai_key"
 ```
 
-Deploy functions after updating secrets:
+Optional model/base URL overrides:
 
+```bash
+npx supabase secrets set OPENAI_MODEL="gpt-4o-mini"
+npx supabase secrets set OPENAI_BASE_URL="https://api.openai.com"
 ```
-npx supabase functions deploy generate-class
-npx supabase functions deploy world-generator
-npx supabase functions deploy dungeon-master
+
+Deploy Mythic functions after updating secrets:
+
+```bash
+npx supabase functions deploy mythic-dungeon-master
+npx supabase functions deploy mythic-create-character
+npx supabase functions deploy mythic-field-generate
 ```
+
+If `OPENAI_API_KEY` is missing, Mythic functions return `openai_not_configured`.
+If OpenAI requests fail, Mythic functions return `openai_request_failed`.

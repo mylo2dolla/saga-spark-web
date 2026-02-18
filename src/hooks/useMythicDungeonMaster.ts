@@ -7,16 +7,44 @@ import { createLogger } from "@/lib/observability/logger";
 
 type MessageRole = "user" | "assistant";
 
+export type MythicUiIntent =
+  | "town"
+  | "travel"
+  | "dungeon"
+  | "combat_start"
+  | "shop"
+  | "open_panel"
+  | "dm_prompt"
+  | "refresh";
+
+export interface MythicUiAction {
+  id: string;
+  label: string;
+  intent: MythicUiIntent;
+  prompt?: string;
+  boardTarget?: "town" | "travel" | "dungeon" | "combat";
+  panel?: "character" | "gear" | "skills" | "loadouts" | "progression" | "quests";
+  payload?: Record<string, unknown>;
+}
+
+export interface MythicDmParsedPayload {
+  narration: string;
+  ui_actions?: MythicUiAction[];
+  scene?: Record<string, unknown>;
+  effects?: Record<string, unknown>;
+}
+
 export interface MythicDMMessage {
   id: string;
   role: MessageRole;
   content: string;
   timestamp: Date;
-  parsed?: { narration: string; [k: string]: unknown };
+  parsed?: MythicDmParsedPayload;
 }
 
 interface SendOptions {
   appendUser?: boolean;
+  actionContext?: Record<string, unknown>;
 }
 
 const MAX_HISTORY_MESSAGES = 16;
@@ -26,6 +54,149 @@ const trimMessage = (content: string) =>
   content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
 
 const logger = createLogger("mythic-dm-hook");
+const JSON_BLOCK_REGEX = /\{[\s\S]*\}/;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function normalizeIntent(raw: string): MythicUiIntent | null {
+  const key = raw.trim().toLowerCase();
+  if (
+    key === "town" ||
+    key === "travel" ||
+    key === "dungeon" ||
+    key === "combat_start" ||
+    key === "shop" ||
+    key === "open_panel" ||
+    key === "dm_prompt" ||
+    key === "refresh"
+  ) {
+    return key;
+  }
+  return null;
+}
+
+function normalizeUiAction(entry: unknown, index: number): MythicUiAction | null {
+  const raw = asRecord(entry);
+  if (!raw) return null;
+  const intent = normalizeIntent(String(raw.intent ?? ""));
+  if (!intent) return null;
+  const panelRaw = String(raw.panel ?? "").toLowerCase();
+  const panel = panelRaw === "character" || panelRaw === "gear" || panelRaw === "skills" || panelRaw === "loadouts" || panelRaw === "progression" || panelRaw === "quests"
+    ? panelRaw
+    : undefined;
+  const boardTargetRaw = String(raw.boardTarget ?? raw.board_target ?? "").toLowerCase();
+  const boardTarget = boardTargetRaw === "town" || boardTargetRaw === "travel" || boardTargetRaw === "dungeon" || boardTargetRaw === "combat"
+    ? boardTargetRaw
+    : undefined;
+  return {
+    id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `dm-action-${index + 1}`,
+    label: typeof raw.label === "string" && raw.label.trim() ? raw.label.trim() : `Action ${index + 1}`,
+    intent,
+    prompt: typeof raw.prompt === "string" && raw.prompt.trim() ? raw.prompt.trim() : undefined,
+    boardTarget,
+    panel,
+    payload: asRecord(raw.payload) ?? undefined,
+  };
+}
+
+function fallbackActionFromLine(line: string, index: number): MythicUiAction | null {
+  const clean = line
+    .replace(/^\s*[-*•]\s*/, "")
+    .replace(/^\s*\d+[.)]\s*/, "")
+    .trim();
+  if (!clean) return null;
+  const lower = clean.toLowerCase();
+  if (/(inventory|gear|equipment|loadout|skill|skills|progression|quest|character)/.test(lower)) {
+    const panel: MythicUiAction["panel"] =
+      /gear|equipment|inventory/.test(lower)
+        ? "gear"
+        : /loadout/.test(lower)
+          ? "loadouts"
+          : /skill/.test(lower)
+            ? "skills"
+            : /progression|level/.test(lower)
+              ? "progression"
+              : /quest/.test(lower)
+                ? "quests"
+                : "character";
+    return {
+      id: `fallback-panel-${index + 1}`,
+      label: `Open ${panel[0].toUpperCase()}${panel.slice(1)}`,
+      intent: "open_panel",
+      panel,
+      prompt: clean,
+    };
+  }
+  if (/(travel|journey|depart|route|road)/.test(lower)) {
+    return { id: `fallback-travel-${index + 1}`, label: "Travel", intent: "travel", boardTarget: "travel", prompt: clean };
+  }
+  if (/(town|market|vendor|inn|restock)/.test(lower)) {
+    return { id: `fallback-town-${index + 1}`, label: "Town", intent: "town", boardTarget: "town", prompt: clean };
+  }
+  if (/(dungeon|ruin|cave|crypt|explore)/.test(lower)) {
+    return { id: `fallback-dungeon-${index + 1}`, label: "Dungeon", intent: "dungeon", boardTarget: "dungeon", prompt: clean };
+  }
+  if (/(combat|fight|battle|attack|engage)/.test(lower)) {
+    return { id: `fallback-combat-${index + 1}`, label: "Start Combat", intent: "combat_start", boardTarget: "combat", prompt: clean };
+  }
+  if (/(shop|vendor|merchant|blacksmith|armorer|alchemist)/.test(lower)) {
+    return { id: `fallback-shop-${index + 1}`, label: "Shop", intent: "shop", prompt: clean };
+  }
+  if (/(talk|speak|ask|investigate|scout|rumor|faction|plan)/.test(lower)) {
+    return { id: `fallback-prompt-${index + 1}`, label: clean.slice(0, 36), intent: "dm_prompt", prompt: clean };
+  }
+  return null;
+}
+
+function parseAssistantPayload(text: string): MythicDmParsedPayload {
+  const trimmed = text.trim();
+  const jsonMatch = trimmed.match(JSON_BLOCK_REGEX);
+
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      const raw = asRecord(parsed);
+      if (raw) {
+        const narration = typeof raw.narration === "string" && raw.narration.trim()
+          ? raw.narration.trim()
+          : trimmed;
+        const actions = Array.isArray(raw.ui_actions)
+          ? raw.ui_actions
+            .map((entry, index) => normalizeUiAction(entry, index))
+            .filter((entry): entry is MythicUiAction => Boolean(entry))
+            .slice(0, 8)
+          : [];
+        const scene = asRecord(raw.scene) ?? undefined;
+        const effects = asRecord(raw.effects) ?? undefined;
+        return {
+          narration,
+          ui_actions: actions.length > 0 ? actions : undefined,
+          scene,
+          effects,
+        };
+      }
+    } catch {
+      // Fall through to deterministic text parser.
+    }
+  }
+
+  const lines = trimmed
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, 12);
+  const fallbackActions = lines
+    .map((line, index) => fallbackActionFromLine(line, index))
+    .filter((entry): entry is MythicUiAction => Boolean(entry))
+    .slice(0, 6);
+  return {
+    narration: trimmed || "The scene shifts. Describe your next move.",
+    ui_actions: fallbackActions.length > 0 ? fallbackActions : undefined,
+  };
+}
 
 export function useMythicDungeonMaster(campaignId: string | undefined) {
   const [messages, setMessages] = useState<MythicDMMessage[]>([]);
@@ -33,16 +204,6 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
   const [currentResponse, setCurrentResponse] = useState("");
   const [operation, setOperation] = useState<OperationState | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-
-  const parseResponse = (text: string): { narration: string; [k: string]: unknown } | null => {
-    try {
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (jsonMatch) return JSON.parse(jsonMatch[0]);
-    } catch {
-      // ignore
-    }
-    return { narration: text };
-  };
 
   const sendMessage = useCallback(
     async (content: string, options?: SendOptions) => {
@@ -82,6 +243,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
                 messages: [...messages, userMessage]
                   .slice(-MAX_HISTORY_MESSAGES)
                   .map((m) => ({ role: m.role, content: trimMessage(m.content) })),
+                actionContext: options?.actionContext ?? null,
               },
             }),
         });
@@ -138,7 +300,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
           }
         }
 
-        const parsedResponse = parseResponse(assistantContent);
+        const parsedResponse = parseAssistantPayload(assistantContent);
         const assistantMessage: MythicDMMessage = {
           id: crypto.randomUUID(),
           role: "assistant",

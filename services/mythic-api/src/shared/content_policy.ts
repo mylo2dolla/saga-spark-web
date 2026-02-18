@@ -1,25 +1,36 @@
-// Harsh language allowed. Sexual content / sexual violence forbidden.
-// This mirrors the DB-side intent (mythic.contains_forbidden_sexual_content).
+// Harsh language allowed. Gore/violence allowed.
+// Allowed: mild sexuality / playful sexy banter.
+// Disallowed: sexual violence, coercion, rape, underage sexual content, pornographic/explicit sex acts.
+//
+// This is an intentionally high-signal filter: we do NOT block generic "sex"/"sexual" mentions,
+// since mild/consensual flirtation is allowed. We focus on violence/coercion/minors + explicit acts.
 
 const forbiddenSexualPatterns: RegExp[] = [
-  /\bsex\b/i,
-  /\bsexual\b/i,
+  // Sexual violence / coercion (high-signal terms)
   /\bsexual\s+violence\b/i,
+  /\bsexual\s+assault\b/i,
   /\brape\b/i,
   /\braped\b/i,
   /\braping\b/i,
   /\bmolest\b/i,
   /\bmolested\b/i,
   /\bmolester\b/i,
+  /\bnonconsensual\b/i,
+  /\bnon-consensual\b/i,
+
+  // Underage content
+  /\bunderage\b/i,
+  /\bchild\s*porn\b/i,
+  /\bminor\s*porn\b/i,
+  /\bloli\b/i,
+
+  // Porn / explicit sex acts / explicit anatomy
   /\bporn\b/i,
   /\bpornography\b/i,
   /\berotic\b/i,
   /\bnude\b/i,
   /\bnudity\b/i,
   /\bincest\b/i,
-  /\bunderage\b/i,
-  /\bchild\s*porn\b/i,
-  /\bminor\s*porn\b/i,
   /\bblowjob\b/i,
   /\bhandjob\b/i,
   /\bintercourse\b/i,
@@ -43,4 +54,3 @@ export function assertContentAllowed(fields: Array<{ path: string; value: string
     throw new Error(`Forbidden sexual content detected in ${bad.path}`);
   }
 }
-

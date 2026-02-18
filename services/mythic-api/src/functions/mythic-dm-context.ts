@@ -431,8 +431,12 @@ export const mythicDmContext: FunctionHandler = {
         is_active: scriptRow?.is_active ?? null,
         policy: {
           allow_gore: true,
-          ban_sexual_content: true,
+          allow_mild_sexuality: true,
+          ban_sexual_content: false,
           ban_sexual_violence: true,
+          ban_coercion: true,
+          ban_underage: true,
+          ban_explicit_porn: true,
         },
       };
 

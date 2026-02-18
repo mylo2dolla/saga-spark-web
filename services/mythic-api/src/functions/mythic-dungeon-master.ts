@@ -3,9 +3,13 @@ import { z } from "zod";
 import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { assertCampaignAccess } from "../shared/authz.js";
-import { mythicOpenAIChatCompletionsStream } from "../shared/ai_provider.js";
+import { mythicOpenAIChatCompletions } from "../shared/ai_provider.js";
 import { enforceRateLimit } from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
+import { computeTurnSeed } from "../shared/turn_seed.js";
+import { createTurnPrng } from "../shared/turn_prng.js";
+import { normalizeWorldPatches, parseDmNarratorOutput } from "../shared/turn_contract.js";
+import { getConfig } from "../shared/env.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const MessageSchema = z.object({
@@ -18,6 +22,8 @@ const RequestSchema = z.object({
   messages: z.array(MessageSchema).max(80),
   actionContext: z.record(z.unknown()).nullable().optional(),
 });
+
+const config = getConfig();
 
 function errMessage(error: unknown, fallback: string): string {
   if (error instanceof Error && error.message.trim().length > 0) return error.message;
@@ -69,13 +75,43 @@ OUTPUT CONTRACT (STRICT)
     When suggesting a shop/vendor in town:
     - intent MUST be "shop"
     - payload MUST include {"vendorId": "<id from board.state_summary.vendors>"}.
+  - "patches": array of world patch objects (may be empty). Supported patch ops:
+    - FACT_CREATE / FACT_SUPERSEDE (fact_key, data)
+    - ENTITY_UPSERT (entity_key, entity_type, data, tags[])
+    - REL_SET (subject_key, object_key, rel_type, data)
+    - QUEST_UPSERT (quest_key, data)
+    - LOCATION_STATE_UPDATE (location_key, data)
+  - "roll_log": array of deterministic roll log entries (may be empty).
 - Optional keys: npcs, suggestions, loot, persistentData.
-- NEVER include sexual content or sexual violence.
+- Allowed: gore/violence/profanity, mild sexuality and playful sexy banter.
+- Forbidden: sexual violence, coercion, rape, underage sexual content, pornographic explicit content.
 - Harsh language allowed. Gore allowed.
 `;
 }
 
 const MAX_TEXT_FIELD_LEN = 900;
+
+function streamOpenAiDelta(text: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const chunkSize = 120;
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      try {
+        for (let i = 0; i < text.length; i += chunkSize) {
+          const chunk = text.slice(i, i + chunkSize);
+          const payload = {
+            choices: [{ delta: { content: chunk } }],
+          };
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        }
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+  });
+}
 
 function shortText(value: unknown, maxLen = MAX_TEXT_FIELD_LEN): string | null {
   if (typeof value !== "string") return null;
@@ -341,6 +377,46 @@ export const mythicDungeonMaster: FunctionHandler = {
 
       const warnings: string[] = [];
 
+      // Turn context: compute next turn index and a deterministic seed up-front.
+      const { data: latestTurn, error: latestTurnErr } = await svc
+        .schema("mythic")
+        .from("turns")
+        .select("turn_index")
+        .eq("campaign_id", campaignId)
+        .order("turn_index", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latestTurnErr) {
+        ctx.log.error("dm.turn_index.failed", {
+          request_id: ctx.requestId,
+          campaign_id: campaignId,
+          hint: errMessage(latestTurnErr, "query failed"),
+        });
+        return new Response(
+          JSON.stringify({
+            error: "Turn engine not ready (missing mythic.turns). Apply migrations and retry.",
+            code: "turn_engine_not_ready",
+            details: { hint: errMessage(latestTurnErr, "query failed") },
+            requestId: ctx.requestId,
+          }),
+          { status: 503, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const expectedTurnIndex = (latestTurn?.turn_index ?? -1) + 1;
+      const salt = config.mythicTurnSalt;
+      if (!salt) {
+        warnings.push("missing_turn_salt:determinism_weak");
+      }
+      const turnSeed = await computeTurnSeed({
+        campaignSeed: campaignId,
+        turnIndex: expectedTurnIndex,
+        playerId: user.userId,
+        salt,
+      });
+
+      const prng = createTurnPrng(turnSeed);
+
       // Canonical rules/script.
       const [{ data: rulesRow, error: rulesError }, { data: scriptRow, error: scriptError }] = await Promise.all([
         svc.schema("mythic").from("game_rules").select("name, version, rules").eq("name", "mythic-weave-rules-v1").maybeSingle(),
@@ -480,7 +556,7 @@ export const mythicDungeonMaster: FunctionHandler = {
         key_rules: [
           "DB state is authoritative.",
           "Combat/logs are append-only and deterministic.",
-          "Violence/gore allowed; sexual content and sexual violence forbidden.",
+          "Violence/gore allowed; mild sexuality/banter allowed; sexual violence/coercion forbidden.",
           "Grid and board state are truth for narration.",
         ],
       };
@@ -489,9 +565,38 @@ export const mythicDungeonMaster: FunctionHandler = {
       const compactCharacter = compactCharacterPayload(character);
       const compactCombat = compactCombatPayload(combat);
 
+      // Consume deterministic rolls in a stable order. These are authoritative for the turn.
+      const rollContext = (() => {
+        const boardType = (compactBoard as Record<string, unknown> | null)?.board_type;
+        const bt = typeof boardType === "string" ? boardType : "unknown";
+        // A couple of general-purpose rolls used for pacing/scene variation.
+        const scene_variant = prng.next01("scene_variant", { board_type: bt });
+        const tension = prng.next01("tension", { board_type: bt });
+        // Board-specific rolls (kept minimal for now, but logged for replay).
+        const encounter = prng.next01("encounter_check", { board_type: bt });
+        const discovery = prng.next01("discovery_check", { board_type: bt });
+        return { board_type: bt, scene_variant, tension, encounter, discovery };
+      })();
+
+      const allowedVendorIds = (() => {
+        const vendors = (compactBoard as Record<string, unknown> | null)?.state_summary
+          && typeof (compactBoard as Record<string, unknown>).state_summary === "object"
+          ? ((compactBoard as Record<string, unknown>).state_summary as Record<string, unknown>).vendors
+          : null;
+        if (!Array.isArray(vendors)) return new Set<string>();
+        const ids = vendors
+          .map((entry) => (entry && typeof entry === "object" ? (entry as Record<string, unknown>).id : null))
+          .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+          .map((id) => id.trim());
+        return new Set(ids);
+      })();
+
       const systemPrompt = `
 You are the Mythic Weave Dungeon Master entity.
 You must narrate a living dungeon comic that strictly matches authoritative DB state.
+
+TURN CONTEXT (DETERMINISTIC, AUTHORITATIVE)
+${JSON.stringify({ expected_turn_index: expectedTurnIndex, turn_seed: turnSeed.toString(), rolls: rollContext }, null, 2)}
 
 AUTHORITATIVE SCRIPT (DB): mythic.generator_scripts(name='mythic-weave-core')
 ${JSON.stringify(compactScript, null, 2)}
@@ -528,7 +633,8 @@ RULES YOU MUST OBEY
 - Narration quality is primary. scene/effects should help render visual board state updates.
 - If command execution context is provided, narrate outcomes using that state delta and avoid contradiction.
 - Violence/gore allowed. Harsh language allowed.
-- Sexual content and sexual violence are forbidden.
+- Mild sexuality / playful sexy banter allowed.
+- Sexual violence, coercion, rape, underage sexual content, and pornographic explicit content are forbidden.
 ${jsonOnlyContract()}
 `;
 
@@ -545,24 +651,185 @@ ${jsonOnlyContract()}
         warning_count: warnings.length,
       });
 
-      const llm = await mythicOpenAIChatCompletionsStream(
-        {
-          messages: [
-            { role: "system", content: systemPrompt },
-            ...messages,
-          ],
-          stream: true,
-          temperature: 0.7,
-        },
-        requestedModel,
-      );
-      const response = llm.response;
+      const maxAttempts = 2;
+      let lastErrors: string[] = [];
+      let dmText = "";
+      let dmParsed: ReturnType<typeof parseDmNarratorOutput> | null = null;
 
-      // Proxy streaming response directly.
-      return new Response(response.body, {
-        status: response.status,
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const attemptMessages = attempt === 1
+          ? [{ role: "system" as const, content: systemPrompt }, ...messages]
+          : [
+            { role: "system" as const, content: systemPrompt },
+            ...messages,
+            {
+              role: "system" as const,
+              content: `Validation errors on previous output: ${JSON.stringify(lastErrors).slice(0, 2000)}. Regenerate a single valid JSON object that satisfies the contract exactly.`,
+            },
+          ];
+
+        const { data, model } = await mythicOpenAIChatCompletions(
+          {
+            messages: attemptMessages,
+            stream: false,
+            temperature: 0.7,
+          },
+          requestedModel,
+        );
+
+        const rawContent = (data as Record<string, unknown>)?.choices
+          && Array.isArray((data as Record<string, unknown>).choices)
+          ? (((data as { choices: Array<{ message?: { content?: unknown } }> }).choices[0]?.message?.content) ?? "")
+          : "";
+        dmText = typeof rawContent === "string" ? rawContent : String(rawContent ?? "");
+
+        const parsedOut = parseDmNarratorOutput(dmText);
+        if (!parsedOut.ok) {
+          lastErrors = parsedOut.errors;
+          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
+          dmParsed = parsedOut;
+          continue;
+        }
+
+        // Additional validation: if suggesting shop actions, vendorId must match board summary.
+        const actions = parsedOut.value.ui_actions ?? [];
+        const badShop = actions.find((action) => {
+          if (action.intent !== "shop") return false;
+          const vendorId = (action.payload as Record<string, unknown> | undefined)?.vendorId;
+          return typeof vendorId !== "string" || !allowedVendorIds.has(vendorId);
+        });
+        if (badShop) {
+          const vendorId = (badShop.payload as Record<string, unknown> | undefined)?.vendorId;
+          lastErrors = [`ui_actions.shop.vendorId_invalid:${typeof vendorId === "string" ? vendorId : "missing"}`];
+          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
+          dmParsed = { ok: false, errors: lastErrors };
+          continue;
+        }
+
+        dmParsed = parsedOut;
+        break;
+      }
+
+      if (!dmParsed || !dmParsed.ok) {
+        ctx.log.error("dm.request.rejected", { request_id: ctx.requestId, errors: lastErrors });
+        const fallback = {
+          schema_version: "mythic.dm.narrator.v1",
+          narration: "The story stutters and resets. Rephrase your action and try again.",
+          scene: { mood: "glitch", focus: "retry" },
+        };
+        const text = JSON.stringify(fallback);
+        return new Response(streamOpenAiDelta(text), {
+          status: 200,
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "x-request-id": ctx.requestId,
+          },
+        });
+      }
+
+      const boardType = (compactBoard as Record<string, unknown> | null)?.board_type;
+      const boardId = (compactBoard as Record<string, unknown> | null)?.board_id;
+      if (typeof boardType !== "string" || typeof boardId !== "string") {
+        return new Response(JSON.stringify({ error: "Active board not found", code: "board_not_found", requestId: ctx.requestId }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const { patches, dropped } = normalizeWorldPatches(dmParsed.value.patches);
+      if (dropped > 0) {
+        warnings.push(`dropped_invalid_patches:${dropped}`);
+      }
+
+      const dmRequestJson = {
+        schema_version: "mythic.turn.request.v1",
+        campaign_id: campaignId,
+        player_id: user.userId,
+        board_id: boardId,
+        board_type: boardType,
+        expected_turn_index: expectedTurnIndex,
+        turn_seed: turnSeed.toString(),
+        model: requestedModel,
+        messages,
+        actionContext: actionContext ?? null,
+        warnings,
+      };
+
+      const dmResponseJson: Record<string, unknown> = {
+        ...dmParsed.value,
+        schema_version: dmParsed.value.schema_version ?? "mythic.dm.narrator.v1",
+        roll_log: prng.rollLog,
+        turn: {
+          expected_turn_index: expectedTurnIndex,
+          turn_seed: turnSeed.toString(),
+        },
+      };
+
+      const commit = await svc.rpc("mythic_commit_turn", {
+        campaign_id: campaignId,
+        player_id: user.userId,
+        board_id: boardId,
+        board_type: boardType,
+        turn_seed: turnSeed.toString(),
+        dm_request_json: dmRequestJson,
+        dm_response_json: dmResponseJson,
+        patches_json: patches,
+        roll_log_json: prng.rollLog,
+      });
+
+      if (commit.error) {
+        ctx.log.error("dm.turn_commit.failed", {
+          request_id: ctx.requestId,
+          campaign_id: campaignId,
+          hint: errMessage(commit.error, "commit failed"),
+          code: (commit.error as { code?: unknown }).code ?? null,
+        });
+        const msg = errMessage(commit.error, "unknown");
+        const isConflict = String((commit.error as { code?: unknown }).code ?? "").includes("40001")
+          || msg.includes("expected_turn_index_")
+          || msg.includes("40001");
+        return new Response(
+          JSON.stringify({
+            error: isConflict
+              ? "Another turn committed concurrently. Retry your action."
+              : `Failed to commit turn: ${msg}`,
+            code: isConflict ? "turn_conflict" : "turn_commit_failed",
+            requestId: ctx.requestId,
+          }),
+          { status: isConflict ? 409 : 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      const commitPayload = commit.data && typeof commit.data === "object" ? commit.data as Record<string, unknown> : null;
+      if (commitPayload?.ok !== true) {
+        ctx.log.error("dm.turn_commit.rejected", { request_id: ctx.requestId, commit: commitPayload });
+        return new Response(
+          JSON.stringify({
+            error: "Turn commit rejected",
+            code: "turn_commit_rejected",
+            details: commitPayload,
+            requestId: ctx.requestId,
+          }),
+          { status: 500, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      dmResponseJson.meta = {
+        ...(typeof dmResponseJson.meta === "object" && dmResponseJson.meta ? dmResponseJson.meta : {}),
+        turn_id: commitPayload.turn_id ?? null,
+        turn_index: commitPayload.turn_index ?? expectedTurnIndex,
+        turn_seed: turnSeed.toString(),
+        world_time: commitPayload.world_time ?? null,
+        heat: commitPayload.heat ?? null,
+      };
+
+      const outText = JSON.stringify(dmResponseJson);
+      return new Response(streamOpenAiDelta(outText), {
+        status: 200,
         headers: {
-          "Content-Type": response.headers.get("Content-Type") ?? "text/event-stream",
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
           "x-request-id": ctx.requestId,
         },
       });
@@ -593,4 +860,3 @@ ${jsonOnlyContract()}
     }
   },
 };
-

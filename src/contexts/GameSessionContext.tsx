@@ -23,20 +23,6 @@ export function GameSessionProvider({
   );
 }
 
-export function MockGameSessionProvider({
-  value,
-  children,
-}: {
-  value: GameSessionContextValue;
-  children: ReactNode;
-}) {
-  return (
-    <GameSessionContext.Provider value={value}>
-      {children}
-    </GameSessionContext.Provider>
-  );
-}
-
 export function useGameSessionContext(): GameSessionContextValue {
   const context = useContext(GameSessionContext);
   if (!context) {

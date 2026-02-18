@@ -105,7 +105,7 @@ export async function runOperation<T>(options: RunOperationOptions<T>): Promise<
       if (signal.aborted) {
         const timeoutHit = timeoutController.wasTimeout();
         operation = withOperationStatus(operation, {
-          status: "CANCELLED",
+          status: timeoutHit ? "FAILED" : "CANCELLED",
           ended_at: Date.now(),
           error_code: timeoutHit ? "timeout" : "cancelled",
           error_message: timeoutHit ? `Operation timed out after ${timeoutMs}ms` : "Operation cancelled",

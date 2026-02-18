@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { z } from "https://deno.land/x/zod@v3.22.4/mod.ts";
-import { aiChatCompletionsWithFallback } from "../_shared/llm_fallback.ts";
+import { mythicOpenAIChatCompletions } from "../_shared/ai_provider.ts";
 import { assertContentAllowed } from "../_shared/content_policy.ts";
 import { clampInt, rngInt, rngPick, weightedPick } from "../_shared/mythic_rng.ts";
 import { createLogger } from "../_shared/logger.ts";
@@ -76,6 +76,11 @@ const RequestSchema = z.object({
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
 });
 const logger = createLogger("mythic-create-character");
+const requestIdFrom = (req: Request) =>
+  req.headers.get("x-request-id")
+  ?? req.headers.get("x-correlation-id")
+  ?? req.headers.get("x-vercel-id")
+  ?? crypto.randomUUID();
 
 function normalizeConcept(s: string): string {
   return s
@@ -367,95 +372,11 @@ function generateMechanicalKit(input: {
   };
 }
 
-function toTitleCase(value: string): string {
-  return value
-    .split(/\s+/g)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function trimText(value: string, max: number): string {
-  const text = value.trim();
-  return text.length > max ? text.slice(0, max).trimEnd() : text;
-}
-
-function deterministicRefineNarrative(input: {
-  classDescription: string;
-  kit: ReturnType<typeof generateMechanicalKit>;
-}): z.infer<typeof ResponseSchema> {
-  const normalized = normalizeConcept(input.classDescription);
-  const meaningfulWords = normalized
-    .split(" ")
-    .filter((word) => word.length >= 4 && !["with", "from", "that", "this", "into", "over", "under", "about"].includes(word));
-  const anchor = meaningfulWords[0] ?? "mythic";
-  const roleLabel = toTitleCase(input.kit.role);
-  const className = trimText(toTitleCase(`${anchor} ${roleLabel}`), 60);
-  const classDescription = trimText(
-    `A ${input.kit.role} built for dirty fights and hard momentum swings. This class weaponizes ${input.kit.weaponFamily} pressure, punishes bad positioning, and accepts controlled self-risk to force advantage windows.`,
-    2000,
-  );
-
-  const passiveNames = ["Predator's Instinct", "Steel Nerve", "Battle Rhythm", "Cold Focus"];
-  const activeNames = ["Razor Dash", "Guard Break", "Shatter Line", "Killer Angle", "Pressure Step", "Control Spike"];
-  const ultimateNames = ["Ruin Engine", "Cataclysm Vector", "Last Light Protocol", "Execution Storm"];
-
-  let passiveCursor = 0;
-  let activeCursor = 0;
-  let ultimateCursor = 0;
-
-  const skills = input.kit.skills.map((skill) => {
-    let name = skill.name;
-    if (skill.kind === "passive") {
-      name = passiveNames[passiveCursor % passiveNames.length]!;
-      passiveCursor += 1;
-    } else if (skill.kind === "ultimate") {
-      name = ultimateNames[ultimateCursor % ultimateNames.length]!;
-      ultimateCursor += 1;
-    } else {
-      name = activeNames[activeCursor % activeNames.length]!;
-      activeCursor += 1;
-    }
-
-    const description = trimText(
-      skill.kind === "passive"
-        ? `${name} passively reinforces your core loop and keeps pressure on during neutral turns.`
-        : skill.kind === "ultimate"
-          ? `${name} detonates your finisher window with high upside and a built-in drawback. KRAK-BOOM.`
-          : `${name} executes your tactical loop: force movement, crack defense, and convert openings into damage.`,
-      2000,
-    );
-
-    return {
-      ...skill,
-      name,
-      description,
-    };
-  });
-
-  return {
-    class_name: className,
-    class_description: classDescription,
-    weapon_identity: {
-      family: input.kit.weaponFamily,
-      notes: `Prefers ${input.kit.weaponFamily} engagements and tempo control over passive trading.`,
-    },
-    role: input.kit.role,
-    base_stats: input.kit.baseStats,
-    resources: input.kit.resources,
-    weakness: {
-      id: input.kit.weakness.id,
-      description: trimText(input.kit.weakness.description, 2000),
-      counterplay: trimText(input.kit.weakness.counterplay, 2000),
-    },
-    skills,
-  };
-}
-
 serve(async (req) => {
+  const requestId = requestIdFrom(req);
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") {
-    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+    return new Response(JSON.stringify({ error: "Method not allowed", code: "method_not_allowed", requestId }), {
       status: 405,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -464,7 +385,7 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader?.startsWith("Bearer ")) {
-      return new Response(JSON.stringify({ error: "Authentication required" }), {
+      return new Response(JSON.stringify({ error: "Authentication required", code: "auth_required", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -482,7 +403,7 @@ serve(async (req) => {
     const authClient = createClient(supabaseUrl, anonKey);
     const { data: { user }, error: userError } = await authClient.auth.getUser(authToken);
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired authentication token" }), {
+      return new Response(JSON.stringify({ error: "Invalid or expired authentication token", code: "auth_invalid", requestId }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -490,7 +411,7 @@ serve(async (req) => {
 
     const parsedBody = RequestSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) {
-      return new Response(JSON.stringify({ error: "Invalid request", details: parsedBody.error.flatten() }), {
+      return new Response(JSON.stringify({ error: "Invalid request", code: "invalid_request", details: parsedBody.error.flatten(), requestId }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -510,7 +431,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (!campaign) {
-      return new Response(JSON.stringify({ error: "Campaign not found" }), {
+      return new Response(JSON.stringify({ error: "Campaign not found", code: "campaign_not_found", requestId }), {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -524,7 +445,7 @@ serve(async (req) => {
       .maybeSingle();
 
     if (!member && campaign.owner_id !== user.id) {
-      return new Response(JSON.stringify({ error: "Not authorized for this campaign" }), {
+      return new Response(JSON.stringify({ error: "Not authorized for this campaign", code: "campaign_access_denied", requestId }), {
         status: 403,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -555,7 +476,7 @@ serve(async (req) => {
     const canonicalRules = rulesRow?.rules ? JSON.stringify(rulesRow.rules) : "{}";
     const canonicalScript = scriptRow?.content ?? "";
 
-    // Ask Groq to rewrite names/descriptions only; mechanics are deterministic.
+    // Ask OpenAI to rewrite names/descriptions only; mechanics stay deterministic.
     const systemPrompt = `You are generating a Mythic Weave class kit.\n\nCANONICAL GENERATOR SCRIPT (authoritative):\n${canonicalScript}\n\nCANONICAL RULES JSON (authoritative):\n${canonicalRules}\n\nTASK:\n- You will receive a deterministic mechanics skeleton JSON (numbers, cooldowns, targeting, costs, effects_json/scaling_json/counterplay).\n- Do NOT change any numeric values, cooldowns, range_tiles, targeting, targeting_json, or cost_json.\n- Improve ONLY these fields: class_name, class_description, weapon_identity.notes (optional), weakness.description/counterplay (may rephrase but keep meaning), each skill.name, each skill.description.\n- Tone: living comic book, mischievous ruthless DM energy. Use onomatopoeia inside descriptions sparingly.\n- NO sexual content. NO sexual violence. Violence/gore allowed. Profanity allowed.\n\nOutput MUST be ONLY valid JSON matching this schema:\n{\n  "class_name": string,\n  "class_description": string,\n  "weapon_identity": {"family": string, "notes"?: string},\n  "role": string,\n  "base_stats": {offense:int, defense:int, control:int, support:int, mobility:int, utility:int},\n  "resources": object,\n  "weakness": {id:string, description:string, counterplay:string},\n  "skills": [ {kind, targeting, targeting_json, name, description, range_tiles, cooldown_turns, cost_json, effects_json, scaling_json, counterplay, narration_style} ]\n}`;
 
     const skeleton = {
@@ -569,55 +490,41 @@ serve(async (req) => {
       skills: kit.skills,
     };
 
-    let refinedData: z.infer<typeof ResponseSchema> | null = null;
     const warnings: string[] = [];
+    const completion = await mythicOpenAIChatCompletions(
+      {
+        temperature: 0.2,
+        messages: [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `CLASS CONCEPT: ${classDescription}\nSEED: ${seed}\n\nMECHANICS SKELETON (do not change numbers):\n${JSON.stringify(skeleton)}`,
+          },
+        ],
+      },
+      "gpt-4o-mini",
+    );
+    const completionData = completion.data as { choices?: Array<{ message?: { content?: string } }> };
+    const content = completionData?.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error("OpenAI returned an empty response for class refinement");
+    }
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("OpenAI response was not valid JSON");
+
+    let parsedJson: unknown;
     try {
-      const completion = await aiChatCompletionsWithFallback(
-        {
-          temperature: 0.2,
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content: `CLASS CONCEPT: ${classDescription}\nSEED: ${seed}\n\nMECHANICS SKELETON (do not change numbers):\n${JSON.stringify(skeleton)}`,
-            },
-          ],
-        },
-        { openai: "gpt-4o-mini", groq: "llama-3.3-70b-versatile" },
-      );
-      if (completion.attempts.length > 1) {
-        warnings.push(`llm_fallback_attempts:${completion.attempts.join(" | ")}`);
-      }
-      const completionData = completion.data as { choices?: Array<{ message?: { content?: string } }> };
-      const content = completionData?.choices?.[0]?.message?.content;
-      if (!content) throw new Error("No response from AI");
-
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error("AI response was not valid JSON");
-
-      let parsedJson: unknown;
-      try {
-        parsedJson = JSON.parse(jsonMatch[0]);
-      } catch {
-        throw new Error("AI returned malformed JSON");
-      }
-
-      const refined = ResponseSchema.safeParse(parsedJson);
-      if (!refined.success) {
-        throw new Error(`AI output failed schema validation: ${JSON.stringify(refined.error.flatten())}`);
-      }
-      refinedData = refined.data;
-    } catch (llmError) {
-      logger.warn("create_character.llm_fallback", {
-        reason: sanitizeError(llmError).message,
-      });
-      warnings.push(`llm_unavailable:${llmError instanceof Error ? llmError.message : String(llmError)}`);
-      refinedData = deterministicRefineNarrative({ classDescription, kit });
+      parsedJson = JSON.parse(jsonMatch[0]);
+    } catch {
+      throw new Error("OpenAI returned malformed JSON");
     }
-    if (!refinedData) {
-      refinedData = deterministicRefineNarrative({ classDescription, kit });
-      warnings.push("llm_unavailable:fallback_without_exception");
+
+    const refined = ResponseSchema.safeParse(parsedJson);
+    if (!refined.success) {
+      throw new Error(`OpenAI output failed schema validation: ${JSON.stringify(refined.error.flatten())}`);
     }
+    const refinedData = refined.data;
 
     // Enforce content policy on stored text fields.
     assertContentAllowed([
@@ -642,11 +549,23 @@ serve(async (req) => {
       concept: classDescription,
     };
 
+    const normalizeResources = (
+      refined: Record<string, unknown>,
+      existing: Record<string, unknown> | null,
+    ): Record<string, unknown> => {
+      const next: Record<string, unknown> = { ...refined };
+      const refinedCoins = Number(next.coins);
+      const existingCoins = existing ? Number(existing.coins) : Number.NaN;
+      const chosen = Number.isFinite(existingCoins) ? existingCoins : Number.isFinite(refinedCoins) ? refinedCoins : 100;
+      next.coins = Math.max(0, Math.floor(chosen));
+      return next;
+    };
+
     // Upsert by (campaign_id, player_id, name) isn't unique; so create new or update existing by player+campaign+name.
     const { data: existingChars, error: existingError } = await svc
       .schema("mythic")
       .from("characters")
-      .select("id")
+      .select("id, resources")
       .eq("campaign_id", campaignId)
       .eq("player_id", user.id)
       .eq("name", characterName)
@@ -654,8 +573,16 @@ serve(async (req) => {
     if (existingError) throw existingError;
 
     let characterId: string;
+    const refinedResources = refinedData.resources as unknown as Record<string, unknown>;
+    let finalResources = normalizeResources(refinedResources, null);
     if (existingChars && existingChars.length > 0) {
       characterId = existingChars[0]!.id as string;
+      const existingResources =
+        existingChars[0] && typeof (existingChars[0] as { resources?: unknown }).resources === "object"
+          ? ((existingChars[0] as { resources?: Record<string, unknown> }).resources ?? null)
+          : null;
+      const mergedResources = normalizeResources(refinedResources, existingResources);
+      finalResources = mergedResources;
       const { error: updErr } = await svc
         .schema("mythic")
         .from("characters")
@@ -668,7 +595,7 @@ serve(async (req) => {
           mobility: refinedData.base_stats.mobility,
           utility: refinedData.base_stats.utility,
           class_json: classJson,
-          resources: refinedData.resources,
+          resources: mergedResources,
           updated_at: new Date().toISOString(),
         })
         .eq("id", characterId);
@@ -682,6 +609,8 @@ serve(async (req) => {
         .eq("character_id", characterId);
       if (delSkillsErr) throw delSkillsErr;
     } else {
+      const mergedResources = normalizeResources(refinedResources, null);
+      finalResources = mergedResources;
       const { data: inserted, error: insErr } = await svc
         .schema("mythic")
         .from("characters")
@@ -697,7 +626,7 @@ serve(async (req) => {
           mobility: refinedData.base_stats.mobility,
           utility: refinedData.base_stats.utility,
           class_json: classJson,
-          resources: refinedData.resources,
+          resources: mergedResources,
           derived_json: {},
         })
         .select("id")
@@ -741,23 +670,29 @@ serve(async (req) => {
           weapon_identity: refinedData.weapon_identity,
           weakness: refinedData.weakness,
           base_stats: refinedData.base_stats,
-          resources: refinedData.resources,
+          resources: finalResources,
         },
         skills: refinedData.skills,
         skill_ids: insertedSkills?.map((r) => r.id) ?? [],
         warnings,
+        provider: completion.provider,
+        model: completion.model,
+        requestId,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (error) {
     const normalized = sanitizeError(error);
     logger.error("create_character.failed", error);
+    const code = normalized.code ?? "create_character_failed";
+    const status = code === "openai_not_configured" ? 503 : code === "openai_request_failed" ? 502 : 500;
     return new Response(
       JSON.stringify({
         error: normalized.message || "Failed to create character",
-        code: normalized.code ?? "create_character_failed",
+        code,
+        requestId,
       }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      { status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });

@@ -18,6 +18,7 @@ export interface MythicApiConfig {
   supabaseServiceRoleKey: string;
   supabaseJwtIssuer: string;
   supabaseJwksUrl: string;
+  mythicTurnSalt: string;
   openaiApiKey: string | null;
   openaiBaseUrl: string;
 }
@@ -39,6 +40,7 @@ export function getConfig(): MythicApiConfig {
   const supabaseJwtIssuer = `${supabaseUrl.replace(/\/$/, "")}/auth/v1`;
   const supabaseJwksUrl = `${supabaseUrl.replace(/\/$/, "")}/auth/v1/.well-known/jwks.json`;
 
+  const mythicTurnSalt = (process.env.MYTHIC_TURN_SALT ?? "").trim();
   const openaiApiKey = (process.env.OPENAI_API_KEY ?? "").trim() || null;
   const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com").trim();
 
@@ -54,6 +56,7 @@ export function getConfig(): MythicApiConfig {
     supabaseServiceRoleKey,
     supabaseJwtIssuer,
     supabaseJwksUrl,
+    mythicTurnSalt,
     openaiApiKey,
     openaiBaseUrl,
   };

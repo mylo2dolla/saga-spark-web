@@ -81,6 +81,22 @@ cat "${dm_ctx_out}"
 
 vendor_id="$(node_get "${dm_ctx_out}" "(j.context?.board_state?.vendors?.[0]?.id||j.board_state?.vendors?.[0]?.id||'')")"
 
+hdr "mythic-dungeon-master (turn resolver SSE)"
+dm_sse_out="${TMP_DIR}/mythic-dungeon-master.sse"
+dm_sse_hdrs="${TMP_DIR}/mythic-dungeon-master.headers"
+curl -sS -D "${dm_sse_hdrs}" -o "${dm_sse_out}" \
+  -X POST "${BASE_URL}/mythic-dungeon-master" \
+  -H "authorization: Bearer ${TOKEN}" \
+  -H "content-type: application/json" \
+  --data "$(printf '{"campaignId":"%s","messages":[{"role":"user","content":"%s"}]}' "${campaign_id}" "smoke: narrate the scene and offer 1-2 choices")"
+
+head -n 8 "${dm_sse_out}"
+if ! grep -q "^data: " "${dm_sse_out}"; then
+  echo "Expected SSE data lines from mythic-dungeon-master; got:" >&2
+  tail -n 20 "${dm_sse_out}" >&2 || true
+  exit 1
+fi
+
 hdr "mythic-board-transition (town -> travel)"
 transition_out="$(curl_json mythic-board-transition "{\"campaignId\":\"${campaign_id}\",\"toBoardType\":\"travel\",\"reason\":\"smoke\"}")"
 cat "${transition_out}"
@@ -142,4 +158,3 @@ echo "campaign_id=${campaign_id}"
 if [[ -n "${character_id}" ]]; then
   echo "character_id=${character_id}"
 fi
-
