@@ -81,7 +81,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         signal: controller.signal,
         // Supabase auth can intermittently take >10s (network + auth gateway). Keep a higher budget and rely on
         // explicit cancel + connectivity checks to avoid "false timeout" failures.
-        timeoutMs: 25_000,
+        timeoutMs: 45_000,
         maxRetries: 1,
         onUpdate: (state) => {
           setAuthOp(state);
@@ -291,15 +291,13 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                 setIsChecking(true);
                 setCheckResult(null);
                 try {
-                  const timeout = (ms: number) =>
-                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out")), ms));
                   const headers = supabaseAnonKey ? { apikey: supabaseAnonKey } : undefined;
-                  const authReq = fetch(`${supabaseUrl}/auth/v1/health`, { method: "GET", headers });
-                  const restReq = fetch(`${supabaseUrl}/rest/v1/`, { method: "GET", headers });
+                  const controller = new AbortController();
+                  const timeoutId = setTimeout(() => controller.abort(), 12_000);
                   const [authRes, restRes] = await Promise.all([
-                    Promise.race([authReq, timeout(6000)]),
-                    Promise.race([restReq, timeout(6000)]),
-                  ]);
+                    fetch(`${supabaseUrl}/auth/v1/health`, { method: "GET", headers, signal: controller.signal }),
+                    fetch(`${supabaseUrl}/rest/v1/`, { method: "GET", headers, signal: controller.signal }),
+                  ]).finally(() => clearTimeout(timeoutId));
                   setCheckResult({
                     authStatus: `auth ${authRes.status}${authRes.status === 401 ? " (key required)" : ""}`,
                     restStatus: `rest ${restRes.status}${restRes.status === 401 ? " (key required)" : ""}`,
@@ -323,19 +321,17 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                 setIsAuthTesting(true);
                 setAuthTestResult(null);
                 try {
-                  const timeout = (ms: number) =>
-                    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out")), ms));
-                  const res = await Promise.race([
-                    fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-                      method: "POST",
-                      headers: {
-                        apikey: supabaseAnonKey,
-                        "Content-Type": "application/json",
-                      },
-                      body: JSON.stringify({ email, password }),
-                    }),
-                    timeout(8000),
-                  ]);
+                  const controller = new AbortController();
+                  const timeoutId = setTimeout(() => controller.abort(), 12_000);
+                  const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+                    method: "POST",
+                    headers: {
+                      apikey: supabaseAnonKey,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ email, password }),
+                    signal: controller.signal,
+                  }).finally(() => clearTimeout(timeoutId));
                   const text = await res.text();
                   const redacted = redactText(text);
                   const snippet = redacted.length > 200 ? `${redacted.slice(0, 200)}...` : redacted;
