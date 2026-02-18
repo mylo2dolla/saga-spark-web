@@ -1,0 +1,18 @@
+# Site bind can be a domain (for TLS) or `http://:80` (IP-only HTTP).
+#
+# Important: browsers do not follow redirects for CORS preflight.
+# If you point the client at an IP (or have no working TLS), use `http://:80`
+# so Caddy does not 308-redirect to https.
+{$MYTHIC_API_SITE:http://:80} {
+  encode zstd gzip
+
+  handle /healthz {
+    reverse_proxy mythic-api:3001
+  }
+
+  # Preserve Supabase Edge function path contract.
+  handle /functions/v1/* {
+    reverse_proxy mythic-api:3001
+  }
+}
+
