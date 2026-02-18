@@ -17,9 +17,14 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const RequestSchema = z.object({
-  inviteCode: z.string().trim().min(4).max(32),
-});
+const RequestSchema = z
+  .object({
+    inviteCode: z.string().trim().min(4).max(32).optional(),
+    invite_code: z.string().trim().min(4).max(32).optional(),
+  })
+  .refine((value) => Boolean(value.inviteCode || value.invite_code), {
+    message: "Invite code is required",
+  });
 
 const syllableA = ["Ash", "Iron", "Dus", "Grim", "Stone", "Glen", "Oath", "Hex", "Rift", "Wolf", "Black", "Silver"];
 const syllableB = ["hold", "bridge", "hollow", "reach", "mark", "port", "spire", "vale", "cross", "ford", "fall", "gate"];
@@ -118,7 +123,8 @@ serve(async (req) => {
     }
 
     const svc = createClient(supabaseUrl, serviceRoleKey);
-    const inviteCode = parsed.data.inviteCode.trim();
+    const rawInvite = (parsed.data.inviteCode ?? parsed.data.invite_code ?? "").trim();
+    const inviteCode = rawInvite.toUpperCase();
     const idempotencyHeader = idempotencyKeyFromRequest(req);
     const idempotencyKey = idempotencyHeader ? `${user.id}:${idempotencyHeader}` : null;
     if (idempotencyKey) {
@@ -129,21 +135,16 @@ serve(async (req) => {
       }
     }
 
-    const { data: foundCampaigns, error: findError } = await svc
-      .rpc("get_campaign_by_invite_code", { _invite_code: inviteCode });
-    if (findError) throw findError;
+    const warnings: string[] = [];
 
-    const campaign = (foundCampaigns?.[0] ?? null) as
-      | {
-          id: string;
-          name: string;
-          description: string | null;
-          invite_code: string;
-          owner_id: string;
-          is_active: boolean;
-          updated_at: string;
-        }
-      | null;
+    // IMPORTANT: Do not use the legacy get_campaign_by_invite_code RPC here.
+    // It may return a reduced column set and cause false "inactive" failures.
+    const { data: campaign, error: campaignLookupError } = await svc
+      .from("campaigns")
+      .select("id,name,description,invite_code,owner_id,is_active,updated_at")
+      .eq("invite_code", inviteCode)
+      .maybeSingle();
+    if (campaignLookupError) throw campaignLookupError;
 
     if (!campaign) {
       return new Response(JSON.stringify({ ok: false, error: "Invalid invite code", code: "invalid" }), {
@@ -167,38 +168,71 @@ serve(async (req) => {
       .maybeSingle();
     if (memberLookupError) throw memberLookupError;
 
+    let alreadyMember = Boolean(existingMember);
+
     if (!existingMember) {
       const { error: joinError } = await svc.from("campaign_members").insert({
         campaign_id: campaign.id,
         user_id: user.id,
         is_dm: false,
       });
-      if (joinError) throw joinError;
+      if (joinError) {
+        // If a unique constraint exists (campaign_id,user_id), treat the race as already_member.
+        if (joinError.code === "23505") {
+          alreadyMember = true;
+        } else {
+          throw joinError;
+        }
+      }
     }
 
     // Ensure Mythic runtime artifacts exist so joined campaigns are always actionable.
-    const seedBase = hashSeed(`${campaign.id}:${user.id}:join`);
+    const seedBase = hashSeed(`${campaign.id}:${campaign.name}:${campaign.invite_code}`);
     await svc.schema("mythic").from("dm_campaign_state").upsert({ campaign_id: campaign.id }, { onConflict: "campaign_id" });
     await svc.schema("mythic").from("dm_world_tension").upsert({ campaign_id: campaign.id }, { onConflict: "campaign_id" });
 
-    const { data: activeBoard } = await svc
+    const { data: activeBoard, error: activeBoardErr } = await svc
       .schema("mythic")
       .from("boards")
       .select("id")
       .eq("campaign_id", campaign.id)
       .eq("status", "active")
+      .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (activeBoardErr) throw activeBoardErr;
 
     if (!activeBoard) {
-      const { error: boardInsertError } = await svc.schema("mythic").from("boards").insert({
-        campaign_id: campaign.id,
-        board_type: "town",
-        status: "active",
-        state_json: makeTownState(seedBase),
-        ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
-      });
-      if (boardInsertError) throw boardInsertError;
+      const nowIso = new Date().toISOString();
+      const { data: latestNonCombat, error: latestErr } = await svc
+        .schema("mythic")
+        .from("boards")
+        .select("id,board_type,status")
+        .eq("campaign_id", campaign.id)
+        .neq("board_type", "combat")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (latestErr) throw latestErr;
+
+      if (latestNonCombat?.id) {
+        const { error: activateErr } = await svc
+          .schema("mythic")
+          .from("boards")
+          .update({ status: "active", updated_at: nowIso })
+          .eq("id", latestNonCombat.id)
+          .eq("campaign_id", campaign.id);
+        if (activateErr) throw activateErr;
+      } else {
+        const { error: boardInsertError } = await svc.schema("mythic").from("boards").insert({
+          campaign_id: campaign.id,
+          board_type: "town",
+          status: "active",
+          state_json: makeTownState(seedBase),
+          ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
+        });
+        if (boardInsertError) throw boardInsertError;
+      }
     }
 
     const worldProfilePayload = {
@@ -213,20 +247,30 @@ serve(async (req) => {
       },
     };
 
-    await svc
-      .schema("mythic")
-      .from("world_profiles")
-      .upsert(worldProfilePayload, { onConflict: "campaign_id" });
+    // Non-destructive: only insert if missing; do not overwrite existing world profile.
+    {
+      const { error: primaryErr } = await svc
+        .schema("mythic")
+        .from("world_profiles")
+        .upsert(worldProfilePayload, { onConflict: "campaign_id", ignoreDuplicates: true });
+      if (primaryErr) {
+        warnings.push(`world_profiles: ${primaryErr.message ?? "write failed"}`);
+      }
 
-    await svc
-      .schema("mythic")
-      .from("campaign_world_profiles")
-      .upsert(worldProfilePayload, { onConflict: "campaign_id" });
+      const { error: mirrorErr } = await svc
+        .schema("mythic")
+        .from("campaign_world_profiles")
+        .upsert(worldProfilePayload, { onConflict: "campaign_id", ignoreDuplicates: true });
+      if (mirrorErr) {
+        warnings.push(`campaign_world_profiles: ${mirrorErr.message ?? "write failed"}`);
+      }
+    }
 
     const response = new Response(JSON.stringify({
       ok: true,
       campaign,
-      already_member: Boolean(existingMember),
+      already_member: alreadyMember,
+      ...(warnings.length > 0 ? { warnings } : {}),
     }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },

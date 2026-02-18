@@ -280,7 +280,7 @@ export default function DashboardScreen() {
   };
 
   const handleJoin = async () => {
-    const code = inviteCode.trim();
+    const code = inviteCode.trim().toUpperCase();
     if (!activeUser || !activeAccessToken) {
       setJoinError("You must be signed in to join a campaign.");
       setJoinErrorCode("auth_required");
@@ -304,14 +304,14 @@ export default function DashboardScreen() {
       const { result: data } = await runOperation({
         name: "dashboard.join_campaign",
         signal: controller.signal,
-        timeoutMs: 12_000,
+        timeoutMs: 18_000,
         maxRetries: 1,
         onUpdate: (state) => {
           setJoinOp(state);
           recordOperation(state);
         },
         run: async ({ signal }) => {
-          const { data, error } = await callEdgeFunction<{ ok: boolean; campaign: CampaignSummary; already_member?: boolean }>(
+          const { data, error } = await callEdgeFunction<{ ok: boolean; campaign: CampaignSummary; already_member?: boolean; warnings?: string[] }>(
             "mythic-join-campaign",
             {
               requireAuth: true,
@@ -329,9 +329,12 @@ export default function DashboardScreen() {
         },
       });
 
+      const warningText = Array.isArray(data.warnings) && data.warnings.length > 0
+        ? ` (${data.warnings.join("; ")})`
+        : "";
       toast({
         title: data.already_member ? "Already in campaign" : "Joined campaign",
-        description: data.campaign.name,
+        description: `${data.campaign.name}${warningText}`,
       });
       setInviteCode("");
       void loadCampaigns();
