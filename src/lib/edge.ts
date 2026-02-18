@@ -42,7 +42,13 @@ const MAX_CONCURRENT_EDGE_CALLS = 6;
 const MAX_RESPONSE_SNIPPET = 2000;
 
 let activeEdgeCalls = 0;
-const edgeCallQueue: Array<() => void> = [];
+type EdgeQueueEntry = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+};
+const edgeCallQueue: EdgeQueueEntry[] = [];
 
 const inFlightJsonCalls = new Map<string, Promise<unknown>>();
 const inFlightRawCalls = new Map<string, Promise<Response>>();
@@ -325,11 +331,37 @@ const waitBackoff = async (attempt: number, baseMs: number, signal?: AbortSignal
   return ms;
 };
 
-const withEdgeSlot = async <T>(run: () => Promise<T>): Promise<T> => {
+const waitForEdgeSlot = async (signal?: AbortSignal) => {
+  if (activeEdgeCalls < MAX_CONCURRENT_EDGE_CALLS) return;
+  await new Promise<void>((resolve, reject) => {
+    const entry: EdgeQueueEntry = {
+      resolve: () => {
+        if (entry.onAbort && entry.signal) entry.signal.removeEventListener("abort", entry.onAbort);
+        resolve();
+      },
+      reject: (error) => {
+        if (entry.onAbort && entry.signal) entry.signal.removeEventListener("abort", entry.onAbort);
+        reject(error);
+      },
+      signal,
+    };
+
+    if (signal) {
+      entry.onAbort = () => {
+        const idx = edgeCallQueue.indexOf(entry);
+        if (idx >= 0) edgeCallQueue.splice(idx, 1);
+        entry.reject(new Error("Request cancelled"));
+      };
+      signal.addEventListener("abort", entry.onAbort, { once: true });
+    }
+
+    edgeCallQueue.push(entry);
+  });
+};
+
+const withEdgeSlot = async <T>(run: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
   if (activeEdgeCalls >= MAX_CONCURRENT_EDGE_CALLS) {
-    await new Promise<void>((resolve) => {
-      edgeCallQueue.push(resolve);
-    });
+    await waitForEdgeSlot(signal);
   }
 
   activeEdgeCalls += 1;
@@ -338,7 +370,7 @@ const withEdgeSlot = async <T>(run: () => Promise<T>): Promise<T> => {
   } finally {
     activeEdgeCalls = Math.max(0, activeEdgeCalls - 1);
     const next = edgeCallQueue.shift();
-    if (next) next();
+    if (next) next.resolve();
   }
 };
 
@@ -532,7 +564,7 @@ export async function callEdgeFunction<T>(
       raw: new Response(null, { status: 599, statusText: "edge_fetch_failed" }),
       skipped: false,
     };
-  });
+  }, options?.signal);
 
   if (dedupeKey) {
     inFlightJsonCalls.set(dedupeKey, runPromise as Promise<unknown>);
@@ -613,7 +645,7 @@ export async function callEdgeFunctionRaw(
     }
 
     throw new Error(`Edge function ${name} failed after retries`);
-  });
+  }, options?.signal);
 
   if (dedupeKey) inFlightRawCalls.set(dedupeKey, runPromise);
   try {
