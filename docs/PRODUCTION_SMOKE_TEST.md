@@ -14,6 +14,11 @@ npm run dev
 
 Open `http://localhost:8080`.
 
+Confirm your Mythic API base is reachable (VM):
+```bash
+curl -sS -D - -o /dev/null http://5.78.189.122/healthz | head
+```
+
 ## 2) Core flow
 
 1. Login with a valid account.

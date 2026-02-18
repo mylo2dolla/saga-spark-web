@@ -1,6 +1,10 @@
-# Supabase Edge Functions - AI Provider Configuration
+# Supabase Edge Functions (Rollback Only)
 
-These functions call Groq directly from the server. No AI keys are ever sent to the client.
+Primary production traffic should run through the Hetzner VM Mythic API (`services/mythic-api/`) while Supabase remains Auth + Postgres.
+
+This folder is kept for rollback/compatibility: you can still deploy Supabase Edge Functions if you need an emergency fallback, but the web client should normally point at the VM base URL (`VITE_MYTHIC_FUNCTIONS_BASE_URL`).
+
+These functions call AI providers from the server. No AI keys are ever sent to the client.
 
 Required secrets:
 

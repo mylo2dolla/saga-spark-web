@@ -7,12 +7,14 @@
 
 ## Bootstrap (newest version)
 1. Ensure Supabase CLI is linked and logged in.
-2. Apply DB migrations and deploy functions:
+2. Apply DB migrations:
    ```bash
    supabase db push
-   supabase functions deploy mythic-create-campaign mythic-bootstrap mythic-create-character mythic-dungeon-master mythic-board-transition mythic-combat-use-skill mythic-combat-start mythic-recompute-character mythic-dm-context world-generator world-content-writer generate-class
    ```
-3. Build and run:
+3. Deploy Mythic API to the Hetzner VM:
+   - See `services/mythic-api/README.md`
+   - Ensure the client has `VITE_MYTHIC_FUNCTIONS_BASE_URL` set to the VM base (`.../functions/v1`)
+4. Build and run:
    ```bash
    npm run build
    npm run dev

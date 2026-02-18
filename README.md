@@ -1,6 +1,10 @@
 # Saga Spark
 
-Saga Spark is a fantasy RPG companion web app built with Vite, React, and Supabase functions.
+Saga Spark is a fantasy RPG companion web app built with Vite, React, and Supabase (Auth + Postgres).
+
+Runtime API architecture:
+- Supabase: Auth + Postgres (canonical DB)
+- Hetzner VM: Mythic API (Supabase Edge Functions-compatible routes at `/functions/v1/*`)
 
 ## Local development
 
@@ -10,6 +14,11 @@ Install dependencies and start the dev server:
 npm install
 npm run dev
 ```
+
+Required env for the web app (local dev):
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_MYTHIC_FUNCTIONS_BASE_URL` (points to Hetzner Mythic API, includes `/functions/v1`)
 
 ## Vault source-of-truth sync
 
@@ -74,7 +83,11 @@ scripts/uninstall-vaultsync-launchd.sh
    - Authentication → Providers → Email → set “Confirm email” to OFF.
    - Authentication → Providers → Email → set “Allowed email domains” to empty (no restrictions).
 4) Supabase Dashboard SQL editor: SQL Editor → New query → paste `supabase/bootstrap.sql` → Run.
-5) Deploy edge functions: `supabase functions deploy world-generator` and `supabase functions deploy world-content-writer`.
+5) Deploy Mythic API to your VM (recommended) and cut over the web client:
+   - See `services/mythic-api/README.md`
+   - Set `VITE_MYTHIC_FUNCTIONS_BASE_URL=http://<vps-ip>/functions/v1` for IP-only dev cutover.
+
+Note: Supabase Edge Functions can remain deployed as rollback, but primary traffic should go to the VM.
 
 ## Supabase migrations (local + remote)
 
@@ -179,6 +192,21 @@ Set your API key in the environment (or a local `.env.local` file) and run the v
 export GROQ_API_KEY="your_api_key"
 npm run verify:groq
 ```
+
+## Mythic API (Hetzner VM) deploy
+
+The Mythic API is in `services/mythic-api/` and provides `/functions/v1/<function-name>` endpoints compatible with the existing client.
+
+Quick deploy (from the VM, Docker required):
+1. `cd /opt/mythic-api` (or your chosen path)
+2. `cp .env.example .env` and fill:
+   - `SUPABASE_URL`, `SUPABASE_PROJECT_REF`, `SUPABASE_SERVICE_ROLE_KEY`
+   - `OPENAI_API_KEY`, `MYTHIC_TURN_SALT`
+   - `MYTHIC_ALLOWED_ORIGINS` (comma-separated) or leave empty for dev
+   - For IP-only: set `MYTHIC_API_SITE=http://:80` (prevents CORS-preflight https redirects)
+3. `docker compose up -d --build`
+
+Security note: IP-only HTTP is fine for local/dev. For production, use a real domain + TLS so Supabase access tokens are not sent over plaintext HTTP.
 
 ## RLS smoke test (optional)
 

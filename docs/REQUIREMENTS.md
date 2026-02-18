@@ -17,16 +17,26 @@
 ./scripts/install-deps.sh
 ```
 
-## API keys
-Fill these in `/Users/dev/saga-spark-web/.env`:
+## Web app env
+Fill these in `/Users/dev/saga-spark-web/.env` (or `.env.local`):
 ```
-OPENAI_API_KEY=
-GROQ_API_KEY=
 VITE_SUPABASE_URL=
 VITE_SUPABASE_ANON_KEY=
+# Required for routing `/functions/v1/*` to your Hetzner VM.
+# Example: http://5.78.189.122/functions/v1
+VITE_MYTHIC_FUNCTIONS_BASE_URL=
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 ```
+
+## Server env (Hetzner VM / Mythic API)
+These live on the VM only (do not put service role or OpenAI keys in the browser):
+- `SUPABASE_URL`
+- `SUPABASE_PROJECT_REF`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `OPENAI_API_KEY`
+- `MYTHIC_TURN_SALT`
+- `MYTHIC_ALLOWED_ORIGINS` (optional CORS allowlist)
 
 Security requirements:
 - Never commit `.env` values.
