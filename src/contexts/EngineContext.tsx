@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 /**
  * React context for the physics-based combat engine.
  * Provides engine state and actions to all child components.

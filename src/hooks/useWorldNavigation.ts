@@ -185,7 +185,6 @@ export function useWorldNavigation(options: UseWorldNavigationOptions) {
     travelState,
     playerId,
     playerLevel,
-    isInCombat,
     canTravelTo,
     onWorldUpdate,
     onTravelStateUpdate,

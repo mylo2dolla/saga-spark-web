@@ -1,0 +1,103 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic:
+    - generic: "Runtime: DEV (development)"
+    - generic: "version: 0.0.0"
+    - generic: "build: 2026-02-13T03:25:41.607Z"
+    - generic: "git: cd67b24"
+    - generic: "runId: 752867bb-301c-4df4-9608-ab1067c23d0f"
+    - generic: "now: 2026-02-13T03:28:15.813Z"
+    - generic: "base: /"
+    - generic: "href: http://localhost:8081/login"
+  - generic [ref=e26]:
+    - complementary [ref=e27]:
+      - generic [ref=e28]: Saga Spark
+      - navigation [ref=e29]:
+        - link "Dashboard" [ref=e30] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e31] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Mythic" [ref=e32] [cursor=pointer]:
+          - /url: /dashboard#campaigns
+        - link "Servers/Admin" [ref=e33] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: "Auth: psylus13@gmail.com"
+          - generic [ref=e38]: "DB: ok"
+        - generic [ref=e39]: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59/create-character
+      - generic [ref=e40]:
+        - generic [ref=e383]:
+          - generic [ref=e384]:
+            - generic [ref=e385]:
+              - generic [ref=e386]: Mythic Class Forge
+              - generic [ref=e387]: Describe your class. The system generates a real kit in Supabase (mythic schema).
+            - button "Cancel" [disabled]
+          - generic [ref=e390]:
+            - generic [ref=e391]:
+              - generic [ref=e392]: Character Name
+              - generic [ref=e393]:
+                - textbox "Character Name" [disabled] [ref=e394]:
+                  - /placeholder: e.g. Nyx
+                  - text: Aria Flux
+                - generic [ref=e395]:
+                  - button "Random" [disabled]:
+                    - img
+                    - text: Random
+                  - button "Expand" [disabled]:
+                    - img
+                    - text: Expand
+            - generic [ref=e397]:
+              - generic [ref=e398]: Class Concept
+              - generic [ref=e399]:
+                - textbox "Class Concept" [disabled] [ref=e400]:
+                  - /placeholder: e.g. "werewolf ninja pyromancer" or "goblin priest of broken vending machines"
+                  - text: chrono witch gunslinger
+                - generic [ref=e401]:
+                  - button "Random" [disabled]:
+                    - img
+                    - text: Random
+                  - button "Expand" [disabled]:
+                    - img
+                    - text: Expand
+              - generic [ref=e403]: Violence/gore allowed. Sexual content forbidden.
+            - generic [ref=e404]:
+              - button "Forging..." [disabled]:
+                - generic:
+                  - img
+                  - text: Forging...
+        - generic [ref=e405]:
+          - generic [ref=e406]: "route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59/create-character"
+          - generic [ref=e407]: "campaignId: 17496eb8-3ed1-4a9a-ab0d-059bdff54e59"
+          - generic [ref=e408]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+          - generic [ref=e409]: "hasSession: yes"
+          - generic [ref=e410]: "authLoading: false"
+          - generic [ref=e411]: "characterLoading: false"
+          - generic [ref=e412]: "characterExists: no"
+          - generic [ref=e413]: "characterError: none"
+          - generic [ref=e414]: "lastAction: none"
+      - generic [ref=e348]:
+        - generic [ref=e349]: "Build: unknown"
+        - generic [ref=e350]: "Route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59/create-character"
+        - generic [ref=e351]: "Last API Error: none"
+      - generic [ref=e352]:
+        - generic [ref=e353]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e354]: "Anon key present: yes"
+        - generic [ref=e355]: "Session exists: yes"
+        - generic [ref=e356]: "Access token exists: yes"
+        - generic [ref=e357]: "Last status: -"
+        - generic [ref=e358]: "Last body: -"
+        - button "Test generate-class" [ref=e359] [cursor=pointer]
+      - generic:
+        - generic: "FPS: 60"
+        - generic: "Heap: 19 MB"
+        - generic: "Long tasks: 2"
+  - generic [ref=e360]:
+    - generic [ref=e361]: "session: yes"
+    - generic [ref=e362]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e363]: "authLoading: false"
+    - generic [ref=e364]: "route: /mythic/17496eb8-3ed1-4a9a-ab0d-059bdff54e59/create-character"
+    - generic [ref=e365]: "lastAuthError: none"

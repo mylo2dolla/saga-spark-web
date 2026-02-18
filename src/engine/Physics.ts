@@ -144,7 +144,7 @@ export function physicsStep(
   config: EngineConfig
 ): { entities: ReadonlyMap<string, Entity>; events: GameEvent[] } {
   const events: GameEvent[] = [];
-  let updatedEntities = new Map(entities);
+  const updatedEntities = new Map(entities);
   
   const substepDt = dt / config.physicsSubsteps;
   

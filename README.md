@@ -1,73 +1,247 @@
-# Welcome to your Lovable project
+# Saga Spark
 
-## Project info
+Saga Spark is a fantasy RPG companion web app built with Vite, React, and Supabase functions.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Local development
 
-## How can I edit this code?
+Install dependencies and start the dev server:
 
-There are several ways of editing your application.
-
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+```bash
+npm install
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+## Vault source-of-truth sync
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+This repo is configured so `vault/main` is the canonical upstream.
 
-**Use GitHub Codespaces**
+One-command sync from vault:
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```bash
+scripts/vaultsync.sh
+```
 
-## What technologies are used for this project?
+Sync and then mirror to GitHub `origin`:
 
-This project is built with:
+```bash
+scripts/vaultsync.sh --push-origin
+```
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+What this script does:
+- fetches/prunes all remotes
+- ensures `main` tracks `vault/main`
+- enforces `remote.pushDefault=vault`
+- fast-forwards from vault when behind
+- fails fast if local is ahead/diverged from vault (so vault stays canonical)
 
-## How can I deploy this project?
+### Nightly auto-sync (macOS launchd)
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+Install nightly job (default 03:15 local time):
 
-## Can I connect a custom domain to my Lovable project?
+```bash
+scripts/install-vaultsync-launchd.sh
+```
 
-Yes, you can!
+Install with custom time:
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+```bash
+VAULTSYNC_HOUR=2 VAULTSYNC_MINUTE=30 scripts/install-vaultsync-launchd.sh
+```
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Check status:
+
+```bash
+launchctl print "gui/$(id -u)/com.sagaspark.vaultsync" | rg "state =|last exit code =|path ="
+```
+
+Watch logs:
+
+```bash
+tail -f "$HOME/Library/Logs/saga-spark-vaultsync.log"
+```
+
+Remove job:
+
+```bash
+scripts/uninstall-vaultsync-launchd.sh
+```
+
+## Supabase bootstrap (new project)
+
+1) Update `.env` with the new project URL and anon key (`VITE_SUPABASE_ANON_KEY`).
+2) Run `scripts/bootstrap-supabase.sh` to apply migrations to the remote project (or paste `supabase/bootstrap.sql` into the SQL editor).
+3) Supabase Dashboard auth settings (dev-friendly):
+   - Authentication → Providers → Email → set “Confirm email” to OFF.
+   - Authentication → Providers → Email → set “Allowed email domains” to empty (no restrictions).
+4) Supabase Dashboard SQL editor: SQL Editor → New query → paste `supabase/bootstrap.sql` → Run.
+5) Deploy edge functions: `supabase functions deploy world-generator` and `supabase functions deploy world-content-writer`.
+
+## Supabase migrations (local + remote)
+
+Apply migrations locally:
+
+```bash
+supabase db reset
+```
+
+Push migrations to remote:
+
+```bash
+supabase db push
+```
+
+Verification SQL (FKs, indexes, policies from `20260120000000_add_missing_fks_indexes_policies.sql`):
+
+```sql
+SELECT conname
+FROM pg_constraint
+WHERE conname IN ('game_saves_user_id_fkey', 'server_nodes_user_id_fkey');
+
+SELECT indexname
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND indexname IN (
+    'idx_abilities_character_id',
+    'idx_campaign_members_campaign_id',
+    'idx_campaign_members_user_id',
+    'idx_campaigns_owner_id',
+    'idx_characters_campaign_id',
+    'idx_characters_user_id',
+    'idx_chat_messages_campaign_id',
+    'idx_chat_messages_user_id',
+    'idx_combat_state_campaign_id',
+    'idx_grid_state_campaign_id',
+    'idx_server_nodes_campaign_id',
+    'idx_server_nodes_user_id',
+    'idx_game_saves_user_id'
+  );
+
+SELECT polname
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND tablename = 'chat_messages'
+  AND polname IN (
+    'Users can update their own chat messages',
+    'Users can delete their own chat messages'
+  );
+```
+
+## Build
+
+```bash
+npm run build
+```
+
+## Production hardening checks
+
+Run the baseline production checks before shipping:
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+npm run smoke:prod
+```
+
+Full manual checklist:
+- `docs/PRODUCTION_SMOKE_TEST.md`
+
+## Mythic backup and restore
+
+Create a linked-project backup for the `mythic` schema:
+
+```bash
+./scripts/backup-mythic.sh
+```
+
+Restore from a backup file:
+
+```bash
+export SUPABASE_DB_URL="postgresql://postgres:<password>@db.<project-ref>.supabase.co:5432/postgres"
+./scripts/restore-mythic.sh backups/mythic-backup-YYYYMMDD-HHMMSS.sql
+```
+
+## Debug bundle and redaction
+
+`Servers/Admin` includes `Export Debug Bundle`, which downloads a redacted JSON bundle with:
+- build metadata
+- health checks
+- operation history
+- recent surfaced errors
+
+Redaction covers auth headers, JWT-like tokens, and API keys.
+
+## Verify Groq API access
+
+Set your API key in the environment (or a local `.env.local` file) and run the verification script:
+
+```bash
+export GROQ_API_KEY="your_api_key"
+npm run verify:groq
+```
+
+## RLS smoke test (optional)
+
+In the Supabase SQL editor, run `supabase/smoke-test.sql` after replacing `__USER_UUID__` with your user id.
+
+## Playwright smoke test (optional)
+
+Run once to install browsers:
+
+```bash
+npm run test:e2e:install
+```
+
+Then run the smoke test:
+
+```bash
+npm run test:e2e
+```
+
+Notes for Codespaces:
+- If `playwright install --with-deps` fails due to the Yarn apt repo signature, remove `/etc/apt/sources.list.d/yarn.list` and run `sudo npx playwright install-deps`.
+- Alternatively install the missing libs listed by Playwright (e.g. `libatk1.0-0t64`, `libgtk-3-0t64`) and rerun `npm run test:e2e`.
+- You can also run `npm run test:e2e:deps` to apply the workaround automatically.
+
+CI:
+- The Playwright HTML report is uploaded as a workflow artifact named `playwright-report`.
+
+## generate-class curl checks
+
+```bash
+curl -i -X OPTIONS https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-class
+```
+
+```bash
+curl -i -X POST https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-class \
+  -H "apikey: <anon-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"classDescription":"Arcane duelist"}'
+```
+
+```bash
+curl -i -X POST https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-class \
+  -H "apikey: <anon-key>" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"classDescription":"Arcane duelist"}'
+```
+
+## generate-class curl (local/dev)
+
+```bash
+curl -i -X OPTIONS http://127.0.0.1:54321/functions/v1/generate-class
+```
+
+```bash
+curl -i -X POST http://127.0.0.1:54321/functions/v1/generate-class \
+  -H "apikey: <anon-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"classDescription":"Arcane duelist"}'
+```
+
+```bash
+curl -i -X POST http://127.0.0.1:54321/functions/v1/generate-class \
+  -H "Content-Type: application/json" \
+  -d '{"classDescription":"Arcane duelist"}'
+```

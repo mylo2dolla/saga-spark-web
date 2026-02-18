@@ -1,3 +1,5 @@
+/* eslint-disable react-refresh/only-export-components */
+
 import { createContext, useContext, type ReactNode } from "react";
 import { useGameSession } from "@/hooks/useGameSession";
 
@@ -16,6 +18,20 @@ export function GameSessionProvider({
 
   return (
     <GameSessionContext.Provider value={session}>
+      {children}
+    </GameSessionContext.Provider>
+  );
+}
+
+export function MockGameSessionProvider({
+  value,
+  children,
+}: {
+  value: GameSessionContextValue;
+  children: ReactNode;
+}) {
+  return (
+    <GameSessionContext.Provider value={value}>
       {children}
     </GameSessionContext.Provider>
   );

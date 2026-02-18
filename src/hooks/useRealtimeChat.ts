@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { recordProfilesRead } from "@/ui/data/networkHealth";
 
 type MessageType = "player" | "dm" | "system" | "roll";
 
@@ -24,6 +25,28 @@ export interface ChatMessage {
   };
 }
 
+const MESSAGE_TYPES: MessageType[] = ["player", "dm", "system", "roll"];
+
+const normalizeMessageType = (value: unknown): MessageType => {
+  if (typeof value === "string" && MESSAGE_TYPES.includes(value as MessageType)) {
+    return value as MessageType;
+  }
+  return "system";
+};
+
+const normalizeRollData = (value: unknown): ChatMessage["roll_data"] => {
+  if (!value || typeof value !== "object") return null;
+  const obj = value as Record<string, unknown>;
+  const dice = typeof obj.dice === "string" ? obj.dice : undefined;
+  const result = typeof obj.result === "number" ? obj.result : undefined;
+  const modifier = typeof obj.modifier === "number" ? obj.modifier : undefined;
+  const total = typeof obj.total === "number" ? obj.total : undefined;
+  if (!dice && result === undefined && modifier === undefined && total === undefined) {
+    return null;
+  }
+  return { dice, result, modifier, total };
+};
+
 export function useRealtimeChat(campaignId: string | undefined) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -31,10 +54,13 @@ export function useRealtimeChat(campaignId: string | undefined) {
   // Fetch initial messages
   useEffect(() => {
     if (!campaignId) return;
+    let isMounted = true;
 
     const fetchMessages = async () => {
       try {
-        setIsLoading(true);
+        if (isMounted) {
+          setIsLoading(true);
+        }
         
         const { data: messagesData, error } = await supabase
           .from("chat_messages")
@@ -56,30 +82,39 @@ export function useRealtimeChat(campaignId: string | undefined) {
             .select("user_id, display_name, avatar_url")
             .in("user_id", uniqueUserIds);
           profilesData = data || [];
+          recordProfilesRead();
         }
 
         const messagesWithProfiles = (messagesData || []).map(msg => ({
           ...msg,
-          message_type: msg.message_type as MessageType,
-          roll_data: msg.roll_data as ChatMessage["roll_data"],
+          message_type: normalizeMessageType(msg.message_type),
+          roll_data: normalizeRollData(msg.roll_data),
           profile: profilesData.find(p => p.user_id === msg.user_id)
         })) as ChatMessage[];
 
-        setMessages(messagesWithProfiles);
+        if (isMounted) {
+          setMessages(messagesWithProfiles);
+        }
       } catch (error) {
         console.error("Error fetching messages:", error);
         toast.error("Failed to load chat history");
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
     fetchMessages();
+    return () => {
+      isMounted = false;
+    };
   }, [campaignId]);
 
   // Subscribe to realtime updates
   useEffect(() => {
     if (!campaignId) return;
+    let isMounted = true;
 
     const channel: RealtimeChannel = supabase
       .channel(`chat:${campaignId}`)
@@ -109,23 +144,31 @@ export function useRealtimeChat(campaignId: string | undefined) {
               .from("profiles")
               .select("display_name, avatar_url")
               .eq("user_id", newMsg.user_id)
-              .single();
+              .maybeSingle();
             profile = data || undefined;
+            recordProfilesRead();
           }
 
           const chatMessage: ChatMessage = {
             ...newMsg,
-            message_type: newMsg.message_type as MessageType,
-            roll_data: newMsg.roll_data as ChatMessage["roll_data"],
+            message_type: normalizeMessageType(newMsg.message_type),
+            roll_data: normalizeRollData(newMsg.roll_data),
             profile
           };
 
-          setMessages(prev => [...prev, chatMessage]);
+          if (isMounted) {
+            setMessages(prev => (
+              prev.some(message => message.id === chatMessage.id)
+                ? prev
+                : [...prev, chatMessage]
+            ));
+          }
         }
       )
       .subscribe();
 
     return () => {
+      isMounted = false;
       supabase.removeChannel(channel);
     };
   }, [campaignId]);

@@ -303,12 +303,16 @@ function CombatArenaWithEntities({
   onCombatEnd?: (entities: Entity[], victory: boolean) => void;
 }) {
   const { spawn } = useEngine();
+  const spawnedSignatureRef = useRef<string | null>(null);
 
   // Spawn initial entities
   useEffect(() => {
     if (!initialEntities) return;
+    const signature = initialEntities.map(entity => entity.id).join("|");
+    if (spawnedSignatureRef.current === signature) return;
+    spawnedSignatureRef.current = signature;
     initialEntities.forEach(e => spawn(e));
-  }, []); // Only run once on mount
+  }, [initialEntities, spawn]);
 
   return <CombatArenaInner myEntityId={myEntityId} onEvent={onEvent} onCombatEnd={onCombatEnd} />;
 }

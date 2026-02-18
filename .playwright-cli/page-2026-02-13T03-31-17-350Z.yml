@@ -1,0 +1,322 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic:
+    - generic: "Runtime: DEV (development)"
+    - generic: "version: 0.0.0"
+    - generic: "build: 2026-02-13T03:25:41.607Z"
+    - generic: "git: cd67b24"
+    - generic: "runId: 752867bb-301c-4df4-9608-ab1067c23d0f"
+    - generic: "now: 2026-02-13T03:28:15.813Z"
+    - generic: "base: /"
+    - generic: "href: http://localhost:8081/login"
+  - generic [ref=e26]:
+    - complementary [ref=e27]:
+      - generic [ref=e28]: Saga Spark
+      - navigation [ref=e29]:
+        - link "Dashboard" [ref=e30] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e31] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Mythic" [ref=e32] [cursor=pointer]:
+          - /url: /dashboard#campaigns
+        - link "Servers/Admin" [ref=e33] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e34]:
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - generic [ref=e37]: "Auth: psylus13@gmail.com"
+          - generic [ref=e38]: "DB: ok"
+        - generic [ref=e39]: /dashboard
+      - generic [ref=e41]:
+        - generic [ref=e42]:
+          - heading "Dashboard" [level=1] [ref=e43]
+          - paragraph [ref=e44]: Your campaigns and access codes.
+          - generic [ref=e45]: "Auth: session | userId: 316225c3-b052-4e4b-bb01-991ff577c037 | DB: ok"
+        - generic [ref=e46]:
+          - generic [ref=e47]:
+            - generic [ref=e48]:
+              - heading "Campaigns" [level=3] [ref=e49]
+              - generic [ref=e50]:
+                - button "Migrate All" [ref=e51] [cursor=pointer]
+                - button "Delete All" [ref=e52] [cursor=pointer]
+            - generic [ref=e54]:
+              - generic [ref=e56]:
+                - generic [ref=e57]:
+                  - generic [ref=e58]: "Whisker Apocalypse: Feline Empire Rises"
+                  - generic [ref=e59]: "Invite: 68a2ecb9"
+                  - generic [ref=e60]: "Members: 1"
+                  - generic [ref=e62]: Mythic Ready
+                - generic [ref=e63]:
+                  - button "Open" [ref=e64] [cursor=pointer]
+                  - button "Delete" [ref=e65] [cursor=pointer]
+              - generic [ref=e67]:
+                - generic [ref=e68]:
+                  - generic [ref=e69]: Finish Campaign 2026-02-12
+                  - generic [ref=e70]: "Invite: 766828dc"
+                  - generic [ref=e71]: "Members: 1"
+                  - generic [ref=e73]: Mythic Ready
+                - generic [ref=e74]:
+                  - button "Open" [ref=e75] [cursor=pointer]
+                  - button "Delete" [ref=e76] [cursor=pointer]
+              - generic [ref=e78]:
+                - generic [ref=e79]:
+                  - generic [ref=e80]: Edge Auth Timeout Fix Verify
+                  - generic [ref=e81]: "Invite: 2153529d"
+                  - generic [ref=e82]: "Members: 1"
+                  - generic [ref=e84]: Mythic Ready
+                - generic [ref=e85]:
+                  - button "Open" [ref=e86] [cursor=pointer]
+                  - button "Delete" [ref=e87] [cursor=pointer]
+              - generic [ref=e89]:
+                - generic [ref=e90]:
+                  - generic [ref=e91]: Finish Verify 2026-02-12
+                  - generic [ref=e92]: "Invite: 9a453a3e"
+                  - generic [ref=e93]: "Members: 1"
+                  - generic [ref=e95]: Mythic Ready
+                - generic [ref=e96]:
+                  - button "Open" [ref=e97] [cursor=pointer]
+                  - button "Delete" [ref=e98] [cursor=pointer]
+              - generic [ref=e100]:
+                - generic [ref=e101]:
+                  - generic [ref=e102]: Live Repro Campaign
+                  - generic [ref=e103]: "Invite: 9decf8e0"
+                  - generic [ref=e104]: "Members: 1"
+                  - generic [ref=e106]: Mythic Ready
+                - generic [ref=e107]:
+                  - button "Open" [ref=e108] [cursor=pointer]
+                  - button "Delete" [ref=e109] [cursor=pointer]
+              - generic [ref=e111]:
+                - generic [ref=e112]:
+                  - generic [ref=e113]: Reliability Patch Campaign
+                  - generic [ref=e114]: "Invite: 7a673ed6"
+                  - generic [ref=e115]: "Members: 1"
+                  - generic [ref=e117]: Mythic Ready
+                - generic [ref=e118]:
+                  - button "Open" [ref=e119] [cursor=pointer]
+                  - button "Delete" [ref=e120] [cursor=pointer]
+              - generic [ref=e122]:
+                - generic [ref=e123]:
+                  - generic [ref=e124]: Autocheck Campaign 2026-02-11T23-56
+                  - generic [ref=e125]: "Invite: db227d37"
+                  - generic [ref=e126]: "Members: 1"
+                  - generic [ref=e128]: Mythic Ready
+                - generic [ref=e129]:
+                  - button "Open" [ref=e130] [cursor=pointer]
+                  - button "Delete" [ref=e131] [cursor=pointer]
+              - generic [ref=e133]:
+                - generic [ref=e134]:
+                  - generic [ref=e135]: Playwright Repro 2026-02-11
+                  - generic [ref=e136]: "Invite: 56c8028a"
+                  - generic [ref=e137]: "Members: 1"
+                  - generic [ref=e139]: Mythic Ready
+                - generic [ref=e140]:
+                  - button "Open" [ref=e141] [cursor=pointer]
+                  - button "Delete" [ref=e142] [cursor=pointer]
+              - generic [ref=e144]:
+                - generic [ref=e145]:
+                  - generic [ref=e146]: codex-1770852795969
+                  - generic [ref=e147]: "Invite: 0c1ecc0e"
+                  - generic [ref=e148]: "Members: 1"
+                  - generic [ref=e150]: Mythic Ready
+                - generic [ref=e151]:
+                  - button "Open" [ref=e152] [cursor=pointer]
+                  - button "Delete" [ref=e153] [cursor=pointer]
+              - generic [ref=e155]:
+                - generic [ref=e156]:
+                  - generic [ref=e157]: Playwright Full Verify 2026-02-11
+                  - generic [ref=e158]: "Invite: 5b97abb9"
+                  - generic [ref=e159]: "Members: 1"
+                  - generic [ref=e161]: Mythic Ready
+                - generic [ref=e162]:
+                  - button "Open" [ref=e163] [cursor=pointer]
+                  - button "Delete" [ref=e164] [cursor=pointer]
+              - generic [ref=e166]:
+                - generic [ref=e167]:
+                  - generic [ref=e168]: Playwright Ready Lock In
+                  - generic [ref=e169]: "Invite: 45baed76"
+                  - generic [ref=e170]: "Members: 1"
+                  - generic [ref=e172]: Mythic Ready
+                - generic [ref=e173]:
+                  - button "Open" [ref=e174] [cursor=pointer]
+                  - button "Delete" [ref=e175] [cursor=pointer]
+              - generic [ref=e177]:
+                - generic [ref=e178]:
+                  - generic [ref=e179]: probe
+                  - generic [ref=e180]: "Invite: 335f84b4"
+                  - generic [ref=e181]: "Members: 1"
+                  - generic [ref=e183]: Mythic Ready
+                - generic [ref=e184]:
+                  - button "Open" [ref=e185] [cursor=pointer]
+                  - button "Delete" [ref=e186] [cursor=pointer]
+              - generic [ref=e188]:
+                - generic [ref=e189]:
+                  - generic [ref=e190]: probe-1770845964005
+                  - generic [ref=e191]: "Invite: 0c08667f"
+                  - generic [ref=e192]: "Members: 1"
+                  - generic [ref=e194]: Mythic Ready
+                - generic [ref=e195]:
+                  - button "Open" [ref=e196] [cursor=pointer]
+                  - button "Delete" [ref=e197] [cursor=pointer]
+              - generic [ref=e199]:
+                - generic [ref=e200]:
+                  - generic [ref=e201]: RPC Wrapper Combat Verify
+                  - generic [ref=e202]: "Invite: d5d698e0"
+                  - generic [ref=e203]: "Members: 1"
+                  - generic [ref=e205]: Mythic Ready
+                - generic [ref=e206]:
+                  - button "Open" [ref=e207] [cursor=pointer]
+                  - button "Delete" [ref=e208] [cursor=pointer]
+              - generic [ref=e210]:
+                - generic [ref=e211]:
+                  - generic [ref=e212]: Playwright LockIn Campaign
+                  - generic [ref=e213]: "Invite: 81644087"
+                  - generic [ref=e214]: "Members: 1"
+                  - generic [ref=e216]: Mythic Ready
+                - generic [ref=e217]:
+                  - button "Open" [ref=e218] [cursor=pointer]
+                  - button "Delete" [ref=e219] [cursor=pointer]
+              - generic [ref=e221]:
+                - generic [ref=e222]:
+                  - generic [ref=e223]: Playwright Fresh Create 2026-02-11
+                  - generic [ref=e224]: "Invite: e9926952"
+                  - generic [ref=e225]: "Members: 1"
+                  - generic [ref=e227]: Mythic Ready
+                - generic [ref=e228]:
+                  - button "Open" [ref=e229] [cursor=pointer]
+                  - button "Delete" [ref=e230] [cursor=pointer]
+              - generic [ref=e232]:
+                - generic [ref=e233]:
+                  - generic [ref=e234]: Playwright End-to-End Campaign
+                  - generic [ref=e235]: "Invite: 24d92a03"
+                  - generic [ref=e236]: "Members: 1"
+                  - generic [ref=e238]: Mythic Ready
+                - generic [ref=e239]:
+                  - button "Open" [ref=e240] [cursor=pointer]
+                  - button "Delete" [ref=e241] [cursor=pointer]
+              - generic [ref=e243]:
+                - generic [ref=e244]:
+                  - generic [ref=e245]: Mythic Auto Campaign 3
+                  - generic [ref=e246]: "Invite: 1258eabe"
+                  - generic [ref=e247]: "Members: 1"
+                  - generic [ref=e249]: Mythic Ready
+                - generic [ref=e250]:
+                  - button "Open" [ref=e251] [cursor=pointer]
+                  - button "Delete" [ref=e252] [cursor=pointer]
+              - generic [ref=e254]:
+                - generic [ref=e255]:
+                  - generic [ref=e256]: blood everywhere
+                  - generic [ref=e257]: "Invite: d5343e2e"
+                  - generic [ref=e258]: "Members: 1"
+                  - generic [ref=e260]: Mythic Ready
+                - generic [ref=e261]:
+                  - button "Open" [ref=e262] [cursor=pointer]
+                  - button "Delete" [ref=e263] [cursor=pointer]
+              - generic [ref=e265]:
+                - generic [ref=e266]:
+                  - generic [ref=e267]: Playwright Create Verify
+                  - generic [ref=e268]: "Invite: b39d52b7"
+                  - generic [ref=e269]: "Members: 1"
+                  - generic [ref=e271]: Mythic Ready
+                - generic [ref=e272]:
+                  - button "Open" [ref=e273] [cursor=pointer]
+                  - button "Delete" [ref=e274] [cursor=pointer]
+              - generic [ref=e276]:
+                - generic [ref=e277]:
+                  - generic [ref=e278]: Mythic Auto Campaign 2
+                  - generic [ref=e279]: "Invite: 95f131e5"
+                  - generic [ref=e280]: "Members: 1"
+                  - generic [ref=e282]: Mythic Ready
+                - generic [ref=e283]:
+                  - button "Open" [ref=e284] [cursor=pointer]
+                  - button "Delete" [ref=e285] [cursor=pointer]
+              - generic [ref=e287]:
+                - generic [ref=e288]:
+                  - generic [ref=e289]: Playwright Smoke Campaign
+                  - generic [ref=e290]: "Invite: f8f52748"
+                  - generic [ref=e291]: "Members: 1"
+                  - generic [ref=e292]:
+                    - generic [ref=e293]: Needs Migration
+                    - generic [ref=e294]: Missing world profile
+                - generic [ref=e295]:
+                  - button "Open" [ref=e296] [cursor=pointer]
+                  - button "Repair" [ref=e297] [cursor=pointer]
+                  - button "Delete" [ref=e298] [cursor=pointer]
+              - generic [ref=e300]:
+                - generic [ref=e301]:
+                  - generic [ref=e302]: for real this time
+                  - generic [ref=e303]: "Invite: 9a42cca5"
+                  - generic [ref=e304]: "Members: 1"
+                  - generic [ref=e305]:
+                    - generic [ref=e306]: Needs Migration
+                    - generic [ref=e307]: Missing world profile
+                - generic [ref=e308]:
+                  - button "Open" [ref=e309] [cursor=pointer]
+                  - button "Repair" [ref=e310] [cursor=pointer]
+                  - button "Delete" [ref=e311] [cursor=pointer]
+          - generic [ref=e312]:
+            - generic [ref=e313]:
+              - heading "Auth" [level=3] [ref=e315]
+              - generic [ref=e317]:
+                - generic [ref=e318]: Signed in as
+                - generic [ref=e319]: psylus13@gmail.com
+                - generic [ref=e320]: 316225c3-b052-4e4b-bb01-991ff577c037
+                - button "Sign out" [ref=e321] [cursor=pointer]
+            - generic [ref=e322]:
+              - heading "Create campaign" [level=3] [ref=e324]
+              - generic [ref=e325]:
+                - generic [ref=e326]:
+                  - textbox "Campaign name" [ref=e327]: Playwright Final Verify
+                  - generic [ref=e328]:
+                    - button "Random" [ref=e329] [cursor=pointer]:
+                      - img
+                      - text: Random
+                    - button "Expand" [ref=e366] [cursor=pointer]:
+                      - img
+                      - text: Expand
+                - generic [ref=e330]:
+                  - textbox "Campaign description" [active] [ref=e331]: World seed for runtime lock-in validation with loot and combat checks.
+                  - generic [ref=e332]:
+                    - button "Random" [ref=e333] [cursor=pointer]:
+                      - img
+                      - text: Random
+                    - button "Expand" [ref=e367] [cursor=pointer]:
+                      - img
+                      - text: Expand
+                - generic [ref=e334]:
+                  - generic [ref=e335]: World template
+                  - generic [ref=e336]:
+                    - button "Custom" [ref=e337] [cursor=pointer]
+                    - button "Graphic Novel Fantasy" [ref=e338] [cursor=pointer]
+                    - button "Sci-Fi Ruins" [ref=e339] [cursor=pointer]
+                    - button "Dark Mythic Horror" [ref=e340] [cursor=pointer]
+                    - button "Post-Apocalypse" [ref=e341] [cursor=pointer]
+                - button "Create" [ref=e368] [cursor=pointer]
+            - generic [ref=e342]:
+              - heading "Join campaign" [level=3] [ref=e344]
+              - generic [ref=e345]:
+                - textbox "Invite code" [ref=e346]
+                - button "Join" [disabled]
+      - generic [ref=e348]:
+        - generic [ref=e349]: "Build: unknown"
+        - generic [ref=e350]: "Route: /dashboard"
+        - generic [ref=e351]: "Last API Error: none"
+      - generic [ref=e352]:
+        - generic [ref=e353]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e354]: "Anon key present: yes"
+        - generic [ref=e355]: "Session exists: yes"
+        - generic [ref=e356]: "Access token exists: yes"
+        - generic [ref=e357]: "Last status: -"
+        - generic [ref=e358]: "Last body: -"
+        - button "Test generate-class" [ref=e359] [cursor=pointer]
+      - generic:
+        - generic: "FPS: 60"
+        - generic: "Heap: 19 MB"
+        - generic: "Long tasks: 2"
+  - generic [ref=e360]:
+    - generic [ref=e361]: "session: yes"
+    - generic [ref=e362]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e363]: "authLoading: false"
+    - generic [ref=e364]: "route: /dashboard"
+    - generic [ref=e365]: "lastAuthError: none"

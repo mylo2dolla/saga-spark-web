@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { callEdgeFunction } from "@/lib/edge";
 import type { 
   CampaignSeed, 
   NPC, 
@@ -19,6 +19,9 @@ import type {
   Equipment,
 } from "@/engine/narrative/types";
 import { toast } from "sonner";
+import { recordEdgeCall, recordEdgeResponse } from "@/ui/data/networkHealth";
+
+const DEV_DEBUG = import.meta.env.DEV;
 
 export interface GeneratedNPC {
   name: string;
@@ -63,11 +66,16 @@ export interface GeneratedWorld {
     enemies: string[];
     allies: string[];
   }[];
-  startingLocation: {
+  locations: {
+    id: string;
     name: string;
     description: string;
     type: string;
-  };
+    dangerLevel?: number;
+    position?: { x: number; y: number };
+    connectedTo?: string[];
+  }[];
+  startingLocationId: string;
   npcs: GeneratedNPC[];
   initialQuest: GeneratedQuest;
   worldHooks: string[];
@@ -83,11 +91,13 @@ interface GenerationContext {
   npcPersonality?: string[];
   playerRelationship?: string;
   worldState?: Record<string, unknown>;
+  campaignId?: string;
 }
 
 export function useWorldGenerator() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastEdgeError, setLastEdgeError] = useState<unknown | null>(null);
 
   const generate = useCallback(async <T>(
     type: "npc" | "quest" | "dialog" | "faction" | "location" | "initial_world",
@@ -96,24 +106,69 @@ export function useWorldGenerator() {
   ): Promise<T | null> => {
     setIsGenerating(true);
     setError(null);
+    setLastEdgeError(null);
 
     try {
-      const { data, error: fnError } = await supabase.functions.invoke("world-generator", {
-        body: { type, campaignSeed, context },
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG worldGenerator invoke start", {
+          type,
+          campaignTitle: campaignSeed.title,
+        });
+      }
+
+      recordEdgeCall();
+      const invokePromise = callEdgeFunction<{ ok?: boolean; error?: string; message?: string; content?: T }>(
+        "world-generator",
+        { body: { type, campaignSeed, context }, requireAuth: false }
+      );
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("World generation timed out")), 90000);
       });
 
+      const { data, error: fnError } = await Promise.race([invokePromise, timeoutPromise]);
+
       if (fnError) {
+        setLastEdgeError({
+          ok: false,
+          code: "invoke_error",
+          message: fnError.message || "Generation failed",
+          details: fnError,
+        });
         throw new Error(fnError.message || "Generation failed");
       }
 
-      if (data.error) {
+      if (data?.ok === false) {
+        setLastEdgeError(data);
+        throw new Error(data.message || "Generation failed");
+      }
+      if (data?.error) {
+        setLastEdgeError({
+          ok: false,
+          code: "function_error",
+          message: data.error,
+          details: data,
+        });
         throw new Error(data.error);
+      }
+      recordEdgeResponse();
+
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG worldGenerator invoke success", {
+          type,
+          hasContent: Boolean(data.content),
+        });
       }
 
       return data.content as T;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       setError(message);
+      if (DEV_DEBUG) {
+        console.error("DEV_DEBUG worldGenerator invoke error", {
+          type,
+          message,
+        });
+      }
       
       if (message.includes("Rate limit")) {
         toast.error("Rate limit exceeded. Please wait a moment.");
@@ -131,9 +186,10 @@ export function useWorldGenerator() {
 
   // Generate initial world for a new campaign
   const generateInitialWorld = useCallback(async (
-    seed: { title: string; description: string; themes?: string[] }
+    seed: { title: string; description: string; themes?: string[] },
+    context?: GenerationContext
   ): Promise<GeneratedWorld | null> => {
-    return generate<GeneratedWorld>("initial_world", seed);
+    return generate<GeneratedWorld>("initial_world", seed, context);
   }, [generate]);
 
   // Generate a single NPC
@@ -150,6 +206,13 @@ export function useWorldGenerator() {
     context?: GenerationContext
   ): Promise<GeneratedQuest | null> => {
     return generate<GeneratedQuest>("quest", seed, context);
+  }, [generate]);
+
+  const generateLocation = useCallback(async (
+    seed: { title: string; description: string; themes?: string[] },
+    context?: GenerationContext
+  ): Promise<GeneratedWorld["locations"][number] | null> => {
+    return generate<GeneratedWorld["locations"][number]>("location", seed, context);
   }, [generate]);
 
   // Generate dialogue for an NPC
@@ -264,10 +327,12 @@ export function useWorldGenerator() {
   return {
     isGenerating,
     error,
+    lastEdgeError,
     generateInitialWorld,
     generateNPC,
     generateQuest,
     generateDialog,
+    generateLocation,
     toEngineNPC,
     toEngineQuest,
     toEngineFactions,

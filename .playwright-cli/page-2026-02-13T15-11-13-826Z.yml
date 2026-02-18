@@ -1,0 +1,57 @@
+- generic [ref=e2]:
+  - region "Notifications (F8)":
+    - list
+  - region "Notifications alt+T"
+  - generic:
+    - generic: "Runtime: DEV (development)"
+    - generic: "version: 0.0.0"
+    - generic: "build: 2026-02-13T14:53:03.873Z"
+    - generic: "git: f80deca"
+    - generic: "runId: b24f1619-e6c5-4d72-aefa-7063c558bb0d"
+    - generic: "now: 2026-02-13T15:07:30.324Z"
+    - generic: "base: /"
+    - generic: "href: http://localhost:8080/dashboard"
+  - generic [ref=e4]:
+    - complementary [ref=e5]:
+      - generic [ref=e6]: Saga Spark
+      - navigation [ref=e7]:
+        - link "Dashboard" [ref=e8] [cursor=pointer]:
+          - /url: /dashboard
+        - link "Create/Join" [ref=e9] [cursor=pointer]:
+          - /url: /dashboard#create
+        - link "Mythic" [ref=e10] [cursor=pointer]:
+          - /url: /dashboard#campaigns
+        - link "Servers/Admin" [ref=e11] [cursor=pointer]:
+          - /url: /servers
+    - main [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]:
+          - generic [ref=e15]: "Auth: psylus13@gmail.com"
+          - generic [ref=e16]: "DB: ok"
+          - generic [ref=e70]: "DB probe: 206 · 2449ms"
+        - generic [ref=e17]: /mythic/14a57b7d-6da0-4c62-871b-f65464f2c382
+      - generic [ref=e246]:
+        - generic [ref=e247]: No Mythic character found for this campaign.
+        - button "Create Character" [ref=e248] [cursor=pointer]
+      - generic [ref=e52]:
+        - generic [ref=e53]: "Build: unknown"
+        - generic [ref=e54]: "Route: /mythic/14a57b7d-6da0-4c62-871b-f65464f2c382"
+        - generic [ref=e55]: "Last API Error: none"
+      - generic [ref=e56]:
+        - generic [ref=e57]: "Supabase URL: https://othlyxwtigxzczeffzee.supabase.co"
+        - generic [ref=e58]: "Anon key present: yes"
+        - generic [ref=e59]: "Session exists: yes"
+        - generic [ref=e60]: "Access token exists: yes"
+        - generic [ref=e61]: "Last status: -"
+        - generic [ref=e62]: "Last body: -"
+        - button "Test generate-class" [ref=e63] [cursor=pointer]
+      - generic:
+        - generic: "FPS: 60"
+        - generic: "Heap: 20 MB"
+        - generic: "Long tasks: 1"
+  - generic [ref=e64]:
+    - generic [ref=e65]: "session: yes"
+    - generic [ref=e66]: "userId: 316225c3-b052-4e4b-bb01-991ff577c037"
+    - generic [ref=e67]: "authLoading: false"
+    - generic [ref=e68]: "route: /mythic/14a57b7d-6da0-4c62-871b-f65464f2c382"
+    - generic [ref=e69]: "lastAuthError: none"

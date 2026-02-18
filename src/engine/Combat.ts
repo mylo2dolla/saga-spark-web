@@ -77,7 +77,7 @@ export function calculateAttack(
   }
   
   // Roll damage
-  let damageResult = rollDice(damageRoll, random);
+  const damageResult = rollDice(damageRoll, random);
   let damage = damageResult.total;
   
   // Critical doubles damage

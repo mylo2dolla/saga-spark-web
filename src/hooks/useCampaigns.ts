@@ -1,6 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { recordCampaignMembersRead, recordCampaignsRead } from "@/ui/data/networkHealth";
+
+const DEV_DEBUG = import.meta.env.DEV;
 
 export interface Campaign {
   id: string;
@@ -30,39 +33,91 @@ export interface CampaignMember {
 export function useCampaigns() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const fetchInFlightRef = useRef(false);
+  const lastFetchAtRef = useRef<number | null>(null);
+  const isMountedRef = useRef(true);
 
-  const fetchCampaigns = useCallback(async () => {
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const logSupabaseError = (
+    context: string,
+    error: { message?: string; code?: string; details?: string; hint?: string; status?: number } | null,
+  ) => {
+    if (!error) return;
+    console.error(context, {
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint,
+      status: error.status,
+    });
+  };
+
+  const fetchCampaigns = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force && lastFetchAtRef.current && now - lastFetchAtRef.current < 15000) {
+      return;
+    }
+    if (fetchInFlightRef.current) return;
+    fetchInFlightRef.current = true;
     try {
-      setIsLoading(true);
-      const { data: { user } } = await supabase.auth.getUser();
+      if (isMountedRef.current) {
+        setIsLoading(true);
+      }
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        logSupabaseError("[auth] supabase error", userError);
+        throw userError;
+      }
       if (!user) {
-        setIsLoading(false);
+        if (isMountedRef.current) {
+          setIsLoading(false);
+        }
         return;
       }
 
       // Get campaigns where user is a member
-      const { data: memberData } = await supabase
+      const { data: memberData, error: memberError } = await supabase
         .from("campaign_members")
         .select("campaign_id")
         .eq("user_id", user.id);
+      if (memberError) {
+        logSupabaseError("[campaigns] supabase error", memberError);
+        throw memberError;
+      }
+      recordCampaignMembersRead();
 
       const memberCampaignIds = memberData?.map(m => m.campaign_id) || [];
 
       // Get owned campaigns
-      const { data: ownedData } = await supabase
+      const { data: ownedData, error: ownedError } = await supabase
         .from("campaigns")
         .select("*")
         .eq("owner_id", user.id);
+      if (ownedError) {
+        logSupabaseError("[campaigns] supabase error", ownedError);
+        throw ownedError;
+      }
 
       // Get member campaigns
       let memberCampaigns: Campaign[] = [];
       if (memberCampaignIds.length > 0) {
-        const { data } = await supabase
+        const { data, error: memberCampaignsError } = await supabase
           .from("campaigns")
           .select("*")
           .in("id", memberCampaignIds);
+        if (memberCampaignsError) {
+          logSupabaseError("[campaigns] supabase error", memberCampaignsError);
+          throw memberCampaignsError;
+        }
         memberCampaigns = (data || []) as unknown as Campaign[];
       }
+      recordCampaignsRead();
 
       // Combine and dedupe
       const allCampaigns = [...(ownedData || []), ...memberCampaigns] as unknown as Campaign[];
@@ -70,45 +125,79 @@ export function useCampaigns() {
         (c, i, self) => self.findIndex(x => x.id === c.id) === i
       );
 
-      setCampaigns(uniqueCampaigns);
+      if (isMountedRef.current) {
+        setCampaigns(uniqueCampaigns);
+      }
+      lastFetchAtRef.current = now;
     } catch (error) {
+      if ((error as { name?: string })?.name === "AbortError") {
+        return;
+      }
       console.error("Error fetching campaigns:", error);
       toast.error("Failed to load campaigns");
     } finally {
-      setIsLoading(false);
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
+      fetchInFlightRef.current = false;
     }
   }, []);
 
   const createCampaign = useCallback(async (name: string, description?: string) => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        logSupabaseError("[auth] supabase error", userError);
+        throw userError;
+      }
       if (!user) throw new Error("Not authenticated");
 
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG campaigns create start", { name });
+      }
+
+      const inviteCode = Math.random().toString(36).substring(2, 8).toUpperCase();
       const { data, error } = await supabase
         .from("campaigns")
-        .insert({ name, description, owner_id: user.id })
+        .insert({ name, description, owner_id: user.id, invite_code: inviteCode, is_active: true })
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        logSupabaseError("[createCampaign] supabase error", error);
+        throw error;
+      }
 
       // Add owner as DM member
-      await supabase
+      const { error: memberError } = await supabase
         .from("campaign_members")
         .insert({ campaign_id: data.id, user_id: user.id, is_dm: true });
+      if (memberError) {
+        logSupabaseError("[createCampaign] supabase error", memberError);
+        throw memberError;
+      }
 
       // Create combat state for campaign
-      await supabase
+      const { error: combatError } = await supabase
         .from("combat_state")
         .insert({ campaign_id: data.id });
+      if (combatError) {
+        logSupabaseError("[createCampaign] supabase error", combatError);
+        throw combatError;
+      }
 
       const campaign = data as unknown as Campaign;
-      setCampaigns(prev => [...prev, campaign]);
+      if (isMountedRef.current) {
+        setCampaigns(prev => [...prev, campaign]);
+      }
       toast.success("Campaign created!");
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG campaigns create success", { campaignId: data.id });
+      }
       return campaign;
     } catch (error) {
       console.error("Error creating campaign:", error);
-      toast.error("Failed to create campaign");
+      toast.error(error instanceof Error ? error.message : "Failed to create campaign");
       throw error;
     }
   }, []);
@@ -117,6 +206,10 @@ export function useCampaigns() {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Not authenticated");
+
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG campaigns join start", { inviteCode });
+      }
 
       // Find campaign by invite code
       const { data: campaignsData, error: findError } = await supabase
@@ -151,6 +244,9 @@ export function useCampaigns() {
 
       await fetchCampaigns();
       toast.success(`Joined "${campaign.name}"!`);
+      if (DEV_DEBUG) {
+        console.info("DEV_DEBUG campaigns join success", { campaignId: campaign.id });
+      }
       return campaign;
     } catch (error) {
       console.error("Error joining campaign:", error);
@@ -168,7 +264,9 @@ export function useCampaigns() {
 
       if (error) throw error;
 
-      setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+      if (isMountedRef.current) {
+        setCampaigns(prev => prev.filter(c => c.id !== campaignId));
+      }
       toast.success("Campaign deleted");
     } catch (error) {
       console.error("Error deleting campaign:", error);

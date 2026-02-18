@@ -5,7 +5,7 @@
 
 import type { Entity, Vec2, Faction, GameState } from "./types";
 import type { CombatSpawnData, CombatEncounter, CombatResult } from "./narrative/TravelPersistence";
-import type { TravelState, EncounterResult, EncounterEnemy } from "./narrative/Travel";
+import type { TravelState, EncounterResult, EncounterEnemy, EnhancedLocation } from "./narrative/Travel";
 import type { WorldState, WorldEvent } from "./narrative/types";
 import { encounterToCombat } from "./narrative/TravelPersistence";
 
@@ -74,7 +74,7 @@ export function rollDangerousEncounter(
   if (!destination) return undefined;
   
   // Get enhanced location data
-  const enhancedLoc = destination as any; // Cast to enhanced location
+  const enhancedLoc = destination as EnhancedLocation;
   const dangerLevel = enhancedLoc.dangerLevel ?? 1;
   const factionControl = enhancedLoc.factionControl;
   
@@ -129,7 +129,7 @@ function seededRandom(seed: number): number {
 }
 
 function generateLocationEncounter(
-  location: any,
+  location: EnhancedLocation,
   dangerLevel: number,
   seed: number
 ): EncounterResult {

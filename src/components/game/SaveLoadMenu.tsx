@@ -59,7 +59,7 @@ export function SaveLoadMenu({
     if (isOpen) {
       persistence.fetchSaves();
     }
-  }, [isOpen]);
+  }, [isOpen, persistence]);
 
   const handleSave = async () => {
     if (!saveName.trim()) {
