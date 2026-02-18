@@ -1,0 +1,125 @@
+{
+  "id": "town",
+  "image": "/game/tilesets/town_sheet.png",
+  "tileSize": 16,
+  "frames": [
+    {
+      "key": "cobble",
+      "x": 0,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "cobble_edge",
+      "x": 16,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "cobble_variant",
+      "x": 32,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "wall",
+      "x": 48,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "crate",
+      "x": 64,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "tree",
+      "x": 80,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "player_default",
+      "x": 96,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "npc_default",
+      "x": 112,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "mob_default",
+      "x": 0,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "loot_default",
+      "x": 16,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "interactable_default",
+      "x": 32,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "gate",
+      "x": 48,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "poi",
+      "x": 64,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "pillar",
+      "x": 80,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    }
+  ],
+  "animations": [
+    {
+      "key": "player_walk",
+      "frames": [
+        "player_default",
+        "npc_default"
+      ],
+      "fps": 8,
+      "loop": true
+    },
+    {
+      "key": "poi_glow",
+      "frames": [
+        "poi",
+        "interactable_default"
+      ],
+      "fps": 6,
+      "loop": true
+    }
+  ]
+}

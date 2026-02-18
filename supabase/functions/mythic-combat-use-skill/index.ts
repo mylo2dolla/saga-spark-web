@@ -551,6 +551,11 @@ serve(async (req) => {
         target: resolved.combatant ? { kind: "combatant", combatant_id: resolved.combatant.id, x: resolved.tx, y: resolved.ty } : { kind: "tile", x: resolved.tx, y: resolved.ty },
         cost: cost.amount,
         cooldown_turns: skill.cooldown_turns,
+        animation_hint: {
+          kind: "cast",
+          duration_ms: 320,
+          actor_combatant_id: actor.id,
+        },
       },
       actor_id: actor.id,
       turn_index: turnIndex,
@@ -572,7 +577,16 @@ serve(async (req) => {
       updates.y = ny;
       events.push({
         event_type: "moved",
-        payload: { from: { x: actor.x, y: actor.y }, to: { x: nx, y: ny }, dash_tiles: dash, onomatopoeia: effects.onomatopoeia ?? null },
+        payload: {
+          from: { x: actor.x, y: actor.y },
+          to: { x: nx, y: ny },
+          dash_tiles: dash,
+          onomatopoeia: effects.onomatopoeia ?? null,
+          animation_hint: {
+            kind: "dash",
+            duration_ms: 220,
+          },
+        },
         actor_id: actor.id,
         turn_index: turnIndex,
       });
@@ -588,7 +602,15 @@ serve(async (req) => {
         updates.y = ty;
         events.push({
           event_type: "moved",
-          payload: { from: { x: actor.x, y: actor.y }, to: { x: tx, y: ty }, teleport: true },
+          payload: {
+            from: { x: actor.x, y: actor.y },
+            to: { x: tx, y: ty },
+            teleport: true,
+            animation_hint: {
+              kind: "teleport",
+              duration_ms: 260,
+            },
+          },
           actor_id: actor.id,
           turn_index: turnIndex,
         });
@@ -612,7 +634,13 @@ serve(async (req) => {
         if (moveErr) throw moveErr;
         events.push({
           event_type: "moved",
-          payload: { target_combatant_id: target.id, from: { x: target.x, y: target.y }, to: next, forced: "pull" },
+          payload: {
+            target_combatant_id: target.id,
+            from: { x: target.x, y: target.y },
+            to: next,
+            forced: "pull",
+            animation_hint: { kind: "forced_move", duration_ms: 180 },
+          },
           actor_id: actor.id,
           turn_index: turnIndex,
         });
@@ -635,7 +663,13 @@ serve(async (req) => {
         if (moveErr) throw moveErr;
         events.push({
           event_type: "moved",
-          payload: { target_combatant_id: target.id, from: { x: target.x, y: target.y }, to: next, forced: "push" },
+          payload: {
+            target_combatant_id: target.id,
+            from: { x: target.x, y: target.y },
+            to: next,
+            forced: "push",
+            animation_hint: { kind: "forced_move", duration_ms: 180 },
+          },
           actor_id: actor.id,
           turn_index: turnIndex,
         });
@@ -772,6 +806,10 @@ serve(async (req) => {
             hp_after: newHp,
             armor_after: newArmor,
             onomatopoeia: effects.onomatopoeia ?? null,
+            animation_hint: {
+              kind: died ? "critical_hit" : "hit",
+              duration_ms: died ? 340 : 220,
+            },
           },
           actor_id: actor.id,
           turn_index: turnIndex,
@@ -891,12 +929,20 @@ serve(async (req) => {
           .eq("id", target.id)
           .eq("combat_session_id", combatSessionId);
         if (healErr) throw healErr;
-        events.push({
-          event_type: "healed",
-          payload: { target_combatant_id: target.id, amount, hp_after: newHp },
-          actor_id: actor.id,
-          turn_index: turnIndex,
-        });
+      events.push({
+        event_type: "healed",
+        payload: {
+          target_combatant_id: target.id,
+          amount,
+          hp_after: newHp,
+          animation_hint: {
+            kind: "heal",
+            duration_ms: 220,
+          },
+        },
+        actor_id: actor.id,
+        turn_index: turnIndex,
+      });
       }
     }
 
@@ -1054,7 +1100,16 @@ serve(async (req) => {
           payload_json: { combat_session_id: combatSessionId, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } },
         });
       }
-      return new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } }), {
+      return new Response(JSON.stringify({
+        ok: true,
+        ended: true,
+        rewards_ready: true,
+        outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs },
+        animation_hint: {
+          kind: "combat_end_page_flip",
+          duration_ms: 420,
+        },
+      }), {
         status: 200,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -1086,7 +1141,15 @@ serve(async (req) => {
       p_payload: { actor_combatant_id: nextCombatantId },
     });
 
-    return new Response(JSON.stringify({ ok: true, next_turn_index: nextIndex, next_actor_combatant_id: nextCombatantId }), {
+    return new Response(JSON.stringify({
+      ok: true,
+      next_turn_index: nextIndex,
+      next_actor_combatant_id: nextCombatantId,
+      animation_hint: {
+        kind: "turn_advance",
+        duration_ms: 240,
+      },
+    }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

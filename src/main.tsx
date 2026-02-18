@@ -15,22 +15,25 @@ if (DEV_DEBUG && !devWindow.__devFetchWrapped) {
   devWindow.__devFetchWrapped = true;
   devWindow.__devFetchBase = window.fetch.bind(window);
 
+  const resolveFetchUrl = (input: RequestInfo | URL): string => {
+    if (typeof input === "string") return input;
+    if (input instanceof URL) return input.href;
+    if (typeof Request !== "undefined" && input instanceof Request) return input.url;
+    const maybe = input as { url?: string; href?: string };
+    return maybe.url ?? maybe.href ?? "";
+  };
+
   window.fetch = async (...args) => {
     const [input, init] = args;
-    const url =
-      typeof input === "string"
-        ? input
-        : input instanceof URL
-          ? input.href
-          : input.url;
+    const url = resolveFetchUrl(input);
     const method = init?.method ?? "GET";
-    if (url.includes("supabase.co")) {
+    if (url && url.includes("supabase.co")) {
       console.info("DEV_DEBUG fetch start", { method, url });
     }
 
     try {
       const response = await devWindow.__devFetchBase!(input, init);
-      if (url.includes("supabase.co")) {
+      if (url && url.includes("supabase.co")) {
         console.info("DEV_DEBUG fetch response", {
           method,
           url,
@@ -39,7 +42,7 @@ if (DEV_DEBUG && !devWindow.__devFetchWrapped) {
       }
       return response;
     } catch (error) {
-      if (url.includes("supabase.co")) {
+      if (url && url.includes("supabase.co")) {
         console.error("DEV_DEBUG fetch error", { method, url, error });
       }
       throw error;

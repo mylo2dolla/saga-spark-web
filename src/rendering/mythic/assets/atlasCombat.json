@@ -1,0 +1,81 @@
+{
+  "id": "combat",
+  "image": "/game/tilesets/combat_sheet.png",
+  "tileSize": 24,
+  "frames": [
+    {
+      "key": "iso_tile",
+      "x": 0,
+      "y": 0,
+      "w": 24,
+      "h": 24
+    },
+    {
+      "key": "iso_tile_blocked",
+      "x": 24,
+      "y": 0,
+      "w": 24,
+      "h": 24
+    },
+    {
+      "key": "player_combat",
+      "x": 48,
+      "y": 0,
+      "w": 24,
+      "h": 24
+    },
+    {
+      "key": "enemy_combat",
+      "x": 72,
+      "y": 0,
+      "w": 24,
+      "h": 24
+    },
+    {
+      "key": "hit_flash",
+      "x": 0,
+      "y": 24,
+      "w": 24,
+      "h": 24
+    },
+    {
+      "key": "move_range",
+      "x": 24,
+      "y": 24,
+      "w": 24,
+      "h": 24
+    },
+    {
+      "key": "selection_ring",
+      "x": 48,
+      "y": 24,
+      "w": 24,
+      "h": 24
+    },
+    {
+      "key": "wait_icon",
+      "x": 72,
+      "y": 24,
+      "w": 24,
+      "h": 24
+    }
+  ],
+  "animations": [
+    {
+      "key": "hit_flash",
+      "frames": [
+        "hit_flash"
+      ],
+      "fps": 12,
+      "loop": false
+    },
+    {
+      "key": "selection_ring",
+      "frames": [
+        "selection_ring"
+      ],
+      "fps": 1,
+      "loop": false
+    }
+  ]
+}

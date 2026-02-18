@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
+import { getMythicE2ECombatState, isMythicE2E } from "@/ui/e2e/mythicState";
 
 export interface MythicCombatSessionRow {
   id: string;
@@ -27,6 +28,7 @@ export interface MythicCombatantRow {
   power_max: number;
   armor: number;
   resist: number;
+  mobility: number;
   initiative: number;
   statuses: unknown;
   is_alive: boolean;
@@ -71,6 +73,19 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
         setCombatants([]);
         setTurnOrder([]);
         setEvents([]);
+        setError(null);
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    if (isMythicE2E(campaignId)) {
+      const e2eCombat = getMythicE2ECombatState(campaignId, combatSessionId);
+      if (isMountedRef.current) {
+        setSession((e2eCombat?.session ?? null) as MythicCombatSessionRow | null);
+        setCombatants((e2eCombat?.combatants ?? []) as MythicCombatantRow[]);
+        setTurnOrder((e2eCombat?.turnOrder ?? []) as MythicTurnOrderRow[]);
+        setEvents((e2eCombat?.events ?? []) as MythicActionEventRow[]);
         setError(null);
         setIsLoading(false);
       }

@@ -9,7 +9,7 @@ import { useMythicCharacter } from "@/hooks/useMythicCharacter";
 import { useMythicDmContext } from "@/hooks/useMythicDmContext";
 import { useMythicDungeonMaster } from "@/hooks/useMythicDungeonMaster";
 import { MythicDMChat } from "@/components/MythicDMChat";
-import { useMythicCombat } from "@/hooks/useMythicCombat";
+import { useMythicCombat, type MythicCombatRewardSummary } from "@/hooks/useMythicCombat";
 import { useMythicCombatState } from "@/hooks/useMythicCombatState";
 import { MythicCombatPanel } from "@/components/mythic/MythicCombatPanel";
 import { MythicInventoryPanel } from "@/components/mythic/MythicInventoryPanel";
@@ -19,6 +19,8 @@ import { useMythicQuestArcs } from "@/hooks/useMythicQuestArcs";
 import { useMythicStoryTimeline } from "@/hooks/useMythicStoryTimeline";
 import { callEdgeFunction } from "@/lib/edge";
 import { sumStatMods, splitInventory, type MythicInventoryRow as EquipmentInventoryRow } from "@/lib/mythicEquipment";
+import { MythicBoardViewport } from "@/components/mythic/boards/MythicBoardViewport";
+import type { MythicDirection } from "@/types/mythicBoard";
 
 function prettyJson(value: unknown): string {
   try {
@@ -51,7 +53,18 @@ export default function MythicGameScreen() {
   const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
   const { bootstrapCampaign, isBootstrapping } = useMythicCreator();
-  const { board, recentTransitions, isLoading: boardLoading, error: boardError, refetch } = useMythicBoard(campaignId);
+  const {
+    board,
+    boardStateV2,
+    chunkMeta,
+    biome,
+    parseDiagnostics,
+    parseError,
+    recentTransitions,
+    isLoading: boardLoading,
+    error: boardError,
+    refetch,
+  } = useMythicBoard(campaignId);
   const { character, skills, items, isLoading: charLoading, error: charError, refetch: refetchCharacter } = useMythicCharacter(campaignId);
   const dm = useMythicDmContext(campaignId, Boolean(campaignId && board && character));
   const mythicDm = useMythicDungeonMaster(campaignId);
@@ -61,6 +74,7 @@ export default function MythicGameScreen() {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionError, setTransitionError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [combatRewards, setCombatRewards] = useState<MythicCombatRewardSummary | null>(null);
 
   const [bootstrapped, setBootstrapped] = useState(false);
   const bootstrapOnceRef = useRef(false);
@@ -95,11 +109,54 @@ export default function MythicGameScreen() {
   }, [board]);
 
   const combatState = useMythicCombatState(campaignId, board?.board_type === "combat" ? combatSessionId : null);
+  const combatGrid = useMemo(() => {
+    const fallback = { width: 12, height: 8, blockedTiles: [] as Array<{ x: number; y: number }> };
+    if (!board || board.board_type !== "combat") return fallback;
+    const state = asRecord(board.state_json);
+    const grid = asRecord(state.grid);
+    const width = Number.isFinite(Number(grid.width)) ? Math.max(4, Math.floor(Number(grid.width))) : fallback.width;
+    const height = Number.isFinite(Number(grid.height)) ? Math.max(4, Math.floor(Number(grid.height))) : fallback.height;
+    const blockedTiles = asArray(state.blocked_tiles)
+      .map((entry) => asRecord(entry))
+      .filter((entry) => Number.isFinite(Number(entry.x)) && Number.isFinite(Number(entry.y)))
+      .map((entry) => ({ x: Math.floor(Number(entry.x)), y: Math.floor(Number(entry.y)) }));
+    return { width, height, blockedTiles };
+  }, [board]);
   const playerCombatantId = useMemo(() => {
-    if (!user) return null;
-    const c = combatState.combatants.find((x) => x.entity_type === "player" && x.player_id === user.id);
-    return c?.id ?? null;
+    if (user) {
+      const currentUserCombatant = combatState.combatants.find((x) => x.entity_type === "player" && x.player_id === user.id);
+      if (currentUserCombatant) return currentUserCombatant.id;
+    }
+    return combatState.combatants.find((x) => x.entity_type === "player")?.id ?? null;
   }, [combatState.combatants, user]);
+
+  const combatItems = useMemo(() => {
+    return items
+      .filter((row) => row.quantity > 0 && row.container === "backpack" && row.item !== null)
+      .filter((row) => row.item.slot === "consumable" || row.item.item_type === "consumable")
+      .map((row) => {
+        const effects = asRecord(row.item.effects_json);
+        const rawDamage = effects.damage;
+        const nestedDamage = asRecord(rawDamage).amount;
+        const damage =
+          typeof rawDamage === "number"
+            ? rawDamage
+            : typeof nestedDamage === "number"
+              ? nestedDamage
+              : Number(nestedDamage);
+        const targeting: "self" | "single" = Number.isFinite(damage) && damage > 0 ? "single" : "self";
+        return {
+          inventoryId: row.id,
+          itemId: row.item.id,
+          name: row.item.name,
+          quantity: row.quantity,
+          container: row.container,
+          itemType: row.item.item_type,
+          slot: row.item.slot,
+          targeting,
+        };
+      });
+  }, [items]);
 
   const invRowsSafe = useMemo<EquipmentInventoryRow[]>(() => {
     return items.map((row) => ({
@@ -194,6 +251,47 @@ export default function MythicGameScreen() {
     }
   };
 
+  const stepBoard = async (direction: MythicDirection) => {
+    if (!campaignId || board.board_type === "combat") return;
+    setIsTransitioning(true);
+    setTransitionError(null);
+    try {
+      const { error } = await callEdgeFunction("mythic-board-step", {
+        requireAuth: true,
+        body: { campaignId, direction },
+      });
+      if (error) throw error;
+      await refetch();
+      await questArcs.refetch();
+      await storyTimeline.refetch();
+    } catch (e) {
+      setTransitionError(e instanceof Error ? e.message : "Failed to step board");
+    } finally {
+      setIsTransitioning(false);
+    }
+  };
+
+  const interactBoard = async (args: { entityId: string; entityKind: string; action: "interact" | "destroy" | "open" }) => {
+    if (!campaignId || board.board_type === "combat") return;
+    try {
+      const { error } = await callEdgeFunction("mythic-board-interact", {
+        requireAuth: true,
+        body: {
+          campaignId,
+          entityId: args.entityId,
+          entityKind: args.entityKind,
+          action: args.action,
+        },
+      });
+      if (error) throw error;
+      await refetch();
+      await questArcs.refetch();
+      await storyTimeline.refetch();
+    } catch (e) {
+      setTransitionError(e instanceof Error ? e.message : "Interaction failed");
+    }
+  };
+
   const recomputeCharacter = async () => {
     if (!campaignId || !character) return;
     await callEdgeFunction("mythic-recompute-character", {
@@ -240,11 +338,12 @@ export default function MythicGameScreen() {
                 onClick={async () => {
                   const combatId = await combat.startCombat(campaignId);
                   if (combatId) {
+                    setCombatRewards(null);
                     await refetch();
                     await dm.refetch();
                   }
                 }}
-                disabled={combat.isStarting}
+                disabled={combat.isStarting || combat.isBusy}
               >
                 {combat.isStarting ? "Starting..." : "Start Combat"}
               </Button>
@@ -252,6 +351,52 @@ export default function MythicGameScreen() {
           ) : null}
         </div>
       </div>
+
+      {combatRewards ? (
+        <div className="mythic-reward-flip rounded-xl border border-primary/40 bg-card/60 p-4">
+          <div className="mb-2 text-sm font-semibold">Battle Rewards</div>
+          <div className="grid gap-3 text-sm text-muted-foreground md:grid-cols-2">
+            <div>
+              <div>XP gained: <span className="font-medium text-foreground">{combatRewards.xp_gained}</span></div>
+              <div>
+                Level:{" "}
+                <span className="font-medium text-foreground">
+                  {combatRewards.level_before} → {combatRewards.level_after}
+                </span>
+                {combatRewards.level_ups > 0 ? ` (+${combatRewards.level_ups})` : ""}
+              </div>
+              <div>
+                Progress:{" "}
+                <span className="font-medium text-foreground">
+                  {combatRewards.xp_after}/{combatRewards.xp_to_next}
+                </span>
+              </div>
+            </div>
+            <div>
+              <div>Defeated enemies: <span className="font-medium text-foreground">{combatRewards.outcome.defeated_npcs}</span></div>
+              <div>Surviving allies: <span className="font-medium text-foreground">{combatRewards.outcome.surviving_players}</span></div>
+              <div>Loot drops: <span className="font-medium text-foreground">{combatRewards.loot.length}</span></div>
+            </div>
+          </div>
+          {combatRewards.loot.length > 0 ? (
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {combatRewards.loot.map((loot) => (
+                <div key={loot.item_id} className="rounded-md border border-border bg-background/30 p-2 text-xs">
+                  <div className="font-medium text-foreground">{loot.name}</div>
+                  <div className="text-muted-foreground">
+                    {loot.rarity} · {loot.slot} · power {loot.item_power}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div className="mt-3 flex justify-end">
+            <Button variant="secondary" onClick={() => setCombatRewards(null)}>
+              Continue Exploring
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-border bg-card/40 p-4">
@@ -282,33 +427,21 @@ export default function MythicGameScreen() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-card/40 p-4">
-          <div className="mb-2 text-sm font-semibold">Board Summary</div>
-          {board.board_type === "town" ? (
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <div>Vendors: {asArray(boardState.vendors).length}</div>
-              <div>Services: {asStringArray(boardState.services).join(", ") || "-"}</div>
-              <div>Factions: {asStringArray(boardState.factions_present).join(", ") || "-"}</div>
-              <div>Rumors: {asStringArray(boardState.rumors).join(" · ") || "-"}</div>
+        <div className="space-y-4">
+          {board.board_type !== "combat" && boardStateV2 ? (
+            <MythicBoardViewport
+              boardState={boardStateV2}
+              isBusy={isTransitioning}
+              onEdgeStep={stepBoard}
+              onInteract={interactBoard}
+            />
+          ) : (
+            <div className="rounded-xl border border-border bg-card/40 p-4 text-sm text-muted-foreground">
+              Board renderer unavailable for this board mode.
             </div>
-          ) : null}
-          {board.board_type === "travel" ? (
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <div>Weather: {String(boardState.weather ?? "-")}</div>
-              <div>Hazard: {String(boardState.hazard_meter ?? "-")}</div>
-              <div>Segments: {asArray(boardState.route_segments).length}</div>
-            </div>
-          ) : null}
-          {board.board_type === "dungeon" ? (
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <div>Rooms: {asArray(asRecord(boardState.room_graph).rooms).length}</div>
-              <div>Loot nodes: {String(boardState.loot_nodes ?? "-")}</div>
-              <div>Trap signals: {String(boardState.trap_signals ?? "-")}</div>
-              <div>Faction presence: {asStringArray(boardState.faction_presence).join(", ") || "-"}</div>
-            </div>
-          ) : null}
+          )}
 
-          <div className="mt-4">
+          <div className="rounded-xl border border-border bg-card/40 p-4">
             <div className="mb-2 text-sm font-semibold">Board Actions</div>
             <div className="flex flex-wrap gap-2">
               {board.board_type === "travel" ? (
@@ -338,10 +471,10 @@ export default function MythicGameScreen() {
               ) : null}
             </div>
             {transitionError ? <div className="mt-2 text-xs text-destructive">{transitionError}</div> : null}
-          </div>
-          <div className="mt-3 text-xs text-muted-foreground">
-            UI contract: board + transitions + action_events remain deterministic DB truth.
-            {bootstrapped ? " (bootstrapped)" : ""}
+            <div className="mt-3 text-xs text-muted-foreground">
+              Chunk: {chunkMeta ? `${chunkMeta.coord_x},${chunkMeta.coord_y}` : "-"} · Biome: {biome ?? "-"}
+              {bootstrapped ? " · bootstrapped" : ""}
+            </div>
           </div>
         </div>
       </div>
@@ -361,10 +494,12 @@ export default function MythicGameScreen() {
               campaignId={campaignId}
               combatSessionId={combatSessionId}
               combatants={combatState.combatants}
+              turnOrder={combatState.turnOrder}
               activeTurnCombatantId={combatState.activeTurnCombatantId}
               events={combatState.events}
               playerCombatantId={playerCombatantId}
               currentTurnIndex={combatState.session?.current_turn_index ?? 0}
+              grid={combatGrid}
               skills={skills.map((s) => ({
                 id: s.id,
                 kind: s.kind,
@@ -374,9 +509,31 @@ export default function MythicGameScreen() {
                 range_tiles: s.range_tiles,
                 cooldown_turns: s.cooldown_turns,
               }))}
-              isActing={combat.isActing}
+              items={combatItems}
+              isActing={combat.isActing || combat.isClaimingRewards}
+              onMove={async ({ actorCombatantId, to }) => {
+                const result = await combat.moveActor({
+                  campaignId,
+                  combatSessionId,
+                  actorCombatantId,
+                  to,
+                });
+                if (result?.ok) {
+                  await combatState.refetch();
+                }
+              }}
+              onWait={async ({ actorCombatantId }) => {
+                const result = await combat.waitTurn({
+                  campaignId,
+                  combatSessionId,
+                  actorCombatantId,
+                });
+                if (result?.ok) {
+                  await combatState.refetch();
+                }
+              }}
               onUseSkill={async ({ actorCombatantId, skillId, target }) => {
-                await combat.useSkill({
+                const result = await combat.useSkill({
                   campaignId,
                   combatSessionId,
                   actorCombatantId,
@@ -384,6 +541,44 @@ export default function MythicGameScreen() {
                   target,
                 });
                 await combatState.refetch();
+                if (result.ok && result.ended) {
+                  const rewards = await combat.claimRewards({
+                    campaignId,
+                    combatSessionId,
+                  });
+                  if (rewards) {
+                    setCombatRewards(rewards);
+                  }
+                  await refetchCharacter();
+                  await refetch();
+                  await dm.refetch();
+                  await questArcs.refetch();
+                  await storyTimeline.refetch();
+                }
+              }}
+              onUseItem={async ({ actorCombatantId, inventoryItemId, target }) => {
+                const result = await combat.useItem({
+                  campaignId,
+                  combatSessionId,
+                  actorCombatantId,
+                  inventoryItemId,
+                  target,
+                });
+                await combatState.refetch();
+                await refetchCharacter();
+                if (result.ok && result.ended) {
+                  const rewards = await combat.claimRewards({
+                    campaignId,
+                    combatSessionId,
+                  });
+                  if (rewards) {
+                    setCombatRewards(rewards);
+                  }
+                  await refetch();
+                  await dm.refetch();
+                  await questArcs.refetch();
+                  await storyTimeline.refetch();
+                }
               }}
             />
           )}
@@ -437,6 +632,12 @@ export default function MythicGameScreen() {
           <div className="rounded-xl border border-border bg-card/40 p-4">
             <div className="mb-2 text-sm font-semibold">Board State JSON (Advanced)</div>
             <pre className="max-h-[520px] overflow-auto text-xs text-muted-foreground">{prettyJson(board.state_json)}</pre>
+            {parseError ? <div className="mt-2 text-xs text-destructive">{parseError}</div> : null}
+            {parseDiagnostics.length > 0 ? (
+              <pre className="mt-2 max-h-[140px] overflow-auto text-[11px] text-amber-200/90">
+                {prettyJson(parseDiagnostics)}
+              </pre>
+            ) : null}
           </div>
 
           <div className="rounded-xl border border-border bg-card/40 p-4">

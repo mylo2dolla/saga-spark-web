@@ -1,0 +1,167 @@
+{
+  "id": "dungeon",
+  "image": "/game/tilesets/dungeon_sheet.png",
+  "tileSize": 16,
+  "frames": [
+    {
+      "key": "cave_floor",
+      "x": 0,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "cave_floor_edge",
+      "x": 16,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "cave_floor_variant",
+      "x": 32,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "crypt_floor",
+      "x": 48,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "crypt_floor_edge",
+      "x": 64,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "crypt_floor_variant",
+      "x": 80,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "ruin_floor",
+      "x": 96,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "ruin_floor_edge",
+      "x": 112,
+      "y": 0,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "ruin_floor_variant",
+      "x": 0,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "wall",
+      "x": 16,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "pillar",
+      "x": 32,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "crate",
+      "x": 48,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "player_default",
+      "x": 64,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "npc_default",
+      "x": 80,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "mob_default",
+      "x": 96,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "loot_default",
+      "x": 112,
+      "y": 16,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "interactable_default",
+      "x": 0,
+      "y": 32,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "gate",
+      "x": 16,
+      "y": 32,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "tree",
+      "x": 32,
+      "y": 32,
+      "w": 16,
+      "h": 16
+    },
+    {
+      "key": "poi",
+      "x": 48,
+      "y": 32,
+      "w": 16,
+      "h": 16
+    }
+  ],
+  "animations": [
+    {
+      "key": "mob_idle",
+      "frames": [
+        "mob_default",
+        "mob_default"
+      ],
+      "fps": 8,
+      "loop": true
+    },
+    {
+      "key": "gate_pulse",
+      "frames": [
+        "gate",
+        "interactable_default"
+      ],
+      "fps": 5,
+      "loop": true
+    }
+  ]
+}

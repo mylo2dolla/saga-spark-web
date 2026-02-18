@@ -17,6 +17,18 @@ const RequestSchema = z.object({
 });
 
 type MythicBoardType = "town" | "travel" | "dungeon" | "combat";
+type MythicBiome =
+  | "town"
+  | "plains"
+  | "forest"
+  | "wetlands"
+  | "desert"
+  | "badlands"
+  | "mountain"
+  | "ruins"
+  | "cavern"
+  | "crypt"
+  | "void";
 
 type ActiveBoardRow = {
   id: string;
@@ -27,6 +39,30 @@ type ActiveBoardRow = {
 type InsertedBoardRow = {
   id: string;
 };
+
+function asObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function inferBiome(toBoardType: MythicBoardType, state: Record<string, unknown>): MythicBiome {
+  if (toBoardType === "town") return "town";
+  if (toBoardType === "dungeon") return "ruins";
+  if (toBoardType === "combat") return "void";
+  const weather = asString(state.weather, "").toLowerCase();
+  if (weather === "storm" || weather === "dust") return "badlands";
+  if (weather === "rain") return "wetlands";
+  return "plains";
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -190,6 +226,7 @@ serve(async (req) => {
       .maybeSingle<ActiveBoardRow>();
 
     const activeState = activeBoard?.state_json ?? {};
+    const activeChunk = asObject(activeState.chunk);
     const rawSeed = activeState.seed;
     const seedBase = typeof rawSeed === "number" && Number.isFinite(rawSeed)
       ? Math.floor(rawSeed)
@@ -200,6 +237,29 @@ serve(async (req) => {
     else if (toBoardType === "travel") stateJson = mkTravelState(seedBase + 2);
     else if (toBoardType === "dungeon") stateJson = mkDungeonState(seedBase + 3);
     else stateJson = { seed: seedBase + 4 };
+
+    const payloadChunk = asObject(payload.chunk);
+    const coordX = Math.floor(asNumber(payloadChunk.coord_x ?? payload.coord_x ?? activeChunk.coord_x, 0));
+    const coordY = Math.floor(asNumber(payloadChunk.coord_y ?? payload.coord_y ?? activeChunk.coord_y, 0));
+    const biome = asString(payloadChunk.biome ?? payload.biome, inferBiome(toBoardType, stateJson)) as MythicBiome;
+
+    stateJson = {
+      ...stateJson,
+      version: 2,
+      chunk: {
+        board_type: toBoardType,
+        coord_x: coordX,
+        coord_y: coordY,
+        biome,
+        seed: Math.floor(asNumber(payloadChunk.seed ?? stateJson.seed, seedBase + 1)),
+      },
+      runtime: {
+        destroyed_ids: [],
+        opened_ids: [],
+        flags: {},
+        fog_revealed: [],
+      },
+    };
 
     if (activeBoard) {
       await svc.schema("mythic").from("boards").update({ status: "archived", updated_at: nowIso() }).eq("id", activeBoard.id);
@@ -212,12 +272,30 @@ serve(async (req) => {
         campaign_id: campaignId,
         board_type: toBoardType,
         status: "active",
-        state_json: { ...stateJson, ...payload },
+        state_json: { ...stateJson, ...payload, chunk: asObject(stateJson.chunk) },
         ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
       })
       .select("id")
       .maybeSingle<InsertedBoardRow>();
     if (newBoardErr) throw newBoardErr;
+
+    if (toBoardType !== "combat") {
+      const runtime = asObject(asObject(stateJson).runtime);
+      const { error: chunkErr } = await svc
+        .schema("mythic")
+        .from("board_chunks")
+        .upsert({
+          campaign_id: campaignId,
+          board_type: toBoardType,
+          coord_x: coordX,
+          coord_y: coordY,
+          biome,
+          seed: Math.floor(asNumber(asObject(stateJson.chunk).seed, seedBase + 1)),
+          state_json: stateJson,
+          runtime_json: runtime,
+        }, { onConflict: "campaign_id,board_type,coord_x,coord_y" });
+      if (chunkErr) throw chunkErr;
+    }
 
     await svc.schema("mythic").from("board_transitions").insert({
       campaign_id: campaignId,
@@ -225,7 +303,19 @@ serve(async (req) => {
       to_board_type: toBoardType,
       reason,
       animation: "page_turn",
-      payload_json: { ...payload },
+      payload_json: {
+        ...payload,
+        from_chunk: {
+          coord_x: Math.floor(asNumber(activeChunk.coord_x, 0)),
+          coord_y: Math.floor(asNumber(activeChunk.coord_y, 0)),
+          biome: asString(activeChunk.biome, "plains"),
+        },
+        to_chunk: {
+          coord_x: coordX,
+          coord_y: coordY,
+          biome,
+        },
+      },
     });
 
     return new Response(JSON.stringify({ ok: true, board_id: newBoard?.id ?? null }), {

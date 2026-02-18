@@ -80,3 +80,38 @@ test("mythic DM turn updates quest arc and story timeline", async ({ page }) => 
   await expect(page.getByText("Endure three volatile turns. (1/3)")).toBeVisible();
   await expect(page.getByText("Mood swing in motion")).toBeVisible();
 });
+
+test("mythic combat loop supports move then skill then rewards then return to exploration", async ({ page }) => {
+  let pageError: Error | null = null;
+  page.on("pageerror", (error) => {
+    pageError = error;
+  });
+
+  const campaignId = "e2e00000-0000-4000-8000-000000000002";
+  await page.goto(`/mythic/${campaignId}`);
+
+  await expect(page.getByText("Board: town")).toBeVisible();
+  await page.getByRole("button", { name: "Start Combat" }).click();
+
+  await expect(page.getByText("Combat Playback (DB is truth)")).toBeVisible();
+  await expect(page.getByText("Isometric Tactics Board")).toBeVisible();
+
+  await page.getByRole("button", { name: "Move" }).click();
+  await page.getByTitle("(2,1)").click();
+  await page.getByRole("button", { name: "Confirm Move" }).click();
+
+  await page.getByRole("button", { name: "Skill" }).click();
+  await page.getByRole("button", { name: "Momentum Slash" }).click();
+  await page.getByTitle(/Ink Ghoul/).click();
+  await page.getByRole("button", { name: "Use Selected Skill" }).click();
+
+  await expect(page.getByText("Battle Rewards")).toBeVisible();
+  await expect(page.getByText("Defeated enemies:")).toBeVisible();
+  await page.getByRole("button", { name: "Continue Exploring" }).click();
+
+  await expect(page.getByText("Battle Rewards")).toHaveCount(0);
+  await expect(page.getByText("Board: town")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start Combat" })).toBeVisible();
+
+  expect(pageError).toBeNull();
+});

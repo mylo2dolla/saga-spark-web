@@ -252,3 +252,114 @@
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(43 50% 35%);
 }
+
+/* Mythic 16-bit renderer pipeline */
+.mythic-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.mythic-stage canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.mythic-town-scene,
+.mythic-travel-scene,
+.mythic-dungeon-scene {
+  position: absolute;
+  inset: 0;
+}
+
+.mythic-combat-board-wrap {
+  overflow: auto;
+  border-radius: 0.5rem;
+  border: 1px solid hsl(var(--border));
+  background:
+    radial-gradient(circle at 20% 20%, hsl(218 20% 16% / 0.72), transparent 48%),
+    radial-gradient(circle at 80% 70%, hsl(13 28% 16% / 0.48), transparent 48%),
+    linear-gradient(180deg, hsl(230 16% 11%), hsl(226 14% 8%));
+}
+
+.mythic-combat-board {
+  position: relative;
+  min-width: 520px;
+  min-height: 320px;
+  margin: 0 auto;
+  transform: translateZ(0);
+}
+
+.mythic-iso-tile {
+  position: absolute;
+  transform: skewY(-26.565deg) scaleY(0.5);
+  transform-origin: center;
+  border: 1px solid hsl(210 14% 34% / 0.3);
+  background: hsl(216 18% 20% / 0.32);
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.mythic-iso-tile:hover {
+  border-color: hsl(var(--primary) / 0.55);
+  background: hsl(var(--primary) / 0.16);
+}
+
+.mythic-iso-tile.is-blocked {
+  border-color: hsl(0 0% 34% / 0.45);
+  background:
+    repeating-linear-gradient(45deg, hsl(0 0% 22% / 0.7), hsl(0 0% 22% / 0.7) 6px, hsl(0 0% 15% / 0.7) 6px, hsl(0 0% 15% / 0.7) 12px);
+}
+
+.mythic-iso-tile.is-move-range {
+  border-color: hsl(156 80% 52% / 0.6);
+  background: hsl(156 68% 38% / 0.2);
+}
+
+.mythic-iso-tile.is-selected {
+  border-color: hsl(var(--primary) / 0.95);
+  background: hsl(var(--primary) / 0.3);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.25), 0 0 18px hsl(var(--primary) / 0.2);
+}
+
+.mythic-iso-token {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: 9999px;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 20px hsl(0 0% 0% / 0.3);
+  transition: transform 160ms linear, box-shadow 140ms ease;
+}
+
+.mythic-iso-token:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px hsl(0 0% 0% / 0.36);
+}
+
+.mythic-token-hp {
+  position: absolute;
+  bottom: -7px;
+  height: 3px;
+  border-radius: 99px;
+  background: hsl(0 88% 63%);
+}
+
+.mythic-reward-flip {
+  animation: mythicPageFlipIn 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: left center;
+}
+
+@keyframes mythicPageFlipIn {
+  0% {
+    opacity: 0;
+    transform: perspective(900px) rotateY(-76deg) translateX(-16px);
+    filter: saturate(0.5) blur(1px);
+  }
+  100% {
+    opacity: 1;
+    transform: perspective(900px) rotateY(0deg) translateX(0);
+    filter: saturate(1) blur(0);
+  }
+}
