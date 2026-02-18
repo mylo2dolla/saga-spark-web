@@ -81,7 +81,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
         signal: controller.signal,
         // Supabase auth can intermittently take >10s (network + auth gateway). Keep a higher budget and rely on
         // explicit cancel + connectivity checks to avoid "false timeout" failures.
-        timeoutMs: 45_000,
+        timeoutMs: 25_000,
         maxRetries: 1,
         onUpdate: (state) => {
           setAuthOp(state);
