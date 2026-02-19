@@ -92,7 +92,6 @@ export default function DashboardScreen() {
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [isRepairing, setIsRepairing] = useState(false);
-  const [isDeletingLegacy, setIsDeletingLegacy] = useState(false);
 
   const [createError, setCreateError] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -304,7 +303,7 @@ export default function DashboardScreen() {
       const { result: data } = await runOperation({
         name: "dashboard.join_campaign",
         signal: controller.signal,
-        timeoutMs: 12_000,
+        timeoutMs: 18_000,
         maxRetries: 1,
         onUpdate: (state) => {
           setJoinOp(state);
@@ -345,42 +344,6 @@ export default function DashboardScreen() {
     } finally {
       joinAbortRef.current = null;
       setIsJoining(false);
-    }
-  };
-
-  const handleDeleteLegacy = async () => {
-    if (!activeUserId) return;
-    const legacy = campaigns.filter((campaign) => campaign.is_owner && campaign.health_status !== "ready");
-    if (legacy.length === 0) {
-      toast({ title: "No legacy campaigns", description: "All owned campaigns are already Mythic-ready." });
-      return;
-    }
-
-    const confirmed = window.confirm(`Delete ${legacy.length} non-ready campaign(s)? This cannot be undone.`);
-    if (!confirmed) return;
-
-    setIsDeletingLegacy(true);
-    try {
-      await runOperation({
-        name: "dashboard.delete_legacy_campaigns",
-        timeoutMs: 20_000,
-        maxRetries: 0,
-        onUpdate: (state) => recordOperation(state),
-        run: async () => {
-          const ids = legacy.map((campaign) => campaign.id);
-          const { error: deleteError } = await supabase.from("campaigns").delete().in("id", ids).eq("owner_id", activeUserId);
-          if (deleteError) throw deleteError;
-          return true;
-        },
-      });
-      toast({ title: "Legacy campaigns deleted", description: `Removed ${legacy.length} campaign(s).` });
-      await loadCampaigns();
-    } catch (err) {
-      const message = formatError(err, "Failed to delete legacy campaigns");
-      setError(message);
-      toast({ title: "Delete failed", description: message, variant: "destructive" });
-    } finally {
-      setIsDeletingLegacy(false);
     }
   };
 
@@ -438,14 +401,6 @@ export default function DashboardScreen() {
           <div className="mb-3 flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => void loadCampaigns()} disabled={isLoading}>
               Refresh
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleDeleteLegacy}
-              disabled={isDeletingLegacy || campaigns.length === 0}
-            >
-              {isDeletingLegacy ? "Deleting..." : "Delete Legacy"}
             </Button>
           </div>
           <div className="space-y-3">

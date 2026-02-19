@@ -1,6 +1,6 @@
 # Saga Spark
 
-Saga Spark is a fantasy RPG companion web app built with Vite, React, and Supabase functions.
+ Saga Spark is a fantasy RPG companion web app built with Vite + React, using Supabase for Auth/Postgres and a VM-hosted functions API for `/functions/v1/*`.
 
 ## Local development
 
@@ -66,15 +66,39 @@ Remove job:
 scripts/uninstall-vaultsync-launchd.sh
 ```
 
-## Supabase bootstrap (new project)
+## Supabase bootstrap (Auth + DB only)
 
 1) Update `.env` with the new project URL and anon key (`VITE_SUPABASE_ANON_KEY`).
-2) Run `scripts/bootstrap-supabase.sh` to apply migrations to the remote project (or paste `supabase/bootstrap.sql` into the SQL editor).
+2) Run `scripts/bootstrap-supabase.sh <project-ref>` to apply migrations to the remote project (or paste `supabase/bootstrap.sql` into the SQL editor).
 3) Supabase Dashboard auth settings (dev-friendly):
    - Authentication → Providers → Email → set “Confirm email” to OFF.
    - Authentication → Providers → Email → set “Allowed email domains” to empty (no restrictions).
 4) Supabase Dashboard SQL editor: SQL Editor → New query → paste `supabase/bootstrap.sql` → Run.
-5) Deploy edge functions: `supabase functions deploy world-generator` and `supabase functions deploy world-content-writer`.
+5) Keep Supabase focused on Auth + Postgres. Runtime function execution is served by your VM API (`VITE_MYTHIC_FUNCTIONS_BASE_URL`).
+
+## Functions runtime (VM-hosted only)
+
+All function calls from the client are routed to:
+
+```bash
+VITE_MYTHIC_FUNCTIONS_BASE_URL
+```
+
+The client appends `/functions/v1/<function-name>` automatically (or uses it directly if your base already ends with `/functions/v1`).
+If `VITE_MYTHIC_FUNCTIONS_BASE_URL` is set to `*.supabase.co`, runtime calls are rejected by the client guard.
+
+Canonical VM API source now lives at:
+
+- `/Users/dev/dev-setup/repos/saga-spark-web/services/mythic-api/src`
+
+Build and run on the VM:
+
+```bash
+cd services/mythic-api
+npm install
+npm run build
+npm run start
+```
 
 ## Supabase migrations (local + remote)
 
@@ -206,42 +230,33 @@ Notes for Codespaces:
 CI:
 - The Playwright HTML report is uploaded as a workflow artifact named `playwright-report`.
 
-## generate-class curl checks
+## generate-class curl checks (VM API)
 
 ```bash
-curl -i -X OPTIONS https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-class
+curl -i -X OPTIONS "$VITE_MYTHIC_FUNCTIONS_BASE_URL/functions/v1/generate-class"
 ```
 
 ```bash
-curl -i -X POST https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-class \
+curl -i -X POST "$VITE_MYTHIC_FUNCTIONS_BASE_URL/functions/v1/generate-class" \
   -H "apikey: <anon-key>" \
   -H "Content-Type: application/json" \
   -d '{"classDescription":"Arcane duelist"}'
 ```
 
 ```bash
-curl -i -X POST https://othlyxwtigxzczeffzee.supabase.co/functions/v1/generate-class \
+curl -i -X POST "$VITE_MYTHIC_FUNCTIONS_BASE_URL/functions/v1/generate-class" \
   -H "apikey: <anon-key>" \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
   -d '{"classDescription":"Arcane duelist"}'
 ```
 
-## generate-class curl (local/dev)
+## VM function route sweep
+
+Verify all expected `/functions/v1/*` routes exist on the VM:
 
 ```bash
-curl -i -X OPTIONS http://127.0.0.1:54321/functions/v1/generate-class
+VITE_MYTHIC_FUNCTIONS_BASE_URL=http://5.78.189.122 ./scripts/smoke-vm-functions.sh
 ```
 
-```bash
-curl -i -X POST http://127.0.0.1:54321/functions/v1/generate-class \
-  -H "apikey: <anon-key>" \
-  -H "Content-Type: application/json" \
-  -d '{"classDescription":"Arcane duelist"}'
-```
-
-```bash
-curl -i -X POST http://127.0.0.1:54321/functions/v1/generate-class \
-  -H "Content-Type: application/json" \
-  -d '{"classDescription":"Arcane duelist"}'
-```
+Supabase Edge Functions are rollback-only and not part of normal runtime traffic.

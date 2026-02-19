@@ -10,8 +10,14 @@ export function useClassGenerator() {
   const [generatedClass, setGeneratedClass] = useState<GeneratedClass | null>(null);
   const [error, setError] = useState<string | null>(null);
   const edgeFunctionName = "generate-class";
-  const edgeFunctionUrl = import.meta.env.VITE_SUPABASE_URL
-    ? `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/${edgeFunctionName}`
+  const rawBase = (
+    import.meta.env.VITE_MYTHIC_FUNCTIONS_BASE_URL
+    ?? import.meta.env.NEXT_PUBLIC_MYTHIC_FUNCTIONS_BASE_URL
+    ?? ""
+  ).trim();
+  const normalizedBase = rawBase.replace(/\/+$/, "");
+  const edgeFunctionUrl = normalizedBase
+    ? `${normalizedBase.endsWith("/functions/v1") ? normalizedBase : `${normalizedBase}/functions/v1`}/${edgeFunctionName}`
     : null;
 
   const logFetchError = useCallback((context: string, payload: Record<string, unknown>) => {

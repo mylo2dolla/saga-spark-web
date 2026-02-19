@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { formatError } from "@/ui/data/async";
+import { callEdgeFunction } from "@/lib/edge";
 import { getGrantedAbilities, splitInventory, sumStatMods, type MythicInventoryRow } from "@/lib/mythicEquipment";
 
 function itemSummary(row: MythicInventoryRow) {
@@ -12,6 +12,8 @@ function itemSummary(row: MythicInventoryRow) {
 }
 
 export function MythicInventoryPanel(props: {
+  campaignId: string;
+  characterId: string;
   rows: MythicInventoryRow[];
   onChanged: () => Promise<void>;
 }) {
@@ -25,26 +27,27 @@ export function MythicInventoryPanel(props: {
     setError(null);
     try {
       const itemSlot = row.item.slot ?? "other";
-      const isUnlimited = itemSlot === "ring" || itemSlot === "trinket";
-      if (!isUnlimited) {
-        // Unequip any existing item in the same slot.
-        const equippedSameSlot = equipment.filter((e) => e.item?.slot === itemSlot);
-        if (equippedSameSlot.length > 0) {
-          const { error: uneqErr } = await supabase
-            .schema("mythic")
-            .from("inventory")
-            .update({ container: "backpack", equip_slot: null, equipped_at: null })
-            .in("id", equippedSameSlot.map((e) => e.id));
-          if (uneqErr) throw uneqErr;
-        }
+      const { data, error: edgeError } = await callEdgeFunction<{
+        ok: boolean;
+        code?: string;
+        error?: string;
+        requestId?: string;
+      }>("mythic-inventory-equip", {
+        requireAuth: true,
+        idempotencyKey: `${props.characterId}:equip:${row.id}:${itemSlot}`,
+        timeoutMs: 15_000,
+        maxRetries: 0,
+        body: {
+          campaignId: props.campaignId,
+          characterId: props.characterId,
+          inventoryId: row.id,
+        },
+      });
+      if (edgeError) throw edgeError;
+      if (!data?.ok) {
+        const requestId = data?.requestId ? ` (requestId: ${data.requestId})` : "";
+        throw new Error(`${data?.error ?? "Equip failed"} [${data?.code ?? "inventory_equip_failed"}]${requestId}`);
       }
-
-      const { error: eqErr } = await supabase
-        .schema("mythic")
-        .from("inventory")
-        .update({ container: "equipment", equip_slot: itemSlot, equipped_at: new Date().toISOString() })
-        .eq("id", row.id);
-      if (eqErr) throw eqErr;
       await props.onChanged();
     } catch (e) {
       setError(formatError(e, "Failed to equip item"));
@@ -57,12 +60,27 @@ export function MythicInventoryPanel(props: {
     setIsWorking(true);
     setError(null);
     try {
-      const { error: uneqErr } = await supabase
-        .schema("mythic")
-        .from("inventory")
-        .update({ container: "backpack", equip_slot: null, equipped_at: null })
-        .eq("id", row.id);
-      if (uneqErr) throw uneqErr;
+      const { data, error: edgeError } = await callEdgeFunction<{
+        ok: boolean;
+        code?: string;
+        error?: string;
+        requestId?: string;
+      }>("mythic-inventory-unequip", {
+        requireAuth: true,
+        idempotencyKey: `${props.characterId}:unequip:${row.id}`,
+        timeoutMs: 15_000,
+        maxRetries: 0,
+        body: {
+          campaignId: props.campaignId,
+          characterId: props.characterId,
+          inventoryId: row.id,
+        },
+      });
+      if (edgeError) throw edgeError;
+      if (!data?.ok) {
+        const requestId = data?.requestId ? ` (requestId: ${data.requestId})` : "";
+        throw new Error(`${data?.error ?? "Unequip failed"} [${data?.code ?? "inventory_unequip_failed"}]${requestId}`);
+      }
       await props.onChanged();
     } catch (e) {
       setError(formatError(e, "Failed to unequip item"));

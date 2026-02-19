@@ -13,7 +13,8 @@ export default function SupabaseStatusIndicator() {
     <div className="mt-3 text-[11px] text-muted-foreground">
       <div>Supabase DB probe: {status}{lastError ? ` (${lastError})` : ""}</div>
       <div>Host: {config.host ?? "-"}</div>
-      <div>Anon key: {config.maskedKey ?? "-"}</div>
+      <div>Client key: {config.maskedKey ?? "-"}</div>
+      <div>Key type: {config.keyType}</div>
     </div>
   );
 }

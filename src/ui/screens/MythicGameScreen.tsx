@@ -900,10 +900,13 @@ export default function MythicGameScreen() {
 
             {activePanel === "gear" ? (
               <MythicInventoryPanel
+                campaignId={campaignId ?? character.campaign_id}
+                characterId={character.id}
                 rows={invRowsSafe}
                 onChanged={async () => {
                   await recomputeCharacter();
                   await refetch();
+                  await refetchCharacter();
                 }}
               />
             ) : null}

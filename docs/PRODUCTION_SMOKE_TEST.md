@@ -21,7 +21,12 @@ Open `http://localhost:8080`.
 3. Create a campaign with name + description.
 4. Confirm UI reaches `/mythic/:campaignId` (or `/mythic/:campaignId/create-character`).
 5. Confirm campaign appears in list and no spinner is stuck.
-6. Open `Servers/Admin` and run:
+6. Confirm VM functions health endpoint is reachable:
+   - `curl -i http://5.78.189.122/healthz`
+7. Confirm frontend runtime base is VM and not Supabase Edge:
+   - `VITE_MYTHIC_FUNCTIONS_BASE_URL` points to VM host
+   - `VITE_MYTHIC_FUNCTIONS_BASE_URL` does **not** end with `.supabase.co`
+8. Open `Servers/Admin` and run:
    - `Test DB`
    - `Export Debug Bundle`
 

@@ -3,15 +3,20 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const FUNCTIONS_BASE = process.env.VITE_MYTHIC_FUNCTIONS_BASE_URL ?? process.env.MYTHIC_FUNCTIONS_BASE_URL;
 const EMAIL = process.env.SUPABASE_TEST_EMAIL ?? process.env.SUPABASE_EMAIL;
 const PASSWORD = process.env.SUPABASE_TEST_PASSWORD ?? process.env.SUPABASE_PASSWORD;
 
-if (!SUPABASE_URL || !ANON_KEY || !SERVICE_ROLE_KEY || !EMAIL || !PASSWORD) {
+if (!SUPABASE_URL || !ANON_KEY || !SERVICE_ROLE_KEY || !FUNCTIONS_BASE || !EMAIL || !PASSWORD) {
   console.error(
-    "Missing env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_TEST_EMAIL (or SUPABASE_EMAIL), SUPABASE_TEST_PASSWORD (or SUPABASE_PASSWORD)."
+    "Missing env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, VITE_MYTHIC_FUNCTIONS_BASE_URL (or MYTHIC_FUNCTIONS_BASE_URL), SUPABASE_TEST_EMAIL (or SUPABASE_EMAIL), SUPABASE_TEST_PASSWORD (or SUPABASE_PASSWORD)."
   );
   process.exit(1);
 }
+const normalizedBase = FUNCTIONS_BASE.replace(/\/+$/, "");
+const functionsBase = normalizedBase.endsWith("/functions/v1")
+  ? normalizedBase
+  : `${normalizedBase}/functions/v1`;
 
 const anonClient = createClient(SUPABASE_URL, ANON_KEY);
 const serviceClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
@@ -64,7 +69,7 @@ try {
   }
 
   console.log("Calling world-generator...");
-  const worldResponse = await fetch(`${SUPABASE_URL}/functions/v1/world-generator`, {
+  const worldResponse = await fetch(`${functionsBase}/world-generator`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -87,7 +92,7 @@ try {
   console.log("world-generator body", worldBody);
 
   console.log("Calling world-content-writer...");
-  const writerResponse = await fetch(`${SUPABASE_URL}/functions/v1/world-content-writer`, {
+  const writerResponse = await fetch(`${functionsBase}/world-content-writer`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

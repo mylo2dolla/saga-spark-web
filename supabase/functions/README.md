@@ -1,23 +1,14 @@
-# Supabase Edge Functions - AI Provider Configuration
+# Supabase Edge Functions (Rollback Archive Only)
 
-These functions call Groq directly from the server. No AI keys are ever sent to the client.
+Active runtime is VM-hosted:
 
-Required secrets:
+- `/functions/v1/<function-name>` on your Hetzner API
 
-```
-npx supabase secrets set GROQ_API_KEY="your_groq_key"
-```
+Supabase remains:
 
-Optional base URL override (defaults to `https://api.groq.com/openai`):
+- Auth (`/auth/v1/*`)
+- Postgres database
 
-```
-npx supabase secrets set GROQ_BASE_URL="https://api.groq.com/openai"
-```
+This directory is kept only as rollback/archive source and should not be deployed in normal operations.
 
-Deploy functions after updating secrets:
-
-```
-npx supabase functions deploy generate-class
-npx supabase functions deploy world-generator
-npx supabase functions deploy dungeon-master
-```
+If rollback is required, deploy explicitly and revert client runtime routing afterward.

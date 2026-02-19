@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_REF="othlyxwtigxzczeffzee"
+PROJECT_REF="${SUPABASE_PROJECT_REF:-${1:-}}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BOOTSTRAP_SQL="$ROOT_DIR/supabase/bootstrap.sql"
+
+if [[ -z "${PROJECT_REF}" ]]; then
+  echo "Missing Supabase project ref."
+  echo "Usage: SUPABASE_PROJECT_REF=<project-ref> $0"
+  echo "   or: $0 <project-ref>"
+  exit 1
+fi
 
 echo "Bootstrapping Supabase project: ${PROJECT_REF}"
 

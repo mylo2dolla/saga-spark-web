@@ -29,7 +29,18 @@ interface AuthContext {
 
 const logger = createLogger("edge");
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const RAW_FUNCTIONS_BASE_URL = (
+  import.meta.env.VITE_MYTHIC_FUNCTIONS_BASE_URL
+  ?? import.meta.env.NEXT_PUBLIC_MYTHIC_FUNCTIONS_BASE_URL
+  ?? ""
+).trim();
+const FUNCTIONS_BASE_URL = RAW_FUNCTIONS_BASE_URL.replace(/\/+$/, "");
+const SUPABASE_API_KEY = (
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+  ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  ?? import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
+  ?? import.meta.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+)?.trim();
 const DEFAULT_EDGE_TIMEOUT_MS = 20_000;
 const AUTH_CALL_TIMEOUT_MS = 4_000;
 const REFRESH_BUFFER_MS = 60_000;
@@ -45,8 +56,24 @@ const inFlightJsonCalls = new Map<string, Promise<unknown>>();
 const inFlightRawCalls = new Map<string, Promise<Response>>();
 
 const ensureEnv = () => {
-  if (!SUPABASE_URL || !ANON_KEY) {
-    throw new Error("Supabase env is not configured");
+  if (!SUPABASE_URL || !SUPABASE_API_KEY || !FUNCTIONS_BASE_URL) {
+    throw new Error(
+      "Missing required env. Set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY), and VITE_MYTHIC_FUNCTIONS_BASE_URL.",
+    );
+  }
+
+  try {
+    const url = new URL(FUNCTIONS_BASE_URL);
+    if (url.hostname.endsWith(".supabase.co")) {
+      throw new Error(
+        "VITE_MYTHIC_FUNCTIONS_BASE_URL must point to your VM runtime, not Supabase Edge Functions.",
+      );
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("must point to your VM runtime")) {
+      throw error;
+    }
+    throw new Error("VITE_MYTHIC_FUNCTIONS_BASE_URL must be a valid absolute URL.");
   }
 };
 
@@ -152,7 +179,7 @@ const buildHeaders = async (
     return {
       headers: {
         "Content-Type": "application/json",
-        apikey: ANON_KEY,
+        apikey: SUPABASE_API_KEY!,
         ...(options?.headers ?? {}),
       },
       skipped: true,
@@ -162,7 +189,7 @@ const buildHeaders = async (
   return {
     headers: {
       "Content-Type": "application/json",
-      apikey: ANON_KEY,
+      apikey: SUPABASE_API_KEY!,
       ...(options?.headers ?? {}),
       ...(options?.idempotencyKey ? { "x-idempotency-key": options.idempotencyKey } : {}),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
@@ -174,7 +201,10 @@ const buildHeaders = async (
 
 const buildUrl = (name: string) => {
   ensureEnv();
-  return `${SUPABASE_URL}/functions/v1/${name}`;
+  const base = FUNCTIONS_BASE_URL.endsWith("/functions/v1")
+    ? FUNCTIONS_BASE_URL
+    : `${FUNCTIONS_BASE_URL}/functions/v1`;
+  return `${base}/${name}`;
 };
 
 const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
@@ -345,7 +375,7 @@ const responseForAuthError = (authError: Error) => ({
 
 const buildRequestHeaders = (options: EdgeOptions | undefined, token: string | null): EdgeHeaders => ({
   "Content-Type": "application/json",
-  apikey: ANON_KEY,
+  apikey: SUPABASE_API_KEY!,
   ...(options?.headers ? buildInvokeHeaders(options.headers) ?? {} : {}),
   ...(options?.idempotencyKey ? { "x-idempotency-key": options.idempotencyKey } : {}),
   ...(token ? { Authorization: `Bearer ${token}` } : {}),

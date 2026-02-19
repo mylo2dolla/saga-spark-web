@@ -7,7 +7,7 @@ This repo stores the authoritative Mythic Weave rules in Supabase Postgres under
 1. Link the project:
 ```bash
 cd /Users/dev/saga-spark-web
-supabase link --project-ref othlyxwtigxzczeffzee
+supabase link --project-ref <project-ref>
 ```
 
 2. Push migrations:

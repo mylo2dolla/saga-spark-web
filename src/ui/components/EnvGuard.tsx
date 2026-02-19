@@ -18,8 +18,20 @@ export default function EnvGuard({ children }: { children: ReactNode }) {
           </ul>
           <div className="mt-4 rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
             <div>Host: {config.host ?? "-"}</div>
-            <div>Anon key length: {config.keyLength}</div>
-            <div>Anon key: {config.maskedKey ?? "-"}</div>
+            <div>Client key type: {config.keyType}</div>
+            <div>Client key source: {config.keySource ?? "-"}</div>
+            <div>Client key length: {config.keyLength}</div>
+            <div>Client key: {config.maskedKey ?? "-"}</div>
+            {config.warnings.length > 0 ? (
+              <div className="mt-2">
+                <div className="font-medium text-foreground/80">Warnings</div>
+                <ul className="mt-1 list-disc space-y-1 pl-5">
+                  {config.warnings.map(w => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

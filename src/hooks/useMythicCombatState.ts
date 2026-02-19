@@ -147,14 +147,15 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
 
   useEffect(() => {
     if (!campaignId || !combatSessionId) return;
+    const pollMs = session?.status === "active" ? 2500 : 4500;
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
       void fetchState();
-    }, 1800);
+    }, pollMs);
     return () => clearInterval(interval);
-  }, [campaignId, combatSessionId, fetchState]);
+  }, [campaignId, combatSessionId, fetchState, session?.status]);
 
   return {
     session,

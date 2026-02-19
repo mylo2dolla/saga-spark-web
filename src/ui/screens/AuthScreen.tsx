@@ -293,7 +293,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                 try {
                   const headers = supabaseAnonKey ? { apikey: supabaseAnonKey } : undefined;
                   const controller = new AbortController();
-                  const timeoutId = setTimeout(() => controller.abort(), 12_000);
+                  const timeoutId = setTimeout(() => controller.abort(), 25_000);
                   const [authRes, restRes] = await Promise.all([
                     fetch(`${supabaseUrl}/auth/v1/health`, { method: "GET", headers, signal: controller.signal }),
                     fetch(`${supabaseUrl}/rest/v1/`, { method: "GET", headers, signal: controller.signal }),
@@ -322,7 +322,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                 setAuthTestResult(null);
                 try {
                   const controller = new AbortController();
-                  const timeoutId = setTimeout(() => controller.abort(), 12_000);
+                  const timeoutId = setTimeout(() => controller.abort(), 25_000);
                   const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
                     method: "POST",
                     headers: {
