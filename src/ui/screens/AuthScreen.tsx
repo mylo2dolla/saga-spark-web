@@ -41,6 +41,7 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
     code?: string | null;
     name?: string | null;
   } | null>(null);
+  const [isRecoveringSignup, setIsRecoveringSignup] = useState(false);
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
   const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
   const [authTestResult, setAuthTestResult] = useState<string | null>(null);
@@ -49,6 +50,14 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
 
   const isSubmitting = authOp?.status === "RUNNING" || authOp?.status === "PENDING";
   const pendingSeconds = authOp?.started_at ? Math.max(1, Math.floor((Date.now() - authOp.started_at) / 1000)) : 0;
+  const canRecoverSignup = mode === "login"
+    && (
+      authDebug?.code === "auth_invalid_credentials"
+      || authDebug?.status === 400
+      || Boolean(lastError && /invalid login credentials|no account found|auth failed \(400\)/i.test(lastError))
+    )
+    && email.trim().length > 0
+    && password.trim().length > 0;
 
   const cancelSubmit = () => {
     abortRef.current?.abort();
@@ -110,18 +119,41 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                 tokenRes.headers.get("sb-request-id")
                 ?? tokenRes.headers.get("x-request-id")
                 ?? tokenRes.headers.get("cf-ray");
+              let providerCode: string | null = null;
               let message = `Auth failed (${tokenRes.status})`;
               try {
-                const json = await tokenRes.clone().json() as { error_description?: string; message?: string } | null;
+                const json = await tokenRes.clone().json() as {
+                  error_description?: string;
+                  message?: string;
+                  error?: string;
+                  code?: string;
+                } | null;
+                providerCode = json?.error ?? json?.code ?? null;
                 message = json?.error_description ?? json?.message ?? message;
               } catch {
                 // Non-JSON responses (e.g. Cloudflare HTML 522) are expected in some outage modes.
                 message = tokenRes.status === 522 ? "Supabase auth gateway timed out (522)" : message;
               }
+              const normalized = message.toLowerCase();
+              if (
+                tokenRes.status === 400
+                && (
+                  providerCode === "invalid_grant"
+                  || normalized.includes("invalid login credentials")
+                  || normalized.includes("auth failed (400)")
+                )
+              ) {
+                throw Object.assign(
+                  new Error(
+                    "No account found in this Supabase project for that email/password. If this project was rebuilt, create the account again.",
+                  ),
+                  { status: tokenRes.status, code: "auth_invalid_credentials", requestId },
+                );
+              }
               if (requestId) {
                 message = `${message} (requestId: ${requestId})`;
               }
-              throw Object.assign(new Error(message), { status: tokenRes.status });
+              throw Object.assign(new Error(message), { status: tokenRes.status, code: providerCode, requestId });
             }
 
             const tokenJson = await tokenRes.json() as { access_token?: string; refresh_token?: string };
@@ -180,6 +212,44 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
       logger.error("auth.submit.failed", error, { mode });
     } finally {
       abortRef.current = null;
+    }
+  };
+
+  const handleRecoverSignup = async () => {
+    if (isRecoveringSignup) return;
+    if (!email.trim() || !password.trim()) {
+      setLastError("Email and password are required.");
+      return;
+    }
+    setIsRecoveringSignup(true);
+    setLastError(null);
+    setAuthDebug(null);
+    try {
+      const response = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: { display_name: displayName || email.split("@")[0] },
+        },
+      });
+      if (response.error) throw response.error;
+      if (response.data.session) {
+        navigate("/dashboard");
+        return;
+      }
+      setLastError("Account created. Check your email to confirm and then log in.");
+    } catch (error) {
+      const normalized = sanitizeError(error);
+      setLastError(formatError(error, "Failed to create account"));
+      setAuthDebug({
+        message: normalized.message,
+        status: (error as { status?: number })?.status ?? null,
+        code: normalized.code,
+        name: (error as { name?: string })?.name ?? null,
+      });
+      logger.error("auth.recover_signup.failed", error, { mode });
+    } finally {
+      setIsRecoveringSignup(false);
     }
   };
 
@@ -249,6 +319,22 @@ export default function AuthScreen({ mode }: AuthScreenProps) {
                 {authDebug ? (
                   <div className="mt-2 text-xs text-destructive/80">
                     Debug: {authDebug.name ?? "Error"} | status {authDebug.status ?? "?"} | code {authDebug.code ?? "?"}
+                  </div>
+                ) : null}
+                {canRecoverSignup ? (
+                  <div className="mt-2 flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={handleRecoverSignup}
+                      disabled={isRecoveringSignup}
+                    >
+                      {isRecoveringSignup ? "Creating account..." : "Create account now"}
+                    </Button>
+                    <span className="text-xs text-destructive/80">
+                      This project was rebuilt, so older accounts may need re-creation.
+                    </span>
                   </div>
                 ) : null}
                 {lastErrorAt ? (

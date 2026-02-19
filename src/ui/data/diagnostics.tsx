@@ -91,7 +91,18 @@ export function DiagnosticsProvider({ children }: { children: ReactNode }) {
     recordOperation,
     healthChecks,
     exportDebugBundle,
-  }), [errorHistory, engineSnapshot, exportDebugBundle, healthChecks, lastError, lastErrorAt, operations]);
+  }), [
+    errorHistory,
+    engineSnapshot,
+    exportDebugBundle,
+    healthChecks,
+    lastError,
+    lastErrorAt,
+    operations,
+    recordOperation,
+    setLastError,
+    setEngineSnapshot,
+  ]);
 
   return (
     <DiagnosticsContext.Provider value={value}>

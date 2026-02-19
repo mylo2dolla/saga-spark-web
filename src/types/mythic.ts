@@ -96,12 +96,23 @@ export interface MythicProgressionEventRow {
   created_at: string;
 }
 
+export interface MythicQuestThreadRow {
+  id: string;
+  source: "dm_memory" | "board_transition" | "progression" | "loot_drop" | "reputation";
+  event_type: string;
+  title: string;
+  detail: string;
+  severity: number;
+  created_at: string;
+}
+
 export interface MythicCharacterBundle {
   character: MythicCharacterRow;
   skills: MythicSkill[];
   items: Array<Record<string, unknown>>;
   loadouts: MythicCharacterLoadoutRow[];
   progressionEvents: MythicProgressionEventRow[];
+  questThreads: MythicQuestThreadRow[];
   loadoutSlotCap: number;
 }
 

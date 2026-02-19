@@ -1,11 +1,16 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { callEdgeFunction } from "@/lib/edge";
+import { parseEdgeError } from "@/lib/edgeError";
 import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
 import { createLogger } from "@/lib/observability/logger";
 
 const logger = createLogger("mythic-combat-hook");
+
+export type MythicCombatStartResult =
+  | { ok: true; combatSessionId: string }
+  | { ok: false; message: string; code: string | null; requestId: string | null };
 
 export function useMythicCombat() {
   const [isStarting, setIsStarting] = useState(false);
@@ -15,18 +20,20 @@ export function useMythicCombat() {
   const [actionOperation, setActionOperation] = useState<OperationState | null>(null);
   const [tickOperation, setTickOperation] = useState<OperationState | null>(null);
 
-  const startCombat = useCallback(async (campaignId: string) => {
+  const startCombat = useCallback(async (campaignId: string): Promise<MythicCombatStartResult> => {
     setIsStarting(true);
     try {
       const { result: data } = await runOperation({
         name: "combat.start",
-        timeoutMs: 15_000,
-        maxRetries: 1,
+        timeoutMs: 30_000,
+        maxRetries: 0,
         onUpdate: setStartOperation,
         run: async ({ signal }) => {
           const { data, error } = await callEdgeFunction<{ ok: boolean; combat_session_id: string }>("mythic-combat-start", {
             requireAuth: true,
             signal,
+            timeoutMs: 25_000,
+            maxRetries: 0,
             idempotencyKey: `${campaignId}:start`,
             body: { campaignId },
           });
@@ -35,13 +42,14 @@ export function useMythicCombat() {
           return data;
         },
       });
-      toast.success("Combat started");
-      return data.combat_session_id;
+      return { ok: true, combatSessionId: data.combat_session_id };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to start combat";
-      logger.error("combat.start.failed", e);
-      toast.error(msg);
-      return null;
+      const parsed = parseEdgeError(e, "Failed to start combat");
+      const message = parsed.message;
+      const code = parsed.code;
+      const requestId = parsed.requestId;
+      logger.error("combat.start.failed", e, { code: code ?? undefined, requestId: requestId ?? undefined });
+      return { ok: false, message, code, requestId };
     } finally {
       setIsStarting(false);
     }
@@ -52,6 +60,7 @@ export function useMythicCombat() {
     combatSessionId: string;
     actorCombatantId: string;
     skillId: string;
+    currentTurnIndex?: number;
     target:
       | { kind: "self" }
       | { kind: "combatant"; combatant_id: string }
@@ -65,12 +74,20 @@ export function useMythicCombat() {
         maxRetries: 1,
         onUpdate: setActionOperation,
         run: async ({ signal }) => {
+          const targetSig = args.target.kind === "self"
+            ? "self"
+            : args.target.kind === "combatant"
+              ? `c${args.target.combatant_id}`
+              : `t${args.target.x},${args.target.y}`;
+          const turnKey = Number.isFinite(args.currentTurnIndex)
+            ? Math.max(0, Math.floor(args.currentTurnIndex ?? 0))
+            : 0;
           const { data, error } = await callEdgeFunction<{ ok: boolean; ended?: boolean; next_turn_index?: number }>(
             "mythic-combat-use-skill",
             {
               requireAuth: true,
               signal,
-              idempotencyKey: `${args.combatSessionId}:${args.actorCombatantId}:${args.skillId}:${JSON.stringify(args.target)}`,
+              idempotencyKey: `${args.combatSessionId}:use:t${turnKey}:actor${args.actorCombatantId}:skill${args.skillId}:target${targetSig}`,
               body: args,
             },
           );
@@ -94,6 +111,7 @@ export function useMythicCombat() {
     campaignId: string;
     combatSessionId: string;
     maxSteps?: number;
+    currentTurnIndex?: number;
   }) => {
     setIsTicking(true);
     try {
@@ -103,6 +121,10 @@ export function useMythicCombat() {
         maxRetries: 1,
         onUpdate: setTickOperation,
         run: async ({ signal }) => {
+          const steps = Math.max(1, Math.min(10, Math.floor(args.maxSteps ?? 1)));
+          const turnKey = Number.isFinite(args.currentTurnIndex)
+            ? Math.max(0, Math.floor(args.currentTurnIndex ?? 0))
+            : 0;
           const { data, error } = await callEdgeFunction<{
             ok: boolean;
             ended?: boolean;
@@ -114,11 +136,11 @@ export function useMythicCombat() {
             {
               requireAuth: true,
               signal,
-              idempotencyKey: `${args.combatSessionId}:tick:${Math.max(1, Math.min(10, Math.floor(args.maxSteps ?? 1)))}`,
+              idempotencyKey: `${args.combatSessionId}:tick:t${turnKey}:steps${steps}`,
               body: {
                 campaignId: args.campaignId,
                 combatSessionId: args.combatSessionId,
-                maxSteps: Math.max(1, Math.min(10, Math.floor(args.maxSteps ?? 1))),
+                maxSteps: steps,
               },
             },
           );

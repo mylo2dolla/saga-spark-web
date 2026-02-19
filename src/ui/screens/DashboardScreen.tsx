@@ -126,8 +126,8 @@ export default function DashboardScreen() {
     try {
       const { result } = await runOperation({
         name: "dashboard.load_campaigns",
-        timeoutMs: 10_000,
-        maxRetries: 2,
+        timeoutMs: 16_000,
+        maxRetries: 1,
         onUpdate: (state) => {
           setLoadOp(state);
           recordOperation(state);
@@ -135,7 +135,14 @@ export default function DashboardScreen() {
         run: async ({ signal }) => {
           const { data, error } = await callEdgeFunction<{ ok: boolean; campaigns: CampaignSummary[] }>(
             "mythic-list-campaigns",
-            { requireAuth: true, accessToken: activeAccessToken, body: {}, signal },
+            {
+              requireAuth: true,
+              accessToken: activeAccessToken,
+              body: {},
+              signal,
+              timeoutMs: 16_000,
+              maxRetries: 0,
+            },
           );
           if (error) {
             throw error;
@@ -222,7 +229,7 @@ export default function DashboardScreen() {
       const { result: data } = await runOperation({
         name: "dashboard.create_campaign",
         signal: controller.signal,
-        timeoutMs: 16_000,
+        timeoutMs: 25_000,
         maxRetries: 1,
         onUpdate: (state) => {
           setCreateOp(state);
@@ -240,6 +247,8 @@ export default function DashboardScreen() {
               requireAuth: true,
               accessToken: activeAccessToken,
               signal,
+              timeoutMs: 25_000,
+              maxRetries: 0,
               idempotencyKey: `${activeUser.id}:${name}:${description}`,
               body: {
                 name,
@@ -309,7 +318,7 @@ export default function DashboardScreen() {
       const { result: data } = await runOperation({
         name: "dashboard.join_campaign",
         signal: controller.signal,
-        timeoutMs: 18_000,
+        timeoutMs: 20_000,
         maxRetries: 1,
         onUpdate: (state) => {
           setJoinOp(state);
@@ -322,6 +331,8 @@ export default function DashboardScreen() {
               requireAuth: true,
               accessToken: activeAccessToken,
               signal,
+              timeoutMs: 20_000,
+              maxRetries: 0,
               idempotencyKey: `${activeUser.id}:${code}`,
               body: { inviteCode: code },
             },

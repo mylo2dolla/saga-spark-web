@@ -78,6 +78,31 @@ export function parseEdgeError(error: unknown, fallback = "Request failed"): Par
 
 export function toFriendlyEdgeError(error: unknown, fallback = "Request failed"): FriendlyEdgeError {
   const parsed = parseEdgeError(error, fallback);
+  const lowerMessage = parsed.message.toLowerCase();
+
+  if (parsed.code === "network_unreachable" || parsed.code === "upstream_timeout") {
+    return {
+      ...parsed,
+      title: "Functions API unreachable",
+      description: "Could not reach the VM functions API. Check VITE_MYTHIC_FUNCTIONS_BASE_URL and VM/Caddy health.",
+    };
+  }
+
+  if (parsed.code === "auth_gateway_timeout") {
+    return {
+      ...parsed,
+      title: "Auth gateway timeout",
+      description: "Supabase auth timed out upstream. Retry once; if it repeats, check Supabase status and network route.",
+    };
+  }
+
+  if (lowerMessage.includes("timed out")) {
+    return {
+      ...parsed,
+      title: "Generation timed out",
+      description: "Generation took too long. Retry once; if it keeps happening, we need to tune backend latency.",
+    };
+  }
 
   if (parsed.isAuth) {
     return {

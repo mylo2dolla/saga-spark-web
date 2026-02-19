@@ -13,6 +13,7 @@ import {
   storeIdempotentResponse,
 } from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
+import { settleCombat } from "../lib/combat/settlement.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const TargetSchema = z.union([
@@ -937,38 +938,49 @@ export const mythicCombatUseSkill: FunctionHandler = {
       const { data: aliveCombatants, error: aliveCombatantsErr } = await svc
         .schema("mythic")
         .from("combatants")
-        .select("id, entity_type, is_alive")
+        .select("id, entity_type, is_alive, character_id, player_id, lvl")
         .eq("combat_session_id", combatSessionId);
       if (aliveCombatantsErr) throw aliveCombatantsErr;
       const alivePlayers = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "player").length;
       const aliveNpcs = (aliveCombatants ?? []).filter((c: any) => c.is_alive && c.entity_type === "npc").length;
       if (alivePlayers === 0 || aliveNpcs === 0) {
-        await svc.rpc("mythic_end_combat_session", {
-          combat_session_id: combatSessionId,
-          outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs },
-        });
-        const { data: lastBoard } = await svc
-          .schema("mythic")
-          .from("boards")
-          .select("id, board_type")
-          .eq("campaign_id", campaignId)
-          .neq("board_type", "combat")
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (lastBoard) {
-          await svc.schema("mythic").from("boards").update({ status: "active", updated_at: new Date().toISOString() }).eq("id", (lastBoard as any).id);
-          await svc.schema("mythic").from("boards").update({ status: "archived", updated_at: new Date().toISOString() }).eq("combat_session_id", combatSessionId);
-          await svc.schema("mythic").from("board_transitions").insert({
-            campaign_id: campaignId,
-            from_board_type: "combat",
-            to_board_type: (lastBoard as any).board_type,
-            reason: "combat_end",
-            animation: "page_turn",
-            payload_json: { combat_session_id: combatSessionId, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } },
+        const appendActionEvent = async (
+          eventType: string,
+          payload: Record<string, unknown>,
+          actorCombatantId?: string | null,
+          eventTurnIndex?: number,
+        ) => {
+          const { error } = await svc.rpc("mythic_append_action_event", {
+            combat_session_id: combatSessionId,
+            turn_index: eventTurnIndex ?? turnIndex,
+            actor_combatant_id: actorCombatantId ?? null,
+            event_type: eventType,
+            payload,
           });
-        }
-        const response = new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: alivePlayers, alive_npcs: aliveNpcs } }), {
+          if (error) throw error;
+        };
+
+        const outcome = await settleCombat({
+          svc,
+          campaignId,
+          combatSessionId,
+          turnIndex,
+          seed,
+          source: "combat_use_skill",
+          requestId,
+          logger: ctx.log,
+          aliveRows: (aliveCombatants ?? []).map((row: any) => ({
+            id: String(row.id),
+            entity_type: row.entity_type === "npc" || row.entity_type === "summon" ? row.entity_type : "player",
+            is_alive: Boolean(row.is_alive),
+            character_id: typeof row.character_id === "string" ? row.character_id : null,
+            player_id: typeof row.player_id === "string" ? row.player_id : null,
+            lvl: typeof row.lvl === "number" ? row.lvl : null,
+          })),
+          appendActionEvent,
+        });
+
+        const response = new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: outcome.alive_players, alive_npcs: outcome.alive_npcs, won: outcome.won } }), {
           status: 200,
           headers: baseHeaders,
         });
@@ -980,8 +992,9 @@ export const mythicCombatUseSkill: FunctionHandler = {
           campaign_id: campaignId,
           combat_session_id: combatSessionId,
           actor_combatant_id: (actor as any).id,
-          alive_players: alivePlayers,
-          alive_npcs: aliveNpcs,
+          alive_players: outcome.alive_players,
+          alive_npcs: outcome.alive_npcs,
+          won: outcome.won,
         });
         return response;
       }
@@ -1045,4 +1058,3 @@ export const mythicCombatUseSkill: FunctionHandler = {
     }
   },
 };
-

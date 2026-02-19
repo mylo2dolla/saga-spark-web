@@ -14,24 +14,35 @@ type CreatorError = {
   code: string | null;
 };
 
+interface CreatorOptions {
+  signal?: AbortSignal;
+}
+
 export function useMythicCreator() {
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [lastError, setLastError] = useState<CreatorError | null>(null);
   const clearError = useCallback(() => setLastError(null), []);
 
-  const bootstrapCampaign = useCallback(async (campaignId: string) => {
+  const bootstrapCampaign = useCallback(async (campaignId: string, options: CreatorOptions = {}) => {
     setIsBootstrapping(true);
     setLastError(null);
     try {
       const { data, error } = await callEdgeFunction<MythicBootstrapResponse>("mythic-bootstrap", {
         requireAuth: true,
+        signal: options.signal,
+        timeoutMs: 25_000,
+        maxRetries: 0,
         body: { campaignId } satisfies MythicBootstrapRequest,
       });
       if (error) throw error;
       if (!data?.ok) throw new Error("Bootstrap failed");
       return data;
     } catch (error) {
+      if (options.signal?.aborted) {
+        setLastError({ message: "Character forge cancelled.", code: "cancelled" });
+        return null;
+      }
       const parsed = toFriendlyEdgeError(error, "Failed to prepare campaign runtime");
       setLastError({ message: parsed.description, code: parsed.code });
       toast.error(parsed.description);
@@ -41,7 +52,7 @@ export function useMythicCreator() {
     }
   }, []);
 
-  const createCharacter = useCallback(async (req: MythicCreateCharacterRequest) => {
+  const createCharacter = useCallback(async (req: MythicCreateCharacterRequest, options: CreatorOptions = {}) => {
     const characterName = req.characterName.trim();
     const classDescription = req.classDescription.trim();
 
@@ -67,6 +78,10 @@ export function useMythicCreator() {
     try {
       const { data, error } = await callEdgeFunction<MythicCreateCharacterResponse>("mythic-create-character", {
         requireAuth: true,
+        signal: options.signal,
+        timeoutMs: 45_000,
+        maxRetries: 0,
+        idempotencyKey: `${req.campaignId}:${characterName}:${classDescription}`,
         body: {
           ...req,
           characterName,
@@ -78,6 +93,10 @@ export function useMythicCreator() {
       toast.success(`Forged: ${data.class.class_name}`);
       return data;
     } catch (e) {
+      if (options.signal?.aborted) {
+        setLastError({ message: "Character forge cancelled.", code: "cancelled" });
+        return null;
+      }
       const parsed = toFriendlyEdgeError(e, "Failed to create character");
       setLastError({ message: parsed.description, code: parsed.code });
       toast.error(parsed.description);

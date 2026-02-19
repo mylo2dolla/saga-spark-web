@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/functions/v1/(.*)",
-      "destination": "http://5.78.189.122/functions/v1/$1"
+      "destination": "https://api.mythweaver.online/functions/v1/$1"
     },
     {
       "source": "/(.*)",

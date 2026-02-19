@@ -11,6 +11,7 @@ import {
   storeIdempotentResponse,
 } from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
+import { settleCombat } from "../lib/combat/settlement.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const RequestSchema = z.object({
@@ -47,8 +48,6 @@ type Combatant = {
 };
 
 type TurnRow = { turn_index: number; combatant_id: string };
-
-const clampInt = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, Math.floor(value)));
 
 async function appendEvent(
   svc: ReturnType<typeof createServiceClient>,
@@ -88,132 +87,6 @@ function skillMultFor(skillName: string, targetHpPct: number): number {
   if (skillName === "boss_mark") return 0.85;
   if (skillName === "boss_vuln") return 0.95;
   return 1.1;
-}
-
-async function grantSimpleLoot(args: {
-  svc: ReturnType<typeof createServiceClient>;
-  seed: number;
-  campaignId: string;
-  combatSessionId: string;
-  characterId: string;
-  level: number;
-  rarity: "magical" | "unique" | "legendary" | "mythic";
-}) {
-  const { svc, seed, campaignId, combatSessionId, characterId, level, rarity } = args;
-  const namesA = ["Ash", "Iron", "Dread", "Storm", "Velvet", "Blood", "Wyrm", "Night"];
-  const namesB = ["Edge", "Ward", "Pulse", "Maw", "Spur", "Bite", "Halo", "Crown"];
-  const slot = rngPick(seed, `loot:${characterId}:slot`, ["weapon", "armor", "ring", "trinket"] as const);
-  const name = `${rngPick(seed, `loot:${characterId}:a`, namesA)} ${rngPick(seed, `loot:${characterId}:b`, namesB)}`;
-  const statMods: Record<string, number> = {
-    offense: rngInt(seed, `loot:${characterId}:off`, 1, 8),
-    defense: rngInt(seed, `loot:${characterId}:def`, 1, 8),
-  };
-  if (slot === "weapon") statMods.weapon_power = rngInt(seed, `loot:${characterId}:wp`, 2, 12);
-  if (slot === "armor") statMods.armor_power = rngInt(seed, `loot:${characterId}:ap`, 2, 10);
-  if (slot === "ring" || slot === "trinket") statMods.utility = rngInt(seed, `loot:${characterId}:ut`, 2, 10);
-
-  const { data: item, error: itemErr } = await svc.schema("mythic").from("items").insert({
-    campaign_id: campaignId,
-    owner_character_id: characterId,
-    rarity,
-    item_type: "gear",
-    slot,
-    stat_mods: statMods,
-    effects_json: {},
-    drawback_json: rarity === "legendary" || rarity === "mythic"
-      ? { id: "volatile_reverb", description: "Draws danger toward its bearer.", world_reaction: true }
-      : {},
-    narrative_hook: `${name} was torn from the fight while metal was still screaming.`,
-    durability_json: { current: 100, max: 100, decay_per_use: 1 },
-    required_level: Math.max(1, level - 1),
-    item_power: Math.max(1, Math.floor(level * (rarity === "mythic" ? 3.4 : rarity === "legendary" ? 2.6 : 1.8))),
-    drop_tier: rarity === "mythic" ? "mythic" : rarity === "legendary" ? "boss" : "elite",
-    bind_policy: rarity === "magical" ? "unbound" : "bind_on_equip",
-  }).select("id,name,slot,rarity").single();
-  if (itemErr) throw itemErr;
-
-  const { error: invErr } = await svc.schema("mythic").from("inventory").insert({
-    character_id: characterId,
-    item_id: (item as any).id,
-    container: "backpack",
-    quantity: 1,
-  });
-  if (invErr) throw invErr;
-
-  const { error: dropErr } = await svc.schema("mythic").from("loot_drops").insert({
-    campaign_id: campaignId,
-    combat_session_id: combatSessionId,
-    source: "combat_tick",
-    rarity,
-    budget_points: rarity === "mythic" ? 60 : rarity === "legendary" ? 40 : 24,
-    item_ids: [(item as any).id],
-    payload: { generated_by: "mythic-combat-tick" },
-  });
-  if (dropErr) throw dropErr;
-
-  return item as any;
-}
-
-async function appendMemoryEvent(args: {
-  svc: ReturnType<typeof createServiceClient>;
-  campaignId: string;
-  playerId: string;
-  category: string;
-  severity: number;
-  payload: Record<string, unknown>;
-}) {
-  const { error } = await args.svc.schema("mythic").from("dm_memory_events").insert({
-    campaign_id: args.campaignId,
-    player_id: args.playerId,
-    category: args.category,
-    severity: clampInt(args.severity, 1, 5),
-    payload: args.payload,
-  });
-  if (error) throw error;
-}
-
-async function applyReputationDelta(args: {
-  svc: ReturnType<typeof createServiceClient>;
-  campaignId: string;
-  playerId: string;
-  factionId: string;
-  delta: number;
-  severity: number;
-  evidence: Record<string, unknown>;
-}) {
-  if (args.delta === 0) return;
-  const { error: repEventError } = await args.svc.schema("mythic").from("reputation_events").insert({
-    campaign_id: args.campaignId,
-    faction_id: args.factionId,
-    player_id: args.playerId,
-    severity: clampInt(args.severity, 1, 5),
-    delta: clampInt(args.delta, -1000, 1000),
-    evidence: args.evidence,
-  });
-  if (repEventError) throw repEventError;
-
-  const currentRepQuery = await args.svc
-    .schema("mythic")
-    .from("faction_reputation")
-    .select("rep")
-    .eq("campaign_id", args.campaignId)
-    .eq("faction_id", args.factionId)
-    .eq("player_id", args.playerId)
-    .maybeSingle();
-  if (currentRepQuery.error) throw currentRepQuery.error;
-  const currentRep = Number((currentRepQuery.data as any)?.rep ?? 0);
-  const nextRep = clampInt(currentRep + args.delta, -1000, 1000);
-  const { error: upsertError } = await args.svc
-    .schema("mythic")
-    .from("faction_reputation")
-    .upsert({
-      campaign_id: args.campaignId,
-      faction_id: args.factionId,
-      player_id: args.playerId,
-      rep: nextRep,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "campaign_id,faction_id,player_id" });
-  if (upsertError) throw upsertError;
 }
 
 export const mythicCombatTick: FunctionHandler = {
@@ -258,20 +131,6 @@ export const mythicCombatTick: FunctionHandler = {
       }
 
       await assertCampaignAccess(svc, campaignId, user.userId);
-
-      const factionPoolQuery = await svc
-        .schema("mythic")
-        .from("factions")
-        .select("id,name,tags")
-        .eq("campaign_id", campaignId)
-        .order("created_at", { ascending: true });
-      const factionPool = (factionPoolQuery.data ?? [])
-        .filter((row: any) => typeof row.id === "string")
-        .map((row: any) => ({
-          id: String(row.id),
-          name: typeof row.name === "string" ? row.name : "Faction",
-          tags: Array.isArray(row.tags) ? row.tags.filter((tag: unknown): tag is string => typeof tag === "string") : [],
-        }));
 
       let ticks = 0;
       let ended = false;
@@ -528,156 +387,33 @@ export const mythicCombatTick: FunctionHandler = {
 
         if (alivePlayers.length === 0 || aliveNpcs.length === 0) {
           ended = true;
-          await svc.rpc("mythic_end_combat_session", {
-            combat_session_id: combatSessionId,
-            outcome: { alive_players: alivePlayers.length, alive_npcs: aliveNpcs.length },
-          });
-
-          const won = alivePlayers.length > 0 && aliveNpcs.length === 0;
-          const bossAlive = (aliveRows ?? []).some((r: any) => r.entity_type === "npc" && r.is_alive);
-          const xpPer = won ? 180 + (aliveRows?.length ?? 0) * 35 + (bossAlive ? 0 : 220) : 0;
-          const playerRowsAll = (aliveRows ?? []).filter((r: any) => r.entity_type === "player" && typeof r.player_id === "string");
-          const primaryFaction = factionPool[0] ?? null;
-
-          if (won) {
-            for (const p of alivePlayers) {
-              if (!(p as any).character_id) continue;
-              const { data: xpResult } = await svc.rpc("mythic_apply_xp", {
-                character_id: (p as any).character_id,
-                amount: xpPer,
-                reason: "combat_settlement",
-                metadata: { combat_session_id: combatSessionId },
-              });
-              await appendEvent(svc, combatSessionId, turnIndex, null, "xp_gain", {
-                character_id: (p as any).character_id,
-                amount: xpPer,
-                result: xpResult ?? null,
-              });
-
-              const rarity = xpPer > 420 ? "legendary" : xpPer > 280 ? "unique" : "magical";
-              const lootItem = await grantSimpleLoot({
+          await settleCombat({
+            svc,
+            campaignId,
+            combatSessionId,
+            turnIndex,
+            seed,
+            source: "combat_tick",
+            requestId,
+            logger: ctx.log,
+            aliveRows: (aliveRows ?? []).map((row: any) => ({
+              id: String(row.id),
+              entity_type: row.entity_type === "npc" || row.entity_type === "summon" ? row.entity_type : "player",
+              is_alive: Boolean(row.is_alive),
+              character_id: typeof row.character_id === "string" ? row.character_id : null,
+              player_id: typeof row.player_id === "string" ? row.player_id : null,
+              lvl: typeof row.lvl === "number" ? row.lvl : null,
+            })),
+            appendActionEvent: async (eventType, payload, actorId, eventTurnIndex) => {
+              await appendEvent(
                 svc,
-                seed,
-                campaignId,
                 combatSessionId,
-                characterId: (p as any).character_id,
-                level: Math.max(1, Number((p as any).lvl ?? 1)),
-                rarity,
-              });
-              await appendEvent(svc, combatSessionId, turnIndex, null, "loot_drop", {
-                character_id: (p as any).character_id,
-                item_id: lootItem.id,
-                rarity: lootItem.rarity,
-                name: lootItem.name,
-              });
-
-              if (primaryFaction && typeof (p as any).player_id === "string") {
-                try {
-                  await applyReputationDelta({
-                    svc,
-                    campaignId,
-                    playerId: String((p as any).player_id),
-                    factionId: primaryFaction.id,
-                    delta: 6,
-                    severity: 2,
-                    evidence: {
-                      reason: "combat_victory",
-                      combat_session_id: combatSessionId,
-                      xp_awarded: xpPer,
-                      loot_item_id: lootItem.id,
-                    },
-                  });
-                  await appendMemoryEvent({
-                    svc,
-                    campaignId,
-                    playerId: String((p as any).player_id),
-                    category: "quest_thread",
-                    severity: 2,
-                    payload: {
-                      type: "combat_victory",
-                      combat_session_id: combatSessionId,
-                      xp_awarded: xpPer,
-                      loot_item_id: lootItem.id,
-                      faction_id: primaryFaction.id,
-                      faction_name: primaryFaction.name,
-                    },
-                  });
-                } catch (persistError) {
-                  ctx.log.warn("combat_tick.persistence_warning", {
-                    request_id: requestId,
-                    campaign_id: campaignId,
-                    combat_session_id: combatSessionId,
-                    reason: sanitizeError(persistError).message,
-                  });
-                }
-              }
-            }
-          } else {
-            for (const playerRow of playerRowsAll) {
-              try {
-                await appendMemoryEvent({
-                  svc,
-                  campaignId,
-                  playerId: String((playerRow as any).player_id),
-                  category: "quest_thread",
-                  severity: 3,
-                  payload: {
-                    type: "combat_setback",
-                    combat_session_id: combatSessionId,
-                    survived: Boolean((playerRow as any).is_alive),
-                  },
-                });
-                if (primaryFaction) {
-                  await applyReputationDelta({
-                    svc,
-                    campaignId,
-                    playerId: String((playerRow as any).player_id),
-                    factionId: primaryFaction.id,
-                    delta: -4,
-                    severity: 2,
-                    evidence: {
-                      reason: "combat_loss",
-                      combat_session_id: combatSessionId,
-                    },
-                  });
-                }
-              } catch (persistError) {
-                ctx.log.warn("combat_tick.persistence_warning", {
-                  request_id: requestId,
-                  campaign_id: campaignId,
-                  combat_session_id: combatSessionId,
-                  reason: sanitizeError(persistError).message,
-                });
-              }
-            }
-          }
-
-          const { data: lastBoard } = await svc
-            .schema("mythic")
-            .from("boards")
-            .select("id, board_type")
-            .eq("campaign_id", campaignId)
-            .neq("board_type", "combat")
-            .order("updated_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (lastBoard) {
-            await svc.schema("mythic").from("boards").update({ status: "active", updated_at: new Date().toISOString() }).eq("id", (lastBoard as any).id);
-            await svc.schema("mythic").from("boards").update({ status: "archived", updated_at: new Date().toISOString() }).eq("combat_session_id", combatSessionId);
-            await svc.schema("mythic").from("board_transitions").insert({
-              campaign_id: campaignId,
-              from_board_type: "combat",
-              to_board_type: (lastBoard as any).board_type,
-              reason: "combat_end",
-              animation: "page_turn",
-              payload_json: { combat_session_id: combatSessionId, outcome: { won } },
-            });
-          }
-
-          await appendEvent(svc, combatSessionId, turnIndex, null, "combat_end", {
-            alive_players: alivePlayers.length,
-            alive_npcs: aliveNpcs.length,
-            won,
+                eventTurnIndex ?? turnIndex,
+                actorId ?? null,
+                eventType,
+                payload,
+              );
+            },
           });
           finalNextActor = null;
           break;
@@ -742,4 +478,3 @@ export const mythicCombatTick: FunctionHandler = {
     }
   },
 };
-

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -29,6 +29,7 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
   const [characterName, setCharacterName] = useState("");
   const [classDescription, setClassDescription] = useState("");
   const [result, setResult] = useState<MythicCreateCharacterResponse | null>(null);
+  const forgeAbortRef = useRef<AbortController | null>(null);
 
   const { isBootstrapping, isCreating, lastError, bootstrapCampaign, createCharacter, clearError } = useMythicCreator();
 
@@ -38,16 +39,29 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
 
   const handleGenerate = async () => {
     clearError();
-    const bootstrap = await bootstrapCampaign(campaignId);
-    if (!bootstrap) return;
-    const created = await createCharacter({
-      campaignId,
-      characterName: characterName.trim(),
-      classDescription: classDescription.trim(),
-    });
-    if (!created) return;
-    setResult(created);
-    setStep("review");
+    forgeAbortRef.current?.abort();
+    const controller = new AbortController();
+    forgeAbortRef.current = controller;
+    try {
+      const bootstrap = await bootstrapCampaign(campaignId, { signal: controller.signal });
+      if (!bootstrap || controller.signal.aborted) return;
+      const created = await createCharacter({
+        campaignId,
+        characterName: characterName.trim(),
+        classDescription: classDescription.trim(),
+      }, { signal: controller.signal });
+      if (!created || controller.signal.aborted) return;
+      setResult(created);
+      setStep("review");
+    } finally {
+      if (forgeAbortRef.current === controller) {
+        forgeAbortRef.current = null;
+      }
+    }
+  };
+
+  const handleCancelForge = () => {
+    forgeAbortRef.current?.abort();
   };
 
   const handleConfirm = () => {
@@ -64,11 +78,18 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
           <div className="font-display text-2xl">Mythic Class Forge</div>
           <div className="text-sm text-muted-foreground">Describe your class. The system generates a real kit in Supabase (mythic schema).</div>
         </div>
-        {onCancel ? (
-          <Button variant="outline" onClick={onCancel} disabled={isBusy}>
-            Cancel
-          </Button>
-        ) : null}
+        <div className="flex items-center gap-2">
+          {isBusy ? (
+            <Button variant="outline" onClick={handleCancelForge}>
+              Cancel Forge
+            </Button>
+          ) : null}
+          {onCancel ? (
+            <Button variant="outline" onClick={onCancel} disabled={isBusy}>
+              Close
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <AnimatePresence mode="wait">

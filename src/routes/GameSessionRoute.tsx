@@ -1,6 +1,5 @@
 import { Outlet, useParams } from "react-router-dom";
 import NotFound from "@/pages/NotFound";
-import DevDebugOverlay from "@/components/debug/DevDebugOverlay";
 import { useAuth } from "@/hooks/useAuth";
 
 export default function GameSessionRoute() {
@@ -18,10 +17,5 @@ export default function GameSessionRoute() {
     return <div className="text-sm text-muted-foreground">Login required.</div>;
   }
 
-  return (
-    <>
-      <Outlet />
-      <DevDebugOverlay />
-    </>
-  );
+  return <Outlet />;
 }

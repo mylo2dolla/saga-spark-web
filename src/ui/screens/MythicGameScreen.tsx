@@ -1,189 +1,253 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { PromptAssistField } from "@/components/PromptAssistField";
 import { useAuth } from "@/hooks/useAuth";
 import { useMythicCreator } from "@/hooks/useMythicCreator";
 import { useMythicBoard } from "@/hooks/useMythicBoard";
 import { useMythicCharacter } from "@/hooks/useMythicCharacter";
-import { useMythicDmContext } from "@/hooks/useMythicDmContext";
-import { useMythicDungeonMaster } from "@/hooks/useMythicDungeonMaster";
-import { MythicDMChat } from "@/components/MythicDMChat";
+import {
+  useMythicDungeonMaster,
+  type MythicDmParsedPayload,
+  type MythicUiAction,
+} from "@/hooks/useMythicDungeonMaster";
+import { useMythicDmVoice } from "@/hooks/useMythicDmVoice";
 import { useMythicCombat } from "@/hooks/useMythicCombat";
 import { useMythicCombatState } from "@/hooks/useMythicCombatState";
-import { MythicCombatPanel } from "@/components/mythic/MythicCombatPanel";
 import { MythicInventoryPanel } from "@/components/mythic/MythicInventoryPanel";
 import { callEdgeFunction } from "@/lib/edge";
 import { sumStatMods, splitInventory, type MythicInventoryRow } from "@/lib/mythicEquipment";
+import { parsePlayerCommand, type PlayerCommandPanel } from "@/lib/mythic/playerCommandParser";
+import { executePlayerCommand } from "@/lib/mythic/playerCommandExecutor";
+import { buildSkillAvailability } from "@/lib/mythic/skillAvailability";
 import { toast } from "sonner";
+import { BookShell } from "@/ui/components/mythic/BookShell";
+import { NarrativePage } from "@/ui/components/mythic/NarrativePage";
+import { BoardPage } from "@/ui/components/mythic/BoardPage";
+import { BoardInspectDialog } from "@/ui/components/mythic/BoardInspectDialog";
+import { ShopDialog } from "@/ui/components/mythic/ShopDialog";
+import { SettingsPanel, type MythicRuntimeSettings } from "@/ui/components/mythic/SettingsPanel";
+import type { BoardInspectTarget } from "@/ui/components/mythic/board/inspectTypes";
 
-function prettyJson(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function truncateText(value: unknown, maxLen = 280): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (trimmed.length <= maxLen) return trimmed;
-  return `${trimmed.slice(0, maxLen)}...`;
-}
-
-function summarizeBoardState(boardType: string | null | undefined, state: unknown) {
-  const safeType = boardType ?? "unknown";
-  const raw = state && typeof state === "object" ? (state as Record<string, unknown>) : {};
-  if (safeType === "town") {
-    const worldSeed =
-      raw.world_seed && typeof raw.world_seed === "object"
-        ? (raw.world_seed as Record<string, unknown>)
-        : null;
-    const vendors = Array.isArray(raw.vendors)
-      ? raw.vendors.map((v) => (v && typeof v === "object" ? (v as Record<string, unknown>).name : null)).filter(Boolean)
-      : [];
-    return {
-      board_type: safeType,
-      template_key: raw.template_key ?? null,
-      world_title: worldSeed?.title ?? null,
-      world_description: truncateText(worldSeed?.description ?? null),
-      vendor_count: Array.isArray(raw.vendors) ? raw.vendors.length : 0,
-      vendor_names: vendors,
-      service_count: Array.isArray(raw.services) ? raw.services.length : 0,
-      rumor_count: Array.isArray(raw.rumors) ? raw.rumors.length : 0,
-      faction_count: Array.isArray(raw.factions_present) ? raw.factions_present.length : 0,
-      guard_alertness: raw.guard_alertness ?? null,
-    };
-  }
-  if (safeType === "travel") {
-    return {
-      board_type: safeType,
-      weather: raw.weather ?? null,
-      hazard_meter: raw.hazard_meter ?? null,
-      route_segments: Array.isArray(raw.route_segments) ? raw.route_segments.length : 0,
-      scouting: raw.scouting ?? null,
-      encounter_seeds: Array.isArray(raw.encounter_seeds) ? raw.encounter_seeds.length : 0,
-    };
-  }
-  if (safeType === "dungeon") {
-    const roomGraph = raw.room_graph && typeof raw.room_graph === "object"
-      ? (raw.room_graph as Record<string, unknown>)
-      : null;
-    return {
-      board_type: safeType,
-      rooms: Array.isArray(roomGraph?.rooms) ? roomGraph?.rooms.length : 0,
-      loot_nodes: raw.loot_nodes ?? null,
-      trap_signals: raw.trap_signals ?? null,
-      fog_of_war: raw.fog_of_war ?? null,
-      faction_presence: Array.isArray(raw.faction_presence) ? raw.faction_presence.length : 0,
-    };
-  }
-  if (safeType === "combat") {
-    const grid = raw.grid && typeof raw.grid === "object" ? (raw.grid as Record<string, unknown>) : null;
-    return {
-      board_type: safeType,
-      combat_session_id: raw.combat_session_id ?? null,
-      grid_width: grid?.width ?? null,
-      grid_height: grid?.height ?? null,
-      blocked_tile_count: Array.isArray(raw.blocked_tiles) ? raw.blocked_tiles.length : 0,
-      seed: raw.seed ?? null,
-    };
-  }
-  return {
-    board_type: safeType,
-    state: truncateText(prettyJson(raw), 400),
-  };
-}
-
-function summarizeDmContextPayload(value: unknown) {
-  if (!value || typeof value !== "object") return value;
-  const raw = value as Record<string, unknown>;
-  const board = raw.board && typeof raw.board === "object" ? (raw.board as Record<string, unknown>) : null;
-  const character = raw.character && typeof raw.character === "object"
-    ? (raw.character as Record<string, unknown>)
-    : null;
-  const combat = raw.combat && typeof raw.combat === "object" ? (raw.combat as Record<string, unknown>) : null;
-  const rules = raw.rules && typeof raw.rules === "object" ? (raw.rules as Record<string, unknown>) : null;
-  const script = raw.script && typeof raw.script === "object" ? (raw.script as Record<string, unknown>) : null;
-  const dmState = raw.dm_campaign_state && typeof raw.dm_campaign_state === "object"
-    ? (raw.dm_campaign_state as Record<string, unknown>)
-    : null;
-  const tension = raw.dm_world_tension && typeof raw.dm_world_tension === "object"
-    ? (raw.dm_world_tension as Record<string, unknown>)
-    : null;
-  return {
-    ok: raw.ok ?? null,
-    campaign_id: raw.campaign_id ?? null,
-    player_id: raw.player_id ?? null,
-    warnings: Array.isArray(raw.warnings) ? raw.warnings : [],
-    board: board
-      ? {
-          board_type: board.board_type ?? null,
-          status: board.status ?? null,
-          combat_session_id: board.combat_session_id ?? null,
-          updated_at: board.updated_at ?? null,
-          state_summary:
-            board.state_summary && typeof board.state_summary === "object"
-              ? board.state_summary
-              : summarizeBoardState(
-                  typeof board.board_type === "string" ? board.board_type : null,
-                  board.state_json ?? null,
-                ),
-        }
-      : null,
-    character: character
-      ? {
-          character_id: character.character_id ?? null,
-          name: character.name ?? null,
-          level: character.level ?? null,
-          role: (character.class_json as Record<string, unknown> | null)?.role ?? null,
-          class_name: (character.class_json as Record<string, unknown> | null)?.class_name ?? null,
-          skill_count: Array.isArray(character.skills) ? character.skills.length : 0,
-          resource_primary: (character.resources as Record<string, unknown> | null)?.primary_id ?? null,
-        }
-      : null,
-    combat: combat
-      ? {
-          combat_session_id: combat.combat_session_id ?? null,
-          status: combat.status ?? null,
-          current_turn_index: combat.current_turn_index ?? null,
-          actor: (combat.dm_payload as Record<string, unknown> | null)?.turn_actor_name ?? null,
-          enemies_count: (combat.dm_payload as Record<string, unknown> | null)?.enemies_count ?? null,
-          allies_count: (combat.dm_payload as Record<string, unknown> | null)?.allies_count ?? null,
-        }
-      : null,
-    rules: rules ? { name: rules.name ?? null, version: rules.version ?? null } : null,
-    script: script ? { name: script.name ?? null, version: script.version ?? null, is_active: script.is_active ?? null } : null,
-    dm_campaign_state: dmState
-      ? {
-          menace: dmState.menace ?? null,
-          amusement: dmState.amusement ?? null,
-          respect: dmState.respect ?? null,
-          boredom: dmState.boredom ?? null,
-        }
-      : null,
-    dm_world_tension: tension
-      ? {
-          tension: tension.tension ?? null,
-          doom: tension.doom ?? null,
-          spectacle: tension.spectacle ?? null,
-        }
-      : null,
-  };
-}
-
-const pageTurn = {
-  initial: { rotateY: -90, opacity: 0, transformOrigin: "left center" },
-  animate: { rotateY: 0, opacity: 1, transformOrigin: "left center" },
-  exit: { rotateY: 90, opacity: 0, transformOrigin: "right center" },
+type MythicPanelTab = "character" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "commands" | "settings";
+const MYTHIC_SETTINGS_STORAGE_KEY = "mythic:settings:v1";
+const DEFAULT_MYTHIC_SETTINGS: MythicRuntimeSettings = {
+  compactNarration: true,
+  animationIntensity: "normal",
+  chatAutoFollow: true,
 };
 
-type MythicPanelTab = "character" | "gear" | "skills" | "loadouts" | "progression" | "quests";
+function summarizeBoardHooks(state: unknown): Array<{ id: string; title: string; detail: string | null }> {
+  const payload = state && typeof state === "object" ? (state as Record<string, unknown>) : {};
+  const rawRumors = Array.isArray(payload.rumors) ? payload.rumors : [];
+  const rawObjectives = Array.isArray(payload.objectives) ? payload.objectives : [];
+  const hooks = [...rawRumors, ...rawObjectives];
+  return hooks.slice(0, 12).map((entry, idx) => {
+    if (typeof entry === "string") {
+      return { id: `hook:${idx}`, title: entry, detail: null };
+    }
+    if (entry && typeof entry === "object") {
+      const raw = entry as Record<string, unknown>;
+      const title =
+        typeof raw.title === "string"
+          ? raw.title
+          : typeof raw.name === "string"
+            ? raw.name
+            : typeof raw.label === "string"
+              ? raw.label
+              : `Hook ${idx + 1}`;
+      const detail =
+        typeof raw.description === "string"
+          ? raw.description
+          : typeof raw.detail === "string"
+            ? raw.detail
+            : typeof raw.prompt === "string"
+              ? raw.prompt
+              : null;
+      return { id: `hook:${idx}`, title, detail };
+    }
+    return { id: `hook:${idx}`, title: `Hook ${idx + 1}`, detail: null };
+  });
+}
+
+function mapPanelTab(panel: string | undefined): MythicPanelTab | null {
+  if (!panel) return null;
+  if (
+    panel === "character" ||
+    panel === "gear" ||
+    panel === "skills" ||
+    panel === "loadouts" ||
+    panel === "progression" ||
+    panel === "quests" ||
+    panel === "commands" ||
+    panel === "settings"
+  ) {
+    return panel;
+  }
+  return null;
+}
+
+function loadMythicSettings(): MythicRuntimeSettings {
+  if (typeof window === "undefined") return DEFAULT_MYTHIC_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(MYTHIC_SETTINGS_STORAGE_KEY);
+    if (!raw) return DEFAULT_MYTHIC_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<MythicRuntimeSettings>;
+    const animationIntensity = parsed.animationIntensity === "low" || parsed.animationIntensity === "normal" || parsed.animationIntensity === "high"
+      ? parsed.animationIntensity
+      : DEFAULT_MYTHIC_SETTINGS.animationIntensity;
+    return {
+      compactNarration: parsed.compactNarration !== false,
+      animationIntensity,
+      chatAutoFollow: parsed.chatAutoFollow !== false,
+    };
+  } catch {
+    return DEFAULT_MYTHIC_SETTINGS;
+  }
+}
+
+function fallbackActionsForBoard(args: {
+  boardType: "town" | "travel" | "dungeon" | "combat";
+  vendors: Array<{ id: string; name: string }>;
+  activeTurnCombatantName: string | null;
+}): MythicUiAction[] {
+  const actions: MythicUiAction[] = [];
+  const push = (action: MythicUiAction) => {
+    if (actions.length < 4) actions.push(action);
+  };
+
+  if (args.boardType === "town") {
+    const vendor = args.vendors[0] ?? null;
+    if (vendor) {
+      push({
+        id: "fallback-town-shop",
+        label: `Shop ${vendor.name}`,
+        intent: "shop",
+        payload: { vendorId: vendor.id },
+        prompt: `I head to ${vendor.name} and check what they have for sale.`,
+      });
+    }
+    push({
+      id: "fallback-town-jobs",
+      label: "Check Job Board",
+      intent: "dm_prompt",
+      prompt: "I check the town job board for contracts and rumors.",
+    });
+    push({
+      id: "fallback-town-talk",
+      label: "Question Locals",
+      intent: "dm_prompt",
+      prompt: "I question the locals for leads and faction tension.",
+    });
+    push({
+      id: "fallback-town-travel",
+      label: "Head Out",
+      intent: "travel",
+      boardTarget: "travel",
+      prompt: "I leave town and start traveling toward the next objective.",
+    });
+    return actions;
+  }
+
+  if (args.boardType === "travel") {
+    push({
+      id: "fallback-travel-scout",
+      label: "Scout Route",
+      intent: "dm_prompt",
+      prompt: "I scout the route for threats, shortcuts, and ambush points.",
+    });
+    push({
+      id: "fallback-travel-search-dungeon",
+      label: "Search Dungeon",
+      intent: "travel",
+      boardTarget: "travel",
+      prompt: "I search for dungeon traces, cave mouths, and ruin entrances.",
+      payload: { searchTarget: "dungeon" },
+    });
+    push({
+      id: "fallback-travel-enter",
+      label: "Enter Dungeon",
+      intent: "dungeon",
+      boardTarget: "dungeon",
+      prompt: "I commit and enter the dungeon entrance we found.",
+    });
+    push({
+      id: "fallback-travel-town",
+      label: "Return Town",
+      intent: "town",
+      boardTarget: "town",
+      prompt: "I return to town to resupply and regroup.",
+    });
+    return actions;
+  }
+
+  if (args.boardType === "dungeon") {
+    push({
+      id: "fallback-dungeon-assess",
+      label: "Assess Room",
+      intent: "dm_prompt",
+      prompt: "I assess this room for threats, secrets, and tactical cover.",
+    });
+    push({
+      id: "fallback-dungeon-loot",
+      label: "Inspect Cache",
+      intent: "dm_prompt",
+      prompt: "I inspect nearby caches and containers for loot and traps.",
+    });
+    push({
+      id: "fallback-dungeon-proceed",
+      label: "Proceed Deeper",
+      intent: "dm_prompt",
+      prompt: "I proceed deeper into the dungeon and secure the next room.",
+    });
+    push({
+      id: "fallback-dungeon-combat",
+      label: "Start Combat",
+      intent: "combat_start",
+      boardTarget: "combat",
+      prompt: "I engage any hostile presence now.",
+    });
+    return actions;
+  }
+
+  if (args.boardType === "combat") {
+    push({
+      id: "fallback-combat-assess",
+      label: "Assess Target",
+      intent: "dm_prompt",
+      prompt: args.activeTurnCombatantName
+        ? `I assess ${args.activeTurnCombatantName} for weaknesses, intent, and status effects.`
+        : "I assess the active hostile target for weaknesses and status effects.",
+    });
+    push({
+      id: "fallback-combat-skills",
+      label: "Open Skills",
+      intent: "open_panel",
+      panel: "skills",
+      prompt: "I review my available combat skills and cooldown windows.",
+    });
+    push({
+      id: "fallback-combat-status",
+      label: "Status Check",
+      intent: "dm_prompt",
+      prompt: "Give me a concise combat status check for my team and threats.",
+    });
+    push({
+      id: "fallback-combat-commands",
+      label: "Open Commands",
+      intent: "open_panel",
+      panel: "commands",
+      prompt: "Open my tactical command menu and callouts.",
+    });
+    return actions;
+  }
+
+  return actions;
+}
 
 export default function MythicGameScreen() {
   const { campaignId } = useParams();
@@ -198,18 +262,22 @@ export default function MythicGameScreen() {
     items,
     loadouts,
     progressionEvents,
+    questThreads,
     loadoutSlotCap,
     isLoading: charLoading,
     error: charError,
     refetch: refetchCharacter,
   } = useMythicCharacter(campaignId);
-  const dm = useMythicDmContext(campaignId, Boolean(campaignId && board && character));
   const mythicDm = useMythicDungeonMaster(campaignId);
+  const dmVoice = useMythicDmVoice(campaignId);
   const combat = useMythicCombat();
-  const [isTransitioning, setIsTransitioning] = useState(false);
   const [transitionError, setTransitionError] = useState<string | null>(null);
+  const [combatStartError, setCombatStartError] = useState<{ message: string; code: string | null; requestId: string | null } | null>(null);
+  const [inspectOpen, setInspectOpen] = useState(false);
+  const [inspectTarget, setInspectTarget] = useState<BoardInspectTarget | null>(null);
+  const [shopOpen, setShopOpen] = useState(false);
+  const [shopVendor, setShopVendor] = useState<{ id: string; name: string | null } | null>(null);
 
-  const [bootstrapped, setBootstrapped] = useState(false);
   const bootstrapOnceRef = useRef(false);
 
   useEffect(() => {
@@ -224,7 +292,6 @@ export default function MythicGameScreen() {
 
     (async () => {
       await bootstrapCampaign(campaignId);
-      setBootstrapped(true);
       await refetch();
     })();
   }, [authLoading, bootstrapCampaign, campaignId, navigate, refetch, user]);
@@ -232,6 +299,44 @@ export default function MythicGameScreen() {
   const modeKey = useMemo(() => {
     return board ? `${board.board_type}:${board.id}:${board.updated_at}` : "none";
   }, [board]);
+
+  const townVendors = useMemo(() => {
+    if (!board || board.board_type !== "town") return [];
+    const state = board.state_json && typeof board.state_json === "object" ? (board.state_json as Record<string, unknown>) : {};
+    const list = Array.isArray(state.vendors) ? state.vendors : [];
+    return list
+      .map((entry, index) => {
+        if (!entry || typeof entry !== "object") return null;
+        const raw = entry as Record<string, unknown>;
+        const id = typeof raw.id === "string" && raw.id.trim().length > 0 ? raw.id.trim() : `vendor_${index + 1}`;
+        const name = typeof raw.name === "string" && raw.name.trim().length > 0 ? raw.name.trim() : `Vendor ${index + 1}`;
+        return { id, name };
+      })
+      .filter((v): v is { id: string; name: string } => Boolean(v));
+  }, [board]);
+
+  const coins = useMemo(() => {
+    if (!character) return 0;
+    const resources = (character.resources && typeof character.resources === "object") ? (character.resources as Record<string, unknown>) : {};
+    const n = Number(resources.coins ?? 0);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+  }, [character]);
+
+  const findVendorName = useCallback((vendorId: string): string | null => {
+    const hit = townVendors.find((v) => v.id === vendorId);
+    return hit?.name ?? null;
+  }, [townVendors]);
+
+  const handleInspect = useCallback((target: BoardInspectTarget) => {
+    setInspectTarget(target);
+    setInspectOpen(true);
+  }, []);
+
+  const openShop = useCallback((vendorId: string, vendorName?: string | null) => {
+    setInspectOpen(false);
+    setShopVendor({ id: vendorId, name: vendorName ?? findVendorName(vendorId) });
+    setShopOpen(true);
+  }, [findVendorName]);
 
   const combatSessionId = useMemo(() => {
     if (!board) return null;
@@ -271,15 +376,38 @@ export default function MythicGameScreen() {
     () => loadouts.find((l) => l.is_active) ?? loadouts[0] ?? null,
     [loadouts],
   );
+  const equippedSkillIds = useMemo(
+    () => new Set((activeLoadout?.slots_json ?? []).filter((id): id is string => typeof id === "string" && id.length > 0)),
+    [activeLoadout],
+  );
+  const equippedActiveSkills = useMemo(
+    () => activeSkillPool.filter((skill) => equippedSkillIds.has(skill.id ?? "")),
+    [activeSkillPool, equippedSkillIds],
+  );
+  const knownUnequippedActiveSkills = useMemo(
+    () => activeSkillPool.filter((skill) => !equippedSkillIds.has(skill.id ?? "")),
+    [activeSkillPool, equippedSkillIds],
+  );
+  const passiveSkills = useMemo(
+    () => skills.filter((skill) => skill.kind === "passive"),
+    [skills],
+  );
   const [loadoutName, setLoadoutName] = useState("Default");
   const [selectedLoadoutSkillIds, setSelectedLoadoutSkillIds] = useState<string[]>([]);
   const [isSavingLoadout, setIsSavingLoadout] = useState(false);
-  const [isApplyingXp, setIsApplyingXp] = useState(false);
-  const [isRollingLoot, setIsRollingLoot] = useState(false);
   const [isAdvancingTurn, setIsAdvancingTurn] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const autoTickKeyRef = useRef<string | null>(null);
+  const lastPlayerInputRef = useRef<string>("");
   const [panelOpen, setPanelOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<MythicPanelTab>("character");
+  const [focusedCombatantId, setFocusedCombatantId] = useState<string | null>(null);
+  const [runtimeSettings, setRuntimeSettings] = useState<MythicRuntimeSettings>(() => loadMythicSettings());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(MYTHIC_SETTINGS_STORAGE_KEY, JSON.stringify(runtimeSettings));
+  }, [runtimeSettings]);
 
   useEffect(() => {
     const currentCap = Math.max(1, loadoutSlotCap);
@@ -311,30 +439,26 @@ export default function MythicGameScreen() {
     });
   }, [activeLoadout, activeSkillPool, loadoutSlotCap]);
 
-  const lastTransition = recentTransitions[0] ?? null;
-  const boardStateSummary = useMemo(
-    () => summarizeBoardState(board?.board_type, board?.state_json ?? null),
-    [board?.board_type, board?.state_json],
-  );
-  const dmContextSummary = useMemo(() => summarizeDmContextPayload(dm.data), [dm.data]);
+  const boardHooks = useMemo(() => summarizeBoardHooks(board?.state_json ?? null), [board?.state_json]);
 
-  const transitionBoard = async (toBoardType: "town" | "travel" | "dungeon", reason: string) => {
+  const transitionBoard = useCallback(async (
+    toBoardType: "town" | "travel" | "dungeon",
+    reason: string,
+    payload?: Record<string, unknown>,
+  ) => {
     if (!campaignId) return;
-    setIsTransitioning(true);
     setTransitionError(null);
     try {
       const { error } = await callEdgeFunction("mythic-board-transition", {
         requireAuth: true,
-        body: { campaignId, toBoardType, reason },
+        body: { campaignId, toBoardType, reason, payload: payload ?? {} },
       });
       if (error) throw error;
       await refetch();
     } catch (e) {
       setTransitionError(e instanceof Error ? e.message : "Failed to transition board");
-    } finally {
-      setIsTransitioning(false);
     }
-  };
+  }, [campaignId, refetch]);
 
   const recomputeCharacter = async () => {
     if (!campaignId || !character) return;
@@ -408,55 +532,6 @@ export default function MythicGameScreen() {
     }
   };
 
-  const applyXp = async (amount: number) => {
-    if (!campaignId || !character) return;
-    setIsApplyingXp(true);
-    try {
-      const { data, error } = await callEdgeFunction<{ ok: boolean }>("mythic-apply-xp", {
-        requireAuth: true,
-        body: {
-          campaignId,
-          characterId: character.id,
-          amount,
-          reason: "manual_progression",
-          metadata: { source: "mythic_screen_quick_action" },
-        },
-      });
-      if (error) throw error;
-      if (!data?.ok) throw new Error("Failed to apply XP");
-      await refetchCharacter();
-      toast.success(`Applied ${amount} XP`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to apply XP");
-    } finally {
-      setIsApplyingXp(false);
-    }
-  };
-
-  const generateLoot = async () => {
-    if (!campaignId || !character) return;
-    setIsRollingLoot(true);
-    try {
-      const { data, error } = await callEdgeFunction<{ ok: boolean; count: number }>("mythic-generate-loot", {
-        requireAuth: true,
-        body: {
-          campaignId,
-          characterId: character.id,
-          count: 1,
-          source: "manual_debug_drop",
-        },
-      });
-      if (error) throw error;
-      if (!data?.ok) throw new Error("Failed to generate loot");
-      await refetchCharacter();
-      toast.success("Loot generated.");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to generate loot");
-    } finally {
-      setIsRollingLoot(false);
-    }
-  };
-
   const activeTurnCombatant = useMemo(
     () => combatState.combatants.find((c) => c.id === combatState.activeTurnCombatantId) ?? null,
     [combatState.activeTurnCombatantId, combatState.combatants],
@@ -470,18 +545,25 @@ export default function MythicGameScreen() {
   );
   const tickCombat = combat.tickCombat;
   const refetchCombatState = combatState.refetch;
-  const refetchDm = dm.refetch;
 
   const advanceNpcTurn = useCallback(async () => {
     if (!campaignId || !combatSessionId || !canAdvanceNpcTurn) return;
     setIsAdvancingTurn(true);
     try {
-      await tickCombat({ campaignId, combatSessionId, maxSteps: 1 });
+      const tickResult = await tickCombat({
+        campaignId,
+        combatSessionId,
+        maxSteps: 1,
+        currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
+      });
       await Promise.all([refetchCombatState(), refetch()]);
+      if (tickResult.ok && tickResult.data?.ended) {
+        await refetchCharacter();
+      }
     } finally {
       setIsAdvancingTurn(false);
     }
-  }, [campaignId, canAdvanceNpcTurn, combatSessionId, refetch, refetchCombatState, tickCombat]);
+  }, [campaignId, canAdvanceNpcTurn, combatSessionId, combatState.session?.current_turn_index, refetch, refetchCharacter, refetchCombatState, tickCombat]);
 
   const bossPhaseLabel = useMemo(() => {
     if (!combatState.events.length) return null;
@@ -491,44 +573,313 @@ export default function MythicGameScreen() {
     return phase > 0 ? `Boss Phase ${phase}` : "Boss Phase";
   }, [combatState.events]);
 
-  const storyActions = useMemo(() => {
-    const boardType = board?.board_type ?? "town";
-    if (boardType === "town") {
-      return [
-        { id: "town-gossip", label: "Gather Rumors", prompt: "I want to gather rumors about immediate threats and opportunities in town." },
-        { id: "town-vendor", label: "Check Vendors", prompt: "I inspect vendor stock for upgrades and consumables that fit our current threat profile." },
-        { id: "town-faction", label: "Faction Play", prompt: "I approach local faction agents and probe for high-value contracts with clear risks." },
-        { id: "town-rest", label: "Regroup", prompt: "I regroup the party, recover resources, and prepare our next objective." },
-      ];
+  const latestAssistantParsed = useMemo<MythicDmParsedPayload | null>(() => {
+    for (let index = mythicDm.messages.length - 1; index >= 0; index -= 1) {
+      const entry = mythicDm.messages[index];
+      if (entry?.role === "assistant" && entry.parsed) {
+        return entry.parsed;
+      }
     }
-    if (boardType === "travel") {
-      return [
-        { id: "travel-scout", label: "Scout Route", prompt: "I scout the route ahead, mark ambush lanes, and identify the safest advance path." },
-        { id: "travel-fast", label: "Push Pace", prompt: "We push pace for a faster arrival while managing exposure to hazard spikes." },
-        { id: "travel-cautious", label: "Move Cautious", prompt: "We move cautiously, prioritize survival, and avoid unnecessary engagements." },
-        { id: "travel-salvage", label: "Salvage Stop", prompt: "We stop briefly to salvage useful materials without losing momentum." },
-      ];
+    return null;
+  }, [mythicDm.messages]);
+
+  const chatActions = useMemo(() => {
+    const modelActions = (latestAssistantParsed?.ui_actions ?? []).slice(0, 4);
+    if (modelActions.length > 0) return modelActions;
+    if (!board) return [];
+    return fallbackActionsForBoard({
+      boardType: board.board_type,
+      vendors: townVendors,
+      activeTurnCombatantName: activeTurnCombatant?.name ?? null,
+    });
+  }, [activeTurnCombatant?.name, board, latestAssistantParsed?.ui_actions, townVendors]);
+
+  const latestAssistantMessage = useMemo(() => {
+    for (let index = mythicDm.messages.length - 1; index >= 0; index -= 1) {
+      const entry = mythicDm.messages[index];
+      if (entry?.role === "assistant") {
+        return entry;
+      }
     }
-    if (boardType === "dungeon") {
-      return [
-        { id: "dungeon-traps", label: "Check Traps", prompt: "I search for trap patterns and safe traversal routes through this section." },
-        { id: "dungeon-loot", label: "Sweep Loot", prompt: "I sweep for hidden loot nodes and relic caches while maintaining formation." },
-        { id: "dungeon-stealth", label: "Stealth Advance", prompt: "I lead with stealth and line-of-sight control to isolate targets before engagement." },
-        { id: "dungeon-breach", label: "Force Breach", prompt: "I force a fast breach and commit to decisive close-quarters pressure." },
-      ];
-    }
-    return [
-      { id: "combat-focus", label: "Call Focus", prompt: "Focus fire on the highest-threat enemy and keep pressure until it breaks." },
-      { id: "combat-control", label: "Control Field", prompt: "Control the battlefield with status and positioning to deny enemy tempo." },
-      { id: "combat-survive", label: "Stabilize", prompt: "Stabilize the team, protect low HP allies, and preserve cooldown windows." },
-      { id: "combat-finish", label: "Execute", prompt: "Execute the current advantage window and secure the kill cleanly." },
-    ];
-  }, [board?.board_type]);
+    return null;
+  }, [mythicDm.messages]);
+
+  const latestAssistantNarration = useMemo(() => {
+    if (!latestAssistantMessage) return "";
+    const parsedNarration = latestAssistantMessage.parsed?.narration?.trim();
+    if (parsedNarration) return parsedNarration;
+    return latestAssistantMessage.content.trim();
+  }, [latestAssistantMessage]);
+
+  const speakDmNarration = dmVoice.speak;
+
+  useEffect(() => {
+    if (!latestAssistantMessage) return;
+    if (!latestAssistantNarration) return;
+    speakDmNarration(latestAssistantNarration, latestAssistantMessage.id);
+  }, [latestAssistantMessage, latestAssistantNarration, speakDmNarration]);
 
   const openPanel = useCallback((tab: MythicPanelTab) => {
     setActivePanel(tab);
     setPanelOpen(true);
   }, []);
+
+  const commandSkillAvailability = useMemo(() => {
+    const turnIndex = Number(combatState.session?.current_turn_index ?? 0);
+    return buildSkillAvailability({
+      skills,
+      combatants: combatState.combatants,
+      playerCombatantId,
+      activeTurnCombatantId: combatState.activeTurnCombatantId,
+      currentTurnIndex: turnIndex,
+      focusedTargetCombatantId: focusedCombatantId,
+    });
+  }, [combatState.activeTurnCombatantId, combatState.combatants, combatState.session?.current_turn_index, focusedCombatantId, playerCombatantId, skills]);
+
+  const handlePlayerInput = useCallback(async (message: string) => {
+    if (!campaignId) return;
+    const rawMessage = message.trim();
+    if (!rawMessage) return;
+    lastPlayerInputRef.current = rawMessage;
+    setActionError(null);
+    setCombatStartError(null);
+
+    const command = parsePlayerCommand(rawMessage);
+    let commandContext: Record<string, unknown> | null = null;
+
+    try {
+      const resolution = await executePlayerCommand({
+        campaignId,
+        boardType: board?.board_type ?? "town",
+        command,
+        skills,
+        combatants: combatState.combatants,
+        currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
+        activeTurnCombatantId: combatState.activeTurnCombatantId,
+        playerCombatantId,
+        focusedTargetCombatantId: focusedCombatantId,
+        transitionBoard,
+        startCombat: combat.startCombat,
+        useSkill: combat.useSkill,
+        combatSessionId,
+        refetchBoard: refetch,
+        refetchCombat: refetchCombatState,
+        refetchCharacter,
+        openMenu: (panel: PlayerCommandPanel) => {
+          openPanel(panel);
+        },
+      });
+      if (resolution.combatStartError) {
+        setCombatStartError(resolution.combatStartError);
+      }
+      if (resolution.error) {
+        setActionError(resolution.error);
+        if (!resolution.combatStartError) {
+          toast.error(resolution.error);
+        }
+      }
+      commandContext = resolution.narrationContext ?? {
+        command: rawMessage,
+        intent: command.intent,
+        handled: resolution.handled,
+        state_changes: resolution.stateChanges,
+        error: resolution.error ?? null,
+      };
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Failed to process command.";
+      setActionError(messageText);
+      toast.error(messageText);
+      commandContext = {
+        command: rawMessage,
+        intent: command.intent,
+        handled: false,
+        state_changes: [],
+        error: messageText,
+      };
+    }
+
+    try {
+      await mythicDm.sendMessage(rawMessage, commandContext ? { actionContext: commandContext } : undefined);
+    } catch (error) {
+      const messageText = error instanceof Error ? error.message : "Failed to reach Mythic DM.";
+      setActionError(messageText);
+    }
+  }, [
+    board?.board_type,
+    campaignId,
+    combat.startCombat,
+    combat.useSkill,
+    combatSessionId,
+    combatState.activeTurnCombatantId,
+    combatState.combatants,
+    combatState.session?.current_turn_index,
+    focusedCombatantId,
+    mythicDm,
+    openPanel,
+    playerCombatantId,
+    refetch,
+    refetchCharacter,
+    refetchCombatState,
+    skills,
+    transitionBoard,
+  ]);
+
+  const executeBoardAction = useCallback(async (action: MythicUiAction) => {
+    if (!campaignId) return;
+    setActionError(null);
+    if (action.intent !== "combat_start") {
+      setCombatStartError(null);
+    }
+    try {
+      if (action.intent === "refresh") {
+        await Promise.all([refetch(), refetchCharacter(), refetchCombatState()]);
+        return;
+      }
+
+      if (action.intent === "focus_target") {
+        const targetId = typeof action.payload?.target_combatant_id === "string"
+          ? action.payload.target_combatant_id
+          : null;
+        if (!targetId) throw new Error("Focus target action missing target id.");
+        setFocusedCombatantId(targetId);
+        return;
+      }
+
+      if (action.intent === "shop") {
+        if (!character) throw new Error("No character loaded for this campaign.");
+        if (!board || board.board_type !== "town") throw new Error("Shops are only available while in town.");
+        const payloadVendor = action.payload && typeof action.payload.vendorId === "string" ? action.payload.vendorId : null;
+        let vendorId: string | null = payloadVendor;
+        if (!vendorId) {
+          const haystack = `${action.label ?? ""} ${action.prompt ?? ""}`.toLowerCase();
+          const matched = townVendors.find((vendor) => haystack.includes(vendor.name.toLowerCase()));
+          vendorId = matched?.id ?? townVendors[0]?.id ?? null;
+        }
+        if (!vendorId) throw new Error("No vendors are available on this town board.");
+        openShop(vendorId, findVendorName(vendorId));
+        return;
+      }
+
+      if (action.intent === "open_panel") {
+        const tab = mapPanelTab(action.panel);
+        if (!tab) throw new Error("Panel target missing for this interaction.");
+        openPanel(tab);
+        if (action.prompt) {
+          await mythicDm.sendMessage(action.prompt, {
+            actionContext: {
+              source: "board_hotspot",
+              intent: action.intent,
+              panel: tab,
+            },
+          });
+        }
+        return;
+      }
+
+      if (action.intent === "town" || action.intent === "travel" || action.intent === "dungeon") {
+        const target = (action.boardTarget === "town" || action.boardTarget === "travel" || action.boardTarget === "dungeon")
+          ? action.boardTarget
+          : action.intent;
+        if (board?.board_type !== target) {
+          await transitionBoard(target, `narrative:${action.id}`, action.payload ?? undefined);
+          await Promise.all([refetch(), refetchCombatState()]);
+        }
+        if (action.prompt) {
+          await mythicDm.sendMessage(action.prompt, {
+            actionContext: {
+              source: "board_hotspot",
+              intent: action.intent,
+              board_target: target,
+            },
+          });
+        }
+        return;
+      }
+
+      if (action.intent === "dm_prompt") {
+        const prompt = action.prompt?.trim();
+        if (!prompt) throw new Error("Prompt action is missing prompt text.");
+        await mythicDm.sendMessage(prompt, {
+          actionContext: {
+            source: "board_hotspot",
+            intent: action.intent,
+            action_id: action.id,
+          },
+        });
+        return;
+      }
+
+      if (action.intent === "combat_start") {
+        if (board?.board_type !== "combat") {
+          setCombatStartError(null);
+          const started = await combat.startCombat(campaignId);
+          if (started.ok === false) {
+            setCombatStartError({ message: started.message, code: started.code, requestId: started.requestId });
+            setActionError(started.message || "Combat session did not start.");
+            return;
+          }
+          await Promise.all([refetch(), refetchCombatState()]);
+        }
+        if (action.prompt) {
+          await mythicDm.sendMessage(action.prompt, {
+            actionContext: {
+              source: "board_hotspot",
+              intent: action.intent,
+            },
+          });
+        }
+        return;
+      }
+
+      throw new Error(`Unsupported board intent: ${action.intent}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to apply board interaction.";
+      setActionError(message);
+      toast.error(message);
+    }
+  }, [
+    board,
+    campaignId,
+    character,
+    combat,
+    findVendorName,
+    mythicDm,
+    openPanel,
+    openShop,
+    refetch,
+    refetchCharacter,
+    refetchCombatState,
+    townVendors,
+    transitionBoard,
+  ]);
+
+  const triggerBoardAction = useCallback((action: MythicUiAction) => {
+    void executeBoardAction(action);
+  }, [executeBoardAction]);
+
+  const retryLastAction = useCallback(() => {
+    if (!lastPlayerInputRef.current) return;
+    void handlePlayerInput(lastPlayerInputRef.current);
+  }, [handlePlayerInput]);
+
+  const retryCombatStart = useCallback(async () => {
+    if (!campaignId) return;
+    setCombatStartError(null);
+    try {
+      const started = await combat.startCombat(campaignId);
+      if (started.ok === false) {
+        setCombatStartError({ message: started.message, code: started.code, requestId: started.requestId });
+        toast.error(started.message || "Combat session failed to start.");
+        return;
+      }
+      await Promise.all([refetch(), refetchCombatState()]);
+      toast.success("Combat started");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Combat session failed to start.";
+      setCombatStartError({ message, code: null, requestId: null });
+      toast.error(message);
+    }
+  }, [campaignId, combat, refetch, refetchCombatState]);
 
   useEffect(() => {
     if (!canAdvanceNpcTurn || isAdvancingTurn || combat.isTicking) return;
@@ -590,270 +941,122 @@ export default function MythicGameScreen() {
 
   return (
     <>
-      <div className="p-4 md:p-6">
-        <div className="mx-auto max-w-[1700px] space-y-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="font-display text-2xl tracking-wide">Mythic Weave</div>
-              <div className="text-sm text-muted-foreground">
-                Board: <span className="font-medium capitalize">{board.board_type}</span>
-                {lastTransition ? (
-                  <span className="ml-2">
-                    Last transition: {lastTransition.from_board_type ?? "?"} → {lastTransition.to_board_type} ({lastTransition.reason})
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" onClick={() => navigate("/dashboard")}>Dashboard</Button>
-              <Button variant="outline" onClick={() => refetch()}>Refresh</Button>
-              <Button variant="outline" onClick={() => refetchDm()}>Refresh DM</Button>
-              {board.board_type !== "combat" ? (
-                <>
-                  <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("town", "return")}>
-                    Town
-                  </Button>
-                  <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("travel", "travel")}>
-                    Travel
-                  </Button>
-                  <Button variant="secondary" disabled={isTransitioning} onClick={() => transitionBoard("dungeon", "enter_dungeon")}>
-                    Dungeon
-                  </Button>
-                  <Button
-                    onClick={async () => {
-                      const combatId = await combat.startCombat(campaignId);
-                      if (combatId) {
-                        await Promise.all([refetch(), refetchDm()]);
-                      }
-                    }}
-                    disabled={combat.isStarting}
-                  >
-                    {combat.isStarting ? "Starting..." : "Start Combat"}
-                  </Button>
-                </>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
-            <Button variant="secondary" className="justify-start" onClick={() => openPanel("character")}>Character</Button>
-            <Button variant="secondary" className="justify-start" onClick={() => openPanel("gear")}>Gear</Button>
-            <Button variant="secondary" className="justify-start" onClick={() => openPanel("skills")}>Skills</Button>
-            <Button variant="secondary" className="justify-start" onClick={() => openPanel("loadouts")}>Loadouts</Button>
-            <Button variant="secondary" className="justify-start" onClick={() => openPanel("progression")}>Progression</Button>
-            <Button variant="secondary" className="justify-start" onClick={() => openPanel("quests")}>Quests</Button>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-gradient-to-b from-card/80 to-card/30 p-3 md:p-4">
-            <div className="grid gap-4 xl:grid-cols-2">
-              <section className="min-h-[760px] overflow-hidden rounded-xl border border-border bg-background/35 shadow-sm">
-                <div className="border-b border-border px-4 py-3">
-                  <div className="font-display text-lg">Narrative Page</div>
-                  <div className="text-xs text-muted-foreground">
-                    DM-driven story + contextual player actions
-                  </div>
-                </div>
-                <div className="grid min-h-0 gap-3 p-3">
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {storyActions.map((action) => (
-                      <Button
-                        key={action.id}
-                        variant="outline"
-                        size="sm"
-                        disabled={mythicDm.isLoading}
-                        onClick={() => void mythicDm.sendMessage(action.prompt)}
-                      >
-                        {action.label}
-                      </Button>
-                    ))}
-                  </div>
-                  {mythicDm.isLoading ? (
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <span>
-                        DM request running (attempt {mythicDm.operation?.attempt ?? 1}
-                        {mythicDm.operation?.next_retry_at
-                          ? ` · retry ${new Date(mythicDm.operation.next_retry_at).toLocaleTimeString()}`
-                          : ""}
-                        )
-                      </span>
-                      <Button size="sm" variant="secondary" onClick={() => mythicDm.cancelMessage()}>
-                        Cancel
-                      </Button>
-                    </div>
-                  ) : null}
-                  <div className="min-h-[420px] overflow-hidden rounded-lg border border-border bg-background/40">
-                    <MythicDMChat
-                      campaignId={campaignId}
-                      messages={mythicDm.messages}
-                      isLoading={mythicDm.isLoading}
-                      currentResponse={mythicDm.currentResponse}
-                      onSendMessage={(msg) => mythicDm.sendMessage(msg)}
-                    />
-                  </div>
-                  <div className="min-h-[180px] overflow-hidden rounded-lg border border-border bg-background/30">
-                    <div className="flex items-center justify-between border-b border-border px-3 py-2">
-                      <div className="text-sm font-semibold">DM Context</div>
-                      <div className="text-xs text-muted-foreground">
-                        {dm.isLoading ? "loading..." : dm.error ? "error" : "ok"}
-                      </div>
-                    </div>
-                    <div className="h-[132px] overflow-auto p-3 text-xs text-muted-foreground">
-                      {dm.error ? (
-                        <div className="text-destructive">{dm.error}</div>
-                      ) : (
-                        <pre>{prettyJson(dmContextSummary)}</pre>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </section>
-
-              <section className="min-h-[760px] overflow-hidden rounded-xl border border-border bg-background/35 shadow-sm">
-                <div className="border-b border-border px-4 py-3">
-                  <div className="font-display text-lg">Board Page</div>
-                  <div className="text-xs text-muted-foreground">
-                    Active board renderer + deterministic event playback
-                  </div>
-                </div>
-                <div className="grid min-h-0 gap-3 p-3">
-                  <div className="min-h-[300px] overflow-hidden rounded-lg border border-border bg-background/30 [perspective:1200px]">
-                    <AnimatePresence mode="wait">
-                      <motion.div
-                        key={modeKey}
-                        variants={pageTurn}
-                        initial="initial"
-                        animate="animate"
-                        exit="exit"
-                        transition={{ duration: 0.35, ease: "easeInOut" }}
-                        className="h-full p-3"
-                      >
-                        <pre className="max-h-[320px] overflow-auto text-xs text-muted-foreground">{prettyJson(boardStateSummary)}</pre>
-                      </motion.div>
-                    </AnimatePresence>
-                  </div>
-
-                  {board.board_type === "combat" && combatSessionId ? (
-                    <div className="min-h-[300px] overflow-hidden rounded-lg border border-border bg-background/30 p-3">
-                      <div className="mb-2 flex items-center justify-between">
-                        <div className="text-sm font-semibold">Combat Playback</div>
-                        <div className="text-xs text-muted-foreground">
-                          {combatState.isLoading ? "loading..." : combatState.error ? "error" : combatState.session?.status ?? "unknown"}
-                        </div>
-                      </div>
-                      {combatState.error ? (
-                        <div className="text-sm text-destructive">{combatState.error}</div>
-                      ) : (
-                        <MythicCombatPanel
-                          campaignId={campaignId}
-                          combatSessionId={combatSessionId}
-                          combatants={combatState.combatants}
-                          activeTurnCombatantId={combatState.activeTurnCombatantId}
-                          events={combatState.events}
-                          playerCombatantId={playerCombatantId}
-                          currentTurnIndex={combatState.session?.current_turn_index ?? 0}
-                          skills={skills.map((s) => ({
-                            id: s.id,
-                            kind: s.kind,
-                            name: s.name,
-                            description: s.description,
-                            targeting: s.targeting,
-                            range_tiles: s.range_tiles,
-                            cooldown_turns: s.cooldown_turns,
-                          }))}
-                          isActing={combat.isActing}
-                          isTicking={isAdvancingTurn || combat.isTicking}
-                          canTick={canAdvanceNpcTurn}
-                          bossPhaseLabel={bossPhaseLabel}
-                          onTickTurn={async () => {
-                            await advanceNpcTurn();
-                          }}
-                          onUseSkill={async ({ actorCombatantId, skillId, target }) => {
-                            await combat.useSkill({
-                              campaignId,
-                              combatSessionId,
-                              actorCombatantId,
-                              skillId,
-                              target,
-                            });
-                            await combatState.refetch();
-                          }}
-                        />
-                      )}
-                    </div>
-                  ) : (
-                    <div className="grid min-h-[300px] gap-3 rounded-lg border border-border bg-background/30 p-3">
-                      <div>
-                        <div className="mb-1 text-sm font-semibold">Board Summary</div>
-                        <div className="max-h-[120px] overflow-auto text-xs text-muted-foreground">
-                          {board.board_type === "town" ? (
-                            <div className="space-y-1">
-                              <div>Vendors: {Array.isArray((board.state_json as any)?.vendors) ? (board.state_json as any).vendors.length : 0}</div>
-                              <div>Services: {Array.isArray((board.state_json as any)?.services) ? (board.state_json as any).services.join(", ") : "-"}</div>
-                              <div>Factions: {Array.isArray((board.state_json as any)?.factions_present) ? (board.state_json as any).factions_present.join(", ") : "-"}</div>
-                              <div>Rumors: {Array.isArray((board.state_json as any)?.rumors) ? (board.state_json as any).rumors.join(" · ") : "-"}</div>
-                            </div>
-                          ) : null}
-                          {board.board_type === "travel" ? (
-                            <div className="space-y-1">
-                              <div>Weather: {String((board.state_json as any)?.weather ?? "-")}</div>
-                              <div>Hazard: {String((board.state_json as any)?.hazard_meter ?? "-")}</div>
-                              <div>Segments: {Array.isArray((board.state_json as any)?.route_segments) ? (board.state_json as any).route_segments.length : 0}</div>
-                            </div>
-                          ) : null}
-                          {board.board_type === "dungeon" ? (
-                            <div className="space-y-1">
-                              <div>Rooms: {Array.isArray((board.state_json as any)?.room_graph?.rooms) ? (board.state_json as any).room_graph.rooms.length : 0}</div>
-                              <div>Loot nodes: {String((board.state_json as any)?.loot_nodes ?? "-")}</div>
-                              <div>Trap signals: {String((board.state_json as any)?.trap_signals ?? "-")}</div>
-                              <div>Faction presence: {Array.isArray((board.state_json as any)?.faction_presence) ? (board.state_json as any).faction_presence.join(", ") : "-"}</div>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="mb-1 text-sm font-semibold">Board Actions</div>
-                        <div className="flex flex-wrap gap-2">
-                          {board.board_type === "travel" ? (
-                            <>
-                              <Button variant="secondary" size="sm" disabled={isTransitioning} onClick={() => transitionBoard("town", "arrival")}>
-                                Arrive Town
-                              </Button>
-                              <Button variant="secondary" size="sm" disabled={isTransitioning} onClick={() => transitionBoard("dungeon", "arrival")}>
-                                Arrive Dungeon
-                              </Button>
-                            </>
-                          ) : null}
-                          {board.board_type === "dungeon" ? (
-                            <>
-                              <Button variant="secondary" size="sm" disabled={isTransitioning} onClick={() => transitionBoard("town", "exit_dungeon")}>
-                                Exit to Town
-                              </Button>
-                              <Button variant="secondary" size="sm" disabled={isTransitioning} onClick={() => transitionBoard("travel", "exit_dungeon")}>
-                                Exit to Travel
-                              </Button>
-                            </>
-                          ) : null}
-                          {board.board_type === "town" ? (
-                            <Button variant="secondary" size="sm" disabled={isTransitioning} onClick={() => transitionBoard("travel", "depart")}>
-                              Depart Travel
-                            </Button>
-                          ) : null}
-                        </div>
-                        {transitionError ? <div className="mt-1 text-xs text-destructive">{transitionError}</div> : null}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="min-h-[120px] overflow-hidden rounded-lg border border-border bg-background/30">
-                    <div className="border-b border-border px-3 py-2 text-sm font-semibold">Recent Board Transitions</div>
-                    <pre className="max-h-[86px] overflow-auto p-3 text-xs text-muted-foreground">{prettyJson(recentTransitions)}</pre>
-                  </div>
-                </div>
-              </section>
-            </div>
-          </div>
-        </div>
-      </div>
+      <BookShell
+        title="Mythic Weave"
+        subtitle={(
+          <>
+            Board: <span className="font-medium capitalize">{board.board_type}</span>
+            <span className="ml-2 text-amber-100/70">Campaign: {campaignId.slice(0, 8)}...</span>
+          </>
+        )}
+        actions={(
+          <Button
+            size="sm"
+            onClick={() => openPanel("commands")}
+            className="border border-amber-200/40 bg-amber-300/20 text-amber-50 hover:bg-amber-300/30"
+          >
+            Menu
+          </Button>
+        )}
+        leftPage={(
+          <NarrativePage
+            messages={mythicDm.messages}
+            isDmLoading={mythicDm.isLoading}
+            currentResponse={mythicDm.currentResponse}
+            actions={chatActions}
+            onAction={triggerBoardAction}
+            operationAttempt={mythicDm.operation?.attempt}
+            operationNextRetryAt={mythicDm.operation?.next_retry_at}
+            actionError={actionError}
+            voiceEnabled={dmVoice.enabled}
+            voiceSupported={dmVoice.supported}
+            voiceBlocked={dmVoice.blocked}
+            onToggleVoice={dmVoice.setEnabled}
+            onSpeakLatest={() => {
+              if (!latestAssistantNarration) return;
+              if (dmVoice.blocked && dmVoice.hasPreparedAudio) {
+                void dmVoice.resumeLatest();
+                return;
+              }
+              dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
+            }}
+            onStopVoice={dmVoice.stop}
+            autoFollow={runtimeSettings.chatAutoFollow}
+            onRetryAction={retryLastAction}
+            onSendMessage={(message) => void handlePlayerInput(message)}
+            onCancelMessage={() => mythicDm.cancelMessage()}
+          />
+        )}
+        rightPage={(
+          <BoardPage
+            boardType={board.board_type}
+            modeKey={modeKey}
+            boardState={(board.state_json && typeof board.state_json === "object")
+              ? (board.state_json as Record<string, unknown>)
+              : {}}
+            sceneHints={(latestAssistantParsed?.scene && typeof latestAssistantParsed.scene === "object")
+              ? latestAssistantParsed.scene
+              : null}
+            transitionError={transitionError}
+            combatStartError={combatStartError}
+            onRetryCombatStart={retryCombatStart}
+            combatSessionId={combatSessionId}
+            combatSession={combatState.session}
+            combatants={combatState.combatants}
+            combatEvents={combatState.events.slice(-32)}
+            activeTurnCombatantId={combatState.activeTurnCombatantId}
+            playerCombatantId={playerCombatantId}
+            skills={skills.map((s) => ({
+              id: s.id,
+              kind: s.kind,
+              name: s.name,
+              description: s.description,
+              targeting: s.targeting,
+              range_tiles: s.range_tiles,
+              cooldown_turns: s.cooldown_turns,
+            }))}
+            skillAvailability={commandSkillAvailability}
+            isActing={combat.isActing}
+            isTicking={isAdvancingTurn || combat.isTicking}
+            canTick={canAdvanceNpcTurn}
+            bossPhaseLabel={bossPhaseLabel}
+            onTickTurn={advanceNpcTurn}
+            animationIntensity={runtimeSettings.animationIntensity}
+            onUseSkill={async ({ actorCombatantId, skillId, target }) => {
+              const result = await combat.useSkill({
+                campaignId,
+                combatSessionId,
+                actorCombatantId,
+                skillId,
+                currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
+                target,
+              });
+              await Promise.all([refetchCombatState(), refetch()]);
+              if (result.ok && result.ended) {
+                await refetchCharacter();
+              }
+            }}
+            onQuickCast={async ({ skillId, target }) => {
+              if (!playerCombatantId || !combatSessionId) return;
+              const result = await combat.useSkill({
+                campaignId,
+                combatSessionId,
+                actorCombatantId: playerCombatantId,
+                skillId,
+                currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
+                target,
+              });
+              await Promise.all([refetchCombatState(), refetch()]);
+              if (result.ok && result.ended) {
+                await refetchCharacter();
+              }
+            }}
+            onAction={triggerBoardAction}
+            onInspect={handleInspect}
+            onFocusCombatant={setFocusedCombatantId}
+          />
+        )}
+      />
 
       <Dialog open={panelOpen} onOpenChange={setPanelOpen}>
         <DialogContent className="max-h-[90vh] max-w-5xl overflow-hidden border border-border bg-card/85 backdrop-blur-md">
@@ -870,6 +1073,8 @@ export default function MythicGameScreen() {
             <Button size="sm" variant={activePanel === "loadouts" ? "default" : "secondary"} onClick={() => setActivePanel("loadouts")}>Loadouts</Button>
             <Button size="sm" variant={activePanel === "progression" ? "default" : "secondary"} onClick={() => setActivePanel("progression")}>Progression</Button>
             <Button size="sm" variant={activePanel === "quests" ? "default" : "secondary"} onClick={() => setActivePanel("quests")}>Quests</Button>
+            <Button size="sm" variant={activePanel === "commands" ? "default" : "secondary"} onClick={() => setActivePanel("commands")}>Commands</Button>
+            <Button size="sm" variant={activePanel === "settings" ? "default" : "secondary"} onClick={() => setActivePanel("settings")}>Settings</Button>
           </div>
           <div className="max-h-[68vh] overflow-auto pr-1">
             {activePanel === "character" ? (
@@ -900,30 +1105,76 @@ export default function MythicGameScreen() {
 
             {activePanel === "gear" ? (
               <MythicInventoryPanel
-                campaignId={campaignId ?? character.campaign_id}
+                campaignId={campaignId}
                 characterId={character.id}
                 rows={invRowsSafe}
                 onChanged={async () => {
                   await recomputeCharacter();
                   await refetch();
-                  await refetchCharacter();
                 }}
               />
             ) : null}
 
             {activePanel === "skills" ? (
-              <div className="grid gap-2">
-                {skills.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">No skills found.</div>
-                ) : (
-                  skills.map((skill) => (
-                    <div key={skill.id} className="rounded-lg border border-border bg-background/30 p-3">
-                      <div className="text-sm font-semibold">{skill.name}</div>
-                      <div className="text-xs text-muted-foreground">{skill.kind} · {skill.targeting} · range {skill.range_tiles} · cooldown {skill.cooldown_turns}</div>
-                      {skill.description ? <div className="mt-1 text-xs text-muted-foreground">{skill.description}</div> : null}
+              <div className="space-y-3">
+                <div className="rounded-lg border border-border bg-background/30 p-3">
+                  <div className="mb-1 text-sm font-semibold">Equipped Abilities</div>
+                  <div className="mb-2 text-xs text-muted-foreground">
+                    Equipped slots: {equippedActiveSkills.length}/{Math.max(1, loadoutSlotCap)}
+                  </div>
+                  {equippedActiveSkills.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No equipped active abilities. Open Loadouts to equip skills.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {equippedActiveSkills.map((skill) => (
+                        <div key={skill.id} className="rounded border border-border bg-background/20 px-2 py-2 text-xs">
+                          <div className="font-medium text-foreground">{skill.name}</div>
+                          <div className="text-muted-foreground">
+                            {skill.kind} · {skill.targeting} · range {skill.range_tiles} · cooldown {skill.cooldown_turns}
+                          </div>
+                          {skill.description ? <div className="mt-1 text-muted-foreground">{skill.description}</div> : null}
+                        </div>
+                      ))}
                     </div>
-                  ))
-                )}
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-border bg-background/30 p-3">
+                  <div className="mb-1 text-sm font-semibold">Known Active Abilities</div>
+                  <div className="mb-2 text-xs text-muted-foreground">Known abilities can exceed equipped slots. Use Loadouts to swap.</div>
+                  {knownUnequippedActiveSkills.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No additional known active abilities.</div>
+                  ) : (
+                    <div className="grid gap-2">
+                      {knownUnequippedActiveSkills.map((skill) => (
+                        <div key={skill.id} className="rounded border border-border bg-background/20 px-2 py-2 text-xs">
+                          <div className="font-medium text-foreground">{skill.name}</div>
+                          <div className="text-muted-foreground">
+                            {skill.kind} · {skill.targeting} · range {skill.range_tiles} · cooldown {skill.cooldown_turns}
+                          </div>
+                          {skill.description ? <div className="mt-1 text-muted-foreground">{skill.description}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-border bg-background/30 p-3">
+                  <div className="mb-1 text-sm font-semibold">Passive Skills</div>
+                  {passiveSkills.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No passive skills recorded.</div>
+                  ) : (
+                    <div className="grid gap-2">
+                      {passiveSkills.map((skill) => (
+                        <div key={skill.id} className="rounded border border-border bg-background/20 px-2 py-2 text-xs">
+                          <div className="font-medium text-foreground">{skill.name}</div>
+                          <div className="text-muted-foreground">{skill.kind}</div>
+                          {skill.description ? <div className="mt-1 text-muted-foreground">{skill.description}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             ) : null}
 
@@ -1002,23 +1253,12 @@ export default function MythicGameScreen() {
 
             {activePanel === "progression" ? (
               <div className="rounded-lg border border-border bg-background/30 p-3">
-                <div className="mb-2 text-sm font-semibold">Progression Runtime</div>
+                <div className="mb-2 text-sm font-semibold">Progression</div>
                 <div className="mb-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
                   <div>Level: {character.level}</div>
                   <div>Unspent Points: {character.unspent_points ?? 0}</div>
                   <div>XP: {character.xp ?? 0}</div>
                   <div>XP to Next: {character.xp_to_next ?? 0}</div>
-                </div>
-                <div className="mb-3 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => void applyXp(250)} disabled={isApplyingXp}>
-                    {isApplyingXp ? "Applying XP..." : "+250 XP"}
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => void generateLoot()} disabled={isRollingLoot}>
-                    {isRollingLoot ? "Rolling..." : "Generate Loot"}
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => void recomputeCharacter()}>
-                    Recompute
-                  </Button>
                 </div>
                 <div className="space-y-1">
                   {progressionEvents.length === 0 ? (
@@ -1038,18 +1278,263 @@ export default function MythicGameScreen() {
             {activePanel === "quests" ? (
               <div className="space-y-3">
                 <div className="rounded-lg border border-border bg-background/30 p-3">
-                  <div className="mb-1 text-sm font-semibold">Board Hooks</div>
-                  <pre className="max-h-[220px] overflow-auto text-xs text-muted-foreground">{prettyJson((board.state_json as any)?.rumors ?? [])}</pre>
+                  <div className="mb-1 text-sm font-semibold">Persistent Threads</div>
+                  {questThreads.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No persistent quest threads yet.</div>
+                  ) : (
+                    <div className="max-h-[260px] space-y-2 overflow-auto pr-1">
+                      {questThreads.map((thread) => (
+                        <div key={thread.id} className="rounded border border-border bg-background/20 px-2 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="font-medium text-foreground">{thread.title}</div>
+                            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{thread.source}</div>
+                          </div>
+                          {thread.detail ? <div className="mt-1 text-muted-foreground">{thread.detail}</div> : null}
+                          <div className="mt-1 text-[10px] text-muted-foreground">
+                            Severity {thread.severity} · {new Date(thread.created_at).toLocaleString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="rounded-lg border border-border bg-background/30 p-3">
-                  <div className="mb-1 text-sm font-semibold">Transition Log</div>
-                  <pre className="max-h-[220px] overflow-auto text-xs text-muted-foreground">{prettyJson(recentTransitions)}</pre>
+                  <div className="mb-1 text-sm font-semibold">Board Hooks</div>
+                  {boardHooks.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No active hooks on this board yet.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {boardHooks.map((hook) => (
+                        <div key={hook.id} className="rounded border border-border bg-background/20 px-2 py-2 text-xs">
+                          <div className="font-medium text-foreground">{hook.title}</div>
+                          {hook.detail ? <div className="mt-1 text-muted-foreground">{hook.detail}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-lg border border-border bg-background/30 p-3">
+                  <div className="mb-1 text-sm font-semibold">Recent Transitions</div>
+                  {recentTransitions.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No transitions yet.</div>
+                  ) : (
+                    <div className="max-h-[220px] space-y-2 overflow-auto">
+                      {recentTransitions.slice(0, 12).map((transition) => (
+                        <div key={transition.id} className="rounded border border-border bg-background/20 px-2 py-2 text-xs">
+                          <div className="font-medium text-foreground">
+                            {(transition.from_board_type ?? "?").toUpperCase()}{" -> "}{transition.to_board_type.toUpperCase()}
+                          </div>
+                          <div className="text-muted-foreground">Reason: {transition.reason}</div>
+                          <div className="text-muted-foreground">{new Date(transition.created_at).toLocaleString()}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
+            ) : null}
+
+            {activePanel === "commands" ? (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-border bg-background/30 p-3">
+                  <div className="mb-2 text-sm font-semibold">DM Voice</div>
+                  <div className="mb-3 flex flex-wrap items-center gap-3 text-xs">
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        checked={dmVoice.enabled}
+                        onCheckedChange={dmVoice.setEnabled}
+                        disabled={!dmVoice.supported}
+                        aria-label="Toggle DM voice"
+                      />
+                      <span className="text-muted-foreground">
+                        {dmVoice.enabled ? "Voice enabled" : "Voice muted"}
+                      </span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        if (!latestAssistantNarration) return;
+                        if (dmVoice.blocked && dmVoice.hasPreparedAudio) {
+                          void dmVoice.resumeLatest();
+                          return;
+                        }
+                        dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
+                      }}
+                      disabled={!dmVoice.supported || !latestAssistantNarration}
+                    >
+                      Speak Latest
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => dmVoice.stop()}
+                      disabled={!dmVoice.supported}
+                    >
+                      Stop
+                    </Button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Rate</span>
+                        <span>{dmVoice.rate.toFixed(2)}</span>
+                      </div>
+                      <Slider
+                        value={[dmVoice.rate]}
+                        min={0.6}
+                        max={1.8}
+                        step={0.05}
+                        onValueChange={(value) => dmVoice.setRate(value[0] ?? 1)}
+                        disabled={!dmVoice.supported}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Pitch</span>
+                        <span>{dmVoice.pitch.toFixed(2)}</span>
+                      </div>
+                      <Slider
+                        value={[dmVoice.pitch]}
+                        min={0.6}
+                        max={1.8}
+                        step={0.05}
+                        onValueChange={(value) => dmVoice.setPitch(value[0] ?? 1)}
+                        disabled={!dmVoice.supported}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Volume</span>
+                        <span>{dmVoice.volume.toFixed(2)}</span>
+                      </div>
+                      <Slider
+                        value={[dmVoice.volume]}
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        onValueChange={(value) => dmVoice.setVolume(value[0] ?? 0.85)}
+                        disabled={!dmVoice.supported}
+                      />
+                    </div>
+                  </div>
+
+                  {!dmVoice.supported ? (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Browser speech synthesis is unavailable in this runtime.
+                    </div>
+                  ) : null}
+                  {dmVoice.blocked ? (
+                    <div className="mt-2 text-xs text-amber-200">
+                      Audio playback was blocked by browser policy. Click <span className="font-medium">Speak Latest</span> after interacting with the page.
+                    </div>
+                  ) : null}
+                  {dmVoice.lastError ? (
+                    <div className="mt-2 text-xs text-destructive">
+                      Voice error: {dmVoice.lastError.message}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="rounded-lg border border-border bg-background/30 p-3">
+                  <div className="mb-1 text-sm font-semibold">Command Reference</div>
+                  <div className="grid gap-1 text-xs text-muted-foreground">
+                    <div><span className="font-medium text-foreground">Natural:</span> "go to town", "travel to dungeon", "start combat", "use fireball on raider"</div>
+                    <div><span className="font-medium text-foreground">Slash:</span> <code>/travel town|travel|dungeon</code></div>
+                    <div><span className="font-medium text-foreground">Slash:</span> <code>/combat start</code></div>
+                    <div><span className="font-medium text-foreground">Slash:</span> <code>/skills</code> <code>/status</code> <code>/menu gear</code></div>
+                    <div><span className="font-medium text-foreground">Slash:</span> <code>/skill &lt;name&gt; @&lt;target&gt;</code></div>
+                    <div><span className="font-medium text-foreground">Travel probes:</span> "scout route", "search for treasure", "forage"</div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-border bg-background/30 p-3">
+                  <div className="mb-1 text-sm font-semibold">Live Combat Skill Availability</div>
+                  {commandSkillAvailability.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">No active combat skills loaded.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {commandSkillAvailability.map((entry) => (
+                        <div key={entry.skillId} className="rounded border border-border bg-background/20 px-2 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="font-medium text-foreground">{entry.name}</div>
+                            <div className={entry.usableNow ? "text-emerald-300" : "text-amber-200"}>
+                              {entry.usableNow ? "Ready" : entry.reason ?? "Unavailable"}
+                            </div>
+                          </div>
+                          <div className="mt-1 text-muted-foreground">
+                            {entry.targeting} · range {entry.rangeTiles} · cooldown {entry.cooldownTurns}
+                            {entry.rangeToFocused !== null
+                              ? ` · focused range ${entry.rangeToFocused.toFixed(1)} (${entry.inRangeForFocused ? "in" : "out"})`
+                              : ""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-lg border border-border bg-background/30 p-3 text-xs text-muted-foreground">
+                  Focused combat target:{" "}
+                  <span className="text-foreground">
+                    {focusedCombatantId
+                      ? (combatState.combatants.find((entry) => entry.id === focusedCombatantId)?.name ?? focusedCombatantId)
+                      : "none"}
+                  </span>
+                </div>
+              </div>
+            ) : null}
+
+            {activePanel === "settings" ? (
+              <SettingsPanel
+                settings={runtimeSettings}
+                onSettingsChange={setRuntimeSettings}
+                voiceEnabled={dmVoice.enabled}
+                voiceSupported={dmVoice.supported}
+                voiceBlocked={dmVoice.blocked}
+                onToggleVoice={dmVoice.setEnabled}
+                onSpeakLatest={() => {
+                  if (!latestAssistantNarration) return;
+                  if (dmVoice.blocked && dmVoice.hasPreparedAudio) {
+                    void dmVoice.resumeLatest();
+                    return;
+                  }
+                  dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
+                }}
+                onStopVoice={dmVoice.stop}
+              />
             ) : null}
           </div>
         </DialogContent>
       </Dialog>
+
+      <BoardInspectDialog
+        open={inspectOpen}
+        target={inspectTarget}
+        questThreads={questThreads}
+        onOpenChange={(open) => {
+          setInspectOpen(open);
+          if (!open) setInspectTarget(null);
+        }}
+        onAction={triggerBoardAction}
+      />
+
+      <ShopDialog
+        open={shopOpen}
+        campaignId={campaignId}
+        characterId={character.id}
+        vendorId={shopVendor?.id ?? null}
+        vendorName={shopVendor?.name ?? null}
+        coins={coins}
+        onOpenChange={(open) => {
+          setShopOpen(open);
+          if (!open) setShopVendor(null);
+        }}
+        onPurchased={async () => {
+          await refetchCharacter();
+        }}
+      />
     </>
   );
 }
