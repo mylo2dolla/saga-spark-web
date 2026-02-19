@@ -310,17 +310,36 @@ const buildEdgeErrorMessage = (
   requestId: string | null,
 ) => {
   const json = responseDetails.json as
-    | { message?: string; error?: string; details?: { message?: string } }
+    | {
+      message?: string;
+      error?: string;
+      code?: string;
+      retry_after_ms?: number;
+      retryAfterMs?: number;
+      details?: { message?: string };
+    }
     | null;
-  const message =
+  const baseMessage =
     json?.message
     ?? json?.error
     ?? json?.details?.message
     ?? responseDetails.text
     ?? fallback;
+  const retryAfterMs = typeof json?.retry_after_ms === "number"
+    ? json.retry_after_ms
+    : typeof json?.retryAfterMs === "number"
+      ? json.retryAfterMs
+      : null;
+  const retryHint = status === 429 && retryAfterMs && retryAfterMs > 0
+    ? ` Retry in ${Math.max(1, Math.ceil(retryAfterMs / 1000))}s.`
+    : "";
+  const message = `${baseMessage}${retryHint}`;
+  const codeSuffix = typeof json?.code === "string" && json.code.trim().length > 0
+    ? ` [${json.code.trim()}]`
+    : "";
   const requestSuffix = requestId ? ` (requestId: ${requestId})` : "";
   const statusSuffix = statusText ? ` ${statusText}` : "";
-  return `Edge function ${name} failed (${status}${statusSuffix}): ${message}${requestSuffix}`;
+  return `Edge function ${name} failed (${status}${statusSuffix}): ${message}${codeSuffix}${requestSuffix}`;
 };
 
 const shouldRetryStatus = (status: number) =>

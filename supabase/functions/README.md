@@ -1,4 +1,4 @@
-# Supabase Edge Functions (Rollback Archive Only)
+# Supabase Edge Functions (Source Archive Only)
 
 Active runtime is VM-hosted:
 
@@ -9,6 +9,7 @@ Supabase remains:
 - Auth (`/auth/v1/*`)
 - Postgres database
 
-This directory is kept only as rollback/archive source and should not be deployed in normal operations.
+This directory is retained as historical source reference only.
 
-If rollback is required, deploy explicitly and revert client runtime routing afterward.
+Do not deploy Supabase Edge Functions for this project.
+Runtime execution is VM-only.

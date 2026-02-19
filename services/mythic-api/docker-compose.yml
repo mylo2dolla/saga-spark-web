@@ -7,3 +7,22 @@ services:
     ports:
       - "3001:3001"
     restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    depends_on:
+      - mythic-api
+    env_file:
+      - .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

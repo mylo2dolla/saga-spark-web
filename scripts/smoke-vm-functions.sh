@@ -35,7 +35,9 @@ echo "VM functions base: ${FUNCTIONS_BASE}"
 echo
 
 endpoints=(
+  dm
   dungeon-master
+  generate-class
   mythic-apply-xp
   mythic-bootstrap
   mythic-board-transition
@@ -80,6 +82,10 @@ for ep in "${endpoints[@]}"; do
   # world-generator may return 400 invalid_type on empty payload because auth is optional.
   ok=0
   if [[ "${status}" == "401" && "${code}" == "auth_required" ]]; then
+    ok=1
+  elif [[ "${ep}" == "dm" && "${status}" == "400" && "${code}" == "invalid_request" ]]; then
+    ok=1
+  elif [[ "${ep}" == "generate-class" && "${status}" == "400" && "${code}" == "invalid_request" ]]; then
     ok=1
   elif [[ "${ep}" == "world-generator" && "${status}" == "400" ]]; then
     ok=1

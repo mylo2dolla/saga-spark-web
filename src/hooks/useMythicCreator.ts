@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { callEdgeFunction } from "@/lib/edge";
+import { toFriendlyEdgeError } from "@/lib/edgeError";
 import type {
   MythicBootstrapRequest,
   MythicBootstrapResponse,
@@ -8,12 +9,20 @@ import type {
   MythicCreateCharacterResponse,
 } from "@/types/mythic";
 
+type CreatorError = {
+  message: string;
+  code: string | null;
+};
+
 export function useMythicCreator() {
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [lastError, setLastError] = useState<CreatorError | null>(null);
+  const clearError = useCallback(() => setLastError(null), []);
 
   const bootstrapCampaign = useCallback(async (campaignId: string) => {
     setIsBootstrapping(true);
+    setLastError(null);
     try {
       const { data, error } = await callEdgeFunction<MythicBootstrapResponse>("mythic-bootstrap", {
         requireAuth: true,
@@ -22,6 +31,11 @@ export function useMythicCreator() {
       if (error) throw error;
       if (!data?.ok) throw new Error("Bootstrap failed");
       return data;
+    } catch (error) {
+      const parsed = toFriendlyEdgeError(error, "Failed to prepare campaign runtime");
+      setLastError({ message: parsed.description, code: parsed.code });
+      toast.error(parsed.description);
+      return null;
     } finally {
       setIsBootstrapping(false);
     }
@@ -49,6 +63,7 @@ export function useMythicCreator() {
     }
 
     setIsCreating(true);
+    setLastError(null);
     try {
       const { data, error } = await callEdgeFunction<MythicCreateCharacterResponse>("mythic-create-character", {
         requireAuth: true,
@@ -63,8 +78,9 @@ export function useMythicCreator() {
       toast.success(`Forged: ${data.class.class_name}`);
       return data;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to create character";
-      toast.error(msg);
+      const parsed = toFriendlyEdgeError(e, "Failed to create character");
+      setLastError({ message: parsed.description, code: parsed.code });
+      toast.error(parsed.description);
       return null;
     } finally {
       setIsCreating(false);
@@ -74,7 +90,9 @@ export function useMythicCreator() {
   return {
     isBootstrapping,
     isCreating,
+    lastError,
     bootstrapCampaign,
     createCharacter,
+    clearError,
   };
 }

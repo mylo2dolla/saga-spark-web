@@ -26,16 +26,16 @@ export function DiagnosticsProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(timer);
   }, []);
 
-  const setLastError = (message: string | null) => {
+  const setLastError = useCallback((message: string | null) => {
     const at = message ? Date.now() : null;
     setLastErrorState(message);
     setLastErrorAt(at);
     if (message && at) {
       setErrorHistory((prev) => [{ message, at }, ...prev].slice(0, MAX_ERROR_HISTORY));
     }
-  };
+  }, []);
 
-  const recordOperation = (operation: OperationState) => {
+  const recordOperation = useCallback((operation: OperationState) => {
     setOperations((prev) => {
       const idx = prev.findIndex((entry) => entry.id === operation.id);
       if (idx === -1) {
@@ -45,7 +45,7 @@ export function DiagnosticsProvider({ children }: { children: ReactNode }) {
       next[idx] = operation;
       return next;
     });
-  };
+  }, []);
 
   const exportDebugBundle = useCallback(() => {
     const network = getNetworkSnapshot();

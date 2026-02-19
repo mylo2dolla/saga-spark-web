@@ -1,12 +1,13 @@
-:443 {
+# Site bind can be a domain (for TLS) or :80 (IP-only HTTP).
+# Defaults to :80 so IP-based access still works before DNS is ready.
+{$MYTHIC_API_SITE::80} {
   encode gzip zstd
 
-  @functions path /functions/v1/*
-  handle @functions {
-    reverse_proxy 127.0.0.1:3001
+  handle /healthz {
+    reverse_proxy mythic-api:3001
   }
 
-  handle /healthz {
-    reverse_proxy 127.0.0.1:3001
+  handle /functions/v1/* {
+    reverse_proxy mythic-api:3001
   }
 }

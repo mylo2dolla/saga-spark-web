@@ -51,7 +51,9 @@ export async function buildApp() {
     timeWindow: config.globalRateLimitWindowMs,
     hook: "onRequest",
     keyGenerator: (req) => req.ip,
+    allowList: (req) => req.method === "OPTIONS",
     errorResponseBuilder: (req, context) => ({
+      statusCode: context.ban ? 403 : 429,
       ok: false,
       error: "Rate limit exceeded. Retry shortly.",
       code: "rate_limited",

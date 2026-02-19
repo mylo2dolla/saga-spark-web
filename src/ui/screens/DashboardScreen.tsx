@@ -10,6 +10,7 @@ import { formatError } from "@/ui/data/async";
 import { useDiagnostics } from "@/ui/data/useDiagnostics";
 import { useDbHealth } from "@/ui/data/useDbHealth";
 import { callEdgeFunction } from "@/lib/edge";
+import { toFriendlyEdgeError } from "@/lib/edgeError";
 import { PromptAssistField } from "@/components/PromptAssistField";
 import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
@@ -94,6 +95,7 @@ export default function DashboardScreen() {
   const [isRepairing, setIsRepairing] = useState(false);
 
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createErrorCode, setCreateErrorCode] = useState<string | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [joinErrorCode, setJoinErrorCode] = useState<string | null>(null);
   const [createWarning, setCreateWarning] = useState<string | null>(null);
@@ -198,10 +200,12 @@ export default function DashboardScreen() {
 
     if (!activeUser || !activeAccessToken) {
       setCreateError("You must be signed in to create a campaign.");
+      setCreateErrorCode("auth_required");
       return;
     }
     if (!name || !description) {
       setCreateError("Campaign name and description are required.");
+      setCreateErrorCode("invalid_request");
       return;
     }
 
@@ -210,6 +214,7 @@ export default function DashboardScreen() {
     createAbortRef.current = controller;
     setIsCreating(true);
     setCreateError(null);
+    setCreateErrorCode(null);
     setCreateWarning(null);
     setLastError(null);
 
@@ -268,10 +273,11 @@ export default function DashboardScreen() {
       void loadCampaigns();
       navigate(`/mythic/${data.campaign.id}/create-character`);
     } catch (err) {
-      const message = formatError(err, "Failed to create campaign");
-      setCreateError(message);
-      setLastError(message);
-      toast({ title: "Failed to create campaign", description: message, variant: "destructive" });
+      const parsed = toFriendlyEdgeError(err, "Failed to create campaign");
+      setCreateError(parsed.description);
+      setCreateErrorCode(parsed.code);
+      setLastError(parsed.description);
+      toast({ title: "Failed to create campaign", description: parsed.description, variant: "destructive" });
     } finally {
       createAbortRef.current = null;
       setIsCreating(false);
@@ -336,11 +342,11 @@ export default function DashboardScreen() {
       void loadCampaigns();
       navigate(`/mythic/${data.campaign.id}`);
     } catch (err) {
-      const message = formatError(err, "Failed to join campaign");
-      setJoinError(message);
-      setJoinErrorCode(inferJoinErrorCode(message));
-      setLastError(message);
-      toast({ title: "Failed to join campaign", description: message, variant: "destructive" });
+      const parsed = toFriendlyEdgeError(err, "Failed to join campaign");
+      setJoinError(parsed.description);
+      setJoinErrorCode(parsed.code ?? inferJoinErrorCode(parsed.description));
+      setLastError(parsed.description);
+      toast({ title: "Failed to join campaign", description: parsed.description, variant: "destructive" });
     } finally {
       joinAbortRef.current = null;
       setIsJoining(false);
@@ -519,6 +525,20 @@ export default function DashboardScreen() {
               </div>
 
               {createError ? <div className="text-xs text-destructive">{createError}</div> : null}
+              {createErrorCode ? (
+                <div className="flex flex-wrap gap-2">
+                  {createErrorCode === "auth_required" || createErrorCode === "auth_invalid" ? (
+                    <Button size="sm" variant="outline" onClick={() => navigate("/login")}>
+                      Sign in again
+                    </Button>
+                  ) : null}
+                  {createErrorCode === "rate_limited" ? (
+                    <Button size="sm" variant="outline" onClick={handleCreate} disabled={isCreating}>
+                      Retry create
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
               {createOp?.status === "RUNNING" ? (
                 <div className="text-xs text-muted-foreground">
                   Create pending (attempt {createOp.attempt}

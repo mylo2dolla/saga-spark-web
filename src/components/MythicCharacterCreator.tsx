@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -23,19 +24,22 @@ const stepVariants = {
 };
 
 export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Props) {
+  const navigate = useNavigate();
   const [step, setStep] = useState<Step>("concept");
   const [characterName, setCharacterName] = useState("");
   const [classDescription, setClassDescription] = useState("");
   const [result, setResult] = useState<MythicCreateCharacterResponse | null>(null);
 
-  const { isBootstrapping, isCreating, bootstrapCampaign, createCharacter } = useMythicCreator();
+  const { isBootstrapping, isCreating, lastError, bootstrapCampaign, createCharacter, clearError } = useMythicCreator();
 
   const canGenerate = useMemo(() => {
     return characterName.trim().length >= 2 && classDescription.trim().length >= 5;
   }, [characterName, classDescription]);
 
   const handleGenerate = async () => {
-    await bootstrapCampaign(campaignId);
+    clearError();
+    const bootstrap = await bootstrapCampaign(campaignId);
+    if (!bootstrap) return;
     const created = await createCharacter({
       campaignId,
       characterName: characterName.trim(),
@@ -114,6 +118,23 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
                   )}
                 </Button>
               </div>
+              {lastError ? (
+                <div className="space-y-2 rounded-md border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">
+                  <div>{lastError.message}</div>
+                  <div className="flex flex-wrap gap-2">
+                    {lastError.code === "auth_required" || lastError.code === "auth_invalid" ? (
+                      <Button size="sm" variant="outline" onClick={() => navigate("/login")} disabled={isBusy}>
+                        Sign in again
+                      </Button>
+                    ) : null}
+                    {lastError.code === "rate_limited" ? (
+                      <Button size="sm" variant="outline" onClick={handleGenerate} disabled={isBusy}>
+                        Retry
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </motion.div>
         ) : null}
