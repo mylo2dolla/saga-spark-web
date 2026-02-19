@@ -45,33 +45,57 @@ function summarizeBoardHooks(state: unknown): Array<{ id: string; title: string;
   const payload = state && typeof state === "object" ? (state as Record<string, unknown>) : {};
   const rawRumors = Array.isArray(payload.rumors) ? payload.rumors : [];
   const rawObjectives = Array.isArray(payload.objectives) ? payload.objectives : [];
-  const hooks = [...rawRumors, ...rawObjectives];
-  return hooks.slice(0, 12).map((entry, idx) => {
+  const rawDiscovery = Array.isArray(payload.discovery_log) ? payload.discovery_log : [];
+  const rawCheckins = Array.isArray(payload.companion_checkins) ? payload.companion_checkins : [];
+  const hooks = [...rawRumors, ...rawObjectives, ...rawDiscovery, ...rawCheckins];
+  const out: Array<{ id: string; title: string; detail: string | null }> = [];
+  for (let idx = 0; idx < hooks.length; idx += 1) {
+    const entry = hooks[idx];
     if (typeof entry === "string") {
-      return { id: `hook:${idx}`, title: entry, detail: null };
+      const text = entry.trim();
+      if (!text) continue;
+      out.push({ id: `hook:${idx}`, title: text.slice(0, 80), detail: text.length > 80 ? text.slice(80) : null });
+      continue;
     }
-    if (entry && typeof entry === "object") {
-      const raw = entry as Record<string, unknown>;
-      const title =
-        typeof raw.title === "string"
-          ? raw.title
-          : typeof raw.name === "string"
-            ? raw.name
-            : typeof raw.label === "string"
-              ? raw.label
-              : `Hook ${idx + 1}`;
-      const detail =
-        typeof raw.description === "string"
-          ? raw.description
-          : typeof raw.detail === "string"
-            ? raw.detail
-            : typeof raw.prompt === "string"
-              ? raw.prompt
+    if (!entry || typeof entry !== "object") continue;
+    const raw = entry as Record<string, unknown>;
+    const title = typeof raw.title === "string"
+      ? raw.title
+      : typeof raw.name === "string"
+        ? raw.name
+        : typeof raw.label === "string"
+          ? raw.label
+          : typeof raw.kind === "string"
+            ? String(raw.kind).replace(/_/g, " ")
+            : typeof raw.hook_type === "string"
+              ? String(raw.hook_type).replace(/_/g, " ")
               : null;
-      return { id: `hook:${idx}`, title, detail };
-    }
-    return { id: `hook:${idx}`, title: `Hook ${idx + 1}`, detail: null };
-  });
+    const detail = typeof raw.description === "string"
+      ? raw.description
+      : typeof raw.detail === "string"
+        ? raw.detail
+        : typeof raw.prompt === "string"
+          ? raw.prompt
+          : typeof raw.line === "string"
+            ? raw.line
+            : null;
+    if (!title && !detail) continue;
+    out.push({
+      id: `hook:${idx}`,
+      title: title ?? "Narrative Update",
+      detail,
+    });
+  }
+  return out.slice(0, 16);
+}
+
+function normalizeReasonCode(value: string): string {
+  const token = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return token.length > 0 ? token : "story_progression";
 }
 
 function mapPanelTab(panel: string | undefined): MythicPanelTab | null {
@@ -114,17 +138,22 @@ function fallbackActionsForBoard(args: {
   boardType: "town" | "travel" | "dungeon" | "combat";
   vendors: Array<{ id: string; name: string }>;
   activeTurnCombatantName: string | null;
+  boardHooks: Array<{ title: string; detail: string | null }>;
 }): MythicUiAction[] {
   const actions: MythicUiAction[] = [];
   const push = (action: MythicUiAction) => {
     if (actions.length < 4) actions.push(action);
   };
+  const primaryHook = args.boardHooks[0] ?? null;
+  const hookText = primaryHook
+    ? [primaryHook.title, primaryHook.detail].filter((entry): entry is string => Boolean(entry)).join(": ")
+    : null;
 
   if (args.boardType === "town") {
     const vendor = args.vendors[0] ?? null;
     if (vendor) {
       push({
-        id: "fallback-town-shop",
+        id: "mythic-town-shop",
         label: `Shop ${vendor.name}`,
         intent: "shop",
         payload: { vendorId: vendor.id },
@@ -132,19 +161,23 @@ function fallbackActionsForBoard(args: {
       });
     }
     push({
-      id: "fallback-town-jobs",
+      id: "mythic-town-jobs",
       label: "Check Job Board",
       intent: "dm_prompt",
-      prompt: "I check the town job board for contracts and rumors.",
+      prompt: hookText
+        ? `I check the town job board for contracts tied to ${hookText}.`
+        : "I check the town job board for contracts and rumors.",
     });
     push({
-      id: "fallback-town-talk",
+      id: "mythic-town-talk",
       label: "Question Locals",
       intent: "dm_prompt",
-      prompt: "I question the locals for leads and faction tension.",
+      prompt: hookText
+        ? `I question locals for leverage and faction movement around ${hookText}.`
+        : "I question the locals for leads and faction tension.",
     });
     push({
-      id: "fallback-town-travel",
+      id: "mythic-town-travel",
       label: "Head Out",
       intent: "travel",
       boardTarget: "travel",
@@ -155,13 +188,15 @@ function fallbackActionsForBoard(args: {
 
   if (args.boardType === "travel") {
     push({
-      id: "fallback-travel-scout",
+      id: "mythic-travel-scout",
       label: "Scout Route",
       intent: "dm_prompt",
-      prompt: "I scout the route for threats, shortcuts, and ambush points.",
+      prompt: hookText
+        ? `I scout the route for threats and shortcuts that connect to ${hookText}.`
+        : "I scout the route for threats, shortcuts, and ambush points.",
     });
     push({
-      id: "fallback-travel-search-dungeon",
+      id: "mythic-travel-search-dungeon",
       label: "Search Dungeon",
       intent: "travel",
       boardTarget: "travel",
@@ -169,14 +204,14 @@ function fallbackActionsForBoard(args: {
       payload: { searchTarget: "dungeon" },
     });
     push({
-      id: "fallback-travel-enter",
+      id: "mythic-travel-enter",
       label: "Enter Dungeon",
       intent: "dungeon",
       boardTarget: "dungeon",
       prompt: "I commit and enter the dungeon entrance we found.",
     });
     push({
-      id: "fallback-travel-town",
+      id: "mythic-travel-town",
       label: "Return Town",
       intent: "town",
       boardTarget: "town",
@@ -187,25 +222,27 @@ function fallbackActionsForBoard(args: {
 
   if (args.boardType === "dungeon") {
     push({
-      id: "fallback-dungeon-assess",
+      id: "mythic-dungeon-assess",
       label: "Assess Room",
       intent: "dm_prompt",
-      prompt: "I assess this room for threats, secrets, and tactical cover.",
+      prompt: hookText
+        ? `I assess this room for threats and clues tied to ${hookText}.`
+        : "I assess this room for threats, secrets, and tactical cover.",
     });
     push({
-      id: "fallback-dungeon-loot",
+      id: "mythic-dungeon-loot",
       label: "Inspect Cache",
       intent: "dm_prompt",
       prompt: "I inspect nearby caches and containers for loot and traps.",
     });
     push({
-      id: "fallback-dungeon-proceed",
+      id: "mythic-dungeon-proceed",
       label: "Proceed Deeper",
       intent: "dm_prompt",
       prompt: "I proceed deeper into the dungeon and secure the next room.",
     });
     push({
-      id: "fallback-dungeon-combat",
+      id: "mythic-dungeon-combat",
       label: "Start Combat",
       intent: "combat_start",
       boardTarget: "combat",
@@ -216,28 +253,28 @@ function fallbackActionsForBoard(args: {
 
   if (args.boardType === "combat") {
     push({
-      id: "fallback-combat-assess",
+      id: "mythic-combat-assess",
       label: "Assess Target",
       intent: "dm_prompt",
       prompt: args.activeTurnCombatantName
-        ? `I assess ${args.activeTurnCombatantName} for weaknesses, intent, and status effects.`
-        : "I assess the active hostile target for weaknesses and status effects.",
+        ? `I assess ${args.activeTurnCombatantName} for weaknesses, intent, and status effects${hookText ? ` tied to ${hookText}` : ""}.`
+        : `I assess the active hostile target for weaknesses and status effects${hookText ? ` tied to ${hookText}` : ""}.`,
     });
     push({
-      id: "fallback-combat-skills",
+      id: "mythic-combat-skills",
       label: "Open Skills",
       intent: "open_panel",
       panel: "skills",
       prompt: "I review my available combat skills and cooldown windows.",
     });
     push({
-      id: "fallback-combat-status",
+      id: "mythic-combat-status",
       label: "Status Check",
       intent: "dm_prompt",
       prompt: "Give me a concise combat status check for my team and threats.",
     });
     push({
-      id: "fallback-combat-commands",
+      id: "mythic-combat-commands",
       label: "Open Commands",
       intent: "open_panel",
       panel: "commands",
@@ -591,8 +628,9 @@ export default function MythicGameScreen() {
       boardType: board.board_type,
       vendors: townVendors,
       activeTurnCombatantName: activeTurnCombatant?.name ?? null,
+      boardHooks,
     });
-  }, [activeTurnCombatant?.name, board, latestAssistantParsed?.ui_actions, townVendors]);
+  }, [activeTurnCombatant?.name, board, boardHooks, latestAssistantParsed?.ui_actions, townVendors]);
 
   const latestAssistantMessage = useMemo(() => {
     for (let index = mythicDm.messages.length - 1; index >= 0; index -= 1) {
@@ -700,6 +738,7 @@ export default function MythicGameScreen() {
 
     try {
       await mythicDm.sendMessage(rawMessage, commandContext ? { actionContext: commandContext } : undefined);
+      await Promise.all([refetch(), refetchCombatState()]);
     } catch (error) {
       const messageText = error instanceof Error ? error.message : "Failed to reach Mythic DM.";
       setActionError(messageText);
@@ -781,7 +820,18 @@ export default function MythicGameScreen() {
           ? action.boardTarget
           : action.intent;
         if (board?.board_type !== target) {
-          await transitionBoard(target, `narrative:${action.id}`, action.payload ?? undefined);
+          const reasonLabel = (action.label && action.label.trim().length > 0)
+            ? action.label.trim()
+            : (action.prompt && action.prompt.trim().length > 0)
+              ? action.prompt.trim().slice(0, 120)
+              : "Story Progression";
+          const reasonCode = normalizeReasonCode(action.id || reasonLabel);
+          const payload = {
+            ...(action.payload ?? {}),
+            reason_code: reasonCode,
+            reason_label: reasonLabel,
+          };
+          await transitionBoard(target, reasonLabel, payload);
           await Promise.all([refetch(), refetchCombatState()]);
         }
         if (action.prompt) {

@@ -1,29 +1,28 @@
 import { test, expect } from "@playwright/test";
 
-test("game screen renders without crashing", async ({ page }) => {
+test("mythic game route renders without crashing", async ({ page }) => {
   let pageError: Error | null = null;
   page.on("pageerror", error => {
     pageError = error;
   });
 
   const campaignId = "e2e-campaign";
-  await page.goto(`/__e2e/game/${campaignId}`);
+  await page.goto(`/mythic/${campaignId}`);
 
-  await expect(page.getByRole("heading", { name: "Game" })).toBeVisible();
-  await expect(page.getByText(`Campaign ${campaignId}`)).toBeVisible();
-  await expect(page.getByText("Dungeon Master")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/mythic/${campaignId}$`));
+  await expect(page.locator("body")).toContainText(/No active Mythic board found\.|Mythic Weave/);
 
   expect(pageError).toBeNull();
 });
 
-test("create character screen renders without crashing", async ({ page }) => {
+test("mythic create character route renders without crashing", async ({ page }) => {
   let pageError: Error | null = null;
   page.on("pageerror", error => {
     pageError = error;
   });
 
   const campaignId = "e2e-campaign";
-  await page.goto(`/__e2e/game/${campaignId}/create-character`);
+  await page.goto(`/mythic/${campaignId}/create-character`);
 
   await expect(page.getByText("Mythic Class Forge")).toBeVisible();
 

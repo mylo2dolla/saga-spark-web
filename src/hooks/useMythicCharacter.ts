@@ -29,6 +29,20 @@ function summarizePayload(payload: unknown): string {
   return "";
 }
 
+function normalizeReasonLabel(value: string): string {
+  const raw = value
+    .replace(/^narrative:/i, "")
+    .replace(/^fallback-/i, "")
+    .replace(/^dm-action-/i, "")
+    .replace(/^transition_reason:/i, "")
+    .trim();
+  if (!raw) return "Story Progression";
+  return raw
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
 export function useMythicCharacter(campaignId: string | undefined) {
   const [bundle, setBundle] = useState<MythicCharacterBundle | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -184,6 +198,26 @@ export function useMythicCharacter(campaignId: string | undefined) {
         const id = safeString(event.id, crypto.randomUUID());
         const category = safeString(event.category, "memory");
         const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+        const companionCheckin = payload.companion_checkin && typeof payload.companion_checkin === "object"
+          ? payload.companion_checkin as Record<string, unknown>
+          : null;
+        if (category === "companion_checkin" && companionCheckin) {
+          const line = safeString(companionCheckin.line);
+          const companionId = safeString(companionCheckin.companion_id, "companion");
+          const title = line.includes(":")
+            ? line.split(":")[0]!.trim()
+            : `Companion ${companionId}`;
+          questThreads.push({
+            id: `memory:${id}`,
+            source: "dm_memory",
+            event_type: "companion_checkin",
+            title: `Companion Check-In · ${title}`,
+            detail: line || summarizePayload(payload),
+            severity: Number(event.severity ?? 1) || 1,
+            created_at: safeString(event.created_at),
+          });
+          continue;
+        }
         questThreads.push({
           id: `memory:${id}`,
           source: "dm_memory",
@@ -203,8 +237,10 @@ export function useMythicCharacter(campaignId: string | undefined) {
           ? transition.payload_json as Record<string, unknown>
           : {};
         const detailParts: string[] = [];
-        const reason = safeString(transition.reason);
+        const reason = normalizeReasonLabel(safeString(transition.reason));
         if (reason) detailParts.push(`Reason: ${reason}`);
+        const reasonCode = safeString(payload.reason_code);
+        if (reasonCode) detailParts.push(`Code: ${reasonCode}`);
         const travelGoal = safeString(payload.travel_goal);
         if (travelGoal) detailParts.push(`Goal: ${travelGoal.replace(/_/g, " ")}`);
         const searchTarget = safeString(payload.search_target);

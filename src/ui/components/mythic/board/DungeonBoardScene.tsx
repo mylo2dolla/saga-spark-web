@@ -3,9 +3,10 @@ import type { BoardInspectTarget } from "@/ui/components/mythic/board/inspectTyp
 import { DungeonMiniMap } from "@/ui/components/mythic/board/dungeon/DungeonMiniMap";
 import { DungeonRoomScene } from "@/ui/components/mythic/board/dungeon/DungeonRoomScene";
 import { computeDungeonLayout, neighborDirections, type DungeonEdgeLite, type DungeonRoomLite } from "@/ui/components/mythic/board/dungeon/dungeonLayout";
+import type { MythicBoardState } from "@/types/mythic";
 
 interface DungeonBoardSceneProps {
-  boardState: Record<string, unknown>;
+  boardState: MythicBoardState;
   scene: Record<string, unknown> | null;
   onInspect: (target: BoardInspectTarget) => void;
 }
@@ -23,7 +24,7 @@ function asNumber(value: unknown, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function extractRoomGraph(state: Record<string, unknown>): { rooms: DungeonRoomLite[]; edges: DungeonEdgeLite[] } {
+function extractRoomGraph(state: MythicBoardState): { rooms: DungeonRoomLite[]; edges: DungeonEdgeLite[] } {
   const graph = state.room_graph && typeof state.room_graph === "object" ? (state.room_graph as Record<string, unknown>) : null;
   const roomsRaw = Array.isArray(graph?.rooms) ? graph?.rooms : [];
   const edgesRaw = Array.isArray(graph?.edges) ? graph?.edges : [];
@@ -144,4 +145,3 @@ export function DungeonBoardScene(props: DungeonBoardSceneProps) {
     </div>
   );
 }
-

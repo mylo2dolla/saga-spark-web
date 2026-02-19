@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
-import type { MythicBoardType } from "@/types/mythic";
+import type { MythicBoardType, MythicBoardState, MythicBoardTransitionPayload } from "@/types/mythic";
 
 export interface MythicBoardRow {
   id: string;
   campaign_id: string;
   board_type: MythicBoardType;
   status: "active" | "archived" | "paused";
-  state_json: Record<string, unknown>;
+  state_json: MythicBoardState;
   ui_hints_json: Record<string, unknown>;
   active_scene_id: string | null;
   combat_session_id: string | null;
@@ -22,7 +22,7 @@ export interface MythicBoardTransitionRow {
   to_board_type: MythicBoardType;
   reason: string;
   animation: string;
-  payload_json: Record<string, unknown>;
+  payload_json: MythicBoardTransitionPayload;
   created_at: string;
 }
 

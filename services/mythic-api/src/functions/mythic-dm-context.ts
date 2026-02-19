@@ -30,6 +30,18 @@ function shortText(value: unknown, maxLen = MAX_TEXT_FIELD_LEN): string | null {
   return `${trimmed.slice(0, maxLen)}...<truncated>`;
 }
 
+function sampleEntries(value: unknown, maxItems = 4): unknown[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry) => typeof entry === "string" || (entry && typeof entry === "object"))
+    .slice(0, maxItems)
+    .map((entry) => {
+      if (typeof entry === "string") return shortText(entry, 180);
+      return entry;
+    })
+    .filter(Boolean) as unknown[];
+}
+
 function compactSkill(skill: Record<string, unknown>) {
   const effectsJson = skill.effects_json && typeof skill.effects_json === "object"
     ? skill.effects_json as Record<string, unknown>
@@ -65,6 +77,8 @@ function compactSkill(skill: Record<string, unknown>) {
 function summarizeBoardState(boardType: unknown, stateJson: unknown) {
   const safeType = typeof boardType === "string" ? boardType : "unknown";
   const raw = stateJson && typeof stateJson === "object" ? stateJson as Record<string, unknown> : {};
+  const companionPresence = sampleEntries(raw.companion_presence, 3);
+  const companionCheckins = sampleEntries(raw.companion_checkins, 3);
   if (safeType === "town") {
     const worldSeed =
       raw.world_seed && typeof raw.world_seed === "object"
@@ -77,8 +91,12 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       vendor_count: Array.isArray(raw.vendors) ? raw.vendors.length : 0,
       service_count: Array.isArray(raw.services) ? raw.services.length : 0,
       rumor_count: Array.isArray(raw.rumors) ? raw.rumors.length : 0,
+      rumor_samples: sampleEntries(raw.rumors, 4),
+      objective_samples: sampleEntries(raw.objectives, 4),
       faction_count: Array.isArray(raw.factions_present) ? raw.factions_present.length : 0,
       guard_alertness: raw.guard_alertness ?? null,
+      companion_presence: companionPresence,
+      companion_checkins: companionCheckins,
     };
   }
   if (safeType === "travel") {
@@ -90,7 +108,11 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       dungeon_traces_found: raw.dungeon_traces_found ?? null,
       discovery_flags: raw.discovery_flags ?? null,
       segment_count: Array.isArray(raw.route_segments) ? raw.route_segments.length : 0,
+      segment_samples: sampleEntries(raw.route_segments, 4),
       encounter_seed_count: Array.isArray(raw.encounter_seeds) ? raw.encounter_seeds.length : 0,
+      discovery_samples: sampleEntries(raw.discovery_log, 4),
+      companion_presence: companionPresence,
+      companion_checkins: companionCheckins,
     };
   }
   if (safeType === "dungeon") {
@@ -99,9 +121,14 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       : null;
     return {
       room_count: Array.isArray(roomGraph?.rooms) ? roomGraph?.rooms.length : 0,
+      room_samples: sampleEntries(roomGraph?.rooms, 4),
       loot_nodes: raw.loot_nodes ?? null,
       trap_signals: raw.trap_signals ?? null,
       faction_presence_count: Array.isArray(raw.faction_presence) ? raw.faction_presence.length : 0,
+      objective_samples: sampleEntries(raw.objectives, 4),
+      discovery_samples: sampleEntries(raw.discovery_log, 4),
+      companion_presence: companionPresence,
+      companion_checkins: companionCheckins,
     };
   }
   if (safeType === "combat") {
@@ -112,6 +139,8 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       grid_height: grid?.height ?? null,
       blocked_tile_count: Array.isArray(raw.blocked_tiles) ? raw.blocked_tiles.length : 0,
       seed: raw.seed ?? null,
+      scene_cache: raw.scene_cache ?? null,
+      companion_checkins: companionCheckins,
     };
   }
   return {

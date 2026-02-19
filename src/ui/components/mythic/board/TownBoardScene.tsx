@@ -4,9 +4,10 @@ import type { BoardInspectTarget } from "@/ui/components/mythic/board/inspectTyp
 import { PixelBoardCanvas } from "@/ui/components/mythic/board/pixel/PixelBoardCanvas";
 import { pixelPalette } from "@/ui/components/mythic/board/pixel/pixelPalette";
 import { drawHouse, drawHumanoid, drawOutlineRect, drawPixelRect, drawTree } from "@/ui/components/mythic/board/pixel/pixelSprites";
+import type { MythicBoardState } from "@/types/mythic";
 
 interface TownBoardSceneProps {
-  boardState: Record<string, unknown>;
+  boardState: MythicBoardState;
   scene: Record<string, unknown> | null;
   onInspect: (target: BoardInspectTarget) => void;
 }

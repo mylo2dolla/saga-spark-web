@@ -14,9 +14,10 @@ import {
   drawRuin,
   drawTree,
 } from "@/ui/components/mythic/board/pixel/pixelSprites";
+import type { MythicBoardState } from "@/types/mythic";
 
 interface TravelBoardSceneProps {
-  boardState: Record<string, unknown>;
+  boardState: MythicBoardState;
   scene: Record<string, unknown> | null;
   onInspect: (target: BoardInspectTarget) => void;
 }
@@ -29,7 +30,7 @@ interface ThemeColors {
   accent: string;
 }
 
-function readTemplate(boardState: Record<string, unknown>): string {
+function readTemplate(boardState: MythicBoardState): string {
   const value = boardState.template_key;
   if (typeof value === "string" && value.trim().length > 0) return value.trim();
   return "custom";

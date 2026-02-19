@@ -35,7 +35,6 @@ echo "VM functions base: ${FUNCTIONS_BASE}"
 echo
 
 endpoints=(
-  generate-class
   mythic-apply-xp
   mythic-bootstrap
   mythic-board-transition
@@ -48,7 +47,6 @@ endpoints=(
   mythic-dungeon-master
   mythic-field-generate
   mythic-generate-loot
-  mythic-game-save
   mythic-join-campaign
   mythic-list-campaigns
   mythic-inventory-equip
@@ -58,8 +56,6 @@ endpoints=(
   mythic-shop-buy
   mythic-shop-stock
   mythic-tts
-  world-content-writer
-  world-generator
 )
 
 fail=0
@@ -78,13 +74,8 @@ for ep in "${endpoints[@]}"; do
   fi
 
   # Most endpoints are auth-required, so unauthenticated probe should return 401/auth_required.
-  # world-generator may return 400 invalid_type on empty payload because auth is optional.
   ok=0
   if [[ "${status}" == "401" && "${code}" == "auth_required" ]]; then
-    ok=1
-  elif [[ "${ep}" == "generate-class" && "${status}" == "400" && "${code}" == "invalid_request" ]]; then
-    ok=1
-  elif [[ "${ep}" == "world-generator" && "${status}" == "400" ]]; then
     ok=1
   fi
 

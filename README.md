@@ -230,25 +230,14 @@ Notes for Codespaces:
 CI:
 - The Playwright HTML report is uploaded as a workflow artifact named `playwright-report`.
 
-## generate-class curl checks (VM API)
+## mythic-create-character curl check (VM API)
 
 ```bash
-curl -i -X OPTIONS "$VITE_MYTHIC_FUNCTIONS_BASE_URL/functions/v1/generate-class"
-```
-
-```bash
-curl -i -X POST "$VITE_MYTHIC_FUNCTIONS_BASE_URL/functions/v1/generate-class" \
-  -H "apikey: <anon-key>" \
-  -H "Content-Type: application/json" \
-  -d '{"classDescription":"Arcane duelist"}'
-```
-
-```bash
-curl -i -X POST "$VITE_MYTHIC_FUNCTIONS_BASE_URL/functions/v1/generate-class" \
+curl -i -X POST "$VITE_MYTHIC_FUNCTIONS_BASE_URL/functions/v1/mythic-create-character" \
   -H "apikey: <anon-key>" \
   -H "Authorization: Bearer <access_token>" \
   -H "Content-Type: application/json" \
-  -d '{"classDescription":"Arcane duelist"}'
+  -d '{"campaignId":"<campaign-id>","name":"Ash","classId":"mythic-wayfarer"}'
 ```
 
 ## VM function route sweep

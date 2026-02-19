@@ -1,5 +1,33 @@
 export type MythicBoardType = "town" | "dungeon" | "travel" | "combat";
 
+export interface MythicCompanionCheckin {
+  companion_id: string;
+  line: string;
+  mood: string;
+  urgency: string;
+  hook_type: string;
+}
+
+export interface MythicBoardTransitionPayload {
+  reason_code?: string;
+  reason_label?: string;
+  travel_goal?: string | null;
+  search_target?: string | null;
+  discovery_flags?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface MythicBoardState {
+  scene_cache?: Record<string, unknown>;
+  companion_checkins?: MythicCompanionCheckin[];
+  companion_presence?: Array<Record<string, unknown>>;
+  reason_code?: string;
+  rumors?: unknown[];
+  objectives?: unknown[];
+  discovery_log?: unknown[];
+  [key: string]: unknown;
+}
+
 export type MythicRarity = "common" | "magical" | "unique" | "legendary" | "mythic" | "unhinged";
 
 export type MythicWeaponFamily =

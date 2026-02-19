@@ -18,6 +18,36 @@ export const UiActionSchema = z
 
 export type UiAction = z.infer<typeof UiActionSchema>;
 
+export const CompanionCheckinSchema = z
+  .object({
+    companion_id: z.string().trim().min(1).max(80),
+    line: z.string().trim().min(1).max(320),
+    mood: z.string().trim().min(1).max(48),
+    urgency: z.string().trim().min(1).max(24),
+    hook_type: z.string().trim().min(1).max(64),
+  })
+  .strict();
+
+export type CompanionCheckin = z.infer<typeof CompanionCheckinSchema>;
+
+const BoardDeltaEntrySchema = z.union([
+  z.string().trim().min(1).max(320),
+  z.record(z.unknown()),
+]);
+
+export const BoardDeltaSchema = z
+  .object({
+    rumors: z.array(BoardDeltaEntrySchema).max(24).optional(),
+    objectives: z.array(BoardDeltaEntrySchema).max(24).optional(),
+    discovery_log: z.array(BoardDeltaEntrySchema).max(36).optional(),
+    discovery_flags: z.record(z.unknown()).optional(),
+    scene_cache: z.record(z.unknown()).optional(),
+    companion_checkins: z.array(CompanionCheckinSchema).max(8).optional(),
+  })
+  .strict();
+
+export type BoardDelta = z.infer<typeof BoardDeltaSchema>;
+
 export const RollLogEntrySchema = z
   .object({
     // Sequential index for deterministic replay.
@@ -101,6 +131,7 @@ export const DmNarratorOutputSchema = z
     scene: z.record(z.unknown()).optional(),
     effects: z.record(z.unknown()).optional(),
     ui_actions: z.array(UiActionSchema).max(8).optional(),
+    board_delta: BoardDeltaSchema.optional(),
     patches: z.array(z.unknown()).optional(),
     roll_log: z.array(RollLogEntrySchema).max(256).optional(),
   })
@@ -142,11 +173,13 @@ export function parseDmNarratorOutput(rawText: string):
 
   // Content policy validation on text fields.
   try {
+    const checkins = result.data.board_delta?.companion_checkins ?? [];
     assertContentAllowed([
       { path: "narration", value: result.data.narration },
       { path: "scene.environment", value: typeof result.data.scene?.environment === "string" ? result.data.scene.environment : null },
       { path: "scene.mood", value: typeof result.data.scene?.mood === "string" ? result.data.scene.mood : null },
       { path: "scene.focus", value: typeof result.data.scene?.focus === "string" ? result.data.scene.focus : null },
+      ...checkins.map((entry, index) => ({ path: `board_delta.companion_checkins[${index}].line`, value: entry.line })),
     ]);
   } catch (error) {
     return { ok: false, errors: [`content_policy:${error instanceof Error ? error.message : String(error)}`] };
@@ -246,4 +279,3 @@ export function normalizeWorldPatches(raw: unknown): { patches: WorldPatch[]; dr
 
   return { patches, dropped };
 }
-

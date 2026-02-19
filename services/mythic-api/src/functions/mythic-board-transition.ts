@@ -42,6 +42,18 @@ interface ContinuityState {
   travel_goal: string | null;
   search_target: string | null;
   discovery_flags: Record<string, unknown>;
+  companion_checkins: unknown[];
+}
+
+interface CompanionState {
+  companion_id: string;
+  name: string;
+  archetype: string;
+  voice: string;
+  mood: string;
+  cadence_turns: number;
+  urgency_bias: number;
+  metadata: Record<string, unknown>;
 }
 
 const syllableA = [
@@ -165,6 +177,113 @@ function normalizeTemplate(value: unknown): TemplateKey {
   return "custom";
 }
 
+function normalizeReasonCode(value: string): string {
+  const raw = value.startsWith("narrative:") ? value.slice("narrative:".length) : value;
+  const token = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return token.length > 0 ? token : "story_progression";
+}
+
+function humanizeReason(value: string): string {
+  const raw = value
+    .replace(/^narrative:/, "")
+    .replace(/^fallback-/, "")
+    .replace(/^dm-action-/, "")
+    .replace(/^transition_reason:/, "");
+  const normalized = raw
+    .trim()
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ");
+  if (!normalized) return "Story Progression";
+  return normalized.replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function normalizeDiscoveryEntry(entry: unknown): Record<string, unknown> | null {
+  if (!entry) return null;
+  if (typeof entry === "object" && !Array.isArray(entry)) {
+    return entry as Record<string, unknown>;
+  }
+  if (typeof entry === "string") {
+    const trimmed = entry.trim();
+    if (!trimmed) return null;
+    const prefixes: Array<{ key: string; kind: string }> = [
+      { key: "transition_reason:", kind: "transition_reason" },
+      { key: "travel_goal:", kind: "travel_goal" },
+      { key: "search_target:", kind: "search_target" },
+      { key: "probe:", kind: "probe" },
+      { key: "encounter:", kind: "encounter" },
+      { key: "treasure:", kind: "treasure" },
+      { key: "dungeon_traces:", kind: "dungeon_traces" },
+      { key: "board:", kind: "board" },
+    ];
+    for (const prefix of prefixes) {
+      if (!trimmed.startsWith(prefix.key)) continue;
+      const detail = trimmed.slice(prefix.key.length).replace(/_/g, " ").trim();
+      return { kind: prefix.kind, detail };
+    }
+    return { kind: "note", detail: trimmed };
+  }
+  return null;
+}
+
+function mergeDiscoveryLog(base: unknown[], incoming: unknown[], maxItems: number): Record<string, unknown>[] {
+  const merged = uniqueUnknownArray([...base, ...incoming])
+    .map((entry) => normalizeDiscoveryEntry(entry))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  return merged.slice(-maxItems);
+}
+
+function buildDynamicHooks(args: {
+  seed: number;
+  boardType: "town" | "travel" | "dungeon" | "combat";
+  world: WorldProfile;
+  factionNames: string[];
+  tension: number;
+}): { rumors: unknown[]; objectives: unknown[] } {
+  const factionA = args.factionNames[0] ?? "an old faction";
+  const factionB = args.factionNames[1] ?? factionA;
+  const tensionTier = args.tension >= 0.7 ? "high" : args.tension >= 0.4 ? "rising" : "low";
+  const boardLabel = args.boardType === "town" ? "gates" : args.boardType === "travel" ? "roads" : "depths";
+  const rumorPool = [
+    `${factionA} scouts were seen near the ${boardLabel}.`,
+    `${factionB} is moving supplies under false colors.`,
+    `A courier from ${args.world.seed_title} never reached the checkpoint.`,
+    `The ${tensionTier} tension around ${args.world.seed_title} is drawing predators.`,
+  ];
+  const objectivePool = [
+    { title: "Interrogate The Route", detail: `Trace ${factionA} movement and identify their next pressure point.` },
+    { title: "Disrupt The Supply Chain", detail: `Cut ${factionB}'s logistics before their advantage compounds.` },
+    { title: "Secure Forward Position", detail: "Claim a safe foothold and deny enemy reconnaissance." },
+    { title: "Pressure The Instigator", detail: "Find who is escalating conflict and force a reaction." },
+  ];
+
+  const rumorA = rngPick(args.seed, `${args.boardType}:rumor:a`, rumorPool);
+  const rumorB = rngPick(args.seed, `${args.boardType}:rumor:b`, rumorPool);
+  const objectiveA = rngPick(args.seed, `${args.boardType}:objective:a`, objectivePool);
+  return {
+    rumors: uniqueUnknownArray([rumorA, rumorB]),
+    objectives: uniqueUnknownArray([
+      {
+        ...objectiveA,
+        source: "dynamic_board_generator",
+        tension_tier: tensionTier,
+      },
+    ]),
+  };
+}
+
+function buildCompanionPresence(companions: CompanionState[]): Array<Record<string, unknown>> {
+  return companions.slice(0, 6).map((companion) => ({
+    companion_id: companion.companion_id,
+    name: companion.name,
+    archetype: companion.archetype,
+    mood: companion.mood,
+  }));
+}
+
 function readContinuity(activeState: Record<string, unknown> | null): ContinuityState {
   const state = activeState ?? {};
   const consequenceFlags = asRecord(state.consequence_flags);
@@ -181,6 +300,7 @@ function readContinuity(activeState: Record<string, unknown> | null): Continuity
     travel_goal: typeof state.travel_goal === "string" ? state.travel_goal : null,
     search_target: typeof state.search_target === "string" ? state.search_target : null,
     discovery_flags: discoveryFlags,
+    companion_checkins: asArray(state.companion_checkins),
   };
 }
 
@@ -219,11 +339,20 @@ function buildTownState(args: {
   world: WorldProfile;
   continuity: ContinuityState;
   factionNames: string[];
+  tension: number;
+  companions: CompanionState[];
   payload: Record<string, unknown>;
 }): Record<string, unknown> {
-  const { seed, world, continuity, factionNames, payload } = args;
+  const { seed, world, continuity, factionNames, tension, companions, payload } = args;
   const vendorCount = rngInt(seed, "town:vendors", 2, 5);
   const services = templateServices[world.template_key] ?? templateServices.custom;
+  const dynamicHooks = buildDynamicHooks({
+    seed,
+    boardType: "town",
+    world,
+    factionNames,
+    tension,
+  });
   const vendors = Array.from({ length: vendorCount }).map((_, idx) => ({
     id: `vendor_${idx + 1}`,
     name: makeName(seed, `town:vendor:${idx}`),
@@ -244,7 +373,7 @@ function buildTownState(args: {
     vendors,
     services,
     gossip: asArray(payload.gossip).length > 0 ? asArray(payload.gossip) : [],
-    rumors: uniqueUnknownArray([...continuity.rumors, ...asArray(payload.rumors)]).slice(-24),
+    rumors: uniqueUnknownArray([...continuity.rumors, ...dynamicHooks.rumors, ...asArray(payload.rumors)]).slice(-24),
     factions_present: uniqueUnknownArray([
       ...pickFactionNames(seed, factionNames, 4, "town:factions"),
       ...continuity.factions_present,
@@ -257,7 +386,7 @@ function buildTownState(args: {
       ),
     ),
     bounties: asArray(payload.bounties),
-    objectives: uniqueUnknownArray([...continuity.objectives, ...asArray(payload.objectives)]).slice(-16),
+    objectives: uniqueUnknownArray([...continuity.objectives, ...dynamicHooks.objectives, ...asArray(payload.objectives)]).slice(-16),
     consequence_flags: {
       ...continuity.consequence_flags,
       ...asRecord(payload.consequence_flags),
@@ -270,7 +399,9 @@ function buildTownState(args: {
       ...continuity.discovery_flags,
       ...asRecord(payload.discovery_flags),
     },
-    discovery_log: uniqueUnknownArray([...continuity.discovery_log, ...asArray(payload.discovery_log)]).slice(-40),
+    discovery_log: mergeDiscoveryLog(continuity.discovery_log, asArray(payload.discovery_log), 40),
+    companion_presence: buildCompanionPresence(companions),
+    companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
   };
 }
 
@@ -279,10 +410,13 @@ function buildTravelState(args: {
   world: WorldProfile;
   continuity: ContinuityState;
   factionNames: string[];
-  reason: string;
+  reasonCode: string;
+  reasonLabel: string;
+  tension: number;
+  companions: CompanionState[];
   payload: Record<string, unknown>;
 }): Record<string, unknown> {
-  const { seed, world, continuity, factionNames, reason, payload } = args;
+  const { seed, world, continuity, factionNames, reasonCode, reasonLabel, tension, companions, payload } = args;
   const terrains = templateTerrains[world.template_key] ?? templateTerrains.custom;
   const weatherPool = templateWeather[world.template_key] ?? templateWeather.custom;
   const weather = rngPick(seed, "travel:weather", weatherPool);
@@ -291,6 +425,13 @@ function buildTravelState(args: {
   const searchTarget = resolveSearchTarget(payload, continuity);
   const probeKind = typeof payload.travel_probe === "string" ? payload.travel_probe.toLowerCase() : null;
   const explicitProbe = Boolean(probeKind);
+  const dynamicHooks = buildDynamicHooks({
+    seed,
+    boardType: "travel",
+    world,
+    factionNames,
+    tension,
+  });
 
   const routeSegments = Array.from({ length: segmentCount }).map((_, i) => ({
     id: `seg_${i + 1}`,
@@ -318,13 +459,13 @@ function buildTravelState(args: {
   };
 
   const discoveryLines: unknown[] = [
-    `transition_reason:${reason}`,
-    `travel_goal:${travelGoal}`,
-    searchTarget ? `search_target:${searchTarget}` : "search_target:none",
-    explicitProbe ? `probe:${probeKind}` : "probe:passive",
-    encounterTriggered ? "encounter:triggered" : "encounter:none",
-    treasureTriggered ? "treasure:triggered" : "treasure:none",
-    dungeonTracesFound ? "dungeon_traces:found" : "dungeon_traces:none",
+    { kind: "transition_reason", detail: reasonLabel, reason_code: reasonCode },
+    { kind: "travel_goal", detail: travelGoal },
+    { kind: "search_target", detail: searchTarget ?? "none" },
+    { kind: "probe", detail: explicitProbe ? probeKind : "passive" },
+    { kind: "encounter", detail: encounterTriggered ? "triggered" : "none" },
+    { kind: "treasure", detail: treasureTriggered ? "triggered" : "none" },
+    { kind: "dungeon_traces", detail: dungeonTracesFound ? "found" : "none" },
   ];
 
   return {
@@ -356,8 +497,8 @@ function buildTravelState(args: {
       : null,
     dungeon_traces_found: dungeonTracesFound,
     faction_markers: pickFactionNames(seed, factionNames, 3, "travel:faction_markers"),
-    rumors: uniqueUnknownArray([...continuity.rumors, ...asArray(payload.rumors)]).slice(-24),
-    objectives: uniqueUnknownArray([...continuity.objectives, ...asArray(payload.objectives)]).slice(-16),
+    rumors: uniqueUnknownArray([...continuity.rumors, ...dynamicHooks.rumors, ...asArray(payload.rumors)]).slice(-24),
+    objectives: uniqueUnknownArray([...continuity.objectives, ...dynamicHooks.objectives, ...asArray(payload.objectives)]).slice(-16),
     consequence_flags: {
       ...continuity.consequence_flags,
       ...asRecord(payload.consequence_flags),
@@ -367,8 +508,11 @@ function buildTravelState(args: {
       ...asRecord(payload.persistent_flags),
     },
     discovery_flags: discoveryFlags,
-    discovery_log: uniqueUnknownArray([...continuity.discovery_log, ...discoveryLines, ...asArray(payload.discovery_log)]).slice(-48),
-    transition_reason: reason,
+    discovery_log: mergeDiscoveryLog(continuity.discovery_log, [...discoveryLines, ...asArray(payload.discovery_log)], 48),
+    transition_reason: reasonLabel,
+    transition_reason_code: reasonCode,
+    companion_presence: buildCompanionPresence(companions),
+    companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
   };
 }
 
@@ -377,9 +521,18 @@ function buildDungeonState(args: {
   world: WorldProfile;
   continuity: ContinuityState;
   factionNames: string[];
+  tension: number;
+  companions: CompanionState[];
   payload: Record<string, unknown>;
 }): Record<string, unknown> {
-  const { seed, world, continuity, factionNames, payload } = args;
+  const { seed, world, continuity, factionNames, tension, companions, payload } = args;
+  const dynamicHooks = buildDynamicHooks({
+    seed,
+    boardType: "dungeon",
+    world,
+    factionNames,
+    tension,
+  });
   const roomCount = rngInt(seed, "dungeon:rooms", 6, 11);
   const rooms = Array.from({ length: roomCount }).map((_, i) => ({
     id: `room_${i + 1}`,
@@ -404,8 +557,8 @@ function buildDungeonState(args: {
     trap_signals: rngInt(seed, "dungeon:traps", 1, 5),
     loot_nodes: rngInt(seed, "dungeon:loot", 1, 6),
     faction_presence: pickFactionNames(seed, factionNames, 2, "dungeon:factions"),
-    rumors: uniqueUnknownArray([...continuity.rumors, ...asArray(payload.rumors)]).slice(-24),
-    objectives: uniqueUnknownArray([...continuity.objectives, ...asArray(payload.objectives)]).slice(-16),
+    rumors: uniqueUnknownArray([...continuity.rumors, ...dynamicHooks.rumors, ...asArray(payload.rumors)]).slice(-24),
+    objectives: uniqueUnknownArray([...continuity.objectives, ...dynamicHooks.objectives, ...asArray(payload.objectives)]).slice(-16),
     consequence_flags: {
       ...continuity.consequence_flags,
       ...asRecord(payload.consequence_flags),
@@ -419,9 +572,15 @@ function buildDungeonState(args: {
       ...asRecord(payload.discovery_flags),
       entered_dungeon: true,
     },
-    discovery_log: uniqueUnknownArray([...continuity.discovery_log, "board:dungeon", ...asArray(payload.discovery_log)]).slice(-48),
+    discovery_log: mergeDiscoveryLog(
+      continuity.discovery_log,
+      [{ kind: "board", detail: "dungeon" }, ...asArray(payload.discovery_log)],
+      48,
+    ),
     travel_goal: "enter_dungeon",
     search_target: resolveSearchTarget(payload, continuity) ?? "dungeon",
+    companion_presence: buildCompanionPresence(companions),
+    companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
   };
 }
 
@@ -485,6 +644,31 @@ async function loadFactions(
       id: row.id as string,
       name: row.name as string,
       tags: Array.isArray(row.tags) ? row.tags.filter((entry: unknown): entry is string => typeof entry === "string") : [],
+    }));
+}
+
+async function loadCompanions(
+  svc: ReturnType<typeof createServiceClient>,
+  campaignId: string,
+): Promise<CompanionState[]> {
+  const { data, error } = await svc
+    .schema("mythic")
+    .from("campaign_companions")
+    .select("companion_id,name,archetype,voice,mood,cadence_turns,urgency_bias,metadata")
+    .eq("campaign_id", campaignId)
+    .order("companion_id", { ascending: true });
+  if (error || !data) return [];
+  return (data as any[])
+    .filter((row) => typeof row.companion_id === "string" && typeof row.name === "string")
+    .map((row) => ({
+      companion_id: row.companion_id as string,
+      name: row.name as string,
+      archetype: typeof row.archetype === "string" ? row.archetype : "scout",
+      voice: typeof row.voice === "string" ? row.voice : "dry",
+      mood: typeof row.mood === "string" ? row.mood : "steady",
+      cadence_turns: Number.isFinite(Number(row.cadence_turns)) ? Number(row.cadence_turns) : 3,
+      urgency_bias: Number.isFinite(Number(row.urgency_bias)) ? Number(row.urgency_bias) : 0.5,
+      metadata: asRecord(row.metadata),
     }));
 }
 
@@ -597,8 +781,14 @@ export const mythicBoardTransition: FunctionHandler = {
       }
 
       const { campaignId, toBoardType } = parsed.data;
-      const reason = parsed.data.reason ?? "manual";
+      const rawReason = parsed.data.reason ?? "manual";
       const payload = asRecord(parsed.data.payload ?? {});
+      const reasonCode = typeof payload.reason_code === "string"
+        ? normalizeReasonCode(payload.reason_code)
+        : normalizeReasonCode(rawReason);
+      const reason = typeof payload.reason_label === "string"
+        ? humanizeReason(payload.reason_label)
+        : humanizeReason(rawReason);
 
       const svc = createServiceClient();
       await assertCampaignAccess(svc, campaignId, user.userId);
@@ -607,7 +797,18 @@ export const mythicBoardTransition: FunctionHandler = {
 
       const world = await loadWorldProfile(svc, campaignId);
       const factions = await loadFactions(svc, campaignId);
+      const companions = await loadCompanions(svc, campaignId);
       const factionNames = factions.map((f) => f.name);
+      const tensionQuery = await svc
+        .schema("mythic")
+        .from("dm_world_tension")
+        .select("tension")
+        .eq("campaign_id", campaignId)
+        .maybeSingle();
+      if (tensionQuery.error) {
+        warnings.push(`dm_world_tension:${tensionQuery.error.message ?? "unknown"}`);
+      }
+      const worldTension = Number((tensionQuery.data as { tension?: unknown } | null)?.tension ?? 0.25);
 
       const activeBoardsQuery = await svc
         .schema("mythic")
@@ -625,23 +826,41 @@ export const mythicBoardTransition: FunctionHandler = {
       const activeBoard = activeBoards[0] ?? null;
       const activeState = activeBoard ? asRecord(activeBoard.state_json) : {};
       const continuity = readContinuity(activeBoard ? activeState : null);
+      const transitionCountQuery = await svc
+        .schema("mythic")
+        .from("board_transitions")
+        .select("id", { count: "exact", head: true })
+        .eq("campaign_id", campaignId);
+      if (transitionCountQuery.error) throw transitionCountQuery.error;
+      const transitionCount = Number(transitionCountQuery.count ?? 0);
 
       const worldSeedBase = Number(asRecord(world.world_profile_json).seed ?? Number.NaN);
       const seedBase = Number.isFinite(continuity.seed)
         ? Number(continuity.seed)
         : Number.isFinite(worldSeedBase)
           ? worldSeedBase
-          : hashSeed(`${campaignId}:${reason}:${toBoardType}`);
+          : hashSeed(`${campaignId}:${reasonCode}:${toBoardType}`);
       const phaseOffset = toBoardType === "town" ? 1 : toBoardType === "travel" ? 2 : toBoardType === "dungeon" ? 3 : 4;
-      const seed = seedBase + phaseOffset;
+      const variationOffset = hashSeed(`${campaignId}:${reasonCode}:${transitionCount}`) % 5000;
+      const seed = seedBase + phaseOffset + variationOffset;
 
       let nextState: Record<string, unknown>;
       if (toBoardType === "town") {
-        nextState = buildTownState({ seed, world, continuity, factionNames, payload });
+        nextState = buildTownState({ seed, world, continuity, factionNames, tension: worldTension, companions, payload });
       } else if (toBoardType === "travel") {
-        nextState = buildTravelState({ seed, world, continuity, factionNames, reason, payload });
+        nextState = buildTravelState({
+          seed,
+          world,
+          continuity,
+          factionNames,
+          reasonCode,
+          reasonLabel: reason,
+          tension: worldTension,
+          companions,
+          payload,
+        });
       } else if (toBoardType === "dungeon") {
-        nextState = buildDungeonState({ seed, world, continuity, factionNames, payload });
+        nextState = buildDungeonState({ seed, world, continuity, factionNames, tension: worldTension, companions, payload });
       } else {
         nextState = {
           ...activeState,
@@ -649,6 +868,8 @@ export const mythicBoardTransition: FunctionHandler = {
           seed,
           template_key: world.template_key,
           world_seed: { title: world.seed_title, description: world.seed_description },
+          companion_presence: buildCompanionPresence(companions),
+          companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
         };
       }
 
@@ -683,6 +904,7 @@ export const mythicBoardTransition: FunctionHandler = {
 
       const transitionPayload = {
         ...payload,
+        reason_code: reasonCode,
         travel_goal: (nextState as any).travel_goal ?? null,
         travel_probe: (payload as any).travel_probe ?? null,
         search_target: (nextState as any).search_target ?? null,
@@ -714,6 +936,7 @@ export const mythicBoardTransition: FunctionHandler = {
             to_board_type: toBoardType,
             reason,
             transition_payload: transitionPayload,
+            reason_code: reasonCode,
             board_id: (insertedBoard.data as any)?.id ?? null,
           },
         });
@@ -721,9 +944,9 @@ export const mythicBoardTransition: FunctionHandler = {
         warnings.push(`dm_memory_events:${sanitizeError(error).message}`);
       }
 
-      const factionTarget = chooseFactionForOutcome(factions, reason);
+      const factionTarget = chooseFactionForOutcome(factions, `${rawReason} ${reasonCode} ${reason}`);
       if (factionTarget) {
-        const lowerReason = reason.toLowerCase();
+        const lowerReason = `${rawReason} ${reasonCode} ${reason}`.toLowerCase();
         let delta = 0;
         let severity = 1;
         if (lowerReason.includes("steal")) {
@@ -752,6 +975,7 @@ export const mythicBoardTransition: FunctionHandler = {
               severity,
               evidence: {
                 reason,
+                reason_code: reasonCode,
                 to_board_type: toBoardType,
                 transition_payload: transitionPayload,
                 faction_name: factionTarget.name,
@@ -775,6 +999,7 @@ export const mythicBoardTransition: FunctionHandler = {
           ok: true,
           board_id: (insertedBoard.data as any)?.id ?? null,
           board_type: toBoardType,
+          reason_code: reasonCode,
           travel_goal: (nextState as any).travel_goal ?? null,
           search_target: (nextState as any).search_target ?? null,
           discovery_flags: asRecord((nextState as any).discovery_flags),
@@ -801,4 +1026,3 @@ export const mythicBoardTransition: FunctionHandler = {
     }
   },
 };
-

@@ -8,6 +8,7 @@ import { DungeonBoardScene } from "@/ui/components/mythic/board/DungeonBoardScen
 import { CombatBoardScene, type CombatBoardSkillLite } from "@/ui/components/mythic/board/CombatBoardScene";
 import type { BoardInspectTarget } from "@/ui/components/mythic/board/inspectTypes";
 import type { SkillAvailabilityEntry } from "@/lib/mythic/skillAvailability";
+import type { MythicBoardState } from "@/types/mythic";
 
 const pageTurn = {
   initial: { rotateY: -90, opacity: 0, transformOrigin: "left center" },
@@ -18,7 +19,7 @@ const pageTurn = {
 interface BoardPageProps {
   boardType: "town" | "travel" | "dungeon" | "combat";
   modeKey: string;
-  boardState: Record<string, unknown>;
+  boardState: MythicBoardState;
   sceneHints: Record<string, unknown> | null;
   transitionError: string | null;
   combatStartError?: { message: string; code: string | null; requestId: string | null } | null;

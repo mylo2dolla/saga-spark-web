@@ -135,6 +135,52 @@ function makeBaselineFactions(template: TemplateKey): Array<{ name: string; desc
   }
 }
 
+function makeBaselineCompanions(seed: number, template: TemplateKey): Array<{
+  companion_id: string;
+  name: string;
+  archetype: string;
+  voice: string;
+  mood: string;
+  cadence_turns: number;
+  urgency_bias: number;
+  metadata: Record<string, unknown>;
+}> {
+  const firstNames = ["Ash", "Morrow", "Vex", "Rook", "Kestrel", "Nyx", "Vale", "Drift"];
+  const surnames = ["Vesper", "Pike", "Gallows", "Cinder", "Mire", "Quill", "Thorn", "Rune"];
+  const bySeed = (label: string, pool: string[]) => pool[hashSeed(`${seed}:${template}:${label}`) % pool.length]!;
+  const scoutName = `${bySeed("companion:scout:first", firstNames)} ${bySeed("companion:scout:last", surnames)}`;
+  const tacticianName = `${bySeed("companion:tactician:first", firstNames)} ${bySeed("companion:tactician:last", surnames)}`;
+
+  return [
+    {
+      companion_id: "companion_01",
+      name: scoutName,
+      archetype: "scout",
+      voice: "dry",
+      mood: "watchful",
+      cadence_turns: 3,
+      urgency_bias: 0.52,
+      metadata: {
+        role: "route_intel",
+        hook_tags: ["threat", "recon", "ambush"],
+      },
+    },
+    {
+      companion_id: "companion_02",
+      name: tacticianName,
+      archetype: "tactician",
+      voice: "blunt",
+      mood: "measured",
+      cadence_turns: 3,
+      urgency_bias: 0.48,
+      metadata: {
+        role: "tempo_control",
+        hook_tags: ["supply", "timing", "fallback"],
+      },
+    },
+  ];
+}
+
 function makeTownState(args: {
   campaignId: string;
   name: string;
@@ -289,6 +335,7 @@ export const mythicCreateCampaign: FunctionHandler = {
       const seed = hashSeed(`${campaign.id}:${name}:${description}:${templateKey}`);
       const worldProfileJson = deriveWorldProfile({ name, description, templateKey, seed });
       const baselineFactions = makeBaselineFactions(templateKey);
+      const baselineCompanions = makeBaselineCompanions(seed, templateKey);
       const baselineFactionNames = baselineFactions.map((entry) => entry.name);
       const townState = makeTownState({
         campaignId: campaign.id,
@@ -397,6 +444,23 @@ export const mythicCreateCampaign: FunctionHandler = {
             tags: faction.tags,
           })),
           { onConflict: "campaign_id,name" },
+        ),
+      );
+      await runOptional(
+        "campaign_companions",
+        svc.schema("mythic").from("campaign_companions").upsert(
+          baselineCompanions.map((companion) => ({
+            campaign_id: campaign.id,
+            companion_id: companion.companion_id,
+            name: companion.name,
+            archetype: companion.archetype,
+            voice: companion.voice,
+            mood: companion.mood,
+            cadence_turns: companion.cadence_turns,
+            urgency_bias: companion.urgency_bias,
+            metadata: companion.metadata,
+          })),
+          { onConflict: "campaign_id,companion_id" },
         ),
       );
       await runOptional(

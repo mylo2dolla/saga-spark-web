@@ -63,18 +63,23 @@ function jsonOnlyContract() {
   return `
 OUTPUT CONTRACT (STRICT)
 - Respond with ONE JSON object ONLY. No markdown. No backticks. No prose outside JSON.
-- Your JSON must include at minimum: {"narration": string}.
-- Strongly include:
-  - "scene": object with visual hints for board rendering from DB state (never fabricated stats/ids).
-    Include board-synced hints when applicable: "environment", "mood", "focus", "travel_goal".
-  - "effects": object with optional ambient/comic effect hints.
+- Your JSON must include: {"narration": string, "scene": object, "board_delta": object, "ui_actions": array}.
+- "scene" must include board-synced hints when applicable: "environment", "mood", "focus", "travel_goal".
+- "board_delta" must be an object containing only supported keys:
+  - rumors: array
+  - objectives: array
+  - discovery_log: array
+  - discovery_flags: object
+  - scene_cache: object
+  - companion_checkins: array of { companion_id, line, mood, urgency, hook_type }
+- "ui_actions" must contain 2-4 concrete intent suggestions for the current board state.
+  Each action item must be an object with:
+  - id (string), label (string), intent (string), optional prompt (string), optional payload (object).
+  When suggesting a shop/vendor in town:
+  - intent MUST be "shop"
+  - payload MUST include {"vendorId": "<id from board.state_summary.vendors>"}.
 - Optional:
-  - "ui_actions": array of intent suggestions (0-4 items; may be empty or omitted).
-    Each action item should be an object with:
-    - id (string), label (string), intent (string), optional prompt (string), optional payload (object).
-    When suggesting a shop/vendor in town:
-    - intent MUST be "shop"
-    - payload MUST include {"vendorId": "<id from board.state_summary.vendors>"}.
+  - "effects": object with optional ambient/comic effect hints.
   - "patches": array of world patch objects (may be empty). Supported patch ops:
     - FACT_CREATE / FACT_SUPERSEDE (fact_key, data)
     - ENTITY_UPSERT (entity_key, entity_type, data, tags[])
@@ -137,6 +142,23 @@ function shortText(value: unknown, maxLen = MAX_TEXT_FIELD_LEN): string | null {
   return `${trimmed.slice(0, maxLen)}...<truncated>`;
 }
 
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function sampleNarrativeEntries(value: unknown, maxItems = 4): unknown[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry) => typeof entry === "string" || (entry && typeof entry === "object"))
+    .slice(0, maxItems)
+    .map((entry) => {
+      if (typeof entry === "string") return shortText(entry, 160);
+      return entry;
+    })
+    .filter(Boolean) as unknown[];
+}
+
 function compactSkill(skill: Record<string, unknown>) {
   const effectsJson = skill.effects_json && typeof skill.effects_json === "object"
     ? skill.effects_json as Record<string, unknown>
@@ -172,6 +194,8 @@ function compactSkill(skill: Record<string, unknown>) {
 function summarizeBoardState(boardType: unknown, stateJson: unknown) {
   const safeType = typeof boardType === "string" ? boardType : "unknown";
   const raw = stateJson && typeof stateJson === "object" ? stateJson as Record<string, unknown> : {};
+  const companionPresence = sampleNarrativeEntries(raw.companion_presence, 3);
+  const companionCheckins = sampleNarrativeEntries(raw.companion_checkins, 3);
   if (safeType === "town") {
     const worldSeed =
       raw.world_seed && typeof raw.world_seed === "object"
@@ -203,8 +227,12 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       vendors,
       service_count: Array.isArray(raw.services) ? raw.services.length : 0,
       rumor_count: Array.isArray(raw.rumors) ? raw.rumors.length : 0,
+      rumor_samples: sampleNarrativeEntries(raw.rumors, 4),
+      objective_samples: sampleNarrativeEntries(raw.objectives, 4),
       faction_count: Array.isArray(raw.factions_present) ? raw.factions_present.length : 0,
       guard_alertness: raw.guard_alertness ?? null,
+      companion_presence: companionPresence,
+      companion_checkins: companionCheckins,
     };
   }
   if (safeType === "travel") {
@@ -217,6 +245,9 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       discovery_flags: raw.discovery_flags ?? null,
       segment_count: Array.isArray(raw.route_segments) ? raw.route_segments.length : 0,
       encounter_seed_count: Array.isArray(raw.encounter_seeds) ? raw.encounter_seeds.length : 0,
+      discovery_samples: sampleNarrativeEntries(raw.discovery_log, 4),
+      companion_presence: companionPresence,
+      companion_checkins: companionCheckins,
     };
   }
   if (safeType === "dungeon") {
@@ -225,9 +256,13 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       : null;
     return {
       room_count: Array.isArray(roomGraph?.rooms) ? roomGraph?.rooms.length : 0,
+      room_samples: sampleNarrativeEntries(roomGraph?.rooms, 4),
       loot_nodes: raw.loot_nodes ?? null,
       trap_signals: raw.trap_signals ?? null,
       faction_presence_count: Array.isArray(raw.faction_presence) ? raw.faction_presence.length : 0,
+      discovery_samples: sampleNarrativeEntries(raw.discovery_log, 4),
+      companion_presence: companionPresence,
+      companion_checkins: companionCheckins,
     };
   }
   if (safeType === "combat") {
@@ -238,6 +273,8 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       grid_height: grid?.height ?? null,
       blocked_tile_count: Array.isArray(raw.blocked_tiles) ? raw.blocked_tiles.length : 0,
       seed: raw.seed ?? null,
+      scene_cache: raw.scene_cache ?? null,
+      companion_checkins: companionCheckins,
     };
   }
   return {
@@ -544,6 +581,16 @@ export const mythicDungeonMaster: FunctionHandler = {
         .eq("campaign_id", campaignId)
         .maybeSingle();
 
+      const { data: companionsRaw, error: companionsError } = await svc
+        .schema("mythic")
+        .from("campaign_companions")
+        .select("companion_id,name,archetype,voice,mood,cadence_turns,urgency_bias,metadata")
+        .eq("campaign_id", campaignId)
+        .order("companion_id", { ascending: true });
+      if (companionsError) {
+        warnings.push(`campaign_companions unavailable: ${errMessage(companionsError, "query failed")}`);
+      }
+
       const compactRules = {
         name: rulesRow?.name ?? "mythic-weave-rules-v1",
         version: rulesRow?.version ?? null,
@@ -580,6 +627,33 @@ export const mythicDungeonMaster: FunctionHandler = {
       const compactBoard = compactBoardPayload(board);
       const compactCharacter = compactCharacterPayload(character);
       const compactCombat = compactCombatPayload(combat);
+      const compactCompanions = Array.isArray(companionsRaw)
+        ? companionsRaw
+          .map((row) => asObject(row))
+          .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+          .slice(0, 8)
+          .map((entry) => ({
+            companion_id: entry.companion_id ?? null,
+            name: entry.name ?? null,
+            archetype: entry.archetype ?? null,
+            voice: entry.voice ?? null,
+            mood: entry.mood ?? null,
+            cadence_turns: entry.cadence_turns ?? null,
+            urgency_bias: entry.urgency_bias ?? null,
+            metadata: asObject(entry.metadata) ?? null,
+          }))
+        : [];
+      const boardNarrativeSamples = (() => {
+        const rawBoard = asObject(board);
+        const state = asObject(rawBoard?.state_json);
+        if (!state) return null;
+        return {
+          rumors: sampleNarrativeEntries(state.rumors, 4),
+          objectives: sampleNarrativeEntries(state.objectives, 4),
+          discovery_log: sampleNarrativeEntries(state.discovery_log, 4),
+          companion_checkins: sampleNarrativeEntries(state.companion_checkins, 3),
+        };
+      })();
 
       // Consume deterministic rolls in a stable order. These are authoritative for the turn.
       const rollContext = (() => {
@@ -636,6 +710,12 @@ ${JSON.stringify(dmCampaignState ?? null, null, 2)}
 - DM world tension:
 ${JSON.stringify(dmWorldTension ?? null, null, 2)}
 
+- Campaign companions:
+${JSON.stringify(compactCompanions, null, 2)}
+
+- Board narrative samples:
+${JSON.stringify(boardNarrativeSamples, null, 2)}
+
 - Recent command execution context (authoritative client action result, may be null):
 ${JSON.stringify(actionContext ?? null, null, 2)}
 
@@ -649,6 +729,8 @@ RULES YOU MUST OBEY
 - Narration must be compact and high-signal: ${NARRATION_MIN_WORDS}-${NARRATION_MAX_WORDS} words total, max 2 short paragraphs.
 - No filler, no recap padding, no repeated adjectives.
 - Narration quality is primary. scene/effects should help render visual board state updates.
+- Provide a non-empty board_delta object that pushes forward rumors/objectives/discovery state.
+- Provide 2-4 grounded ui_actions tied to active board context (avoid generic labels like "Action 1").
 - If command execution context is provided, narrate outcomes using that state delta and avoid contradiction.
 - Violence/gore allowed. Harsh language allowed.
 - Mild sexuality / playful sexy banter allowed.
@@ -717,8 +799,29 @@ ${jsonOnlyContract()}
           continue;
         }
 
-        // Additional validation: if suggesting shop actions, vendorId must match board summary.
+        if (!parsedOut.value.scene || typeof parsedOut.value.scene !== "object") {
+          lastErrors = ["scene_missing_or_invalid"];
+          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
+          dmParsed = { ok: false, errors: lastErrors };
+          continue;
+        }
+
+        if (!parsedOut.value.board_delta || typeof parsedOut.value.board_delta !== "object") {
+          lastErrors = ["board_delta_missing_or_invalid"];
+          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
+          dmParsed = { ok: false, errors: lastErrors };
+          continue;
+        }
+
         const actions = parsedOut.value.ui_actions ?? [];
+        if (actions.length < 2 || actions.length > 4) {
+          lastErrors = [`ui_actions_count_out_of_bounds:${actions.length}:expected_2_4`];
+          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
+          dmParsed = { ok: false, errors: lastErrors };
+          continue;
+        }
+
+        // Additional validation: if suggesting shop actions, vendorId must match board summary.
         const badShop = actions.find((action) => {
           if (action.intent !== "shop") return false;
           const vendorId = (action.payload as Record<string, unknown> | undefined)?.vendorId;
@@ -742,6 +845,14 @@ ${jsonOnlyContract()}
           schema_version: "mythic.dm.narrator.v1",
           narration: "The story stutters and resets. Rephrase your action and try again.",
           scene: { mood: "glitch", focus: "retry" },
+          board_delta: {
+            discovery_log: [{ kind: "system", detail: "dm_retry_requested" }],
+            scene_cache: { mood: "glitch", focus: "retry" },
+          },
+          ui_actions: [
+            { id: "dm-retry-refresh", label: "Refresh State", intent: "refresh" },
+            { id: "dm-retry-prompt", label: "Retry Move", intent: "dm_prompt", prompt: "I restate my move clearly and continue." },
+          ],
         };
         const text = JSON.stringify(fallback);
         return new Response(streamOpenAiDelta(text), {

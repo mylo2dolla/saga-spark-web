@@ -55,7 +55,50 @@ const trimMessage = (content: string) =>
   content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
 
 const logger = createLogger("mythic-dm-hook");
-const JSON_BLOCK_REGEX = /\{[\s\S]*\}/;
+
+function extractBalancedJsonObject(text: string): string | null {
+  const source = text.trim();
+  if (!source) return null;
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i]!;
+    if (start === -1) {
+      if (ch === "{") {
+        start = i;
+        depth = 1;
+      }
+      continue;
+    }
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      depth += 1;
+      continue;
+    }
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(start, i + 1);
+      }
+    }
+  }
+  return null;
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -94,7 +137,7 @@ function normalizeUiAction(entry: unknown, index: number): MythicUiAction | null
     ? boardTargetRaw
     : undefined;
   return {
-    id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `dm-action-${index + 1}`,
+    id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `mythic-action-${index + 1}`,
     label: typeof raw.label === "string" && raw.label.trim() ? raw.label.trim() : `Action ${index + 1}`,
     intent,
     prompt: typeof raw.prompt === "string" && raw.prompt.trim() ? raw.prompt.trim() : undefined,
@@ -125,7 +168,7 @@ function fallbackActionFromLine(line: string, index: number): MythicUiAction | n
                 ? "quests"
                 : "character";
     return {
-      id: `fallback-panel-${index + 1}`,
+      id: `mythic-panel-${index + 1}`,
       label: `Open ${panel[0].toUpperCase()}${panel.slice(1)}`,
       intent: "open_panel",
       panel,
@@ -133,33 +176,33 @@ function fallbackActionFromLine(line: string, index: number): MythicUiAction | n
     };
   }
   if (/(travel|journey|depart|route|road)/.test(lower)) {
-    return { id: `fallback-travel-${index + 1}`, label: "Travel", intent: "travel", boardTarget: "travel", prompt: clean };
+    return { id: `mythic-travel-${index + 1}`, label: "Travel", intent: "travel", boardTarget: "travel", prompt: clean };
   }
   if (/(town|market|vendor|inn|restock)/.test(lower)) {
-    return { id: `fallback-town-${index + 1}`, label: "Town", intent: "town", boardTarget: "town", prompt: clean };
+    return { id: `mythic-town-${index + 1}`, label: "Town", intent: "town", boardTarget: "town", prompt: clean };
   }
   if (/(dungeon|ruin|cave|crypt|explore)/.test(lower)) {
-    return { id: `fallback-dungeon-${index + 1}`, label: "Dungeon", intent: "dungeon", boardTarget: "dungeon", prompt: clean };
+    return { id: `mythic-dungeon-${index + 1}`, label: "Dungeon", intent: "dungeon", boardTarget: "dungeon", prompt: clean };
   }
   if (/(combat|fight|battle|attack|engage)/.test(lower)) {
-    return { id: `fallback-combat-${index + 1}`, label: "Start Combat", intent: "combat_start", boardTarget: "combat", prompt: clean };
+    return { id: `mythic-combat-${index + 1}`, label: "Start Combat", intent: "combat_start", boardTarget: "combat", prompt: clean };
   }
   if (/(shop|vendor|merchant|blacksmith|armorer|alchemist)/.test(lower)) {
-    return { id: `fallback-shop-${index + 1}`, label: "Shop", intent: "shop", prompt: clean };
+    return { id: `mythic-shop-${index + 1}`, label: "Shop", intent: "shop", prompt: clean };
   }
   if (/(talk|speak|ask|investigate|scout|rumor|faction|plan)/.test(lower)) {
-    return { id: `fallback-prompt-${index + 1}`, label: clean.slice(0, 36), intent: "dm_prompt", prompt: clean };
+    return { id: `mythic-prompt-${index + 1}`, label: clean.slice(0, 36), intent: "dm_prompt", prompt: clean };
   }
   return null;
 }
 
 function parseAssistantPayload(text: string): MythicDmParsedPayload {
   const trimmed = text.trim();
-  const jsonMatch = trimmed.match(JSON_BLOCK_REGEX);
+  const jsonText = extractBalancedJsonObject(trimmed);
 
-  if (jsonMatch) {
+  if (jsonText) {
     try {
-      const parsed = JSON.parse(jsonMatch[0]);
+      const parsed = JSON.parse(jsonText);
       const raw = asRecord(parsed);
       if (raw) {
         const narration = typeof raw.narration === "string" && raw.narration.trim()
