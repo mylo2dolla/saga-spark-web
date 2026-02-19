@@ -1,6 +1,4 @@
 import type { FunctionHandler } from "./types.js";
-import { dm } from "./dm.js";
-import { dungeonMaster } from "./dungeon-master.js";
 import { generateClass } from "./generate-class.js";
 import { mythicApplyXp } from "./mythic-apply-xp.js";
 import { mythicBootstrap } from "./mythic-bootstrap.js";
@@ -14,6 +12,7 @@ import { mythicDmContext } from "./mythic-dm-context.js";
 import { mythicDungeonMaster } from "./mythic-dungeon-master.js";
 import { mythicFieldGenerate } from "./mythic-field-generate.js";
 import { mythicGenerateLoot } from "./mythic-generate-loot.js";
+import { mythicGameSave } from "./mythic-game-save.js";
 import { mythicJoinCampaign } from "./mythic-join-campaign.js";
 import { mythicListCampaigns } from "./mythic-list-campaigns.js";
 import { mythicInventoryEquip } from "./mythic-inventory-equip.js";
@@ -27,8 +26,6 @@ import { worldContentWriter } from "./world-content-writer.js";
 import { worldGenerator } from "./world-generator.js";
 
 const handlers: FunctionHandler[] = [
-  dm,
-  dungeonMaster,
   generateClass,
   mythicApplyXp,
   mythicBootstrap,
@@ -42,6 +39,7 @@ const handlers: FunctionHandler[] = [
   mythicDungeonMaster,
   mythicFieldGenerate,
   mythicGenerateLoot,
+  mythicGameSave,
   mythicJoinCampaign,
   mythicListCampaigns,
   mythicInventoryEquip,

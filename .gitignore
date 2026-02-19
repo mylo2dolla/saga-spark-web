@@ -31,3 +31,8 @@ supabase/.temp/
 
 # Playwright CLI snapshots generated during smoke runs
 .playwright-cli/page-*.yml
+
+# Playwright generated reports/artifacts
+playwright-report/
+test-results/
+playwright-artifacts/

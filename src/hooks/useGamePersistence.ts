@@ -5,6 +5,7 @@
 
 import { useState, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { callEdgeFunction } from "@/lib/edge";
 import { 
   serializeUnifiedState, 
   deserializeUnifiedState,
@@ -43,6 +44,14 @@ export interface UseGamePersistenceOptions {
 interface SaveOptions {
   refreshList?: boolean;
   silent?: boolean;
+}
+
+interface SaveMutationResponse {
+  ok?: boolean;
+  id?: string;
+  updated?: boolean;
+  deleted?: boolean;
+  error?: string;
 }
 
 export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOptions) {
@@ -142,25 +151,24 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       const worldStateJson = JSON.parse(worldSerialized) as Json;
       const gameStateJson = parsedSerialized.game as Json;
 
-      const { data, error } = await supabase
-        .from("game_saves")
-        .upsert({
-          campaign_id: campaignId,
-          user_id: userId,
-          save_name: saveName,
-          campaign_seed: campaignSeedJson,
-          world_state: worldStateJson,
-          game_state: gameStateJson,
-          player_level: playerLevel,
-          total_xp: totalXp,
-          playtime_seconds: playtimeSeconds,
-        }, {
-          onConflict: "campaign_id,user_id,save_name",
-        })
-        .select("id")
-        .single();
-
+      const { data, error } = await callEdgeFunction<SaveMutationResponse>("mythic-game-save", {
+        requireAuth: true,
+        body: {
+          action: "upsert",
+          campaignId,
+          saveName,
+          campaignSeed: campaignSeedJson,
+          worldState: worldStateJson,
+          gameState: gameStateJson,
+          playerLevel,
+          totalXp,
+          playtimeSeconds,
+        },
+      });
       if (error) throw error;
+      if (!data?.ok || !data.id) {
+        throw new Error(data?.error ?? "Failed to save game");
+      }
       logPersistenceSnapshot("DEV_DEBUG persistence save success", state, travelState);
       recordDbWrite();
 
@@ -180,7 +188,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     } finally {
       setIsSaving(false);
     }
-  }, [campaignId, userId, fetchSaves, getFallbackTravelState, logPersistenceSnapshot]);
+  }, [campaignId, fetchSaves, getFallbackTravelState, logPersistenceSnapshot]);
   // Update an existing save - includes travel state
   const updateSave = useCallback(async (
     saveId: string,
@@ -217,20 +225,24 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       const worldStateJson = JSON.parse(worldSerialized) as Json;
       const gameStateJson = parsedSerialized.game as Json;
 
-      const { error } = await supabase
-        .from("game_saves")
-        .update({
-          campaign_seed: campaignSeedJson,
-          world_state: worldStateJson,
-          game_state: gameStateJson,
-          player_level: playerLevel,
-          total_xp: totalXp,
-          playtime_seconds: playtimeSeconds,
-        })
-        .eq("id", saveId)
-        .eq("user_id", userId);
+      const { data, error } = await callEdgeFunction<SaveMutationResponse>("mythic-game-save", {
+        requireAuth: true,
+        body: {
+          action: "update",
+          saveId,
+          campaignSeed: campaignSeedJson,
+          worldState: worldStateJson,
+          gameState: gameStateJson,
+          playerLevel,
+          totalXp,
+          playtimeSeconds,
+        },
+      });
 
       if (error) throw error;
+      if (!data?.ok) {
+        throw new Error(data?.error ?? "Failed to update save");
+      }
       logPersistenceSnapshot("DEV_DEBUG persistence update success", state, travelState);
       recordDbWrite();
       return true;
@@ -240,7 +252,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
     } finally {
       setIsSaving(false);
     }
-  }, [userId, getFallbackTravelState, logPersistenceSnapshot]);
+  }, [getFallbackTravelState, logPersistenceSnapshot]);
 
   // Load a saved game
   const buildUnifiedStateFromRow = useCallback((data: {
@@ -334,13 +346,18 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
   // Delete a save
   const deleteSave = useCallback(async (saveId: string): Promise<boolean> => {
     try {
-      const { error } = await supabase
-        .from("game_saves")
-        .delete()
-        .eq("id", saveId)
-        .eq("user_id", userId);
+      const { data, error } = await callEdgeFunction<SaveMutationResponse>("mythic-game-save", {
+        requireAuth: true,
+        body: {
+          action: "delete",
+          saveId,
+        },
+      });
 
       if (error) throw error;
+      if (!data?.ok) {
+        throw new Error(data?.error ?? "Failed to delete save");
+      }
       
       toast.success("Save deleted");
       await fetchSaves();
@@ -350,7 +367,7 @@ export function useGamePersistence({ campaignId, userId }: UseGamePersistenceOpt
       toast.error("Failed to delete save");
       return false;
     }
-  }, [userId, fetchSaves]);
+  }, [fetchSaves]);
 
   // Get or create autosave
   const getOrCreateAutosave = useCallback(async (): Promise<string | null> => {

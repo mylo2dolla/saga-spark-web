@@ -720,29 +720,14 @@ export function useGameSession({ campaignId }: UseGameSessionOptions) {
       { body: { campaignId, content }, requireAuth: true, accessToken }
     );
 
-    if (!writeResult.error && !writeResult.data?.error && !writeResult.skipped) {
-      return;
+    if (writeResult.skipped) {
+      throw new Error("World content write skipped due to missing authentication.");
     }
-
-    console.warn("[gameSession] edge writer failed, falling back to direct insert", {
-      campaignId,
-      edgeError: writeResult.error?.message ?? null,
-      edgeMessage: writeResult.data?.error ?? null,
-      skipped: writeResult.skipped,
-    });
-
-    const fallbackResult = await supabase
-      .from("ai_generated_content")
-      .insert(content);
-
-    if (fallbackResult.error) {
-      if (writeResult.error) {
-        throw writeResult.error;
-      }
-      if (writeResult.data?.error) {
-        throw new Error(writeResult.data.error);
-      }
-      throw fallbackResult.error;
+    if (writeResult.error) {
+      throw writeResult.error;
+    }
+    if (writeResult.data?.error) {
+      throw new Error(writeResult.data.error);
     }
   }, [campaignId, accessToken]);
 

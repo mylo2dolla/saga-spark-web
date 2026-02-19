@@ -302,14 +302,15 @@ export const mythicCreateCampaign: FunctionHandler = {
       const warnings: string[] = [];
       const criticalFailures: string[] = [];
 
-      const runOptional = async (label: string, operation: Promise<{ error: { message?: string } | null }>) => {
+      type DbWriteResult = { error: { message?: string } | null };
+      const runOptional = async (label: string, operation: PromiseLike<DbWriteResult>) => {
         const { error } = await operation;
         if (error) {
           warnings.push(`${label}: ${error.message ?? "unknown"}`);
         }
       };
 
-      const runCritical = async (label: string, operation: Promise<{ error: { message?: string } | null }>) => {
+      const runCritical = async (label: string, operation: PromiseLike<DbWriteResult>) => {
         const { error } = await operation;
         if (error) {
           criticalFailures.push(`${label}: ${error.message ?? "unknown"}`);
@@ -480,4 +481,3 @@ export const mythicCreateCampaign: FunctionHandler = {
     }
   },
 };
-

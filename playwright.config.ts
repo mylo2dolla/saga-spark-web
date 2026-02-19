@@ -9,9 +9,10 @@ export default defineConfig({
     timeout: 5_000,
   },
   reporter: [
-    ["html", { outputFolder: "playwright-report", open: "never" }],
+    ["html", { outputFolder: "playwright-artifacts/report", open: "never" }],
     ["list"],
   ],
+  outputDir: "playwright-artifacts/test-results",
   projects: [
     {
       name: "chromium",

@@ -34,6 +34,8 @@ const normalizeNodeStatus = (value: string | null | undefined): ServerNodeRow["s
   return "degraded";
 };
 
+const formatBundleTimestamp = (date: Date) => date.toISOString().replace(/[:.]/g, "-");
+
 export default function ServerAdminScreen() {
   const { user, isLoading: authLoading } = useAuth();
   const { setLastError, engineSnapshot, lastError, lastErrorAt, healthChecks } = useDiagnostics();
@@ -158,6 +160,69 @@ export default function ServerAdminScreen() {
     }
   }, [fetchNodes, handleDbTest, setLastError]);
 
+  const handleExportDebugBundle = useCallback(() => {
+    if (typeof document === "undefined" || typeof URL === "undefined") {
+      setLastError("Debug bundle export is only available in the browser.");
+      return;
+    }
+
+    try {
+      const now = new Date();
+      const payload = {
+        generated_at: now.toISOString(),
+        route: "/servers",
+        user: {
+          id: user.id,
+          email: user.email ?? null,
+        },
+        diagnostics: {
+          last_error: lastError ?? null,
+          last_error_at: lastErrorAt ? new Date(lastErrorAt).toISOString() : null,
+          health_checks: healthChecks,
+          engine_snapshot: engineSnapshot ?? null,
+          db_test: dbTest,
+        },
+        network_health: networkHealth,
+        nodes,
+        world_events: worldEvents,
+        runtime: {
+          functions_base_url:
+            import.meta.env.VITE_MYTHIC_FUNCTIONS_BASE_URL
+            ?? import.meta.env.NEXT_PUBLIC_MYTHIC_FUNCTIONS_BASE_URL
+            ?? null,
+          supabase_url:
+            import.meta.env.VITE_SUPABASE_URL
+            ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL
+            ?? null,
+          user_agent: typeof navigator !== "undefined" ? navigator.userAgent : null,
+          page_url: typeof window !== "undefined" ? window.location.href : null,
+        },
+      };
+
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const filename = `mythic-debug-bundle-${formatBundleTimestamp(now)}.json`;
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = filename;
+      link.style.display = "none";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+
+      logger.info("debug_bundle.exported", {
+        filename,
+        node_count: nodes.length,
+        world_event_count: worldEvents.length,
+      });
+    } catch (err) {
+      const message = formatError(err, "Failed to export debug bundle");
+      setLastError(message);
+      logger.error("debug_bundle.export.failed", err);
+    }
+  }, [dbTest, engineSnapshot, healthChecks, lastError, lastErrorAt, logger, networkHealth, nodes, setLastError, user, worldEvents]);
+
   useEffect(() => {
     if (!user) return;
     const channel = supabase
@@ -209,6 +274,7 @@ export default function ServerAdminScreen() {
           <div className="text-xs text-muted-foreground">Live server nodes</div>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={handleExportDebugBundle}>Export Debug Bundle</Button>
           <Button variant="outline" onClick={fetchNodes}>Reconnect</Button>
           <Button variant="outline" onClick={handleReconnectAll} disabled={isTesting}>
             Reconnect + Refresh
