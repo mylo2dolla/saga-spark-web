@@ -29,6 +29,7 @@ import { parsePlayerCommand, type PlayerCommandPanel } from "@/lib/mythic/player
 import { executePlayerCommand } from "@/lib/mythic/playerCommandExecutor";
 import { buildSkillAvailability } from "@/lib/mythic/skillAvailability";
 import { createLogger } from "@/lib/observability/logger";
+import { parseEdgeError } from "@/lib/edgeError";
 import { toast } from "sonner";
 import { BookShell } from "@/ui/components/mythic/BookShell";
 import { NarrativePage } from "@/ui/components/mythic/NarrativePage";
@@ -37,6 +38,14 @@ import { SettingsPanel, type MythicRuntimeSettings } from "@/ui/components/mythi
 import { actionSignature as boardActionSignature } from "@/ui/components/mythic/board2/actionBuilders";
 import { buildNarrativeBoardScene } from "@/ui/components/mythic/board2/adapters";
 import { NarrativeBoardPage } from "@/ui/components/mythic/board2/NarrativeBoardPage";
+import { CharacterMiniHud } from "@/ui/components/mythic/character2/CharacterMiniHud";
+import { CharacterSheetSurface } from "@/ui/components/mythic/character2/CharacterSheetSurface";
+import { buildCharacterProfilePatch, buildCharacterSheetViewModel } from "@/ui/components/mythic/character2/adapters";
+import type {
+  CharacterProfileDraft,
+  CharacterSheetSaveState,
+  CharacterSheetSection,
+} from "@/ui/components/mythic/character2/types";
 
 type MythicPanelTab = "status" | "loadout" | "skills" | "combat" | "quests" | "companions" | "shop";
 type MythicUtilityTab = "panels" | "settings" | "logs" | "diagnostics";
@@ -129,6 +138,14 @@ function mapPanelTab(panel: string | undefined): MythicPanelTab | null {
   return null;
 }
 
+function mapCharacterSheetSection(panel: string | undefined): CharacterSheetSection {
+  if (panel === "combat") return "combat";
+  if (panel === "quests") return "quests";
+  if (panel === "companions") return "companions";
+  if (panel === "skills" || panel === "loadout" || panel === "loadouts" || panel === "gear") return "skills";
+  return "overview";
+}
+
 function loadMythicSettings(): MythicRuntimeSettings {
   if (typeof window === "undefined") return DEFAULT_MYTHIC_SETTINGS;
   try {
@@ -146,6 +163,21 @@ function loadMythicSettings(): MythicRuntimeSettings {
   } catch {
     return DEFAULT_MYTHIC_SETTINGS;
   }
+}
+
+function profileDraftFromCharacter(character: { name: string; class_json: Record<string, unknown> | null }): CharacterProfileDraft {
+  const classJson = character.class_json && typeof character.class_json === "object"
+    ? character.class_json
+    : {};
+  const profile = classJson.profile && typeof classJson.profile === "object"
+    ? classJson.profile as Record<string, unknown>
+    : {};
+  return {
+    name: typeof character.name === "string" ? character.name : "Adventurer",
+    callsign: typeof profile.callsign === "string" ? profile.callsign : "",
+    pronouns: typeof profile.pronouns === "string" ? profile.pronouns : "",
+    originNote: typeof profile.origin_note === "string" ? profile.origin_note : "",
+  };
 }
 
 const MAX_CONSOLE_ACTIONS = 6;
@@ -320,7 +352,11 @@ function synthesizePromptFromAction(action: MythicUiAction, args: {
     return "I commit to combat now and want the exact mechanical outcome narrated.";
   }
   if (action.intent === "open_panel" || action.intent === "loadout_action") {
-    return `I open the ${action.panel ?? "skills"} panel and cross-check it against current narrative state.`;
+    const panel = action.panel ?? "skills";
+    if (panel === "character" || panel === "status" || panel === "progression") {
+      return "I open the full character sheet and cross-check identity, resources, and quest pressure with current narrative state.";
+    }
+    return `I open the ${panel} panel and cross-check it against current narrative state.`;
   }
   if (action.intent === "focus_target" || action.intent === "combat_action") {
     const target = typeof action.payload?.target_combatant_id === "string"
@@ -414,6 +450,7 @@ export default function MythicGameScreen() {
     isRefreshing: charRefreshing,
     error: charError,
     refetch: refetchCharacter,
+    updateCharacterProfile,
   } = useMythicCharacter(campaignId);
   const mythicDm = useMythicDungeonMaster(campaignId);
   const dmVoice = useMythicDmVoice(campaignId);
@@ -545,11 +582,86 @@ export default function MythicGameScreen() {
   const [utilityTab, setUtilityTab] = useState<MythicUtilityTab>("settings");
   const [focusedCombatantId, setFocusedCombatantId] = useState<string | null>(null);
   const [runtimeSettings, setRuntimeSettings] = useState<MythicRuntimeSettings>(() => loadMythicSettings());
+  const [characterSheetOpen, setCharacterSheetOpen] = useState(false);
+  const [characterSheetSection, setCharacterSheetSection] = useState<CharacterSheetSection>("overview");
+  const [profileDraft, setProfileDraft] = useState<CharacterProfileDraft | null>(null);
+  const [profileSaveState, setProfileSaveState] = useState<CharacterSheetSaveState>({
+    isDirty: false,
+    isSaving: false,
+    lastSavedAt: null,
+    error: null,
+  });
+  const lastSavedProfileRef = useRef<CharacterProfileDraft | null>(null);
+  const profileSaveSeqRef = useRef(0);
+  const queuedNarrationKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(MYTHIC_SETTINGS_STORAGE_KEY, JSON.stringify(runtimeSettings));
   }, [runtimeSettings]);
+
+  const baseProfileDraft = useMemo(
+    () => (character ? profileDraftFromCharacter(character) : null),
+    [character?.class_json, character?.id, character?.name, character?.updated_at],
+  );
+
+  useEffect(() => {
+    if (!baseProfileDraft) {
+      setProfileDraft(null);
+      return;
+    }
+    if (profileSaveState.isDirty || profileSaveState.isSaving) return;
+    setProfileDraft(baseProfileDraft);
+    lastSavedProfileRef.current = baseProfileDraft;
+  }, [baseProfileDraft, profileSaveState.isDirty, profileSaveState.isSaving]);
+
+  useEffect(() => {
+    if (!character || !profileDraft) return;
+    if (!profileSaveState.isDirty) return;
+    const timer = window.setTimeout(async () => {
+      const saveSeq = profileSaveSeqRef.current + 1;
+      profileSaveSeqRef.current = saveSeq;
+      const patch = buildCharacterProfilePatch(profileDraft);
+      setProfileSaveState((prev) => ({ ...prev, isSaving: true, error: null }));
+      try {
+        await updateCharacterProfile({
+          characterId: character.id,
+          name: patch.name,
+          callsign: patch.callsign,
+          pronouns: patch.pronouns,
+          origin_note: patch.origin_note,
+        });
+        if (profileSaveSeqRef.current !== saveSeq) return;
+        const savedDraft: CharacterProfileDraft = {
+          name: patch.name,
+          callsign: patch.callsign,
+          pronouns: patch.pronouns,
+          originNote: patch.origin_note,
+        };
+        lastSavedProfileRef.current = savedDraft;
+        setProfileDraft(savedDraft);
+        setProfileSaveState({
+          isDirty: false,
+          isSaving: false,
+          lastSavedAt: Date.now(),
+          error: null,
+        });
+      } catch (error) {
+        if (profileSaveSeqRef.current !== saveSeq) return;
+        const message = error instanceof Error ? error.message : "Failed to save character profile.";
+        const rollback = lastSavedProfileRef.current ?? profileDraftFromCharacter(character);
+        setProfileDraft(rollback);
+        setProfileSaveState((prev) => ({
+          isDirty: false,
+          isSaving: false,
+          lastSavedAt: prev.lastSavedAt,
+          error: message,
+        }));
+        toast.error(message);
+      }
+    }, 620);
+    return () => window.clearTimeout(timer);
+  }, [character, profileDraft, profileSaveState.isDirty, updateCharacterProfile]);
 
   useEffect(() => {
     const currentCap = Math.max(1, loadoutSlotCap);
@@ -793,9 +905,25 @@ export default function MythicGameScreen() {
     setUtilityDrawerOpen(true);
   }, []);
 
+  const openCharacterSheet = useCallback((section: CharacterSheetSection = "overview") => {
+    setCharacterSheetSection(section);
+    setUtilityDrawerOpen(false);
+    setCharacterSheetOpen(true);
+  }, []);
+
   const openUtility = useCallback((tab: MythicUtilityTab = "settings") => {
     setUtilityTab(tab);
     setUtilityDrawerOpen(true);
+  }, []);
+
+  const handleProfileDraftChange = useCallback((next: CharacterProfileDraft) => {
+    setProfileDraft(next);
+    setProfileSaveState((prev) => ({
+      ...prev,
+      isDirty: true,
+      isSaving: false,
+      error: null,
+    }));
   }, []);
 
   const commandSkillAvailability = useMemo(() => {
@@ -954,6 +1082,24 @@ export default function MythicGameScreen() {
     }>;
   }) => {
     if (!campaignId) return Promise.resolve();
+    const normalizedPrompt = args.prompt.trim().toLowerCase().replace(/\s+/g, " ");
+    const dedupeKey = args.intent === "refresh"
+      ? "refresh"
+      : args.intent === "dm_prompt" && normalizedPrompt.length > 0
+        ? `dm_prompt:${normalizedPrompt.slice(0, 160)}`
+        : null;
+    if (dedupeKey && queuedNarrationKeysRef.current.has(dedupeKey)) {
+      screenLogger.info("mythic.action.duplicate_suppressed", {
+        source: args.source,
+        intent: args.intent,
+        dedupe_key: dedupeKey,
+      });
+      return Promise.resolve();
+    }
+    if (dedupeKey) {
+      queuedNarrationKeysRef.current.add(dedupeKey);
+    }
+
     return enqueueNarratedAction(async () => {
       const actionTraceId = crypto.randomUUID();
       let prompt = args.prompt.trim();
@@ -1027,8 +1173,17 @@ export default function MythicGameScreen() {
             intent: args.intent,
           });
         } else {
-          setActionError(dmError);
-          toast.error(dmError);
+          const parsed = parseEdgeError(error, "Failed to reach Mythic DM.");
+          const classified = parsed.code === "turn_conflict"
+            ? "Turn conflict. Retry the action."
+            : parsed.code === "turn_commit_failed"
+              ? "Turn commit failed. Retry or refresh state."
+              : parsed.message.toLowerCase().includes("timed out")
+                ? "DM request timed out. Retry once."
+                : parsed.message;
+          const withRequest = parsed.requestId ? `${classified} (requestId: ${parsed.requestId})` : classified;
+          setActionError(withRequest);
+          toast.error(withRequest);
           screenLogger.error("mythic.action.dm_failed", error, {
             action_trace_id: actionTraceId,
             source: args.source,
@@ -1052,6 +1207,10 @@ export default function MythicGameScreen() {
       if (executionError) {
         setActionError(executionError);
         toast.error(executionError);
+      }
+    }).finally(() => {
+      if (dedupeKey) {
+        queuedNarrationKeysRef.current.delete(dedupeKey);
       }
     });
   }, [campaignId, enqueueNarratedAction, mythicDm, refreshAllState]);
@@ -1139,6 +1298,7 @@ export default function MythicGameScreen() {
     combatState.combatants,
     combatState.session?.current_turn_index,
     focusedCombatantId,
+    openCharacterSheet,
     openPanel,
     openUtility,
     playerCombatantId,
@@ -1228,9 +1388,28 @@ export default function MythicGameScreen() {
         }
 
         if (resolvedIntent === "open_panel") {
-          const tab = mapPanelTab(action.panel);
+          const panelRaw = typeof action.panel === "string"
+            ? action.panel
+            : action.intent === "loadout_action"
+              ? "loadout"
+              : "status";
+          if (
+            panelRaw === "character"
+            || panelRaw === "status"
+            || panelRaw === "progression"
+            || panelRaw === "loadout"
+            || panelRaw === "loadouts"
+            || panelRaw === "gear"
+          ) {
+            const section = mapCharacterSheetSection(panelRaw);
+            openCharacterSheet(section);
+            return {
+              stateChanges: [`Opened character sheet (${section}).`],
+              context: { character_sheet_section: section },
+            };
+          }
+          const tab = mapPanelTab(panelRaw);
           if (!tab) {
-            const panelRaw = typeof action.panel === "string" ? action.panel : "settings";
             if (panelRaw === "commands" || panelRaw === "settings") {
               openUtility(panelRaw === "commands" ? "logs" : "settings");
               return {
@@ -1670,6 +1849,45 @@ export default function MythicGameScreen() {
     [commandSkillAvailability],
   );
 
+  const characterSheetModel = useMemo(() => {
+    if (!character || !board) return null;
+    return buildCharacterSheetViewModel({
+      character,
+      boardMode: board.board_type,
+      coins,
+      skills,
+      questThreads,
+      companionNotes: companionCheckins.map((entry) => ({
+        id: entry.id,
+        companionId: entry.companionId,
+        line: entry.line,
+        mood: entry.mood,
+        urgency: entry.urgency,
+        hookType: entry.hookType,
+        turnIndex: entry.turnIndex,
+      })),
+      skillAvailability: commandSkillAvailability,
+      combatants: combatState.combatants,
+      playerCombatantId,
+      activeTurnCombatantId: combatState.activeTurnCombatantId,
+      focusedCombatantId,
+      combatStatus: combatState.session?.status ?? null,
+    });
+  }, [
+    board,
+    character,
+    coins,
+    commandSkillAvailability,
+    companionCheckins,
+    combatState.activeTurnCombatantId,
+    combatState.combatants,
+    combatState.session?.status,
+    focusedCombatantId,
+    playerCombatantId,
+    questThreads,
+    skills,
+  ]);
+
   const boardScene = useMemo(() => {
     return buildNarrativeBoardScene({
       mode: board?.board_type ?? "town",
@@ -1863,31 +2081,31 @@ export default function MythicGameScreen() {
 
       {activePanel === "status" ? (
         <div className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-2">
-            <div className="rounded-lg border border-border bg-background/30 p-3">
-              <div className="text-sm font-semibold">{character.name}</div>
-              <div className="text-xs text-muted-foreground">{String((character.class_json as any)?.class_name ?? "(class)")}</div>
-              <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                <div>Level: {character.level}</div>
-                <div>Unspent Points: {character.unspent_points ?? 0}</div>
-                <div>XP: {character.xp ?? 0}</div>
-                <div>XP to Next: {character.xp_to_next ?? 0}</div>
-                <div>Mode: {board.board_type}</div>
-                <div>Coins: {coins}</div>
+          <div className="rounded-lg border border-border bg-background/30 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold">Character Sheet</div>
+                <div className="text-xs text-muted-foreground">
+                  Identity, stats, HP/MP gauges, companions, and quests live in the unified sheet.
+                </div>
               </div>
+              <Button size="sm" variant="secondary" onClick={() => openCharacterSheet("overview")}>
+                Open Sheet
+              </Button>
             </div>
-            <div className="rounded-lg border border-border bg-background/30 p-3">
-              <div className="mb-2 text-sm font-semibold">Derived Stats</div>
-              <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                <div>Offense: {derivedStats.offense}</div>
-                <div>Defense: {derivedStats.defense}</div>
-                <div>Control: {derivedStats.control}</div>
-                <div>Support: {derivedStats.support}</div>
-                <div>Mobility: {derivedStats.mobility}</div>
-                <div>Utility: {derivedStats.utility}</div>
-              </div>
+            {characterSheetModel ? (
+              <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                <div>{characterSheetModel.name} · Level {characterSheetModel.level}</div>
+                <div>Mode {characterSheetModel.boardMode}</div>
+              <div>HP {characterSheetModel.hpGauge.current}/{characterSheetModel.hpGauge.max}</div>
+              <div>MP {characterSheetModel.mpGauge.current}/{characterSheetModel.mpGauge.max}</div>
+              <div>Armor {characterSheetModel.combat.armor}</div>
+              <div>Coins {characterSheetModel.coins}</div>
+              <div>Off/Def {derivedStats.offense}/{derivedStats.defense}</div>
+              <div>Ctrl/Sup {derivedStats.control}/{derivedStats.support}</div>
             </div>
-          </div>
+          ) : null}
+        </div>
           <div className="rounded-lg border border-border bg-background/30 p-3">
             <div className="mb-2 text-sm font-semibold">Progression Feed</div>
             {progressionEvents.length === 0 ? (
@@ -2274,20 +2492,43 @@ export default function MythicGameScreen() {
           />
         )}
         rightPage={(
-          <NarrativeBoardPage
-            scene={boardScene}
-            baseActions={boardStripBaseActions}
-            baseActionSourceBySignature={boardStripBase.sourceBySignature}
-            isBusy={mythicDm.isLoading || isNarratedActionBusy || combat.isActing || combat.isTicking}
-            transitionError={transitionError}
-            combatStartError={combatStartError}
-            dmContextError={mythicDmContext.error}
-            onRetryCombatStart={() => void retryCombatStart()}
-            onQuickCast={(skillId, targeting) => void triggerQuickCast(skillId, targeting)}
-            onAction={(action, source) => triggerConsoleAction(action, source === "board_hotspot" ? "board_hotspot" : "console_action")}
-          />
+          <div className="flex h-full min-h-0 flex-col gap-2 p-2">
+            {characterSheetModel ? (
+              <CharacterMiniHud
+                model={characterSheetModel}
+                onOpen={() => openCharacterSheet("overview")}
+              />
+            ) : null}
+            <div className="min-h-0 flex-1">
+              <NarrativeBoardPage
+                scene={boardScene}
+                baseActions={boardStripBaseActions}
+                baseActionSourceBySignature={boardStripBase.sourceBySignature}
+                isBusy={mythicDm.isLoading || isNarratedActionBusy || combat.isActing || combat.isTicking}
+                transitionError={transitionError}
+                combatStartError={combatStartError}
+                dmContextError={mythicDmContext.error}
+                onRetryCombatStart={() => void retryCombatStart()}
+                onQuickCast={(skillId, targeting) => void triggerQuickCast(skillId, targeting)}
+                onAction={(action, source) => triggerConsoleAction(action, source === "board_hotspot" ? "board_hotspot" : "console_action")}
+              />
+            </div>
+          </div>
         )}
       />
+
+      {characterSheetModel && profileDraft ? (
+        <CharacterSheetSurface
+          open={characterSheetOpen}
+          onOpenChange={setCharacterSheetOpen}
+          model={characterSheetModel}
+          section={characterSheetSection}
+          onSectionChange={setCharacterSheetSection}
+          draft={profileDraft}
+          onDraftChange={handleProfileDraftChange}
+          saveState={profileSaveState}
+        />
+      ) : null}
 
       <Sheet open={utilityDrawerOpen} onOpenChange={setUtilityDrawerOpen}>
         <SheetContent side="right" className="w-[420px] border border-amber-200/20 bg-[linear-gradient(180deg,rgba(17,14,10,0.95),rgba(8,10,16,0.98))] text-amber-50 sm:max-w-[420px]">
@@ -2365,6 +2606,13 @@ export default function MythicGameScreen() {
                 <div>mode: {board.board_type}</div>
                 <div>dm_messages: {mythicDm.messages.length}</div>
                 <div>dm_loading: {mythicDm.isLoading ? "true" : "false"}</div>
+                <div>dm_last_error_kind: {mythicDm.lastError?.kind ?? "none"}</div>
+                <div>dm_last_error_code: {mythicDm.lastError?.code ?? "none"}</div>
+                <div>dm_last_error_request_id: {mythicDm.lastError?.requestId ?? "none"}</div>
+                <div>dm_last_response_request_id: {mythicDm.lastResponseMeta?.requestId ?? "none"}</div>
+                <div>dm_last_response_recovery_used: {mythicDm.lastResponseMeta?.recoveryUsed ? "true" : "false"}</div>
+                <div>dm_last_response_recovery_reason: {mythicDm.lastResponseMeta?.recoveryReason ?? "none"}</div>
+                <div>dm_last_response_validation_attempts: {mythicDm.lastResponseMeta?.validationAttempts ?? "none"}</div>
                 <div>narrated_action_busy: {isNarratedActionBusy ? "true" : "false"}</div>
                 <div>state_refreshing: {isStateRefreshing ? "true" : "false"}</div>
                 <div>board_id: {board.id}</div>

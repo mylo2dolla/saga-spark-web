@@ -366,6 +366,61 @@ export function useMythicCharacter(campaignId: string | undefined) {
     }
   }, [campaignId]);
 
+  const updateCharacterProfile = useCallback(async (args: {
+    characterId: string;
+    name: string;
+    callsign: string;
+    pronouns: string;
+    origin_note: string;
+  }) => {
+    const current = bundle?.character;
+    if (!current) throw new Error("No character loaded.");
+    if (current.id !== args.characterId) throw new Error("Character context changed. Refresh and retry.");
+
+    const classJson = current.class_json && typeof current.class_json === "object"
+      ? { ...current.class_json as Record<string, unknown> }
+      : {};
+    const existingProfile = classJson.profile && typeof classJson.profile === "object"
+      ? classJson.profile as Record<string, unknown>
+      : {};
+    const nextClassJson: Record<string, unknown> = {
+      ...classJson,
+      profile: {
+        ...existingProfile,
+        callsign: args.callsign,
+        pronouns: args.pronouns,
+        origin_note: args.origin_note,
+      },
+    };
+
+    const { data, error } = await supabase
+      .schema("mythic")
+      .from("characters")
+      .update({
+        name: args.name,
+        class_json: nextClassJson as any,
+      })
+      .eq("id", args.characterId)
+      .select("*")
+      .single();
+
+    if (error) throw error;
+    if (!data) throw new Error("Character update returned empty response.");
+
+    const updatedCharacter = data as unknown as MythicCharacterRow;
+    if (isMountedRef.current) {
+      setBundle((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          character: updatedCharacter,
+        };
+      });
+    }
+
+    return updatedCharacter;
+  }, [bundle?.character]);
+
   useEffect(() => {
     isMountedRef.current = true;
     if (campaignId && isUuid(campaignId)) {
@@ -393,5 +448,6 @@ export function useMythicCharacter(campaignId: string | undefined) {
     isLoading: isInitialLoading,
     error,
     refetch: fetchBundle,
+    updateCharacterProfile,
   };
 }

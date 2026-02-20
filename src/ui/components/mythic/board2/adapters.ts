@@ -520,6 +520,11 @@ function buildTownScene(args: {
       version: 1,
       seed: layoutSeed,
     },
+    dock: {
+      inspectTitle: "Inspect",
+      actionsTitle: "Town Actions",
+      compact: true,
+    },
     grid: {
       cols: 12,
       rows: 8,
@@ -657,6 +662,11 @@ function buildTravelScene(args: {
     layout: {
       version: 1,
       seed: layoutSeed,
+    },
+    dock: {
+      inspectTitle: "Inspect",
+      actionsTitle: "Route Actions",
+      compact: true,
     },
     grid: {
       cols: 12,
@@ -842,6 +852,11 @@ function buildDungeonScene(args: {
       version: 1,
       seed: layoutSeed,
     },
+    dock: {
+      inspectTitle: "Inspect",
+      actionsTitle: "Dungeon Actions",
+      compact: true,
+    },
     grid: {
       cols: 12,
       rows: 8,
@@ -932,6 +947,11 @@ function buildCombatScene(args: {
     layout: {
       version: 1,
       seed: layoutSeed,
+    },
+    dock: {
+      inspectTitle: "Inspect",
+      actionsTitle: "Combat Actions",
+      compact: true,
     },
     grid: {
       cols: gridCols,

@@ -184,6 +184,11 @@ export interface NarrativeBoardSceneModel {
     version: number;
     seed: string;
   };
+  dock: {
+    inspectTitle: string;
+    actionsTitle: string;
+    compact: boolean;
+  };
   grid: {
     cols: number;
     rows: number;

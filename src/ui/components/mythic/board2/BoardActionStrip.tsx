@@ -15,6 +15,8 @@ interface BoardActionStripProps {
   sourceBySignature: Record<string, BoardActionSource>;
   isBusy: boolean;
   onAction: (action: MythicUiAction, source: "board_hotspot" | "console_action") => void;
+  className?: string;
+  title?: string;
 }
 
 function sourceLabel(source: BoardActionSource): string {
@@ -37,9 +39,9 @@ function sourceTone(source: BoardActionSource): string {
 
 export function BoardActionStrip(props: BoardActionStripProps) {
   return (
-    <div className="rounded-lg border border-amber-200/30 bg-[linear-gradient(160deg,rgba(24,20,14,0.95),rgba(11,12,18,0.96))] p-3">
+    <div className={`rounded-lg border border-amber-200/30 bg-[linear-gradient(160deg,rgba(24,20,14,0.95),rgba(11,12,18,0.96))] p-3 ${props.className ?? ""}`.trim()}>
       <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-xs uppercase tracking-wide text-amber-100/70">Context Actions</div>
+        <div className="text-xs uppercase tracking-wide text-amber-100/70">{props.title ?? "Context Actions"}</div>
         <div className="text-[11px] text-amber-100/60">inspect-first, explicit confirm</div>
       </div>
 

@@ -91,58 +91,77 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
     return out;
   }, [inspectActions, props.baseActionSourceBySignature, props.baseActions]);
 
+  const topBanner = useMemo(() => {
+    if (props.transitionError) {
+      return {
+        tone: "danger" as const,
+        title: "Runtime transition failed",
+        detail: props.transitionError,
+      };
+    }
+    if (props.combatStartError) {
+      const bits = [
+        props.combatStartError.message,
+        props.combatStartError.code ? `code: ${props.combatStartError.code}` : null,
+        props.combatStartError.requestId ? `requestId: ${props.combatStartError.requestId}` : null,
+      ].filter((entry): entry is string => Boolean(entry));
+      return {
+        tone: "danger" as const,
+        title: "Combat start failed",
+        detail: bits.join(" · "),
+      };
+    }
+    if (props.dmContextError) {
+      return {
+        tone: "warn" as const,
+        title: "DM context unavailable",
+        detail: "Rendering from runtime state only. Diagnostics includes details.",
+      };
+    }
+    if (props.scene.warnings.length > 0) {
+      return {
+        tone: "warn" as const,
+        title: "Runtime warning",
+        detail: props.scene.warnings[0]!,
+      };
+    }
+    return null;
+  }, [props.combatStartError, props.dmContextError, props.scene.warnings, props.transitionError]);
+
+  const metricsRow = useMemo(() => props.scene.metrics.slice(0, 6), [props.scene.metrics]);
+
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 p-3">
-      {props.transitionError ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          {props.transitionError}
+    <div className="flex h-full min-h-0 flex-col gap-2 p-3">
+      {topBanner ? (
+        <div className={`rounded-md border px-3 py-2 text-xs ${topBanner.tone === "danger" ? "border-destructive/45 bg-destructive/10 text-destructive" : "border-amber-300/45 bg-amber-500/10 text-amber-100"}`}>
+          <div className="font-medium">{topBanner.title}</div>
+          <div className="mt-1">{topBanner.detail}</div>
+          {props.combatStartError ? (
+            <div className="mt-2">
+              <Button size="sm" variant="secondary" onClick={props.onRetryCombatStart}>
+                Retry combat start
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
-      {props.combatStartError ? (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          <div className="font-medium text-foreground">Failed to initiate combat</div>
-          <div className="mt-1">{props.combatStartError.message}</div>
-          <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-            {props.combatStartError.code ? <span>code: {props.combatStartError.code}</span> : null}
-            {props.combatStartError.requestId ? <span>requestId: {props.combatStartError.requestId}</span> : null}
-          </div>
-          <div className="mt-2">
-            <Button size="sm" variant="secondary" onClick={props.onRetryCombatStart}>
-              Retry combat start
-            </Button>
-          </div>
-        </div>
-      ) : null}
-
-      {props.dmContextError ? (
-        <div className="rounded-md border border-amber-300/45 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
-          DM context unavailable. Rendering from runtime state only. Diagnostics includes details.
-        </div>
-      ) : null}
-
-      {props.scene.warnings.length > 0 ? (
-        <div className="rounded-md border border-amber-300/35 bg-amber-500/5 px-3 py-2 text-xs text-amber-100/85">
-          {props.scene.warnings[0]}
-        </div>
-      ) : null}
-
-      <div className="flex flex-wrap gap-2">
-        {props.scene.metrics.map((metric) => (
+      <div className="flex items-center gap-2 overflow-x-auto rounded-lg border border-amber-200/25 bg-amber-100/5 px-2 py-2">
+        {metricsRow.map((metric) => (
           <div
             key={`scene-metric-${metric.id}`}
-            className={`rounded border px-2 py-1 text-[11px] ${toneClass(metric.tone)}`}
+            className={`whitespace-nowrap rounded border px-2 py-1 text-[11px] ${toneClass(metric.tone)}`}
           >
             <span className="font-semibold">{metric.label}</span>: {metric.value}
           </div>
         ))}
-        <div className="ml-auto inline-flex items-center gap-2 rounded border border-amber-200/25 bg-amber-100/10 px-2 py-1 text-[11px] text-amber-100/80">
+        <div className="ml-auto inline-flex shrink-0 items-center gap-2 rounded border border-amber-200/25 bg-amber-100/10 px-2 py-1 text-[11px] text-amber-100/80">
           <span>{props.scene.contextSource === "runtime_and_dm_context" ? "Runtime + DM Context" : "Runtime Only"}</span>
           {props.isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
         </div>
       </div>
 
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 rounded-lg border border-amber-200/20 bg-black/10 p-1">
         <NarrativeBoardViewport
           scene={props.scene}
           isActing={props.isBusy}
@@ -165,27 +184,39 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
         />
       </div>
 
-      <BoardInspectCard
-        target={inspectTarget}
-        isBusy={props.isBusy}
-        onClose={() => setInspectTarget(null)}
-        onAction={(action) => {
-          props.onAction(action, "board_hotspot");
-          setInspectTarget(null);
-        }}
-      />
+      <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
+        {inspectTarget ? (
+          <BoardInspectCard
+            target={inspectTarget}
+            title={props.scene.dock.inspectTitle}
+            isBusy={props.isBusy}
+            className="h-full"
+            onClose={() => setInspectTarget(null)}
+            onAction={(action) => {
+              props.onAction(action, "board_hotspot");
+              setInspectTarget(null);
+            }}
+          />
+        ) : (
+          <div className="rounded-lg border border-amber-200/25 bg-[linear-gradient(160deg,rgba(21,17,12,0.95),rgba(12,14,20,0.96))] p-3 text-xs text-amber-100/70">
+            <div className="mb-1 uppercase tracking-wide text-amber-100/65">{props.scene.dock.inspectTitle}</div>
+            Click a hotspot or probe an empty tile to inspect before confirming an action.
+          </div>
+        )}
 
-      <BoardActionStrip
-        actions={stripActions}
-        sourceBySignature={stripActionSourceBySignature}
-        isBusy={props.isBusy}
-        onAction={(action, source) => {
-          props.onAction(action, source);
-          if (source === "board_hotspot") {
-            setInspectTarget(null);
-          }
-        }}
-      />
+        <BoardActionStrip
+          actions={stripActions}
+          title={props.scene.dock.actionsTitle}
+          sourceBySignature={stripActionSourceBySignature}
+          isBusy={props.isBusy}
+          onAction={(action, source) => {
+            props.onAction(action, source);
+            if (source === "board_hotspot") {
+              setInspectTarget(null);
+            }
+          }}
+        />
+      </div>
     </div>
   );
 }

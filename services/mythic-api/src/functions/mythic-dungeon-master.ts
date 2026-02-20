@@ -140,7 +140,8 @@ function titleCaseWords(input: string): string {
 function remapLegacyLoadoutPanel(panelRaw: unknown): Exclude<NarratorUiAction["panel"], undefined> {
   const panel = typeof panelRaw === "string" ? panelRaw.trim().toLowerCase() : "";
   if (!panel) return "skills";
-  if (panel === "loadout" || panel === "loadouts" || panel === "gear" || panel === "character") return "skills";
+  if (panel === "character") return "character";
+  if (panel === "loadout" || panel === "loadouts" || panel === "gear") return "skills";
   if (panel === "skills" || panel === "progression" || panel === "quests" || panel === "commands" || panel === "settings") {
     return panel;
   }
@@ -1672,6 +1673,7 @@ ${jsonOnlyContract()}
       let validationAttempts = 0;
       let dmRecoveryUsed = false;
       let dmRecoveryReason: string | null = null;
+      let dmFastRecovery = false;
       let introCleared = false;
       const actionBoardType = typeof boardPayloadRecord?.board_type === "string"
         ? String(boardPayloadRecord.board_type)
@@ -1841,6 +1843,17 @@ ${jsonOnlyContract()}
         };
       };
 
+      const shouldFastRecover = (attempt: number, errors: string[]) => {
+        if (attempt < 2) return false;
+        return errors.some((entry) =>
+          entry.includes("runtime_delta_missing_or_invalid")
+          || entry.includes("scene_missing_or_invalid")
+          || entry.includes("ui_actions_count_out_of_bounds")
+          || entry.includes("narration_word_count_out_of_bounds")
+          || entry.includes("vendorId_invalid"),
+        );
+      };
+
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         validationAttempts = attempt;
         const attemptMessages = (() => {
@@ -1893,6 +1906,10 @@ ${jsonOnlyContract()}
           lastErrors = parsedOut.errors;
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
           dmParsed = parsedOut;
+          if (shouldFastRecover(attempt, lastErrors)) {
+            dmFastRecovery = true;
+            break;
+          }
           continue;
         }
 
@@ -1901,6 +1918,10 @@ ${jsonOnlyContract()}
           lastErrors = [`narration_word_count_out_of_bounds:${narrationWords}:expected_${NARRATION_MIN_WORDS}-${NARRATION_MAX_WORDS}`];
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
           dmParsed = { ok: false, errors: lastErrors };
+          if (shouldFastRecover(attempt, lastErrors)) {
+            dmFastRecovery = true;
+            break;
+          }
           continue;
         }
 
@@ -1908,6 +1929,10 @@ ${jsonOnlyContract()}
           lastErrors = ["scene_missing_or_invalid"];
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
           dmParsed = { ok: false, errors: lastErrors };
+          if (shouldFastRecover(attempt, lastErrors)) {
+            dmFastRecovery = true;
+            break;
+          }
           continue;
         }
 
@@ -1916,6 +1941,10 @@ ${jsonOnlyContract()}
           lastErrors = ["runtime_delta_missing_or_invalid"];
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
           dmParsed = { ok: false, errors: lastErrors };
+          if (shouldFastRecover(attempt, lastErrors)) {
+            dmFastRecovery = true;
+            break;
+          }
           continue;
         }
 
@@ -1965,6 +1994,10 @@ ${jsonOnlyContract()}
           lastErrors = [`ui_actions_count_out_of_bounds:${actions.length}:expected_2_4`];
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
           dmParsed = { ok: false, errors: lastErrors };
+          if (shouldFastRecover(attempt, lastErrors)) {
+            dmFastRecovery = true;
+            break;
+          }
           continue;
         }
 
@@ -1979,6 +2012,10 @@ ${jsonOnlyContract()}
           lastErrors = [`ui_actions.shop.vendorId_invalid:${typeof vendorId === "string" ? vendorId : "missing"}`];
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
           dmParsed = { ok: false, errors: lastErrors };
+          if (shouldFastRecover(attempt, lastErrors)) {
+            dmFastRecovery = true;
+            break;
+          }
           continue;
         }
 
@@ -2023,11 +2060,14 @@ ${jsonOnlyContract()}
 
       if (!dmParsed || !dmParsed.ok) {
         dmRecoveryUsed = true;
-        dmRecoveryReason = lastErrors.join("|").slice(0, 400) || "validation_failed";
+        dmRecoveryReason = dmFastRecovery
+          ? `fast_recovery:${lastErrors.join("|").slice(0, 360)}`
+          : lastErrors.join("|").slice(0, 400) || "validation_failed";
         ctx.log.warn("dm.request.auto_recovery", {
           request_id: ctx.requestId,
           validation_attempts: validationAttempts,
           reason: dmRecoveryReason,
+          fast_recovery: dmFastRecovery,
         });
         dmParsed = {
           ok: true,

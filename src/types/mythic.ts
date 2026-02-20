@@ -228,6 +228,18 @@ export interface MythicCharacterRow {
   updated_at: string;
 }
 
+export interface MythicCharacterProfile {
+  callsign?: string;
+  pronouns?: string;
+  origin_note?: string;
+}
+
+export interface MythicCharacterClassJson extends Record<string, unknown> {
+  class_name?: string;
+  role?: string;
+  profile?: MythicCharacterProfile;
+}
+
 export interface MythicCharacterLoadoutRow {
   id: string;
   character_id: string;

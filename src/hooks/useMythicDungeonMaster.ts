@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { callEdgeFunctionRaw } from "@/lib/edge";
+import { parseEdgeError } from "@/lib/edgeError";
 import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
 import { createLogger } from "@/lib/observability/logger";
@@ -58,6 +59,28 @@ interface SendOptions {
   timeoutMs?: number;
   suppressErrorToast?: boolean;
   abortPrevious?: boolean;
+}
+
+export type MythicDmErrorKind =
+  | "timeout"
+  | "turn_conflict"
+  | "turn_commit_failed"
+  | "validation_recovery"
+  | "network"
+  | "unknown";
+
+export interface MythicDmErrorInfo {
+  kind: MythicDmErrorKind;
+  message: string;
+  code: string | null;
+  requestId: string | null;
+}
+
+export interface MythicDmLastResponseMeta {
+  requestId: string | null;
+  validationAttempts: number | null;
+  recoveryUsed: boolean;
+  recoveryReason: string | null;
 }
 
 const MAX_HISTORY_MESSAGES = 16;
@@ -219,19 +242,21 @@ function fallbackActionFromLine(line: string, index: number): MythicUiAction | n
   if (!clean) return null;
   const lower = clean.toLowerCase();
   const label = compactLabel(clean);
-  if (/(inventory|gear|equipment|loadout|skill|skills|progression|quest|character)/.test(lower)) {
+  if (/(inventory|gear|equipment|loadout|skill|skills|progression|quest|character|profile|sheet)/.test(lower)) {
     const panel: MythicUiAction["panel"] =
-      /gear|equipment|inventory/.test(lower)
-        ? "skills"
-        : /loadout/.test(lower)
+      /character|profile|sheet/.test(lower)
+        ? "character"
+        : /gear|equipment|inventory/.test(lower)
           ? "skills"
-          : /skill/.test(lower)
+          : /loadout/.test(lower)
             ? "skills"
-            : /progression|level/.test(lower)
-              ? "progression"
-              : /quest/.test(lower)
-                ? "quests"
-                : "status";
+            : /skill/.test(lower)
+              ? "skills"
+              : /progression|level/.test(lower)
+                ? "progression"
+                : /quest/.test(lower)
+                  ? "quests"
+                  : "status";
     return {
       id: `mythic-panel-${index + 1}`,
       label,
@@ -316,16 +341,33 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
   };
 }
 
+function classifyDmError(message: string, code: string | null): MythicDmErrorKind {
+  const normalized = message.toLowerCase();
+  if (code === "turn_conflict") return "turn_conflict";
+  if (code === "turn_commit_failed") return "turn_commit_failed";
+  if (code === "validation_recovery" || normalized.includes("validation_recovery")) return "validation_recovery";
+  if (normalized.includes("timed out") || normalized.includes("timeout") || normalized.includes("upstream_timeout")) return "timeout";
+  if (normalized.includes("failed to fetch") || normalized.includes("network") || normalized.includes("unreachable")) return "network";
+  return "unknown";
+}
+
 export function useMythicDungeonMaster(campaignId: string | undefined) {
   const [messages, setMessages] = useState<MythicDMMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentResponse, setCurrentResponse] = useState("");
   const [operation, setOperation] = useState<OperationState | null>(null);
+  const [lastError, setLastError] = useState<MythicDmErrorInfo | null>(null);
+  const [lastResponseMeta, setLastResponseMeta] = useState<MythicDmLastResponseMeta | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const requestSeqRef = useRef(0);
+  const activeSeqRef = useRef(0);
 
   const sendMessage = useCallback(
     async (content: string, options?: SendOptions) => {
       if (!campaignId) throw new Error("Missing campaignId");
+      const requestSeq = requestSeqRef.current + 1;
+      requestSeqRef.current = requestSeq;
+      activeSeqRef.current = requestSeq;
 
       const userMessage: MythicDMMessage = {
         id: crypto.randomUUID(),
@@ -353,6 +395,8 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
       abortRef.current = controller;
       setIsLoading(true);
       setCurrentResponse("");
+      setOperation(null);
+      setLastError(null);
 
       let assistantContent = "";
       try {
@@ -361,7 +405,10 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
           signal: controller.signal,
           timeoutMs: Math.max(30_000, Math.min(120_000, options?.timeoutMs ?? DEFAULT_DM_TIMEOUT_MS)),
           maxRetries: 0,
-          onUpdate: setOperation,
+          onUpdate: (next) => {
+            if (requestSeq !== activeSeqRef.current) return;
+            setOperation(next);
+          },
           run: async ({ signal }) =>
             await callEdgeFunctionRaw("mythic-dungeon-master", {
               requireAuth: true,
@@ -386,10 +433,14 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
             (typeof errorData.message === "string" && errorData.message) ||
             `Request failed: ${response.status}`;
           const code = typeof errorData.code === "string" ? errorData.code : null;
-          throw new Error(code ? `${baseMessage} [${code}]` : baseMessage);
+          const requestId = response.headers.get("x-request-id")
+            ?? (typeof errorData.requestId === "string" ? errorData.requestId : null);
+          const withCode = code ? `${baseMessage} [${code}]` : baseMessage;
+          throw new Error(requestId ? `${withCode} (requestId: ${requestId})` : withCode);
         }
 
         if (!response.body) throw new Error("No response body");
+        const requestId = response.headers.get("x-request-id");
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -421,7 +472,9 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
               const delta = parsed.choices?.[0]?.delta?.content;
               if (delta) {
                 assistantContent += delta;
-                setCurrentResponse(assistantContent);
+                if (requestSeq === activeSeqRef.current) {
+                  setCurrentResponse(assistantContent);
+                }
               }
             } catch {
               // Incomplete chunk; put back.
@@ -440,8 +493,26 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
           parsed: parsedResponse || undefined,
         };
 
-        setMessages((prev) => [...prev, assistantMessage]);
-        setCurrentResponse("");
+        if (requestSeq === activeSeqRef.current) {
+          setMessages((prev) => [...prev, assistantMessage]);
+          setCurrentResponse("");
+          setLastResponseMeta({
+            requestId,
+            validationAttempts: Number.isFinite(Number(parsedResponse?.meta?.dm_validation_attempts))
+              ? Number(parsedResponse?.meta?.dm_validation_attempts)
+              : null,
+            recoveryUsed: parsedResponse?.meta?.dm_recovery_used === true,
+            recoveryReason: typeof parsedResponse?.meta?.dm_recovery_reason === "string"
+              ? parsedResponse.meta.dm_recovery_reason
+              : null,
+          });
+        } else {
+          logger.info("mythic.dm.send.stale_ignored", {
+            campaign_id: campaignId,
+            action_trace_id: actionTraceId,
+            request_seq: requestSeq,
+          });
+        }
         logger.info("mythic.dm.send.complete", {
           campaign_id: campaignId,
           action_trace_id: actionTraceId,
@@ -457,14 +528,29 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         const message = error instanceof Error ? error.message : "Failed to reach Mythic DM";
         const normalized = message.toLowerCase();
         const isExpectedCancel = normalized.includes("cancelled") || normalized.includes("aborted");
+        if (requestSeq === activeSeqRef.current && !isExpectedCancel) {
+          const parsed = parseEdgeError(error, "Failed to reach Mythic DM");
+          setLastError({
+            kind: classifyDmError(parsed.message, parsed.code),
+            message: parsed.message,
+            code: parsed.code,
+            requestId: parsed.requestId,
+          });
+        }
         if (!options?.suppressErrorToast && !isExpectedCancel) {
           toast.error(message);
         }
-        setCurrentResponse("");
+        if (requestSeq === activeSeqRef.current) {
+          setCurrentResponse("");
+        }
         throw error;
       } finally {
-        abortRef.current = null;
-        setIsLoading(false);
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
+        if (requestSeq === activeSeqRef.current) {
+          setIsLoading(false);
+        }
       }
     },
     [campaignId, messages],
@@ -474,6 +560,8 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
     abortRef.current?.abort();
     setMessages([]);
     setCurrentResponse("");
+    setLastError(null);
+    setLastResponseMeta(null);
   }, []);
 
   const cancelMessage = useCallback(() => {
@@ -485,6 +573,8 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
     isLoading,
     currentResponse,
     operation,
+    lastError,
+    lastResponseMeta,
     sendMessage,
     clearMessages,
     cancelMessage,
