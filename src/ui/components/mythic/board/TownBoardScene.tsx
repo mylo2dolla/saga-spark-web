@@ -31,6 +31,10 @@ function extractNames(list: unknown): string[] {
         const raw = entry as Record<string, unknown>;
         if (typeof raw.name === "string") return raw.name;
         if (typeof raw.title === "string") return raw.title;
+        if (typeof raw.label === "string") return raw.label;
+        if (typeof raw.detail === "string") return raw.detail;
+        if (typeof raw.description === "string") return raw.description;
+        if (typeof raw.line === "string") return raw.line;
       }
       return null;
     })
@@ -232,8 +236,47 @@ export function TownBoardScene(props: TownBoardSceneProps) {
           }}
           onClickPixel={(x, y) => {
             const hit = hotspots.find((spot) => x >= spot.x && x <= spot.x + spot.w && y >= spot.y && y <= spot.y + spot.h);
-            if (!hit) return;
-            props.onInspect(hit.target);
+            if (hit) {
+              props.onInspect({
+                ...hit.target,
+                interaction: { source: "hotspot", x, y },
+              });
+              return;
+            }
+            props.onInspect({
+              kind: "hotspot",
+              id: `town-miss-${Math.floor(x / 4)}-${Math.floor(y / 4)}`,
+              title: "Town Streetline",
+              subtitle: "Crowd pressure, market noise, and a chance to pull a thread.",
+              actions: [
+                {
+                  id: `town-miss-probe-${Math.floor(x / 4)}-${Math.floor(y / 4)}`,
+                  label: "Probe This Corner",
+                  intent: "dm_prompt",
+                  prompt: `I inspect this section of town at tile (${x}, ${y}), reading crowd movement, rumor vectors, and immediate opportunity.`,
+                  payload: {
+                    tile_x: x,
+                    tile_y: y,
+                    board_type: "town",
+                    interaction_source: "miss_click",
+                    vendor_count: vendorRows.length,
+                    service_count: services.length,
+                    rumor_count: rumors.length,
+                    faction_count: factions.length,
+                  },
+                },
+              ],
+              meta: {
+                tile_x: x,
+                tile_y: y,
+                vendors: vendorRows.length,
+                services: services.length,
+                rumors: rumors.length,
+                factions: factions.length,
+              },
+              interaction: { source: "miss_click", x, y },
+              autoRunPrimaryAction: true,
+            });
           }}
         />
 

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
 import type { MythicCombatantRow, MythicActionEventRow, MythicCombatSessionRow } from "@/hooks/useMythicCombatState";
 import type { BoardInspectTarget } from "@/ui/components/mythic/board/inspectTypes";
 import { PixelBoardCanvas } from "@/ui/components/mythic/board/pixel/PixelBoardCanvas";
@@ -498,11 +497,6 @@ export function CombatBoardScene(props: CombatBoardSceneProps) {
         )}
       </div>
 
-      <div className="mt-2 flex items-center gap-2">
-        <Button variant="outline" size="sm" onClick={() => void props.onTickTurn()} disabled={!props.canTick || props.isTicking}>
-          {props.isTicking ? "Advancing..." : "Advance Enemy Turn"}
-        </Button>
-      </div>
     </div>
   );
 }

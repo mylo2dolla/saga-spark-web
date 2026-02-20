@@ -54,10 +54,12 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
   const [combatants, setCombatants] = useState<MythicCombatantRow[]>([]);
   const [turnOrder, setTurnOrder] = useState<MythicTurnOrderRow[]>([]);
   const [events, setEvents] = useState<MythicActionEventRow[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const inFlightRef = useRef(false);
+  const hasLoadedOnceRef = useRef(false);
 
   const activeTurnCombatantId = useMemo(() => {
     if (!session) return null;
@@ -73,8 +75,10 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
         setTurnOrder([]);
         setEvents([]);
         setError(null);
-        setIsLoading(false);
+        setIsInitialLoading(false);
+        setIsRefreshing(false);
       }
+      hasLoadedOnceRef.current = false;
       return;
     }
 
@@ -82,7 +86,11 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
     try {
       inFlightRef.current = true;
       if (isMountedRef.current) {
-        setIsLoading(true);
+        if (hasLoadedOnceRef.current) {
+          setIsRefreshing(true);
+        } else {
+          setIsInitialLoading(true);
+        }
         setError(null);
       }
 
@@ -133,17 +141,26 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
       if (isMountedRef.current) setError(msg);
     } finally {
       inFlightRef.current = false;
-      if (isMountedRef.current) setIsLoading(false);
+      hasLoadedOnceRef.current = true;
+      if (isMountedRef.current) {
+        setIsInitialLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, [campaignId, combatSessionId]);
 
   useEffect(() => {
     isMountedRef.current = true;
+    if (campaignId && combatSessionId) {
+      hasLoadedOnceRef.current = false;
+      setIsInitialLoading(true);
+      setIsRefreshing(false);
+    }
     fetchState();
     return () => {
       isMountedRef.current = false;
     };
-  }, [fetchState]);
+  }, [campaignId, combatSessionId, fetchState]);
 
   useEffect(() => {
     if (!campaignId || !combatSessionId) return;
@@ -163,7 +180,9 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
     turnOrder,
     events,
     activeTurnCombatantId,
-    isLoading,
+    isInitialLoading,
+    isRefreshing,
+    isLoading: isInitialLoading,
     error,
     refetch: fetchState,
   };

@@ -24,6 +24,7 @@ import { sumStatMods, splitInventory, type MythicInventoryRow } from "@/lib/myth
 import { parsePlayerCommand, type PlayerCommandPanel } from "@/lib/mythic/playerCommandParser";
 import { executePlayerCommand } from "@/lib/mythic/playerCommandExecutor";
 import { buildSkillAvailability } from "@/lib/mythic/skillAvailability";
+import { createLogger } from "@/lib/observability/logger";
 import { toast } from "sonner";
 import { BookShell } from "@/ui/components/mythic/BookShell";
 import { NarrativePage } from "@/ui/components/mythic/NarrativePage";
@@ -82,7 +83,7 @@ function summarizeBoardHooks(state: unknown): Array<{ id: string; title: string;
     if (!title && !detail) continue;
     out.push({
       id: `hook:${idx}`,
-      title: title ?? "Narrative Update",
+      title: title ?? (detail ? detail.slice(0, 80) : "Story Hook"),
       detail,
     });
   }
@@ -134,156 +135,246 @@ function loadMythicSettings(): MythicRuntimeSettings {
   }
 }
 
-function fallbackActionsForBoard(args: {
-  boardType: "town" | "travel" | "dungeon" | "combat";
-  vendors: Array<{ id: string; name: string }>;
-  activeTurnCombatantName: string | null;
-  boardHooks: Array<{ title: string; detail: string | null }>;
-}): MythicUiAction[] {
-  const actions: MythicUiAction[] = [];
-  const push = (action: MythicUiAction) => {
-    if (actions.length < 4) actions.push(action);
-  };
-  const primaryHook = args.boardHooks[0] ?? null;
-  const hookText = primaryHook
-    ? [primaryHook.title, primaryHook.detail].filter((entry): entry is string => Boolean(entry)).join(": ")
-    : null;
+const MAX_DYNAMIC_CHIPS = 6;
+const LOW_SIGNAL_CHIP_LABEL = /^(action\s+\d+|narrative update)$/i;
+const screenLogger = createLogger("mythic-game-screen");
 
-  if (args.boardType === "town") {
-    const vendor = args.vendors[0] ?? null;
-    if (vendor) {
-      push({
-        id: "mythic-town-shop",
-        label: `Shop ${vendor.name}`,
-        intent: "shop",
-        payload: { vendorId: vendor.id },
-        prompt: `I head to ${vendor.name} and check what they have for sale.`,
-      });
-    }
-    push({
-      id: "mythic-town-jobs",
-      label: "Check Job Board",
-      intent: "dm_prompt",
-      prompt: hookText
-        ? `I check the town job board for contracts tied to ${hookText}.`
-        : "I check the town job board for contracts and rumors.",
-    });
-    push({
-      id: "mythic-town-talk",
-      label: "Question Locals",
-      intent: "dm_prompt",
-      prompt: hookText
-        ? `I question locals for leverage and faction movement around ${hookText}.`
-        : "I question the locals for leads and faction tension.",
-    });
-    push({
-      id: "mythic-town-travel",
-      label: "Head Out",
-      intent: "travel",
-      boardTarget: "travel",
-      prompt: "I leave town and start traveling toward the next objective.",
-    });
-    return actions;
+type UnifiedActionSource =
+  | "typed_command"
+  | "dm_chip"
+  | "board_hotspot"
+  | "combat_skill"
+  | "combat_quick_cast"
+  | "combat_enemy_tick";
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function isUiIntent(value: string): value is MythicUiAction["intent"] {
+  return value === "town"
+    || value === "travel"
+    || value === "dungeon"
+    || value === "combat_start"
+    || value === "shop"
+    || value === "focus_target"
+    || value === "open_panel"
+    || value === "dm_prompt"
+    || value === "refresh";
+}
+
+function normalizeUiActionFromUnknown(entry: unknown, fallbackId: string): MythicUiAction | null {
+  const raw = asRecord(entry);
+  if (!raw) return null;
+  const rawIntent = String(raw.intent ?? "").trim().toLowerCase();
+  if (!isUiIntent(rawIntent)) return null;
+  const label = typeof raw.label === "string" && raw.label.trim().length > 0 ? raw.label.trim() : fallbackId;
+  const boardTargetRaw = String(raw.boardTarget ?? raw.board_target ?? "").trim().toLowerCase();
+  const boardTarget = boardTargetRaw === "town" || boardTargetRaw === "travel" || boardTargetRaw === "dungeon" || boardTargetRaw === "combat"
+    ? boardTargetRaw
+    : undefined;
+  const panelRaw = String(raw.panel ?? "").trim().toLowerCase();
+  const panel = panelRaw === "character" || panelRaw === "gear" || panelRaw === "skills" || panelRaw === "loadouts" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "commands" || panelRaw === "settings"
+    ? panelRaw
+    : undefined;
+  const prompt = typeof raw.prompt === "string" && raw.prompt.trim().length > 0 ? raw.prompt.trim() : undefined;
+  const payload = asRecord(raw.payload) ?? undefined;
+  return {
+    id: typeof raw.id === "string" && raw.id.trim().length > 0 ? raw.id.trim() : fallbackId,
+    label,
+    intent: rawIntent,
+    boardTarget,
+    panel,
+    prompt,
+    payload,
+  };
+}
+
+function normalizeChipLabel(action: MythicUiAction): MythicUiAction {
+  const label = action.label.trim();
+  if (!LOW_SIGNAL_CHIP_LABEL.test(label)) return action;
+  const next = action.prompt?.trim() || label;
+  return { ...action, label: next.length > 42 ? `${next.slice(0, 42).trim()}...` : next };
+}
+
+function actionTargetSignature(action: MythicUiAction): string {
+  const normalizedPrompt = (action.prompt ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  if (action.intent === "dm_prompt") {
+    const textKey = (action.prompt ?? action.label)
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ");
+    return `${action.intent}:${textKey || action.id}:${normalizedPrompt}`;
   }
 
-  if (args.boardType === "travel") {
-    push({
-      id: "mythic-travel-scout",
-      label: "Scout Route",
+  const payload = action.payload ?? {};
+  const target = typeof payload.target_combatant_id === "string"
+    ? payload.target_combatant_id
+    : typeof payload.vendorId === "string"
+      ? payload.vendorId
+      : typeof payload.room_id === "string"
+        ? payload.room_id
+        : typeof payload.to_room_id === "string"
+          ? payload.to_room_id
+          : typeof payload.searchTarget === "string"
+            ? payload.searchTarget
+            : action.boardTarget ?? action.panel ?? action.id;
+  return `${action.intent}:${target}:${normalizedPrompt}`;
+}
+
+function dedupeDynamicActions(candidates: MythicUiAction[]): MythicUiAction[] {
+  const unique: MythicUiAction[] = [];
+  const seen = new Set<string>();
+  for (const entry of candidates) {
+    const normalized = normalizeChipLabel(entry);
+    if (LOW_SIGNAL_CHIP_LABEL.test(normalized.label.trim())) continue;
+    const key = actionTargetSignature(normalized);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(normalized);
+    if (unique.length >= MAX_DYNAMIC_CHIPS) break;
+  }
+  return unique;
+}
+
+function synthesizePromptFromAction(action: MythicUiAction, args: {
+  boardType: "town" | "travel" | "dungeon" | "combat";
+  vendorName: string | null;
+  activeTurnCombatantName: string | null;
+}): string {
+  if (action.prompt && action.prompt.trim().length > 0) return action.prompt.trim();
+  if (action.intent === "shop") {
+    const vendorLabel = args.vendorName ?? "the vendor";
+    return `I check ${vendorLabel}'s stock and ask what changed since the last turn.`;
+  }
+  if (action.intent === "combat_start") {
+    return "I commit to combat now and want the exact mechanical outcome narrated.";
+  }
+  if (action.intent === "open_panel") {
+    return `I open the ${action.panel ?? "character"} panel and cross-check it against current narrative state.`;
+  }
+  if (action.intent === "focus_target") {
+    const target = typeof action.payload?.target_combatant_id === "string"
+      ? action.payload.target_combatant_id
+      : args.activeTurnCombatantName ?? "the active target";
+    return `I focus ${target} and set up the next strike.`;
+  }
+  if (action.intent === "town" || action.intent === "travel" || action.intent === "dungeon") {
+    return `I transition to ${action.intent} and continue from committed board state.`;
+  }
+  if (action.intent === "refresh") {
+    return "Refresh the current state and narrate what changed on the board.";
+  }
+  return `I take the action "${action.label}" on the ${args.boardType} board and continue.`;
+}
+
+function deriveHookActions(args: {
+  boardType: "town" | "travel" | "dungeon" | "combat";
+  boardHooks: Array<{ id: string; title: string; detail: string | null }>;
+  townVendors: Array<{ id: string; name: string }>;
+}): MythicUiAction[] {
+  const hookActions: MythicUiAction[] = [];
+  for (const hook of args.boardHooks) {
+    if (hookActions.length >= 3) break;
+    const normalizedTitle = hook.title.trim().toLowerCase().replace(/\s+/g, "_");
+    if (normalizedTitle === "companion_checkin" || normalizedTitle === "narrative_update") {
+      // Companion follow-ups are injected separately with dedicated context.
+      // Skip generic placeholders that cause low-signal chips.
+      continue;
+    }
+    const joined = [hook.title, hook.detail].filter((entry): entry is string => Boolean(entry)).join(": ");
+    hookActions.push({
+      id: `hook-followup-${hook.id || hookActions.length + 1}`,
+      label: hook.title.length > 42 ? `${hook.title.slice(0, 42).trim()}...` : hook.title,
       intent: "dm_prompt",
-      prompt: hookText
-        ? `I scout the route for threats and shortcuts that connect to ${hookText}.`
-        : "I scout the route for threats, shortcuts, and ambush points.",
+      prompt: `I pursue this lead: ${joined}. Give a concrete next move tied to board state.`,
+      payload: { hook_id: hook.id, hook_title: hook.title },
     });
-    push({
-      id: "mythic-travel-search-dungeon",
-      label: "Search Dungeon",
-      intent: "travel",
-      boardTarget: "travel",
-      prompt: "I search for dungeon traces, cave mouths, and ruin entrances.",
-      payload: { searchTarget: "dungeon" },
+  }
+
+  if (args.boardType === "town" && args.townVendors[0]) {
+    const vendor = args.townVendors[0];
+    hookActions.push({
+      id: `board-chip-shop-${vendor.id}`,
+      label: `Check ${vendor.name}`,
+      intent: "shop",
+      payload: { vendorId: vendor.id },
+      prompt: `I check ${vendor.name} for contracts and inventory changes tied to current rumors.`,
     });
-    push({
-      id: "mythic-travel-enter",
-      label: "Enter Dungeon",
+  } else if (args.boardType === "travel") {
+    hookActions.push({
+      id: "board-chip-travel-dungeon",
+      label: "Press Toward Dungeon",
       intent: "dungeon",
       boardTarget: "dungeon",
-      prompt: "I commit and enter the dungeon entrance we found.",
+      prompt: "I press toward the dungeon route and commit to entry if we confirm the approach.",
     });
-    push({
-      id: "mythic-travel-town",
-      label: "Return Town",
-      intent: "town",
-      boardTarget: "town",
-      prompt: "I return to town to resupply and regroup.",
+  } else if (args.boardType === "dungeon") {
+    hookActions.push({
+      id: "board-chip-dungeon-assess",
+      label: "Pressure Room",
+      intent: "dm_prompt",
+      prompt: "I pressure the current room objective and force a meaningful outcome this turn.",
     });
-    return actions;
+  } else if (args.boardType === "combat") {
+    hookActions.push({
+      id: "board-chip-combat-status",
+      label: "Combat Read",
+      intent: "dm_prompt",
+      prompt: "Give me the immediate tactical combat read from current turn and statuses.",
+    });
   }
+  return hookActions;
+}
 
-  if (args.boardType === "dungeon") {
-    push({
-      id: "mythic-dungeon-assess",
-      label: "Assess Room",
-      intent: "dm_prompt",
-      prompt: hookText
-        ? `I assess this room for threats and clues tied to ${hookText}.`
-        : "I assess this room for threats, secrets, and tactical cover.",
-    });
-    push({
-      id: "mythic-dungeon-loot",
-      label: "Inspect Cache",
-      intent: "dm_prompt",
-      prompt: "I inspect nearby caches and containers for loot and traps.",
-    });
-    push({
-      id: "mythic-dungeon-proceed",
-      label: "Proceed Deeper",
-      intent: "dm_prompt",
-      prompt: "I proceed deeper into the dungeon and secure the next room.",
-    });
-    push({
-      id: "mythic-dungeon-combat",
-      label: "Start Combat",
-      intent: "combat_start",
-      boardTarget: "combat",
-      prompt: "I engage any hostile presence now.",
-    });
-    return actions;
+function deriveCompanionFollowup(state: unknown): MythicUiAction | null {
+  const rawState = asRecord(state);
+  const checkins = Array.isArray(rawState?.companion_checkins) ? rawState?.companion_checkins : [];
+  const actionChips = Array.isArray(rawState?.action_chips) ? rawState?.action_chips : [];
+  const resolvedKeys = new Set<string>();
+  for (const chip of actionChips) {
+    const chipRecord = asRecord(chip);
+    if (!chipRecord) continue;
+    const payload = asRecord(chipRecord.payload);
+    const companionId = typeof payload?.companion_id === "string" ? payload.companion_id : null;
+    if (!companionId) continue;
+    const turnIndex = Number.isFinite(Number(payload?.turn_index)) ? Number(payload?.turn_index) : "na";
+    const resolved = chipRecord.resolved === true || payload?.resolved === true;
+    if (resolved) {
+      resolvedKeys.add(`${companionId}:${turnIndex}`);
+    }
   }
-
-  if (args.boardType === "combat") {
-    push({
-      id: "mythic-combat-assess",
-      label: "Assess Target",
+  for (let index = checkins.length - 1; index >= 0; index -= 1) {
+    const row = asRecord(checkins[index]);
+    if (!row) continue;
+    const line = typeof row.line === "string" ? row.line.trim() : "";
+    const companionId = typeof row.companion_id === "string" ? row.companion_id : "companion";
+    const mood = typeof row.mood === "string" ? row.mood : "steady";
+    const urgency = typeof row.urgency === "string" ? row.urgency : "medium";
+    const turnIndex = Number.isFinite(Number(row.turn_index)) ? Number(row.turn_index) : index;
+    if (!line) continue;
+    if (resolvedKeys.has(`${companionId}:${turnIndex}`) || resolvedKeys.has(`${companionId}:na`)) continue;
+    const labelBase = line.includes(":") ? line.split(":")[0]!.trim() : `Companion ${companionId}`;
+    return {
+      id: `companion-followup-${companionId}-${index}`,
+      label: `Check ${labelBase}`,
       intent: "dm_prompt",
-      prompt: args.activeTurnCombatantName
-        ? `I assess ${args.activeTurnCombatantName} for weaknesses, intent, and status effects${hookText ? ` tied to ${hookText}` : ""}.`
-        : `I assess the active hostile target for weaknesses and status effects${hookText ? ` tied to ${hookText}` : ""}.`,
-    });
-    push({
-      id: "mythic-combat-skills",
-      label: "Open Skills",
-      intent: "open_panel",
-      panel: "skills",
-      prompt: "I review my available combat skills and cooldown windows.",
-    });
-    push({
-      id: "mythic-combat-status",
-      label: "Status Check",
-      intent: "dm_prompt",
-      prompt: "Give me a concise combat status check for my team and threats.",
-    });
-    push({
-      id: "mythic-combat-commands",
-      label: "Open Commands",
-      intent: "open_panel",
-      panel: "commands",
-      prompt: "Open my tactical command menu and callouts.",
-    });
-    return actions;
+      prompt: `I follow up on ${labelBase}'s guidance: "${line}". Give the immediate actionable step.`,
+      payload: {
+        companion_id: companionId,
+        mood,
+        urgency,
+        hook_type: typeof row.hook_type === "string" ? row.hook_type : "companion_checkin",
+        turn_index: turnIndex,
+        companion_followup: true,
+      },
+    };
   }
-
-  return actions;
+  return null;
 }
 
 export default function MythicGameScreen() {
@@ -292,7 +383,14 @@ export default function MythicGameScreen() {
   const { user, isLoading: authLoading } = useAuth();
 
   const { bootstrapCampaign, isBootstrapping } = useMythicCreator();
-  const { board, recentTransitions, isLoading: boardLoading, error: boardError, refetch } = useMythicBoard(campaignId);
+  const {
+    board,
+    recentTransitions,
+    isInitialLoading: boardInitialLoading,
+    isRefreshing: boardRefreshing,
+    error: boardError,
+    refetch,
+  } = useMythicBoard(campaignId);
   const {
     character,
     skills,
@@ -301,7 +399,8 @@ export default function MythicGameScreen() {
     progressionEvents,
     questThreads,
     loadoutSlotCap,
-    isLoading: charLoading,
+    isInitialLoading: charInitialLoading,
+    isRefreshing: charRefreshing,
     error: charError,
     refetch: refetchCharacter,
   } = useMythicCharacter(campaignId);
@@ -312,6 +411,7 @@ export default function MythicGameScreen() {
   const [combatStartError, setCombatStartError] = useState<{ message: string; code: string | null; requestId: string | null } | null>(null);
   const [inspectOpen, setInspectOpen] = useState(false);
   const [inspectTarget, setInspectTarget] = useState<BoardInspectTarget | null>(null);
+  const [recentInspectActions, setRecentInspectActions] = useState<MythicUiAction[]>([]);
   const [shopOpen, setShopOpen] = useState(false);
   const [shopVendor, setShopVendor] = useState<{ id: string; name: string | null } | null>(null);
 
@@ -336,6 +436,10 @@ export default function MythicGameScreen() {
   const modeKey = useMemo(() => {
     return board ? `${board.board_type}:${board.id}:${board.updated_at}` : "none";
   }, [board]);
+
+  useEffect(() => {
+    setRecentInspectActions([]);
+  }, [board?.id, board?.updated_at]);
 
   const townVendors = useMemo(() => {
     if (!board || board.board_type !== "town") return [];
@@ -363,9 +467,34 @@ export default function MythicGameScreen() {
     const hit = townVendors.find((v) => v.id === vendorId);
     return hit?.name ?? null;
   }, [townVendors]);
+  const executeBoardActionRef = useRef<((action: MythicUiAction, source?: UnifiedActionSource) => Promise<void>) | null>(null);
 
   const handleInspect = useCallback((target: BoardInspectTarget) => {
-    setInspectTarget(target);
+    const inspectedActions = target.actions.map((action) => ({
+      ...action,
+      payload: {
+        ...(action.payload ?? {}),
+        inspect_target_id: target.id,
+        inspect_target_kind: target.kind,
+        inspect_target_title: target.title,
+        inspect_rect: target.rect ?? null,
+        inspect_meta: target.meta ?? null,
+        inspect_interaction_source: target.interaction?.source ?? "hotspot",
+        inspect_click_x: target.interaction?.x ?? null,
+        inspect_click_y: target.interaction?.y ?? null,
+      },
+    }));
+    setRecentInspectActions(inspectedActions.slice(0, MAX_DYNAMIC_CHIPS));
+    if (target.autoRunPrimaryAction && inspectedActions[0]) {
+      setInspectOpen(false);
+      setInspectTarget(null);
+      void executeBoardActionRef.current?.(inspectedActions[0], "board_hotspot");
+      return;
+    }
+    setInspectTarget({
+      ...target,
+      actions: inspectedActions,
+    });
     setInspectOpen(true);
   }, []);
 
@@ -476,7 +605,39 @@ export default function MythicGameScreen() {
     });
   }, [activeLoadout, activeSkillPool, loadoutSlotCap]);
 
-  const boardHooks = useMemo(() => summarizeBoardHooks(board?.state_json ?? null), [board?.state_json]);
+  const boardStateRecord = useMemo(
+    () => (board?.state_json && typeof board.state_json === "object" ? board.state_json as Record<string, unknown> : {}),
+    [board?.state_json],
+  );
+
+  const boardHooks = useMemo(() => summarizeBoardHooks(boardStateRecord), [boardStateRecord]);
+
+  const boardActionChips = useMemo(() => {
+    const raw = Array.isArray(boardStateRecord.action_chips) ? boardStateRecord.action_chips : [];
+    return raw
+      .map((entry, index) => {
+        const record = asRecord(entry);
+        const payload = asRecord(record?.payload);
+        if (record?.resolved === true || payload?.resolved === true) return null;
+        return normalizeUiActionFromUnknown(entry, `board-chip-${index + 1}`);
+      })
+      .filter((entry): entry is MythicUiAction => Boolean(entry))
+      .slice(0, MAX_DYNAMIC_CHIPS);
+  }, [boardStateRecord.action_chips]);
+
+  const companionFollowupAction = useMemo(
+    () => deriveCompanionFollowup(boardStateRecord),
+    [boardStateRecord],
+  );
+
+  const derivedHookChipActions = useMemo(() => {
+    if (!board) return [];
+    return deriveHookActions({
+      boardType: board.board_type,
+      boardHooks,
+      townVendors,
+    });
+  }, [board, boardHooks, townVendors]);
 
   const transitionBoard = useCallback(async (
     toBoardType: "town" | "travel" | "dungeon",
@@ -583,25 +744,6 @@ export default function MythicGameScreen() {
   const tickCombat = combat.tickCombat;
   const refetchCombatState = combatState.refetch;
 
-  const advanceNpcTurn = useCallback(async () => {
-    if (!campaignId || !combatSessionId || !canAdvanceNpcTurn) return;
-    setIsAdvancingTurn(true);
-    try {
-      const tickResult = await tickCombat({
-        campaignId,
-        combatSessionId,
-        maxSteps: 1,
-        currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
-      });
-      await Promise.all([refetchCombatState(), refetch()]);
-      if (tickResult.ok && tickResult.data?.ended) {
-        await refetchCharacter();
-      }
-    } finally {
-      setIsAdvancingTurn(false);
-    }
-  }, [campaignId, canAdvanceNpcTurn, combatSessionId, combatState.session?.current_turn_index, refetch, refetchCharacter, refetchCombatState, tickCombat]);
-
   const bossPhaseLabel = useMemo(() => {
     if (!combatState.events.length) return null;
     const phaseShift = [...combatState.events].reverse().find((e) => e.event_type === "phase_shift");
@@ -620,17 +762,18 @@ export default function MythicGameScreen() {
     return null;
   }, [mythicDm.messages]);
 
+  const latestAssistantActions = useMemo(() => (latestAssistantParsed?.ui_actions ?? []).slice(0, MAX_DYNAMIC_CHIPS), [latestAssistantParsed?.ui_actions]);
+
   const chatActions = useMemo(() => {
-    const modelActions = (latestAssistantParsed?.ui_actions ?? []).slice(0, 4);
-    if (modelActions.length > 0) return modelActions;
-    if (!board) return [];
-    return fallbackActionsForBoard({
-      boardType: board.board_type,
-      vendors: townVendors,
-      activeTurnCombatantName: activeTurnCombatant?.name ?? null,
-      boardHooks,
-    });
-  }, [activeTurnCombatant?.name, board, boardHooks, latestAssistantParsed?.ui_actions, townVendors]);
+    const dynamicSources: MythicUiAction[] = [
+      ...latestAssistantActions,
+      ...boardActionChips,
+      ...recentInspectActions,
+      ...(companionFollowupAction ? [companionFollowupAction] : []),
+      ...derivedHookChipActions,
+    ];
+    return dedupeDynamicActions(dynamicSources);
+  }, [boardActionChips, companionFollowupAction, derivedHookChipActions, latestAssistantActions, recentInspectActions]);
 
   const latestAssistantMessage = useMemo(() => {
     for (let index = mythicDm.messages.length - 1; index >= 0; index -= 1) {
@@ -648,6 +791,18 @@ export default function MythicGameScreen() {
     if (parsedNarration) return parsedNarration;
     return latestAssistantMessage.content.trim();
   }, [latestAssistantMessage]);
+
+  const sceneHints = useMemo(() => {
+    const persisted = asRecord(boardStateRecord.scene_cache) ?? {};
+    const overlay = latestAssistantParsed?.scene && typeof latestAssistantParsed.scene === "object"
+      ? latestAssistantParsed.scene
+      : null;
+    if (!overlay && Object.keys(persisted).length === 0) return null;
+    return {
+      ...persisted,
+      ...(overlay ?? {}),
+    };
+  }, [boardStateRecord.scene_cache, latestAssistantParsed?.scene]);
 
   const speakDmNarration = dmVoice.speak;
 
@@ -674,6 +829,119 @@ export default function MythicGameScreen() {
     });
   }, [combatState.activeTurnCombatantId, combatState.combatants, combatState.session?.current_turn_index, focusedCombatantId, playerCombatantId, skills]);
 
+  const refreshAllState = useCallback(async () => {
+    const started = Date.now();
+    await Promise.all([refetch(), refetchCombatState(), refetchCharacter()]);
+    screenLogger.info("mythic.state.refresh_all_complete", {
+      elapsed_ms: Date.now() - started,
+      board_refreshing: boardRefreshing,
+      character_refreshing: charRefreshing,
+      combat_refreshing: combatState.isRefreshing,
+    });
+  }, [boardRefreshing, charRefreshing, combatState.isRefreshing, refetch, refetchCharacter, refetchCombatState]);
+
+  const runNarratedAction = useCallback(async (args: {
+    source: UnifiedActionSource;
+    intent: string;
+    actionId?: string;
+    payload?: Record<string, unknown>;
+    prompt: string;
+    appendUser?: boolean;
+    execute?: () => Promise<{
+      stateChanges?: string[];
+      context?: Record<string, unknown>;
+      prompt?: string;
+      error?: string | null;
+    }>;
+  }) => {
+    if (!campaignId) return;
+
+    const actionTraceId = crypto.randomUUID();
+    let prompt = args.prompt.trim();
+    let stateChanges: string[] = [];
+    let context: Record<string, unknown> = {};
+    let executionError: string | null = null;
+    screenLogger.info("mythic.action.start", {
+      action_trace_id: actionTraceId,
+      source: args.source,
+      intent: args.intent,
+      action_id: args.actionId ?? null,
+    });
+
+    try {
+      if (args.execute) {
+        const result = await args.execute();
+        if (Array.isArray(result.stateChanges)) stateChanges = result.stateChanges;
+        if (result.context && typeof result.context === "object") context = result.context;
+        if (typeof result.prompt === "string" && result.prompt.trim().length > 0) prompt = result.prompt.trim();
+        if (typeof result.error === "string" && result.error.trim().length > 0) executionError = result.error.trim();
+        screenLogger.info("mythic.action.execute_result", {
+          action_trace_id: actionTraceId,
+          source: args.source,
+          intent: args.intent,
+          state_changes: stateChanges,
+          execution_error: executionError,
+        });
+      }
+    } catch (error) {
+      executionError = error instanceof Error ? error.message : "Action execution failed.";
+      screenLogger.warn("mythic.action.execute_failed", {
+        action_trace_id: actionTraceId,
+        source: args.source,
+        intent: args.intent,
+        execution_error: executionError,
+      });
+    }
+
+    const narrationPrompt = prompt.length > 0
+      ? prompt
+      : executionError
+        ? `I attempted ${args.intent}, but it failed: ${executionError}. Narrate the failure against committed state.`
+        : `I execute ${args.intent}. Narrate outcome from committed Mythic state.`;
+
+    try {
+      await mythicDm.sendMessage(narrationPrompt, {
+        appendUser: args.appendUser !== false,
+        timeoutMs: 95_000,
+        idempotencyKey: `${campaignId}:${actionTraceId}`,
+        actionContext: {
+          action_trace_id: actionTraceId,
+          source: args.source,
+          intent: args.intent,
+          action_id: args.actionId ?? null,
+          payload: args.payload ?? null,
+          state_changes: stateChanges,
+          execution_error: executionError,
+          ...context,
+        },
+      });
+    } catch (error) {
+      const dmError = error instanceof Error ? error.message : "Failed to reach Mythic DM.";
+      setActionError(dmError);
+      toast.error(dmError);
+      screenLogger.error("mythic.action.dm_failed", error, {
+        action_trace_id: actionTraceId,
+        source: args.source,
+        intent: args.intent,
+      });
+      await refreshAllState();
+      return;
+    }
+
+    await refreshAllState();
+    screenLogger.info("mythic.action.refresh_complete", {
+      action_trace_id: actionTraceId,
+      source: args.source,
+      intent: args.intent,
+      state_changes: stateChanges,
+      execution_error: executionError,
+    });
+    if (executionError) {
+      setActionError(executionError);
+      toast.error(executionError);
+    }
+  }, [campaignId, mythicDm, refreshAllState]);
+
   const handlePlayerInput = useCallback(async (message: string) => {
     if (!campaignId) return;
     const rawMessage = message.trim();
@@ -683,66 +951,65 @@ export default function MythicGameScreen() {
     setCombatStartError(null);
 
     const command = parsePlayerCommand(rawMessage);
-    let commandContext: Record<string, unknown> | null = null;
-
-    try {
-      const resolution = await executePlayerCommand({
-        campaignId,
-        boardType: board?.board_type ?? "town",
-        command,
-        skills,
-        combatants: combatState.combatants,
-        currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
-        activeTurnCombatantId: combatState.activeTurnCombatantId,
-        playerCombatantId,
-        focusedTargetCombatantId: focusedCombatantId,
-        transitionBoard,
-        startCombat: combat.startCombat,
-        useSkill: combat.useSkill,
-        combatSessionId,
-        refetchBoard: refetch,
-        refetchCombat: refetchCombatState,
-        refetchCharacter,
-        openMenu: (panel: PlayerCommandPanel) => {
-          openPanel(panel);
-        },
-      });
-      if (resolution.combatStartError) {
-        setCombatStartError(resolution.combatStartError);
-      }
-      if (resolution.error) {
-        setActionError(resolution.error);
-        if (!resolution.combatStartError) {
-          toast.error(resolution.error);
+    await runNarratedAction({
+      source: "typed_command",
+      intent: command.intent,
+      actionId: `command:${command.intent}`,
+      payload: {
+        command: rawMessage,
+        parsed_intent: command.intent,
+        explicit: command.explicit,
+      },
+      prompt: rawMessage,
+      execute: async () => {
+        try {
+          const resolution = await executePlayerCommand({
+            campaignId,
+            boardType: board?.board_type ?? "town",
+            command,
+            skills,
+            combatants: combatState.combatants,
+            currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
+            activeTurnCombatantId: combatState.activeTurnCombatantId,
+            playerCombatantId,
+            focusedTargetCombatantId: focusedCombatantId,
+            transitionBoard,
+            startCombat: combat.startCombat,
+            useSkill: combat.useSkill,
+            combatSessionId,
+            refetchBoard: refetch,
+            refetchCombat: refetchCombatState,
+            refetchCharacter,
+            openMenu: (panel: PlayerCommandPanel) => {
+              openPanel(panel);
+            },
+          });
+          if (resolution.combatStartError) {
+            setCombatStartError(resolution.combatStartError);
+          }
+          return {
+            stateChanges: resolution.stateChanges,
+            context: resolution.narrationContext ?? {
+              command: rawMessage,
+              intent: command.intent,
+              handled: resolution.handled,
+            },
+            error: resolution.error ?? null,
+          };
+        } catch (error) {
+          const messageText = error instanceof Error ? error.message : "Failed to process command.";
+          return {
+            stateChanges: [],
+            context: {
+              command: rawMessage,
+              intent: command.intent,
+              handled: false,
+            },
+            error: messageText,
+          };
         }
-      }
-      commandContext = resolution.narrationContext ?? {
-        command: rawMessage,
-        intent: command.intent,
-        handled: resolution.handled,
-        state_changes: resolution.stateChanges,
-        error: resolution.error ?? null,
-      };
-    } catch (error) {
-      const messageText = error instanceof Error ? error.message : "Failed to process command.";
-      setActionError(messageText);
-      toast.error(messageText);
-      commandContext = {
-        command: rawMessage,
-        intent: command.intent,
-        handled: false,
-        state_changes: [],
-        error: messageText,
-      };
-    }
-
-    try {
-      await mythicDm.sendMessage(rawMessage, commandContext ? { actionContext: commandContext } : undefined);
-      await Promise.all([refetch(), refetchCombatState()]);
-    } catch (error) {
-      const messageText = error instanceof Error ? error.message : "Failed to reach Mythic DM.";
-      setActionError(messageText);
-    }
+      },
+    });
   }, [
     board?.board_type,
     campaignId,
@@ -753,159 +1020,333 @@ export default function MythicGameScreen() {
     combatState.combatants,
     combatState.session?.current_turn_index,
     focusedCombatantId,
-    mythicDm,
     openPanel,
     playerCombatantId,
     refetch,
     refetchCharacter,
     refetchCombatState,
+    runNarratedAction,
     skills,
     transitionBoard,
   ]);
 
-  const executeBoardAction = useCallback(async (action: MythicUiAction) => {
-    if (!campaignId) return;
+  const executeBoardAction = useCallback(async (action: MythicUiAction, source: UnifiedActionSource = "dm_chip") => {
+    if (!campaignId || !board) return;
     setActionError(null);
     if (action.intent !== "combat_start") {
       setCombatStartError(null);
     }
-    try {
-      if (action.intent === "refresh") {
-        await Promise.all([refetch(), refetchCharacter(), refetchCombatState()]);
-        return;
-      }
 
-      if (action.intent === "focus_target") {
-        const targetId = typeof action.payload?.target_combatant_id === "string"
-          ? action.payload.target_combatant_id
-          : null;
-        if (!targetId) throw new Error("Focus target action missing target id.");
-        setFocusedCombatantId(targetId);
-        return;
-      }
-
-      if (action.intent === "shop") {
-        if (!character) throw new Error("No character loaded for this campaign.");
-        if (!board || board.board_type !== "town") throw new Error("Shops are only available while in town.");
-        const payloadVendor = action.payload && typeof action.payload.vendorId === "string" ? action.payload.vendorId : null;
-        let vendorId: string | null = payloadVendor;
-        if (!vendorId) {
-          const haystack = `${action.label ?? ""} ${action.prompt ?? ""}`.toLowerCase();
-          const matched = townVendors.find((vendor) => haystack.includes(vendor.name.toLowerCase()));
-          vendorId = matched?.id ?? townVendors[0]?.id ?? null;
-        }
-        if (!vendorId) throw new Error("No vendors are available on this town board.");
-        openShop(vendorId, findVendorName(vendorId));
-        return;
-      }
-
-      if (action.intent === "open_panel") {
-        const tab = mapPanelTab(action.panel);
-        if (!tab) throw new Error("Panel target missing for this interaction.");
-        openPanel(tab);
-        if (action.prompt) {
-          await mythicDm.sendMessage(action.prompt, {
-            actionContext: {
-              source: "board_hotspot",
-              intent: action.intent,
-              panel: tab,
-            },
-          });
-        }
-        return;
-      }
-
-      if (action.intent === "town" || action.intent === "travel" || action.intent === "dungeon") {
-        const target = (action.boardTarget === "town" || action.boardTarget === "travel" || action.boardTarget === "dungeon")
-          ? action.boardTarget
-          : action.intent;
-        if (board?.board_type !== target) {
-          const reasonLabel = (action.label && action.label.trim().length > 0)
-            ? action.label.trim()
-            : (action.prompt && action.prompt.trim().length > 0)
-              ? action.prompt.trim().slice(0, 120)
-              : "Story Progression";
-          const reasonCode = normalizeReasonCode(action.id || reasonLabel);
-          const payload = {
-            ...(action.payload ?? {}),
-            reason_code: reasonCode,
-            reason_label: reasonLabel,
-          };
-          await transitionBoard(target, reasonLabel, payload);
-          await Promise.all([refetch(), refetchCombatState()]);
-        }
-        if (action.prompt) {
-          await mythicDm.sendMessage(action.prompt, {
-            actionContext: {
-              source: "board_hotspot",
-              intent: action.intent,
-              board_target: target,
-            },
-          });
-        }
-        return;
-      }
-
-      if (action.intent === "dm_prompt") {
-        const prompt = action.prompt?.trim();
-        if (!prompt) throw new Error("Prompt action is missing prompt text.");
-        await mythicDm.sendMessage(prompt, {
-          actionContext: {
-            source: "board_hotspot",
-            intent: action.intent,
-            action_id: action.id,
-          },
-        });
-        return;
-      }
-
-      if (action.intent === "combat_start") {
-        if (board?.board_type !== "combat") {
-          setCombatStartError(null);
-          const started = await combat.startCombat(campaignId);
-          if (started.ok === false) {
-            setCombatStartError({ message: started.message, code: started.code, requestId: started.requestId });
-            setActionError(started.message || "Combat session did not start.");
-            return;
-          }
-          await Promise.all([refetch(), refetchCombatState()]);
-        }
-        if (action.prompt) {
-          await mythicDm.sendMessage(action.prompt, {
-            actionContext: {
-              source: "board_hotspot",
-              intent: action.intent,
-            },
-          });
-        }
-        return;
-      }
-
-      throw new Error(`Unsupported board intent: ${action.intent}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to apply board interaction.";
-      setActionError(message);
-      toast.error(message);
+    let vendorName: string | null = null;
+    if (action.intent === "shop") {
+      const payloadVendor = action.payload && typeof action.payload.vendorId === "string" ? action.payload.vendorId : null;
+      vendorName = payloadVendor ? findVendorName(payloadVendor) : null;
     }
+
+    const prompt = synthesizePromptFromAction(action, {
+      boardType: board.board_type,
+      vendorName,
+      activeTurnCombatantName: activeTurnCombatant?.name ?? null,
+    });
+
+    await runNarratedAction({
+      source,
+      intent: action.intent,
+      actionId: action.id,
+      payload: action.payload,
+      prompt,
+      execute: async () => {
+        if (action.intent === "refresh") {
+          return {
+            stateChanges: ["Requested a full state refresh and narration sync."],
+            context: { refresh: true },
+          };
+        }
+
+        if (action.intent === "focus_target") {
+          const targetId = typeof action.payload?.target_combatant_id === "string"
+            ? action.payload.target_combatant_id
+            : null;
+          if (!targetId) {
+            return {
+              stateChanges: [],
+              context: { focus_target: null },
+              error: "Focus target action is missing target id.",
+            };
+          }
+          setFocusedCombatantId(targetId);
+          return {
+            stateChanges: [`Focused target ${targetId}.`],
+            context: { focus_target: targetId },
+          };
+        }
+
+        if (action.intent === "shop") {
+          if (!character) {
+            return { stateChanges: [], error: "No character loaded for this campaign." };
+          }
+          if (board.board_type !== "town") {
+            return { stateChanges: [], error: "Shops are only available while in town." };
+          }
+          const payloadVendor = action.payload && typeof action.payload.vendorId === "string" ? action.payload.vendorId : null;
+          let vendorId: string | null = payloadVendor;
+          if (!vendorId) {
+            const haystack = `${action.label ?? ""} ${action.prompt ?? ""}`.toLowerCase();
+            const matched = townVendors.find((vendor) => haystack.includes(vendor.name.toLowerCase()));
+            vendorId = matched?.id ?? townVendors[0]?.id ?? null;
+          }
+          if (!vendorId) {
+            return { stateChanges: [], error: "No vendors are available on this town board." };
+          }
+          const resolvedName = findVendorName(vendorId);
+          openShop(vendorId, resolvedName);
+          return {
+            stateChanges: [`Opened shop for ${resolvedName ?? vendorId}.`],
+            context: { vendor_id: vendorId, vendor_name: resolvedName ?? null },
+          };
+        }
+
+        if (action.intent === "open_panel") {
+          const tab = mapPanelTab(action.panel);
+          if (!tab) return { stateChanges: [], error: "Panel target missing for this interaction." };
+          openPanel(tab);
+          return {
+            stateChanges: [`Opened ${tab} panel.`],
+            context: { panel: tab },
+          };
+        }
+
+        if (action.intent === "town" || action.intent === "travel" || action.intent === "dungeon") {
+          const target = (action.boardTarget === "town" || action.boardTarget === "travel" || action.boardTarget === "dungeon")
+            ? action.boardTarget
+            : action.intent;
+          if (board.board_type !== target) {
+            const reasonLabel = (action.label && action.label.trim().length > 0)
+              ? action.label.trim()
+              : (action.prompt && action.prompt.trim().length > 0)
+                ? action.prompt.trim().slice(0, 120)
+                : "Story Progression";
+            const reasonCode = normalizeReasonCode(action.id || reasonLabel);
+            const payload = {
+              ...(action.payload ?? {}),
+              reason_code: reasonCode,
+              reason_label: reasonLabel,
+            };
+            await transitionBoard(target, reasonLabel, payload);
+            return {
+              stateChanges: [`Transitioned board to ${target}.`],
+              context: { board_target: target, transition_payload: payload },
+            };
+          }
+          return {
+            stateChanges: [`Board already on ${target}.`],
+            context: { board_target: target, noop: true },
+          };
+        }
+
+        if (action.intent === "dm_prompt") {
+          const companionId = typeof action.payload?.companion_id === "string"
+            ? action.payload.companion_id
+            : null;
+          const companionTurnIndex = Number.isFinite(Number(action.payload?.turn_index))
+            ? Number(action.payload?.turn_index)
+            : null;
+          const companionHookType = typeof action.payload?.hook_type === "string"
+            ? action.payload.hook_type
+            : null;
+          return {
+            stateChanges: ["Narration-only action requested from board interaction."],
+            context: {
+              board_target: board.board_type,
+              companion_followup_resolved: Boolean(companionId),
+              companion_id: companionId,
+              companion_turn_index: companionTurnIndex,
+              companion_hook_type: companionHookType,
+            },
+          };
+        }
+
+        if (action.intent === "combat_start") {
+          if (board.board_type !== "combat") {
+            const started = await combat.startCombat(campaignId);
+            if (started.ok === false) {
+              setCombatStartError({ message: started.message, code: started.code, requestId: started.requestId });
+              return {
+                stateChanges: [],
+                context: {
+                  combat_start_failed: true,
+                  code: started.code,
+                  request_id: started.requestId,
+                },
+                error: started.message || "Combat session did not start.",
+              };
+            }
+            return {
+              stateChanges: ["Combat session started."],
+              context: { combat_session_id: started.combatSessionId },
+            };
+          }
+          return {
+            stateChanges: ["Combat already active on current board."],
+            context: { combat_session_id: combatSessionId ?? null, noop: true },
+          };
+        }
+
+        return {
+          stateChanges: [],
+          error: `Unsupported board intent: ${action.intent}`,
+        };
+      },
+    });
   }, [
+    activeTurnCombatant?.name,
     board,
     campaignId,
     character,
     combat,
+    combatSessionId,
     findVendorName,
-    mythicDm,
     openPanel,
     openShop,
-    refetch,
-    refetchCharacter,
-    refetchCombatState,
+    runNarratedAction,
     townVendors,
     transitionBoard,
   ]);
 
-  const triggerBoardAction = useCallback((action: MythicUiAction) => {
-    void executeBoardAction(action);
+  useEffect(() => {
+    executeBoardActionRef.current = executeBoardAction;
+    return () => {
+      if (executeBoardActionRef.current === executeBoardAction) {
+        executeBoardActionRef.current = null;
+      }
+    };
   }, [executeBoardAction]);
+
+  const triggerChipAction = useCallback((action: MythicUiAction) => {
+    void executeBoardAction(action, "dm_chip");
+  }, [executeBoardAction]);
+
+  const triggerBoardAction = useCallback((action: MythicUiAction) => {
+    void executeBoardAction(action, "board_hotspot");
+  }, [executeBoardAction]);
+
+  const advanceNpcTurn = useCallback(async () => {
+    if (!campaignId || !combatSessionId || !canAdvanceNpcTurn) return;
+    setIsAdvancingTurn(true);
+    try {
+      const activeName = activeTurnCombatant?.name ?? "enemy";
+      await runNarratedAction({
+        source: "combat_enemy_tick",
+        intent: "dm_prompt",
+        actionId: "enemy_auto_tick",
+        appendUser: false,
+        payload: {
+          combat_session_id: combatSessionId,
+          current_turn_index: Number(combatState.session?.current_turn_index ?? 0),
+          active_turn_combatant_id: activeTurnCombatant?.id ?? null,
+        },
+        prompt: `${activeName} takes the enemy turn. Narrate the committed combat events and new tactical pressure.`,
+        execute: async () => {
+          const tickResult = await tickCombat({
+            campaignId,
+            combatSessionId,
+            maxSteps: 1,
+            currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
+          });
+          if (!tickResult.ok) {
+            return {
+              stateChanges: [],
+              context: {
+                combat_tick_failed: true,
+              },
+              error: tickResult.error || "Enemy turn failed to resolve.",
+            };
+          }
+          return {
+            stateChanges: ["Enemy turn resolved from authoritative combat tick."],
+            context: {
+              combat_tick: tickResult.data ?? null,
+            },
+          };
+        },
+      });
+    } finally {
+      setIsAdvancingTurn(false);
+    }
+  }, [
+    activeTurnCombatant?.id,
+    activeTurnCombatant?.name,
+    campaignId,
+    canAdvanceNpcTurn,
+    combatSessionId,
+    combatState.session?.current_turn_index,
+    runNarratedAction,
+    tickCombat,
+  ]);
+
+  const combatantNameById = useCallback((combatantId: string | null | undefined): string | null => {
+    if (!combatantId) return null;
+    const hit = combatState.combatants.find((entry) => entry.id === combatantId);
+    return hit?.name ?? null;
+  }, [combatState.combatants]);
+
+  const describeCombatTarget = useCallback((target: { kind: "self" } | { kind: "combatant"; combatant_id: string } | { kind: "tile"; x: number; y: number }) => {
+    if (target.kind === "self") return "self";
+    if (target.kind === "combatant") return combatantNameById(target.combatant_id) ?? target.combatant_id;
+    return `tile (${Math.floor(target.x)},${Math.floor(target.y)})`;
+  }, [combatantNameById]);
+
+  const executeCombatSkillNarration = useCallback(async (args: {
+    source: "combat_skill" | "combat_quick_cast";
+    actorCombatantId: string;
+    skillId: string;
+    target: { kind: "self" } | { kind: "combatant"; combatant_id: string } | { kind: "tile"; x: number; y: number };
+  }) => {
+    if (!campaignId || !combatSessionId) return;
+    const skillName = skills.find((skill) => skill.id === args.skillId)?.name ?? "skill";
+    const targetLabel = describeCombatTarget(args.target);
+    await runNarratedAction({
+      source: args.source,
+      intent: "dm_prompt",
+      actionId: `${args.source}:${args.skillId}`,
+      payload: {
+        combat_session_id: combatSessionId,
+        actor_combatant_id: args.actorCombatantId,
+        skill_id: args.skillId,
+        target: args.target,
+      },
+      prompt: `I use ${skillName} on ${targetLabel}. Narrate the committed combat result and board consequences.`,
+      execute: async () => {
+        const result = await combat.useSkill({
+          campaignId,
+          combatSessionId,
+          actorCombatantId: args.actorCombatantId,
+          skillId: args.skillId,
+          currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
+          target: args.target,
+        });
+        if (!result.ok) {
+          return {
+            stateChanges: [],
+            context: {
+              skill_id: args.skillId,
+              target: args.target,
+              combat_use_skill_failed: true,
+            },
+            error: result.error || "Skill execution failed.",
+          };
+        }
+        return {
+          stateChanges: [`Used ${skillName} on ${targetLabel}.`],
+          context: {
+            skill_id: args.skillId,
+            target: args.target,
+            combat_ended: result.ended,
+          },
+        };
+      },
+    });
+  }, [campaignId, combat, combatSessionId, combatState.session?.current_turn_index, describeCombatTarget, runNarratedAction, skills]);
 
   const retryLastAction = useCallback(() => {
     if (!lastPlayerInputRef.current) return;
@@ -947,11 +1388,14 @@ export default function MythicGameScreen() {
     isAdvancingTurn,
   ]);
 
+  const isInitialScreenLoading = authLoading || boardInitialLoading || charInitialLoading || isBootstrapping;
+  const isStateRefreshing = boardRefreshing || charRefreshing || combatState.isRefreshing;
+
   if (!campaignId) {
     return <div className="p-6 text-sm text-muted-foreground">Campaign not found.</div>;
   }
 
-  if (authLoading || boardLoading || charLoading || isBootstrapping) {
+  if (isInitialScreenLoading) {
     return (
       <div className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground">
         <Loader2 className="h-5 w-5 animate-spin" />
@@ -997,6 +1441,12 @@ export default function MythicGameScreen() {
           <>
             Board: <span className="font-medium capitalize">{board.board_type}</span>
             <span className="ml-2 text-amber-100/70">Campaign: {campaignId.slice(0, 8)}...</span>
+            {isStateRefreshing ? (
+              <span className="ml-3 inline-flex items-center gap-1 text-amber-100/75">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Syncing state
+              </span>
+            ) : null}
           </>
         )}
         actions={(
@@ -1014,7 +1464,7 @@ export default function MythicGameScreen() {
             isDmLoading={mythicDm.isLoading}
             currentResponse={mythicDm.currentResponse}
             actions={chatActions}
-            onAction={triggerBoardAction}
+            onAction={triggerChipAction}
             operationAttempt={mythicDm.operation?.attempt}
             operationNextRetryAt={mythicDm.operation?.next_retry_at}
             actionError={actionError}
@@ -1041,12 +1491,8 @@ export default function MythicGameScreen() {
           <BoardPage
             boardType={board.board_type}
             modeKey={modeKey}
-            boardState={(board.state_json && typeof board.state_json === "object")
-              ? (board.state_json as Record<string, unknown>)
-              : {}}
-            sceneHints={(latestAssistantParsed?.scene && typeof latestAssistantParsed.scene === "object")
-              ? latestAssistantParsed.scene
-              : null}
+            boardState={boardStateRecord}
+            sceneHints={sceneHints}
             transitionError={transitionError}
             combatStartError={combatStartError}
             onRetryCombatStart={retryCombatStart}
@@ -1073,33 +1519,22 @@ export default function MythicGameScreen() {
             onTickTurn={advanceNpcTurn}
             animationIntensity={runtimeSettings.animationIntensity}
             onUseSkill={async ({ actorCombatantId, skillId, target }) => {
-              const result = await combat.useSkill({
-                campaignId,
-                combatSessionId,
+              if (!campaignId || !combatSessionId) return;
+              await executeCombatSkillNarration({
+                source: "combat_skill",
                 actorCombatantId,
                 skillId,
-                currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
                 target,
               });
-              await Promise.all([refetchCombatState(), refetch()]);
-              if (result.ok && result.ended) {
-                await refetchCharacter();
-              }
             }}
             onQuickCast={async ({ skillId, target }) => {
               if (!playerCombatantId || !combatSessionId) return;
-              const result = await combat.useSkill({
-                campaignId,
-                combatSessionId,
+              await executeCombatSkillNarration({
+                source: "combat_quick_cast",
                 actorCombatantId: playerCombatantId,
                 skillId,
-                currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
                 target,
               });
-              await Promise.all([refetchCombatState(), refetch()]);
-              if (result.ok && result.ended) {
-                await refetchCharacter();
-              }
             }}
             onAction={triggerBoardAction}
             onInspect={handleInspect}

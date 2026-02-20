@@ -304,18 +304,30 @@ export function DungeonRoomScene(props: {
           const hit = hotspots.find((h) => x >= h.rect.x && x <= h.rect.x + h.rect.w && y >= h.rect.y && y <= h.rect.y + h.rect.h) ?? null;
           const chosen = hit ?? hotspots.find((h) => h.kind === "room") ?? null;
           if (!chosen) return;
+          const interactionSource: "hotspot" | "miss_click" = hit ? "hotspot" : "miss_click";
+          const actions = chosen.actions.map((action) => ({
+            ...action,
+            payload: {
+              ...(action.payload ?? {}),
+              tile_x: x,
+              tile_y: y,
+              interaction_source: interactionSource,
+              board_type: "dungeon",
+            },
+          }));
           props.onInspect({
             kind: chosen.kind,
             id: chosen.id,
             title: chosen.title,
             subtitle: chosen.subtitle,
-            actions: chosen.actions,
+            actions,
             meta: chosen.meta,
             rect: chosen.rect,
+            interaction: { source: interactionSource, x, y },
+            autoRunPrimaryAction: interactionSource === "miss_click",
           });
         }}
       />
     </div>
   );
 }
-

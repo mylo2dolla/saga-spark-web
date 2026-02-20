@@ -3,16 +3,71 @@ import { assertContentAllowed } from "./content_policy.js";
 
 const MAX_NARRATION_LEN = 8_000;
 const MAX_ACTION_LABEL_LEN = 80;
+const GENERIC_ACTION_LABEL_RX = /^(action\s+\d+|narrative\s+update)$/i;
+
+export const UiActionIntentSchema = z.enum([
+  "town",
+  "travel",
+  "dungeon",
+  "combat_start",
+  "shop",
+  "focus_target",
+  "open_panel",
+  "dm_prompt",
+  "refresh",
+]);
+
+export type UiActionIntent = z.infer<typeof UiActionIntentSchema>;
+
+function normalizeUiIntent(value: unknown): UiActionIntent | null {
+  if (typeof value !== "string") return null;
+  const key = value.trim().toLowerCase();
+  if (!key) return null;
+
+  if (key === "town" || key === "travel" || key === "dungeon" || key === "combat_start" || key === "shop" || key === "focus_target" || key === "open_panel" || key === "dm_prompt" || key === "refresh") {
+    return key;
+  }
+
+  if (key === "combat" || key === "battle" || key === "fight" || key === "engage" || key === "combat_begin") {
+    return "combat_start";
+  }
+
+  if (key === "board_transition" || key === "transition" || key === "board_transition_travel") {
+    return "travel";
+  }
+  if (key === "board_transition_town" || key === "return_town") {
+    return "town";
+  }
+  if (key === "board_transition_dungeon" || key === "enter_dungeon") {
+    return "dungeon";
+  }
+
+  if (key === "panel" || key === "open_menu") {
+    return "open_panel";
+  }
+
+  if (key === "prompt" || key === "narrate") {
+    return "dm_prompt";
+  }
+
+  return null;
+}
 
 export const UiActionSchema = z
   .object({
     id: z.string().trim().min(1).max(80),
-    label: z.string().trim().min(1).max(MAX_ACTION_LABEL_LEN),
-    intent: z.string().trim().min(1).max(32),
+    label: z.string().trim().min(1).max(MAX_ACTION_LABEL_LEN)
+      .refine((value) => !GENERIC_ACTION_LABEL_RX.test(value), "generic_action_label"),
+    intent: z.preprocess((value) => {
+      const normalized = normalizeUiIntent(value);
+      return normalized ?? value;
+    }, UiActionIntentSchema),
+    hint_key: z.string().trim().min(1).max(120).optional(),
     prompt: z.string().trim().min(1).max(800).optional(),
     payload: z.record(z.unknown()).optional(),
-    boardTarget: z.string().trim().min(1).max(24).optional(),
-    panel: z.string().trim().min(1).max(24).optional(),
+    boardTarget: z.enum(["town", "travel", "dungeon", "combat"]).optional(),
+    board_target: z.enum(["town", "travel", "dungeon", "combat"]).optional(),
+    panel: z.enum(["character", "gear", "skills", "loadouts", "progression", "quests", "commands", "settings"]).optional(),
   })
   .strict();
 
@@ -43,6 +98,7 @@ export const BoardDeltaSchema = z
     discovery_flags: z.record(z.unknown()).optional(),
     scene_cache: z.record(z.unknown()).optional(),
     companion_checkins: z.array(CompanionCheckinSchema).max(8).optional(),
+    action_chips: z.array(UiActionSchema).max(8).optional(),
   })
   .strict();
 

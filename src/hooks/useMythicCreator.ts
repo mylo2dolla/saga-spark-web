@@ -79,7 +79,8 @@ export function useMythicCreator() {
       const { data, error } = await callEdgeFunction<MythicCreateCharacterResponse>("mythic-create-character", {
         requireAuth: true,
         signal: options.signal,
-        timeoutMs: 45_000,
+        // SLA target is sub-30s with deterministic fallback, keep client timeout tight.
+        timeoutMs: 40_000,
         maxRetries: 0,
         idempotencyKey: `${req.campaignId}:${characterName}:${classDescription}`,
         body: {

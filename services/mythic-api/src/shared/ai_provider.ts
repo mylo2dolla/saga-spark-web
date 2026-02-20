@@ -91,11 +91,12 @@ function withModel(payload: Record<string, unknown>, model: string): Record<stri
 export async function mythicOpenAIChatCompletions(
   payload: Record<string, unknown>,
   defaultModel = "gpt-4o-mini",
+  options: { timeoutMs?: number } = {},
 ): Promise<{ data: unknown; provider: "openai"; model: string }> {
   ensureOpenAiConfigured();
   const model = resolveOpenAiModel(defaultModel);
   try {
-    const data = await openaiChatCompletions(withModel(payload, model));
+    const data = await openaiChatCompletions(withModel(payload, model), options);
     return { data, provider: "openai", model };
   } catch (error) {
     if (error instanceof AiProviderError) throw error;
@@ -111,11 +112,12 @@ export async function mythicOpenAIChatCompletions(
 export async function mythicOpenAIChatCompletionsStream(
   payload: Record<string, unknown>,
   defaultModel = "gpt-4o-mini",
+  options: { timeoutMs?: number } = {},
 ): Promise<{ response: Response; provider: "openai"; model: string }> {
   ensureOpenAiConfigured();
   const model = resolveOpenAiModel(defaultModel);
   try {
-    const response = await openaiChatCompletionsStream(withModel(payload, model));
+    const response = await openaiChatCompletionsStream(withModel(payload, model), options);
     return { response, provider: "openai", model };
   } catch (error) {
     if (error instanceof AiProviderError) throw error;
@@ -127,4 +129,3 @@ export async function mythicOpenAIChatCompletionsStream(
     );
   }
 }
-

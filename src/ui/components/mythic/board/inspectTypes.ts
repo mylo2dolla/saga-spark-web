@@ -24,4 +24,10 @@ export interface BoardInspectTarget {
   actions: MythicUiAction[];
   meta?: Record<string, unknown>;
   rect?: { x: number; y: number; w: number; h: number };
+  interaction?: {
+    source: "hotspot" | "miss_click";
+    x: number;
+    y: number;
+  };
+  autoRunPrimaryAction?: boolean;
 }

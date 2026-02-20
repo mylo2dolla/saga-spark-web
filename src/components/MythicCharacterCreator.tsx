@@ -153,6 +153,11 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
                         Retry
                       </Button>
                     ) : null}
+                    {lastError.code === "timeout" ? (
+                      <Button size="sm" variant="outline" onClick={handleGenerate} disabled={isBusy}>
+                        Retry once
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -166,6 +171,18 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
               <div className="rounded-lg border border-border bg-background/40 p-4">
                 <div className="font-display text-xl">{result.class.class_name}</div>
                 <div className="mt-1 text-sm text-muted-foreground">{result.class.class_description}</div>
+                {result.refinement_mode === "deterministic_fallback" ? (
+                  <div className="mt-3 rounded-md border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+                    Deterministic fallback refinement was used for this forge. Mechanics remain authoritative.
+                  </div>
+                ) : null}
+                {result.timings_ms ? (
+                  <div className="mt-2 text-[11px] text-muted-foreground">
+                    Forge timings: total {Math.max(0, Math.floor(result.timings_ms.total))}ms ·
+                    refinement {Math.max(0, Math.floor(result.timings_ms.refinement))}ms ·
+                    db write {Math.max(0, Math.floor(result.timings_ms.db_write))}ms
+                  </div>
+                ) : null}
                 <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
                   <div>
                     <div className="text-xs text-muted-foreground">Role</div>

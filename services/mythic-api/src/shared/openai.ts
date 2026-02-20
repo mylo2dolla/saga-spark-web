@@ -35,9 +35,15 @@ function getOpenAiConfig() {
   return { apiKey, baseUrl: baseUrl.replace(/\/$/, "") };
 }
 
-export async function openaiChatCompletions(payload: unknown) {
+export async function openaiChatCompletions(
+  payload: unknown,
+  options: { timeoutMs?: number } = {},
+) {
   const { apiKey, baseUrl } = getOpenAiConfig();
-  const timeoutMs = clampTimeoutMs(process.env.OPENAI_CHAT_TIMEOUT_MS, DEFAULT_OPENAI_CHAT_TIMEOUT_MS);
+  const timeoutMs = clampTimeoutMs(
+    options.timeoutMs === undefined ? process.env.OPENAI_CHAT_TIMEOUT_MS : String(options.timeoutMs),
+    DEFAULT_OPENAI_CHAT_TIMEOUT_MS,
+  );
   const { controller, timeout } = withTimeout(timeoutMs);
 
   try {
@@ -70,9 +76,15 @@ export async function openaiChatCompletions(payload: unknown) {
   }
 }
 
-export async function openaiChatCompletionsStream(payload: unknown) {
+export async function openaiChatCompletionsStream(
+  payload: unknown,
+  options: { timeoutMs?: number } = {},
+) {
   const { apiKey, baseUrl } = getOpenAiConfig();
-  const timeoutMs = clampTimeoutMs(process.env.OPENAI_CHAT_TIMEOUT_MS, DEFAULT_OPENAI_CHAT_TIMEOUT_MS);
+  const timeoutMs = clampTimeoutMs(
+    options.timeoutMs === undefined ? process.env.OPENAI_CHAT_TIMEOUT_MS : String(options.timeoutMs),
+    DEFAULT_OPENAI_CHAT_TIMEOUT_MS,
+  );
   const { controller, timeout } = withTimeout(timeoutMs);
 
   try {

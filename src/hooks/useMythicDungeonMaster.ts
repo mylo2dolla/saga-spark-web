@@ -23,6 +23,7 @@ export interface MythicUiAction {
   label: string;
   intent: MythicUiIntent;
   prompt?: string;
+  hint_key?: string;
   boardTarget?: "town" | "travel" | "dungeon" | "combat";
   panel?: "character" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "commands" | "settings";
   payload?: Record<string, unknown>;
@@ -46,15 +47,60 @@ export interface MythicDMMessage {
 interface SendOptions {
   appendUser?: boolean;
   actionContext?: Record<string, unknown>;
+  idempotencyKey?: string;
+  timeoutMs?: number;
 }
 
 const MAX_HISTORY_MESSAGES = 16;
 const MAX_MESSAGE_CONTENT = 1800;
+const DEFAULT_DM_TIMEOUT_MS = 95_000;
+const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative\s+update)$/i;
 
 const trimMessage = (content: string) =>
   content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
 
 const logger = createLogger("mythic-dm-hook");
+
+function isLowSignalActionLabel(value: string): boolean {
+  return LOW_SIGNAL_ACTION_LABEL.test(value.trim());
+}
+
+function titleCaseWords(input: string): string {
+  return input
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function defaultLabelForIntent(intent: MythicUiIntent): string {
+  if (intent === "combat_start") return "Start Combat";
+  if (intent === "open_panel") return "Open Panel";
+  if (intent === "dm_prompt") return "Press The Scene";
+  if (intent === "focus_target") return "Focus Target";
+  if (intent === "refresh") return "Refresh State";
+  return `Go ${titleCaseWords(intent)}`;
+}
+
+function compactLabel(input: string, maxLen = 42): string {
+  const clean = input.trim().replace(/\s+/g, " ");
+  if (!clean) return "";
+  return clean.length > maxLen ? `${clean.slice(0, maxLen).trim()}...` : clean;
+}
+
+function normalizeActionLabel(args: {
+  labelRaw: unknown;
+  prompt: string | undefined;
+  intent: MythicUiIntent;
+}): string {
+  const candidate = typeof args.labelRaw === "string" ? compactLabel(args.labelRaw, 80) : "";
+  if (candidate && !isLowSignalActionLabel(candidate)) return candidate;
+
+  const promptLabel = compactLabel(args.prompt ?? "");
+  if (promptLabel && !isLowSignalActionLabel(promptLabel)) return promptLabel;
+
+  return defaultLabelForIntent(args.intent);
+}
 
 function extractBalancedJsonObject(text: string): string | null {
   const source = text.trim();
@@ -128,6 +174,7 @@ function normalizeUiAction(entry: unknown, index: number): MythicUiAction | null
   if (!raw) return null;
   const intent = normalizeIntent(String(raw.intent ?? ""));
   if (!intent) return null;
+  const prompt = typeof raw.prompt === "string" && raw.prompt.trim() ? raw.prompt.trim() : undefined;
   const panelRaw = String(raw.panel ?? "").toLowerCase();
   const panel = panelRaw === "character" || panelRaw === "gear" || panelRaw === "skills" || panelRaw === "loadouts" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "commands" || panelRaw === "settings"
     ? panelRaw
@@ -138,9 +185,14 @@ function normalizeUiAction(entry: unknown, index: number): MythicUiAction | null
     : undefined;
   return {
     id: typeof raw.id === "string" && raw.id.trim() ? raw.id.trim() : `mythic-action-${index + 1}`,
-    label: typeof raw.label === "string" && raw.label.trim() ? raw.label.trim() : `Action ${index + 1}`,
+    label: normalizeActionLabel({
+      labelRaw: raw.label,
+      prompt,
+      intent,
+    }),
     intent,
-    prompt: typeof raw.prompt === "string" && raw.prompt.trim() ? raw.prompt.trim() : undefined,
+    prompt,
+    hint_key: typeof raw.hint_key === "string" && raw.hint_key.trim().length > 0 ? raw.hint_key.trim() : undefined,
     boardTarget,
     panel,
     payload: asRecord(raw.payload) ?? undefined,
@@ -154,6 +206,7 @@ function fallbackActionFromLine(line: string, index: number): MythicUiAction | n
     .trim();
   if (!clean) return null;
   const lower = clean.toLowerCase();
+  const label = compactLabel(clean);
   if (/(inventory|gear|equipment|loadout|skill|skills|progression|quest|character)/.test(lower)) {
     const panel: MythicUiAction["panel"] =
       /gear|equipment|inventory/.test(lower)
@@ -169,29 +222,29 @@ function fallbackActionFromLine(line: string, index: number): MythicUiAction | n
                 : "character";
     return {
       id: `mythic-panel-${index + 1}`,
-      label: `Open ${panel[0].toUpperCase()}${panel.slice(1)}`,
+      label,
       intent: "open_panel",
       panel,
       prompt: clean,
     };
   }
   if (/(travel|journey|depart|route|road)/.test(lower)) {
-    return { id: `mythic-travel-${index + 1}`, label: "Travel", intent: "travel", boardTarget: "travel", prompt: clean };
+    return { id: `mythic-travel-${index + 1}`, label, intent: "travel", boardTarget: "travel", prompt: clean };
   }
   if (/(town|market|vendor|inn|restock)/.test(lower)) {
-    return { id: `mythic-town-${index + 1}`, label: "Town", intent: "town", boardTarget: "town", prompt: clean };
+    return { id: `mythic-town-${index + 1}`, label, intent: "town", boardTarget: "town", prompt: clean };
   }
   if (/(dungeon|ruin|cave|crypt|explore)/.test(lower)) {
-    return { id: `mythic-dungeon-${index + 1}`, label: "Dungeon", intent: "dungeon", boardTarget: "dungeon", prompt: clean };
+    return { id: `mythic-dungeon-${index + 1}`, label, intent: "dungeon", boardTarget: "dungeon", prompt: clean };
   }
   if (/(combat|fight|battle|attack|engage)/.test(lower)) {
-    return { id: `mythic-combat-${index + 1}`, label: "Start Combat", intent: "combat_start", boardTarget: "combat", prompt: clean };
+    return { id: `mythic-combat-${index + 1}`, label, intent: "combat_start", boardTarget: "combat", prompt: clean };
   }
   if (/(shop|vendor|merchant|blacksmith|armorer|alchemist)/.test(lower)) {
-    return { id: `mythic-shop-${index + 1}`, label: "Shop", intent: "shop", prompt: clean };
+    return { id: `mythic-shop-${index + 1}`, label, intent: "shop", prompt: clean };
   }
   if (/(talk|speak|ask|investigate|scout|rumor|faction|plan)/.test(lower)) {
-    return { id: `mythic-prompt-${index + 1}`, label: clean.slice(0, 36), intent: "dm_prompt", prompt: clean };
+    return { id: `mythic-prompt-${index + 1}`, label, intent: "dm_prompt", prompt: clean };
   }
   return null;
 }
@@ -218,7 +271,9 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
         const effects = asRecord(raw.effects) ?? undefined;
         return {
           narration,
-          ui_actions: actions.length > 0 ? actions : undefined,
+          ui_actions: actions.length > 0
+            ? actions.filter((entry) => !isLowSignalActionLabel(entry.label))
+            : undefined,
           scene,
           effects,
         };
@@ -236,6 +291,7 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
   const fallbackActions = lines
     .map((line, index) => fallbackActionFromLine(line, index))
     .filter((entry): entry is MythicUiAction => Boolean(entry))
+    .filter((entry) => !isLowSignalActionLabel(entry.label))
     .slice(0, 6);
   return {
     narration: trimmed || "The scene shifts. Describe your next move.",
@@ -263,6 +319,14 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
 
       const shouldAppendUser = options?.appendUser !== false;
       if (shouldAppendUser) setMessages((prev) => [...prev, userMessage]);
+      const actionTraceId = typeof options?.actionContext?.action_trace_id === "string"
+        ? options.actionContext.action_trace_id
+        : null;
+      logger.info("mythic.dm.send.start", {
+        campaign_id: campaignId,
+        action_trace_id: actionTraceId,
+        append_user: shouldAppendUser,
+      });
 
       abortRef.current?.abort();
       const controller = new AbortController();
@@ -275,14 +339,16 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         const { result: response } = await runOperation({
           name: "mythic.dm.send",
           signal: controller.signal,
-          timeoutMs: 30_000,
-          maxRetries: 1,
+          timeoutMs: Math.max(30_000, Math.min(120_000, options?.timeoutMs ?? DEFAULT_DM_TIMEOUT_MS)),
+          maxRetries: 0,
           onUpdate: setOperation,
           run: async ({ signal }) =>
             await callEdgeFunctionRaw("mythic-dungeon-master", {
               requireAuth: true,
               signal,
-              idempotencyKey: `${campaignId}:${crypto.randomUUID()}`,
+              timeoutMs: Math.max(30_000, Math.min(120_000, options?.timeoutMs ?? DEFAULT_DM_TIMEOUT_MS)),
+              maxRetries: 0,
+              idempotencyKey: options?.idempotencyKey ?? `${campaignId}:${crypto.randomUUID()}`,
               body: {
                 campaignId,
                 messages: [...messages, userMessage]
@@ -356,10 +422,18 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
 
         setMessages((prev) => [...prev, assistantMessage]);
         setCurrentResponse("");
+        logger.info("mythic.dm.send.complete", {
+          campaign_id: campaignId,
+          action_trace_id: actionTraceId,
+          content_chars: assistantContent.length,
+        });
 
         return { message: assistantMessage, parsed: parsedResponse };
       } catch (error) {
-        logger.error("mythic.dm.send.failed", error);
+        logger.error("mythic.dm.send.failed", error, {
+          campaign_id: campaignId,
+          action_trace_id: actionTraceId,
+        });
         toast.error(error instanceof Error ? error.message : "Failed to reach Mythic DM");
         setCurrentResponse("");
         throw error;

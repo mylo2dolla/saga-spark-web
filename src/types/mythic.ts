@@ -6,6 +6,32 @@ export interface MythicCompanionCheckin {
   mood: string;
   urgency: string;
   hook_type: string;
+  turn_index?: number;
+}
+
+export type MythicUiIntent =
+  | "town"
+  | "travel"
+  | "dungeon"
+  | "combat_start"
+  | "shop"
+  | "focus_target"
+  | "open_panel"
+  | "dm_prompt"
+  | "refresh";
+
+export interface MythicActionChip {
+  id: string;
+  label: string;
+  intent: MythicUiIntent;
+  hint_key?: string;
+  prompt?: string;
+  boardTarget?: "town" | "travel" | "dungeon" | "combat";
+  panel?: "character" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "commands" | "settings";
+  payload?: Record<string, unknown>;
+  companion_id?: string;
+  turn_index?: number;
+  resolved?: boolean;
 }
 
 export interface MythicBoardTransitionPayload {
@@ -21,6 +47,7 @@ export interface MythicBoardState {
   scene_cache?: Record<string, unknown>;
   companion_checkins?: MythicCompanionCheckin[];
   companion_presence?: Array<Record<string, unknown>>;
+  action_chips?: MythicActionChip[];
   reason_code?: string;
   rumors?: unknown[];
   objectives?: unknown[];
@@ -165,6 +192,12 @@ export interface MythicCreateCharacterResponse {
   };
   skills: MythicSkill[];
   skill_ids: string[];
+  timings_ms?: {
+    total: number;
+    refinement: number;
+    db_write: number;
+  };
+  refinement_mode?: "llm" | "deterministic_fallback";
 }
 
 export interface MythicBootstrapRequest {

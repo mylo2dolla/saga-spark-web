@@ -4,11 +4,20 @@ import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { assertCampaignAccess } from "../shared/authz.js";
 import { mythicOpenAIChatCompletions } from "../shared/ai_provider.js";
-import { enforceRateLimit } from "../shared/request_guard.js";
+import {
+  enforceRateLimit,
+  getIdempotentResponse,
+  idempotencyKeyFromRequest,
+  storeIdempotentResponse,
+} from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
 import { computeTurnSeed } from "../shared/turn_seed.js";
 import { createTurnPrng } from "../shared/turn_prng.js";
-import { normalizeWorldPatches, parseDmNarratorOutput } from "../shared/turn_contract.js";
+import {
+  normalizeWorldPatches,
+  parseDmNarratorOutput,
+  type DmNarratorOutput,
+} from "../shared/turn_contract.js";
 import { getConfig } from "../shared/env.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
@@ -72,9 +81,11 @@ OUTPUT CONTRACT (STRICT)
   - discovery_flags: object
   - scene_cache: object
   - companion_checkins: array of { companion_id, line, mood, urgency, hook_type }
+  - action_chips: array of action chip objects (same shape as ui_actions)
 - "ui_actions" must contain 2-4 concrete intent suggestions for the current board state.
   Each action item must be an object with:
-  - id (string), label (string), intent (string), optional prompt (string), optional payload (object).
+  - id (string), label (string), intent (enum), optional hint_key (string), optional prompt (string), optional payload (object).
+  - intent must be one of: town, travel, dungeon, combat_start, shop, focus_target, open_panel, dm_prompt, refresh.
   When suggesting a shop/vendor in town:
   - intent MUST be "shop"
   - payload MUST include {"vendorId": "<id from board.state_summary.vendors>"}.
@@ -97,6 +108,10 @@ OUTPUT CONTRACT (STRICT)
 const MAX_TEXT_FIELD_LEN = 900;
 const NARRATION_MIN_WORDS = 60;
 const NARRATION_MAX_WORDS = 95;
+const DM_IDEMPOTENCY_TTL_MS = 20_000;
+const GENERIC_ACTION_LABEL_RX = /^(action\s+\d+|narrative\s+update)$/i;
+
+type NarratorUiAction = NonNullable<DmNarratorOutput["ui_actions"]>[number];
 
 function countWords(text: string): number {
   return text
@@ -110,6 +125,199 @@ function compactNarration(text: string, maxWords = NARRATION_MAX_WORDS): string 
   if (words.length <= maxWords) return text.trim();
   const sliced = words.slice(0, maxWords).join(" ").trim();
   return `${sliced}...`;
+}
+
+function titleCaseWords(input: string): string {
+  return input
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function compactLabel(text: string, maxLen = 80): string {
+  const clean = text.trim().replace(/\s+/g, " ");
+  if (!clean) return "";
+  return clean.length > maxLen ? `${clean.slice(0, maxLen).trim()}...` : clean;
+}
+
+function isGenericActionLabel(value: string): boolean {
+  return GENERIC_ACTION_LABEL_RX.test(value.trim());
+}
+
+function canonicalIntent(value: string): NarratorUiAction["intent"] {
+  const key = value.trim().toLowerCase();
+  if (
+    key === "town" ||
+    key === "travel" ||
+    key === "dungeon" ||
+    key === "combat_start" ||
+    key === "shop" ||
+    key === "focus_target" ||
+    key === "open_panel" ||
+    key === "dm_prompt" ||
+    key === "refresh"
+  ) {
+    return key;
+  }
+  if (key === "combat" || key === "fight" || key === "battle" || key === "engage") return "combat_start";
+  if (key === "panel" || key === "open_menu") return "open_panel";
+  if (key === "prompt" || key === "narrate") return "dm_prompt";
+  if (key === "board_transition_town" || key === "return_town") return "town";
+  if (key === "board_transition_dungeon" || key === "enter_dungeon") return "dungeon";
+  if (key === "board_transition_travel" || key === "transition" || key === "board_transition") return "travel";
+  return "dm_prompt";
+}
+
+function boardTargetForIntent(intent: NarratorUiAction["intent"]): NarratorUiAction["boardTarget"] | undefined {
+  if (intent === "town" || intent === "travel" || intent === "dungeon") return intent;
+  if (intent === "combat_start") return "combat";
+  return undefined;
+}
+
+function extractVendorsFromBoardSummary(boardSummary: Record<string, unknown> | null): Array<{ id: string; name: string }> {
+  const raw = boardSummary && Array.isArray(boardSummary.vendors) ? boardSummary.vendors : [];
+  return raw
+    .map((entry, index) => {
+      if (!entry || typeof entry !== "object") return null;
+      const row = entry as Record<string, unknown>;
+      const id = typeof row.id === "string" && row.id.trim().length > 0 ? row.id.trim() : `vendor_${index + 1}`;
+      const name = typeof row.name === "string" && row.name.trim().length > 0 ? row.name.trim() : `Vendor ${index + 1}`;
+      return { id, name };
+    })
+    .filter((entry): entry is { id: string; name: string } => Boolean(entry));
+}
+
+function repairActionLabel(args: {
+  action: NarratorUiAction;
+  intent: NarratorUiAction["intent"];
+  boardType: string;
+  boardSummary: Record<string, unknown> | null;
+  index: number;
+}): string {
+  const rawLabel = typeof args.action.label === "string" ? compactLabel(args.action.label) : "";
+  if (rawLabel && !isGenericActionLabel(rawLabel)) return rawLabel;
+
+  const promptLabel = typeof args.action.prompt === "string" ? compactLabel(args.action.prompt, 56) : "";
+  if (promptLabel && !isGenericActionLabel(promptLabel)) return promptLabel;
+
+  if (args.intent === "shop") {
+    const vendors = extractVendorsFromBoardSummary(args.boardSummary);
+    const payloadVendorId = typeof (args.action.payload as Record<string, unknown> | undefined)?.vendorId === "string"
+      ? String((args.action.payload as Record<string, unknown>).vendorId)
+      : null;
+    const vendorName = payloadVendorId
+      ? vendors.find((entry) => entry.id === payloadVendorId)?.name ?? null
+      : vendors[0]?.name ?? null;
+    return vendorName ? `Check ${vendorName}` : "Check Vendor Stock";
+  }
+
+  if (args.intent === "open_panel") {
+    const panel = typeof args.action.panel === "string" ? args.action.panel : "character";
+    return `Open ${titleCaseWords(panel)}`;
+  }
+  if (args.intent === "focus_target") {
+    const target = typeof (args.action.payload as Record<string, unknown> | undefined)?.target_combatant_id === "string"
+      ? String((args.action.payload as Record<string, unknown>).target_combatant_id)
+      : "Target";
+    return `Focus ${target}`;
+  }
+  if (args.intent === "combat_start") return "Start Combat";
+  if (args.intent === "refresh") return "Refresh State";
+  if (args.intent === "town") return "Head To Town";
+  if (args.intent === "travel") return "Push The Route";
+  if (args.intent === "dungeon") return "Enter The Dungeon";
+
+  const anchor = typeof args.boardSummary?.travel_goal === "string"
+    ? args.boardSummary.travel_goal
+    : typeof args.boardSummary?.search_target === "string"
+      ? args.boardSummary.search_target
+      : args.boardType;
+  return `Press ${titleCaseWords(String(anchor || `Scene ${args.index + 1}`))}`;
+}
+
+function stableHintKey(args: {
+  hintKeyRaw: unknown;
+  intent: NarratorUiAction["intent"];
+  label: string;
+  payload: Record<string, unknown> | undefined;
+  index: number;
+}): string {
+  if (typeof args.hintKeyRaw === "string" && args.hintKeyRaw.trim().length > 0) {
+    return args.hintKeyRaw.trim().slice(0, 120);
+  }
+  const payload = args.payload ?? {};
+  const target = typeof payload.target_combatant_id === "string"
+    ? payload.target_combatant_id
+    : typeof payload.vendorId === "string"
+      ? payload.vendorId
+      : typeof payload.room_id === "string"
+        ? payload.room_id
+        : typeof payload.to_room_id === "string"
+          ? payload.to_room_id
+          : typeof payload.search_target === "string"
+            ? payload.search_target
+            : compactLabel(args.label, 32).toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  const key = `${args.intent}:${String(target || args.index + 1)}`;
+  return key.slice(0, 120);
+}
+
+function synthesizeActionPrompt(action: NarratorUiAction, boardType: string): string {
+  if (action.prompt && action.prompt.trim().length > 0) return action.prompt.trim();
+  if (action.intent === "open_panel") return `I open the ${action.panel ?? "character"} panel and review the live state.`;
+  if (action.intent === "shop") return "I check current vendor stock and prices before buying.";
+  if (action.intent === "combat_start") return "I engage hostiles and begin combat now.";
+  if (action.intent === "town") return "I route back to town and reassess the board hooks.";
+  if (action.intent === "travel") return "I travel onward and pressure the next objective.";
+  if (action.intent === "dungeon") return "I descend into the dungeon and clear the first threat angle.";
+  if (action.intent === "focus_target") return "I focus that target and prepare the next strike.";
+  if (action.intent === "refresh") return "Refresh the board state and summarize what changed.";
+  return boardType === "combat"
+    ? `I commit to ${action.label.toLowerCase()} and want the result narrated from current combat events.`
+    : `I commit to ${action.label.toLowerCase()} and want the result narrated from current board state.`;
+}
+
+function sanitizeUiActions(args: {
+  actions: NarratorUiAction[];
+  boardType: string;
+  boardSummary: Record<string, unknown> | null;
+}): NarratorUiAction[] {
+  const { actions, boardType, boardSummary } = args;
+  return actions
+    .slice(0, 6)
+    .map((action, index) => {
+      const actionRaw = action as NarratorUiAction & { board_target?: NarratorUiAction["boardTarget"]; hint_key?: string };
+      const { board_target: boardTargetAlias, ...actionNoAlias } = actionRaw;
+      const intent = canonicalIntent(String(action.intent ?? "dm_prompt"));
+      const label = repairActionLabel({
+        action,
+        intent,
+        boardType,
+        boardSummary,
+        index,
+      });
+      const boardTarget = action.boardTarget ?? boardTargetAlias ?? boardTargetForIntent(intent);
+      const panel = intent === "open_panel" ? (action.panel ?? "character") : action.panel;
+      const prompt = synthesizeActionPrompt({ ...action, intent, boardTarget, panel, label }, boardType);
+      const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : undefined;
+      return {
+        ...actionNoAlias,
+        id: typeof action.id === "string" && action.id.trim().length > 0 ? action.id.trim() : `dm-action-${index + 1}`,
+        label,
+        intent,
+        hint_key: stableHintKey({
+          hintKeyRaw: actionRaw.hint_key,
+          intent,
+          label,
+          payload,
+          index,
+        }),
+        boardTarget,
+        panel,
+        prompt,
+        payload,
+      };
+    });
 }
 
 function streamOpenAiDelta(text: string): ReadableStream<Uint8Array> {
@@ -397,6 +605,257 @@ function compactCombatPayload(combat: unknown) {
   };
 }
 
+type CompanionCheckinLite = {
+  companion_id: string;
+  line: string;
+  mood: string;
+  urgency: string;
+  hook_type: string;
+  turn_index: number | null;
+};
+
+function parseCompanionCheckinEntry(entry: unknown, index: number): CompanionCheckinLite | null {
+  if (!entry || typeof entry !== "object") return null;
+  const raw = entry as Record<string, unknown>;
+  const line = typeof raw.line === "string" ? raw.line.trim() : "";
+  if (!line) return null;
+  return {
+    companion_id: typeof raw.companion_id === "string" && raw.companion_id.trim().length > 0 ? raw.companion_id.trim() : "companion",
+    line,
+    mood: typeof raw.mood === "string" && raw.mood.trim().length > 0 ? raw.mood.trim() : "steady",
+    urgency: typeof raw.urgency === "string" && raw.urgency.trim().length > 0 ? raw.urgency.trim() : "medium",
+    hook_type: typeof raw.hook_type === "string" && raw.hook_type.trim().length > 0 ? raw.hook_type.trim() : "companion_checkin",
+    turn_index: Number.isFinite(Number(raw.turn_index)) ? Number(raw.turn_index) : index,
+  };
+}
+
+function latestCompanionCheckin(boardState: Record<string, unknown> | null): CompanionCheckinLite | null {
+  const rows = boardState && Array.isArray(boardState.companion_checkins) ? boardState.companion_checkins : [];
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const parsed = parseCompanionCheckinEntry(rows[index], index);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function isCompanionFollowupResolved(boardState: Record<string, unknown> | null, checkin: CompanionCheckinLite): boolean {
+  const chips = boardState && Array.isArray(boardState.action_chips) ? boardState.action_chips : [];
+  for (const row of chips) {
+    if (!row || typeof row !== "object") continue;
+    const chip = row as Record<string, unknown>;
+    const payload = chip.payload && typeof chip.payload === "object" ? chip.payload as Record<string, unknown> : null;
+    const companionId = payload && typeof payload.companion_id === "string" ? payload.companion_id : null;
+    if (!companionId || companionId !== checkin.companion_id) continue;
+    const turnIndex = Number.isFinite(Number(payload?.turn_index)) ? Number(payload?.turn_index) : null;
+    const resolved = payload?.resolved === true || chip.resolved === true;
+    if (!resolved) continue;
+    if (checkin.turn_index === null || turnIndex === null || turnIndex === checkin.turn_index) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function buildCompanionFollowupAction(checkin: CompanionCheckinLite): NarratorUiAction {
+  const labelBase = checkin.line.includes(":") ? checkin.line.split(":")[0]!.trim() : `Companion ${checkin.companion_id}`;
+  return {
+    id: `companion-followup-${checkin.companion_id}-${checkin.turn_index ?? 0}`,
+    label: compactLabel(`Check ${labelBase}`),
+    intent: "dm_prompt",
+    hint_key: `companion_followup:${checkin.companion_id}:${checkin.turn_index ?? 0}`,
+    prompt: `I follow ${labelBase}'s check-in: "${checkin.line}". Give the immediate tactical step from current board truth.`,
+    payload: {
+      companion_id: checkin.companion_id,
+      mood: checkin.mood,
+      urgency: checkin.urgency,
+      hook_type: checkin.hook_type,
+      turn_index: checkin.turn_index,
+    },
+  };
+}
+
+function appendCompanionResolutionChip(args: {
+  chips: NarratorUiAction[];
+  actionContext: Record<string, unknown> | null;
+}): NarratorUiAction[] {
+  const context = args.actionContext ?? null;
+  if (!context || context.companion_followup_resolved !== true) return args.chips;
+
+  const companionId = typeof context.companion_id === "string" && context.companion_id.trim().length > 0
+    ? context.companion_id.trim()
+    : null;
+  if (!companionId) return args.chips;
+
+  const contextPayload = context.payload && typeof context.payload === "object"
+    ? context.payload as Record<string, unknown>
+    : null;
+  const turnIndex = Number.isFinite(Number(context.companion_turn_index))
+    ? Number(context.companion_turn_index)
+    : Number.isFinite(Number(contextPayload?.turn_index))
+      ? Number(contextPayload?.turn_index)
+      : null;
+  const hookType = typeof context.companion_hook_type === "string" && context.companion_hook_type.trim().length > 0
+    ? context.companion_hook_type.trim()
+    : "companion_checkin";
+
+  const existing = args.chips.find((chip) => {
+    const payload = chip.payload && typeof chip.payload === "object" ? chip.payload as Record<string, unknown> : null;
+    return payload?.resolved === true
+      && payload?.companion_id === companionId
+      && (turnIndex === null || Number(payload?.turn_index) === turnIndex);
+  });
+  if (existing) return args.chips;
+
+  return [
+    ...args.chips,
+    {
+      id: `companion-resolved-${companionId}-${turnIndex ?? "na"}`,
+      label: "Companion Debrief Logged",
+      intent: "dm_prompt",
+      hint_key: `companion_resolved:${companionId}:${turnIndex ?? "na"}`,
+      prompt: `Companion follow-up ${companionId} has been resolved this turn.`,
+      payload: {
+        companion_id: companionId,
+        turn_index: turnIndex,
+        hook_type: hookType,
+        resolved: true,
+      },
+    },
+  ];
+}
+
+function synthesizeRecoveryPayload(args: {
+  boardType: string;
+  boardSummary: Record<string, unknown> | null;
+  boardState: Record<string, unknown> | null;
+  actionContext: Record<string, unknown> | null;
+  lastErrors: string[];
+}): DmNarratorOutput {
+  const boardType = args.boardType;
+  const boardLabel = titleCaseWords(boardType || "board");
+  const context = args.actionContext ?? null;
+  const actionIntent = typeof context?.intent === "string" ? context.intent : "dm_prompt";
+  const actionPrompt = typeof context?.payload === "object" && context?.payload
+    && typeof (context.payload as Record<string, unknown>).prompt === "string"
+    ? String((context.payload as Record<string, unknown>).prompt)
+    : typeof context?.action_id === "string"
+      ? String(context.action_id)
+      : null;
+  const stateChanges = Array.isArray(context?.state_changes)
+    ? context?.state_changes.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).slice(0, 3)
+    : [];
+  const firstStateChange = stateChanges[0] ?? null;
+
+  const actionSummary = compactLabel(
+    firstStateChange
+      ?? actionPrompt
+      ?? `I execute ${actionIntent.replace(/_/g, " ")} from the current board state.`,
+    160,
+  );
+
+  const narrative = [
+    `${actionSummary} The ${boardLabel} board answers immediately with concrete movement instead of dead air.`,
+    `Pressure shifts across active hooks, and the next beat is now tied to authoritative state updates already committed for this turn.`,
+    `You can press the strongest lead now, pivot boards for tempo, or force a tighter read on the nearest threat before it escalates.`,
+  ].join(" ");
+
+  const vendors = extractVendorsFromBoardSummary(args.boardSummary);
+  const baseActions: NarratorUiAction[] = boardType === "town"
+    ? [
+      ...(vendors[0]
+        ? [{
+            id: `recovery-shop-${vendors[0].id}`,
+            label: `Check ${vendors[0].name}`,
+            intent: "shop",
+            payload: { vendorId: vendors[0].id },
+            prompt: `I check ${vendors[0].name} for contract and inventory changes tied to current board hooks.`,
+          } satisfies NarratorUiAction]
+        : []),
+      { id: "recovery-town-travel", label: "Push To Travel", intent: "travel", boardTarget: "travel" },
+      {
+        id: "recovery-town-hooks",
+        label: "Work The Board Hooks",
+        intent: "dm_prompt",
+        prompt: "I work the strongest town hook and force a concrete next step from current board truth.",
+      },
+    ]
+    : boardType === "travel"
+      ? [
+        { id: "recovery-travel-scout", label: "Scout The Route", intent: "dm_prompt", prompt: "I scout the route and pressure the immediate travel threat." },
+        { id: "recovery-travel-dungeon", label: "Enter Dungeon", intent: "dungeon", boardTarget: "dungeon" },
+        { id: "recovery-travel-town", label: "Return To Town", intent: "town", boardTarget: "town" },
+      ]
+      : boardType === "dungeon"
+        ? [
+          { id: "recovery-dungeon-assess", label: "Assess This Room", intent: "dm_prompt", prompt: "I assess this room for threats, exits, and objective leverage." },
+          { id: "recovery-dungeon-proceed", label: "Press The Next Door", intent: "dm_prompt", prompt: "I press the next doorway and narrate committed outcomes only." },
+          { id: "recovery-dungeon-retreat", label: "Fall Back To Town", intent: "town", boardTarget: "town" },
+        ]
+        : [
+          { id: "recovery-combat-read", label: "Combat Read", intent: "dm_prompt", prompt: "Give me the immediate tactical read from committed combat events." },
+          { id: "recovery-combat-focus", label: "Focus Target", intent: "focus_target", payload: { target_combatant_id: context?.active_turn_combatant_id ?? null } },
+          { id: "recovery-combat-refresh", label: "Refresh State", intent: "refresh" },
+        ];
+
+  const sanitizedActions = sanitizeUiActions({
+    actions: baseActions,
+    boardType,
+    boardSummary: args.boardSummary,
+  }).slice(0, 4);
+
+  const companionCheckin = latestCompanionCheckin(args.boardState);
+  let actionChips = sanitizeUiActions({
+    actions: sanitizedActions,
+    boardType,
+    boardSummary: args.boardSummary,
+  }).slice(0, 6);
+
+  if (companionCheckin && !isCompanionFollowupResolved(args.boardState, companionCheckin)) {
+    const hasExistingCompanion = actionChips.some((chip) => {
+      const payload = chip.payload && typeof chip.payload === "object" ? chip.payload as Record<string, unknown> : null;
+      return payload?.companion_id === companionCheckin.companion_id && payload?.resolved !== true;
+    });
+    if (!hasExistingCompanion) {
+      actionChips = [...actionChips.slice(0, 5), buildCompanionFollowupAction(companionCheckin)];
+    }
+  }
+
+  actionChips = appendCompanionResolutionChip({
+    chips: actionChips,
+    actionContext: context,
+  }).slice(-6);
+
+  const discoveryDetail = compactLabel(
+    args.lastErrors.length > 0
+      ? `auto_recovery:${args.lastErrors.join("|")}`
+      : "auto_recovery:validation_repair",
+    200,
+  );
+
+  return {
+    schema_version: "mythic.dm.narrator.v1",
+    narration: narrative,
+    scene: {
+      environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
+      mood: "tense forward momentum",
+      focus: actionSummary,
+      travel_goal: typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
+    },
+    ui_actions: sanitizedActions,
+    board_delta: {
+      rumors: [{ title: "Pressure Spike", detail: actionSummary }],
+      objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
+      discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
+      scene_cache: {
+        environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
+        mood: "tense forward momentum",
+        focus: actionSummary,
+      },
+      action_chips: actionChips,
+    },
+  };
+}
+
 export const mythicDungeonMaster: FunctionHandler = {
   name: "mythic-dungeon-master",
   auth: "required",
@@ -424,6 +883,22 @@ export const mythicDungeonMaster: FunctionHandler = {
       }
 
       const { campaignId, messages, actionContext } = parsed.data;
+      const actionContextRecord = actionContext && typeof actionContext === "object"
+        ? actionContext as Record<string, unknown>
+        : null;
+      const idempotencyHeader = idempotencyKeyFromRequest(req);
+      const idempotencyKey = idempotencyHeader ? `${user.userId}:${idempotencyHeader}` : null;
+      if (idempotencyKey) {
+        const cached = getIdempotentResponse(idempotencyKey);
+        if (cached) {
+          ctx.log.info("dm.idempotent_hit", {
+            request_id: ctx.requestId,
+            campaign_id: campaignId,
+            user_id: user.userId,
+          });
+          return cached;
+        }
+      }
       const svc = createServiceClient();
 
       await assertCampaignAccess(svc, campaignId, user.userId);
@@ -627,6 +1102,9 @@ export const mythicDungeonMaster: FunctionHandler = {
       const compactBoard = compactBoardPayload(board);
       const compactCharacter = compactCharacterPayload(character);
       const compactCombat = compactCombatPayload(combat);
+      const boardPayloadRecord = asObject(compactBoard);
+      const boardSummaryRecord = asObject(boardPayloadRecord?.state_summary);
+      const boardStateRecord = asObject((board as Record<string, unknown> | null)?.state_json);
       const compactCompanions = Array.isArray(companionsRaw)
         ? companionsRaw
           .map((row) => asObject(row))
@@ -717,7 +1195,7 @@ ${JSON.stringify(compactCompanions, null, 2)}
 ${JSON.stringify(boardNarrativeSamples, null, 2)}
 
 - Recent command execution context (authoritative client action result, may be null):
-${JSON.stringify(actionContext ?? null, null, 2)}
+${JSON.stringify(actionContextRecord ?? null, null, 2)}
 
 - Runtime warnings:
 ${JSON.stringify(warnings, null, 2)}
@@ -731,6 +1209,7 @@ RULES YOU MUST OBEY
 - Narration quality is primary. scene/effects should help render visual board state updates.
 - Provide a non-empty board_delta object that pushes forward rumors/objectives/discovery state.
 - Provide 2-4 grounded ui_actions tied to active board context (avoid generic labels like "Action 1").
+- Mirror those action candidates into board_delta.action_chips so chips stay dynamic after refresh.
 - If command execution context is provided, narrate outcomes using that state delta and avoid contradiction.
 - Violence/gore allowed. Harsh language allowed.
 - Mild sexuality / playful sexy banter allowed.
@@ -751,22 +1230,49 @@ ${jsonOnlyContract()}
         warning_count: warnings.length,
       });
 
-      const maxAttempts = 2;
+      const maxAttempts = 3;
       let lastErrors: string[] = [];
       let dmText = "";
       let dmParsed: ReturnType<typeof parseDmNarratorOutput> | null = null;
+      let validationAttempts = 0;
+      let dmRecoveryUsed = false;
+      let dmRecoveryReason: string | null = null;
+      const actionBoardType = typeof boardPayloadRecord?.board_type === "string"
+        ? String(boardPayloadRecord.board_type)
+        : "town";
+      const fallbackVendorId = Array.from(allowedVendorIds.values())[0] ?? null;
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        const attemptMessages = attempt === 1
-          ? [{ role: "system" as const, content: systemPrompt }, ...messages]
-          : [
+        validationAttempts = attempt;
+        const attemptMessages = (() => {
+          if (attempt === 1) {
+            return [{ role: "system" as const, content: systemPrompt }, ...messages];
+          }
+          if (attempt === 2) {
+            return [
+              { role: "system" as const, content: systemPrompt },
+              ...messages,
+              {
+                role: "system" as const,
+                content: `Validation errors on previous output: ${JSON.stringify(lastErrors).slice(0, 2400)}. Regenerate one valid JSON object that satisfies every contract field.`,
+              },
+            ];
+          }
+          return [
             { role: "system" as const, content: systemPrompt },
             ...messages,
             {
               role: "system" as const,
-              content: `Validation errors on previous output: ${JSON.stringify(lastErrors).slice(0, 2000)}. Regenerate a single valid JSON object that satisfies the contract exactly.`,
+              content: [
+                "REPAIR PASS REQUIRED.",
+                `Previous validation errors: ${JSON.stringify(lastErrors).slice(0, 2400)}.`,
+                "Previous invalid JSON candidate (may be malformed):",
+                dmText.slice(0, 3200),
+                "Rewrite from scratch as ONE valid JSON object with scene + board_delta + 2-4 ui_actions.",
+              ].join("\n"),
             },
           ];
+        })();
 
         const { data, model } = await mythicOpenAIChatCompletions(
           {
@@ -813,7 +1319,48 @@ ${jsonOnlyContract()}
           continue;
         }
 
-        const actions = parsedOut.value.ui_actions ?? [];
+        let actions: NarratorUiAction[] = sanitizeUiActions({
+          actions: parsedOut.value.ui_actions ?? [],
+          boardType: actionBoardType,
+          boardSummary: boardSummaryRecord,
+        })
+          .map((action): NarratorUiAction => {
+            if (action.intent !== "shop") return action;
+            const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : {};
+            const vendorId = typeof payload.vendorId === "string" ? payload.vendorId : null;
+            if (vendorId && allowedVendorIds.has(vendorId)) return action;
+            if (fallbackVendorId) {
+              return {
+                ...action,
+                payload: { ...payload, vendorId: fallbackVendorId },
+              } as NarratorUiAction;
+            }
+            return {
+              ...action,
+              intent: "dm_prompt" as const,
+              label: "Work A Lead",
+              prompt: action.prompt ?? "I press a concrete lead from current board hooks and commit the next move.",
+              payload: { ...payload, vendor_unavailable: true },
+            } as NarratorUiAction;
+          });
+
+        const checkin = latestCompanionCheckin(boardStateRecord);
+        if (checkin && !isCompanionFollowupResolved(boardStateRecord, checkin)) {
+          const hasCompanionAction = actions.some((action) => {
+            const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : null;
+            return payload?.companion_id === checkin.companion_id && payload?.resolved !== true;
+          });
+          if (!hasCompanionAction && actions.length < 4) {
+            actions = [...actions, buildCompanionFollowupAction(checkin)];
+          }
+        }
+
+        actions = sanitizeUiActions({
+          actions,
+          boardType: actionBoardType,
+          boardSummary: boardSummaryRecord,
+        }).slice(0, 4);
+
         if (actions.length < 2 || actions.length > 4) {
           lastErrors = [`ui_actions_count_out_of_bounds:${actions.length}:expected_2_4`];
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
@@ -835,34 +1382,61 @@ ${jsonOnlyContract()}
           continue;
         }
 
-        dmParsed = parsedOut;
+        let boardDeltaActionChips = sanitizeUiActions({
+          actions: parsedOut.value.board_delta?.action_chips ?? actions,
+          boardType: actionBoardType,
+          boardSummary: boardSummaryRecord,
+        });
+
+        const checkinForChips = latestCompanionCheckin(boardStateRecord);
+        if (checkinForChips && !isCompanionFollowupResolved(boardStateRecord, checkinForChips)) {
+          const hasCompanionChip = boardDeltaActionChips.some((chip) => {
+            const payload = chip.payload && typeof chip.payload === "object" ? chip.payload as Record<string, unknown> : null;
+            return payload?.companion_id === checkinForChips.companion_id && payload?.resolved !== true;
+          });
+          if (!hasCompanionChip) {
+            boardDeltaActionChips = [...boardDeltaActionChips.slice(0, 5), buildCompanionFollowupAction(checkinForChips)];
+          }
+        }
+
+        boardDeltaActionChips = appendCompanionResolutionChip({
+          chips: boardDeltaActionChips,
+          actionContext: actionContextRecord,
+        }).slice(-6);
+
+        const boardDelta = {
+          ...parsedOut.value.board_delta,
+          action_chips: boardDeltaActionChips,
+        };
+        dmParsed = {
+          ok: true,
+          value: {
+            ...parsedOut.value,
+            ui_actions: actions,
+            board_delta: boardDelta,
+          },
+        };
         break;
       }
 
       if (!dmParsed || !dmParsed.ok) {
-        ctx.log.error("dm.request.rejected", { request_id: ctx.requestId, errors: lastErrors });
-        const fallback = {
-          schema_version: "mythic.dm.narrator.v1",
-          narration: "The story stutters and resets. Rephrase your action and try again.",
-          scene: { mood: "glitch", focus: "retry" },
-          board_delta: {
-            discovery_log: [{ kind: "system", detail: "dm_retry_requested" }],
-            scene_cache: { mood: "glitch", focus: "retry" },
-          },
-          ui_actions: [
-            { id: "dm-retry-refresh", label: "Refresh State", intent: "refresh" },
-            { id: "dm-retry-prompt", label: "Retry Move", intent: "dm_prompt", prompt: "I restate my move clearly and continue." },
-          ],
-        };
-        const text = JSON.stringify(fallback);
-        return new Response(streamOpenAiDelta(text), {
-          status: 200,
-          headers: {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            "x-request-id": ctx.requestId,
-          },
+        dmRecoveryUsed = true;
+        dmRecoveryReason = lastErrors.join("|").slice(0, 400) || "validation_failed";
+        ctx.log.warn("dm.request.auto_recovery", {
+          request_id: ctx.requestId,
+          validation_attempts: validationAttempts,
+          reason: dmRecoveryReason,
         });
+        dmParsed = {
+          ok: true,
+          value: synthesizeRecoveryPayload({
+            boardType: actionBoardType,
+            boardSummary: boardSummaryRecord,
+            boardState: boardStateRecord,
+            actionContext: actionContextRecord,
+            lastErrors,
+          }),
+        };
       }
 
       const boardType = (compactBoard as Record<string, unknown> | null)?.board_type;
@@ -889,7 +1463,7 @@ ${jsonOnlyContract()}
         turn_seed: turnSeed.toString(),
         model: requestedModel,
         messages,
-        actionContext: actionContext ?? null,
+        actionContext: actionContextRecord ?? null,
         warnings,
       };
 
@@ -898,6 +1472,11 @@ ${jsonOnlyContract()}
         narration: compactNarration(dmParsed.value.narration, NARRATION_MAX_WORDS),
         schema_version: dmParsed.value.schema_version ?? "mythic.dm.narrator.v1",
         roll_log: prng.rollLog,
+        meta: {
+          dm_validation_attempts: validationAttempts,
+          dm_recovery_used: dmRecoveryUsed,
+          dm_recovery_reason: dmRecoveryReason,
+        },
         turn: {
           expected_turn_index: expectedTurnIndex,
           turn_seed: turnSeed.toString(),
@@ -962,8 +1541,18 @@ ${jsonOnlyContract()}
         heat: commitPayload.heat ?? null,
       };
 
+      ctx.log.info("dm.request.completed", {
+        request_id: ctx.requestId,
+        campaign_id: campaignId,
+        turn_id: commitPayload.turn_id ?? null,
+        turn_index: commitPayload.turn_index ?? expectedTurnIndex,
+        dm_validation_attempts: validationAttempts,
+        dm_recovery_used: dmRecoveryUsed,
+        dm_recovery_reason: dmRecoveryReason,
+      });
+
       const outText = JSON.stringify(dmResponseJson);
-      return new Response(streamOpenAiDelta(outText), {
+      const response = new Response(streamOpenAiDelta(outText), {
         status: 200,
         headers: {
           "Content-Type": "text/event-stream",
@@ -971,6 +1560,10 @@ ${jsonOnlyContract()}
           "x-request-id": ctx.requestId,
         },
       });
+      if (idempotencyKey) {
+        storeIdempotentResponse(idempotencyKey, response, DM_IDEMPOTENCY_TTL_MS);
+      }
+      return response;
     } catch (error) {
       if (error instanceof AuthError) {
         const code = error.code === "auth_required" ? "auth_required" : "auth_invalid";

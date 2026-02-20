@@ -72,6 +72,8 @@ const RequestSchema = z.object({
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
 });
 
+const CLASS_FORGE_REFINEMENT_TIMEOUT_MS = 19_000;
+
 function normalizeConcept(s: string): string {
   return s
     .toLowerCase()
@@ -458,6 +460,7 @@ export const mythicCreateCharacter: FunctionHandler = {
   auth: "required",
   async handle(req: Request, ctx: FunctionContext): Promise<Response> {
     try {
+      const totalStartedAt = Date.now();
       const user = await requireUser(req.headers);
 
       const parsedBody = RequestSchema.safeParse(await req.json().catch(() => null));
@@ -517,6 +520,8 @@ export const mythicCreateCharacter: FunctionHandler = {
       let provider = "openai";
       let model = "gpt-4o-mini";
       let refinedData: z.infer<typeof ResponseSchema> = deterministicRefinement({ classDescription, kit });
+      let refinementMode: "llm" | "deterministic_fallback" = "deterministic_fallback";
+      const refinementStartedAt = Date.now();
       try {
         const completion = await mythicOpenAIChatCompletions(
           {
@@ -530,6 +535,7 @@ export const mythicCreateCharacter: FunctionHandler = {
             ],
           },
           "gpt-4o-mini",
+          { timeoutMs: CLASS_FORGE_REFINEMENT_TIMEOUT_MS },
         );
         provider = completion.provider;
         model = completion.model;
@@ -547,6 +553,7 @@ export const mythicCreateCharacter: FunctionHandler = {
           throw new Error(`OpenAI output failed schema validation: ${JSON.stringify(refined.error.flatten())}`);
         }
         refinedData = refined.data;
+        refinementMode = "llm";
       } catch (error) {
         if (error instanceof AiProviderError && error.code === "openai_not_configured") {
           throw error;
@@ -559,6 +566,7 @@ export const mythicCreateCharacter: FunctionHandler = {
           reason: message,
         });
       }
+      const refinementMs = Date.now() - refinementStartedAt;
 
       // Enforce content policy on stored text fields.
       assertContentAllowed([
@@ -595,6 +603,7 @@ export const mythicCreateCharacter: FunctionHandler = {
         return next;
       };
 
+      const dbWriteStartedAt = Date.now();
       // Create new or update existing by player+campaign+name.
       const { data: existingChars, error: existingError } = await svc
         .schema("mythic")
@@ -692,6 +701,18 @@ export const mythicCreateCharacter: FunctionHandler = {
         .insert(skillRows)
         .select("id");
       if (insSkillsErr) throw insSkillsErr;
+      const dbWriteMs = Date.now() - dbWriteStartedAt;
+      const totalMs = Date.now() - totalStartedAt;
+
+      ctx.log.info("create_character.completed", {
+        request_id: ctx.requestId,
+        campaign_id: campaignId,
+        character_id: characterId,
+        forge_refinement_mode: refinementMode,
+        forge_total_ms: totalMs,
+        forge_refinement_ms: refinementMs,
+        forge_db_write_ms: dbWriteMs,
+      });
 
       return new Response(
         JSON.stringify({
@@ -711,6 +732,12 @@ export const mythicCreateCharacter: FunctionHandler = {
           warnings,
           provider,
           model,
+          timings_ms: {
+            total: totalMs,
+            refinement: refinementMs,
+            db_write: dbWriteMs,
+          },
+          refinement_mode: refinementMode,
           requestId: ctx.requestId,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },

@@ -370,13 +370,15 @@ export function TravelBoardScene(props: TravelBoardSceneProps) {
               actions: [
                 {
                   id: "travel-scout-prompt",
-                  label: "Scout Route",
-                  intent: "dm_prompt",
-                  prompt: "I scout the route ahead, checking hazards, encounters, and hidden opportunities.",
-                  payload: { travel_probe: "scout", tile_x: x, tile_y: y },
-                },
-              ],
+                    label: "Scout Route",
+                    intent: "dm_prompt",
+                    prompt: "I scout the route ahead, checking hazards, encounters, and hidden opportunities.",
+                    payload: { travel_probe: "scout", tile_x: x, tile_y: y, interaction_source: "miss_click", board_type: "travel" },
+                  },
+                ],
               rect: { x: Math.max(0, x - 4), y: Math.max(0, y - 4), w: 8, h: 8 },
+              interaction: { source: "miss_click", x, y },
+              autoRunPrimaryAction: true,
             });
           }}
         />

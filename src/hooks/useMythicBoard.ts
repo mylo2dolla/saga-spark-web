@@ -29,19 +29,23 @@ export interface MythicBoardTransitionRow {
 export function useMythicBoard(campaignId: string | undefined) {
   const [board, setBoard] = useState<MythicBoardRow | null>(null);
   const [recentTransitions, setRecentTransitions] = useState<MythicBoardTransitionRow[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const inFlightRef = useRef(false);
+  const hasLoadedOnceRef = useRef(false);
 
   const fetchState = useCallback(async () => {
     if (!campaignId) {
       if (isMountedRef.current) {
-        setIsLoading(false);
+        setIsInitialLoading(false);
+        setIsRefreshing(false);
         setBoard(null);
         setRecentTransitions([]);
         setError(null);
       }
+      hasLoadedOnceRef.current = false;
       return;
     }
 
@@ -49,7 +53,11 @@ export function useMythicBoard(campaignId: string | undefined) {
     try {
       inFlightRef.current = true;
       if (isMountedRef.current) {
-        setIsLoading(true);
+        if (hasLoadedOnceRef.current) {
+          setIsRefreshing(true);
+        } else {
+          setIsInitialLoading(true);
+        }
         setError(null);
       }
 
@@ -84,22 +92,33 @@ export function useMythicBoard(campaignId: string | undefined) {
       if (isMountedRef.current) setError(msg);
     } finally {
       inFlightRef.current = false;
-      if (isMountedRef.current) setIsLoading(false);
+      hasLoadedOnceRef.current = true;
+      if (isMountedRef.current) {
+        setIsInitialLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, [campaignId]);
 
   useEffect(() => {
     isMountedRef.current = true;
+    if (campaignId) {
+      hasLoadedOnceRef.current = false;
+      setIsInitialLoading(true);
+      setIsRefreshing(false);
+    }
     fetchState();
     return () => {
       isMountedRef.current = false;
     };
-  }, [fetchState]);
+  }, [campaignId, fetchState]);
 
   return {
     board,
     recentTransitions,
-    isLoading,
+    isInitialLoading,
+    isRefreshing,
+    isLoading: isInitialLoading,
     error,
     refetch: fetchState,
   };

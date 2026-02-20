@@ -101,6 +101,7 @@ export function toFriendlyEdgeError(error: unknown, fallback = "Request failed")
       ...parsed,
       title: "Generation timed out",
       description: "Generation took too long. Retry once; if it keeps happening, we need to tune backend latency.",
+      code: parsed.code ?? "timeout",
     };
   }
 

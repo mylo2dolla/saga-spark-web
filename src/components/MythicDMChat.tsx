@@ -184,14 +184,14 @@ export function MythicDMChat({
 
       <div className="border-t border-border p-3">
         {actions && actions.length > 0 ? (
-          <div className="mb-2 flex flex-wrap gap-2">
-            {actions.slice(0, 4).map((action) => (
+          <div className="mb-2 flex max-h-[68px] flex-wrap gap-2 overflow-hidden">
+            {actions.slice(0, 6).map((action) => (
               <Button
                 key={action.id}
                 type="button"
                 size="sm"
                 variant="secondary"
-                className="h-8 border border-amber-200/25 bg-amber-100/10 text-amber-50 hover:bg-amber-100/15"
+                className="h-8 max-w-[210px] justify-start overflow-hidden text-ellipsis whitespace-nowrap border border-amber-200/25 bg-amber-100/10 text-amber-50 hover:bg-amber-100/15"
                 onClick={() => {
                   if (!onAction) return;
                   onAction(action);

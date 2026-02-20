@@ -45,19 +45,23 @@ function normalizeReasonLabel(value: string): string {
 
 export function useMythicCharacter(campaignId: string | undefined) {
   const [bundle, setBundle] = useState<MythicCharacterBundle | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const inFlightRef = useRef(false);
   const pendingRefetchRef = useRef(false);
+  const hasLoadedOnceRef = useRef(false);
 
   const fetchBundle = useCallback(async () => {
     if (!campaignId || !isUuid(campaignId)) {
       if (isMountedRef.current) {
-        setIsLoading(false);
+        setIsInitialLoading(false);
+        setIsRefreshing(false);
         setBundle(null);
         setError(null);
       }
+      hasLoadedOnceRef.current = false;
       return;
     }
 
@@ -68,7 +72,11 @@ export function useMythicCharacter(campaignId: string | undefined) {
     try {
       inFlightRef.current = true;
       if (isMountedRef.current) {
-        setIsLoading(true);
+        if (hasLoadedOnceRef.current) {
+          setIsRefreshing(true);
+        } else {
+          setIsInitialLoading(true);
+        }
         setError(null);
       }
 
@@ -76,9 +84,11 @@ export function useMythicCharacter(campaignId: string | undefined) {
       if (userError) throw userError;
       if (!user) {
         if (isMountedRef.current) {
-          setIsLoading(false);
+          setIsInitialLoading(false);
+          setIsRefreshing(false);
           setBundle(null);
         }
+        hasLoadedOnceRef.current = true;
         return;
       }
 
@@ -347,17 +357,26 @@ export function useMythicCharacter(campaignId: string | undefined) {
         pendingRefetchRef.current = false;
         void fetchBundle();
       }
-      if (isMountedRef.current && !shouldRefetchAgain) setIsLoading(false);
+      if (isMountedRef.current && !shouldRefetchAgain) {
+        hasLoadedOnceRef.current = true;
+        setIsInitialLoading(false);
+        setIsRefreshing(false);
+      }
     }
   }, [campaignId]);
 
   useEffect(() => {
     isMountedRef.current = true;
+    if (campaignId && isUuid(campaignId)) {
+      hasLoadedOnceRef.current = false;
+      setIsInitialLoading(true);
+      setIsRefreshing(false);
+    }
     fetchBundle();
     return () => {
       isMountedRef.current = false;
     };
-  }, [fetchBundle]);
+  }, [campaignId, fetchBundle]);
 
   return {
     bundle,
@@ -368,7 +387,9 @@ export function useMythicCharacter(campaignId: string | undefined) {
     progressionEvents: bundle?.progressionEvents ?? [],
     questThreads: bundle?.questThreads ?? [],
     loadoutSlotCap: bundle?.loadoutSlotCap ?? 2,
-    isLoading,
+    isInitialLoading,
+    isRefreshing,
+    isLoading: isInitialLoading,
     error,
     refetch: fetchBundle,
   };
