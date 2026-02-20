@@ -82,7 +82,7 @@ const CLASS_FORGE_MIN_REPAIR_TIMEOUT_MS = 2_500;
 const FORGE_CONCEPT_TARGET_MIN_CHARS = 280;
 const FORGE_CONCEPT_TARGET_MAX_CHARS = 420;
 
-const GENERIC_SKILL_NAME_RX = /^(action|ability|skill|trait|passive|ultimate)\s*\d*(?:\s*[:\-]\s*(?:strike|guard|blast|carve|defense|utility|effect)?)?$/i;
+const GENERIC_SKILL_NAME_RX = /^(action|ability|skill|trait|passive|ultimate)\s*\d*(?:\s*[:-]\s*(?:strike|guard|blast|carve|defense|utility|effect)?)?$/i;
 const LOW_SIGNAL_SKILL_NAME_RX = /^(strike|guard|ultimate|pressure wave|reposition|disrupt|weakness exploit|passive a|passive b|burst strike)$/i;
 const LOW_SIGNAL_SKILL_DESCRIPTION_RX = /^(a basic|movement tool\.?|defense tool\.?|burst tool\.?|control\/utility tool\.?|passive [ab] description\.?|uses [a-z0-9_\s]+ targeting at range \d+\.?)/i;
 
