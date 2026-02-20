@@ -16,6 +16,9 @@ This record captures closeout work after rewriting history to remove a leaked AP
 - Added CI secret scan workflow at `.github/workflows/secret-scan.yml`.
 - Added local hook installer script at `scripts/install-git-hooks.sh`.
 - Removed local rewrite anchor tag `pre-filter-env-removal-20260220-1019`.
+- Removed temporary remote branches:
+  - `origin/codex/sanitized-main-env-clean-20260220`
+  - `vault/codex/sanitized-main-env-clean-20260220`
 - Expired reflogs and ran aggressive local garbage collection.
 - Verified tracked files and reachable history are clean for OpenAI key patterns.
 
@@ -27,9 +30,6 @@ This record captures closeout work after rewriting history to remove a leaked AP
 - GitHub repository settings:
   - Enable Secret Scanning.
   - Enable Push Protection.
-- Remote sanitized branch cleanup:
-  - Delete `origin/codex/sanitized-main-env-clean-20260220`.
-  - Delete `vault/codex/sanitized-main-env-clean-20260220`.
 
 ## Runtime Secret Sync + Restart
 - VM API host: `api.mythweaver.online`
