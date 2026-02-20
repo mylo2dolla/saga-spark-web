@@ -11,7 +11,13 @@ drop function if exists mythic.mythic_board_transition(uuid, text, jsonb) cascad
 drop function if exists public.mythic_board_transition(uuid, text, jsonb) cascade;
 
 -- Remove board append-only trigger functions if present.
-drop trigger if exists tr_mythic_board_transitions_append_only on mythic.board_transitions;
+do $$
+begin
+  if to_regclass('mythic.board_transitions') is not null then
+    execute 'drop trigger if exists tr_mythic_board_transitions_append_only on mythic.board_transitions';
+  end if;
+end
+$$;
 
 -- Remove legacy storage.
 drop table if exists mythic.board_transitions cascade;
