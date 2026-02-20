@@ -3,11 +3,12 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { MythicUiAction } from "@/hooks/useMythicDungeonMaster";
 import {
+  actionSignature,
   buildInspectTargetFromHotspot,
   buildMissClickInspectTarget,
   dedupeBoardActions,
 } from "@/ui/components/mythic/board2/actionBuilders";
-import { BoardActionStrip } from "@/ui/components/mythic/board2/BoardActionStrip";
+import { BoardActionStrip, type BoardActionSource } from "@/ui/components/mythic/board2/BoardActionStrip";
 import { BoardInspectCard } from "@/ui/components/mythic/board2/BoardInspectCard";
 import { NarrativeBoardViewport } from "@/ui/components/mythic/board2/NarrativeBoardViewport";
 import type {
@@ -21,6 +22,7 @@ import type {
 interface NarrativeBoardPageProps {
   scene: NarrativeBoardSceneModel;
   baseActions: MythicUiAction[];
+  baseActionSourceBySignature?: Record<string, "assistant" | "runtime" | "companion" | "fallback">;
   isBusy: boolean;
   transitionError: string | null;
   combatStartError: { message: string; code: string | null; requestId: string | null } | null;
@@ -44,12 +46,50 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
     setInspectTarget(null);
   }, [props.scene.mode]);
 
+  useEffect(() => {
+    if (!inspectTarget || inspectTarget.interaction.source !== "hotspot") return;
+    const liveHotspot = props.scene.hotspots.find((entry) => entry.id === inspectTarget.id);
+    if (!liveHotspot) {
+      setInspectTarget(null);
+      return;
+    }
+    const prevSignature = inspectTarget.actions.map((entry) => actionSignature(entry)).join("|");
+    const nextSignature = liveHotspot.actions.map((entry) => actionSignature(entry)).join("|");
+    const changed = prevSignature !== nextSignature
+      || inspectTarget.title !== liveHotspot.title
+      || inspectTarget.subtitle !== liveHotspot.subtitle
+      || inspectTarget.description !== liveHotspot.description;
+    if (!changed) return;
+    setInspectTarget((prev) => {
+      if (!prev || prev.id !== liveHotspot.id || prev.interaction.source !== "hotspot") return prev;
+      return {
+        ...prev,
+        title: liveHotspot.title,
+        subtitle: liveHotspot.subtitle,
+        description: liveHotspot.description,
+        actions: liveHotspot.actions,
+        meta: liveHotspot.meta,
+      };
+    });
+  }, [inspectTarget, props.scene.hotspots]);
+
   const inspectActions = inspectTarget?.actions ?? [];
   const stripActions = useMemo(
     () => dedupeBoardActions([...inspectActions, ...props.baseActions], 8),
     [inspectActions, props.baseActions],
   );
-  const inspectActionIds = useMemo(() => new Set(inspectActions.map((action) => action.id)), [inspectActions]);
+  const stripActionSourceBySignature = useMemo(() => {
+    const out: Record<string, BoardActionSource> = {};
+    inspectActions.forEach((action) => {
+      out[actionSignature(action)] = "inspect";
+    });
+    props.baseActions.forEach((action) => {
+      const signature = actionSignature(action);
+      if (out[signature]) return;
+      out[signature] = props.baseActionSourceBySignature?.[signature] ?? "console";
+    });
+    return out;
+  }, [inspectActions, props.baseActionSourceBySignature, props.baseActions]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 p-3">
@@ -137,7 +177,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
 
       <BoardActionStrip
         actions={stripActions}
-        inspectActionIds={inspectActionIds}
+        sourceBySignature={stripActionSourceBySignature}
         isBusy={props.isBusy}
         onAction={(action, source) => {
           props.onAction(action, source);

@@ -17,6 +17,7 @@ import type {
   NarrativeBoardAdapterInput,
   NarrativeBoardSceneModel,
   NarrativeHotspot,
+  NarrativeSceneLegendItem,
   NarrativeSceneMetric,
   TownSceneData,
   TravelSceneData,
@@ -44,6 +45,19 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function asBoolean(value: unknown): boolean {
   return value === true;
+}
+
+function buildLayoutSeed(mode: string, tokens: Array<string | number | null | undefined>): string {
+  const compact = tokens
+    .map((entry) => {
+      if (typeof entry === "number") return String(Math.floor(entry));
+      if (typeof entry === "string") return entry.trim();
+      return "";
+    })
+    .filter((entry) => entry.length > 0)
+    .slice(0, 32)
+    .join("|");
+  return `${mode}:${compact || "default"}`;
 }
 
 function normalizeTextList(value: unknown): string[] {
@@ -78,6 +92,7 @@ function parseTownData(args: {
       return { id, name, services };
     })
     .filter((entry) => entry.name.length > 0)
+    .sort((a, b) => a.id.localeCompare(b.id))
     .slice(0, 6);
 
   const services = normalizeTextList(args.boardState.services);
@@ -96,6 +111,7 @@ function parseTownData(args: {
       };
     })
     .filter((entry) => entry.title.length > 0)
+    .sort((a, b) => a.id.localeCompare(b.id))
     .slice(0, 8);
 
   const rumors = normalizeTextList(args.boardState.rumors);
@@ -166,7 +182,8 @@ function parseDungeonData(args: {
         danger: Math.max(0, Math.min(10, Math.floor(asNumber(row.danger, 0)))),
       };
     })
-    .filter((entry) => entry.id.length > 0);
+    .filter((entry) => entry.id.length > 0)
+    .sort((a, b) => a.id.localeCompare(b.id));
 
   const fallbackRooms = asArray(args.summary.room_samples)
     .map((entry, index) => {
@@ -179,6 +196,7 @@ function parseDungeonData(args: {
       };
     })
     .filter((entry) => entry.id.length > 0)
+    .sort((a, b) => a.id.localeCompare(b.id))
     .slice(0, 8);
 
   const edges = asArray(roomGraph.edges)
@@ -269,6 +287,10 @@ function buildTownScene(args: {
         vendor_id: vendor.id,
         services: vendor.services,
       },
+      visual: {
+        tier: "primary",
+        icon: "V",
+      },
     });
   });
 
@@ -284,6 +306,10 @@ function buildTownScene(args: {
       meta: {
         open_jobs: data.jobPostings.filter((row) => row.status === "open").length,
       },
+      visual: {
+        tier: "secondary",
+        icon: "N",
+      },
     });
   }
 
@@ -295,6 +321,10 @@ function buildTownScene(args: {
     description: "Leave the square and project force into the wilds.",
     rect: { x: 10, y: 3, w: 2, h: 3 },
     actions: buildTownGateActions(),
+    visual: {
+      tier: "primary",
+      icon: "G",
+    },
   });
 
   const openJobs = data.jobPostings.filter((entry) => entry.status === "open").length;
@@ -304,9 +334,19 @@ function buildTownScene(args: {
     { id: "factions", label: "Factions", value: String(data.factionsPresent.length) },
     { id: "rumors", label: "Rumors", value: String(data.rumors.length) },
   ];
+  const legend: NarrativeSceneLegendItem[] = [
+    { id: "legend-town-vendor", label: "V Vendor", detail: "trade and intel", tone: "good" },
+    { id: "legend-town-board", label: "N Notice", detail: "contracts and jobs", tone: "neutral" },
+    { id: "legend-town-gate", label: "G Gate", detail: "travel transition", tone: "warn" },
+  ];
 
   const fallbackActions = buildModeFallbackActions({ mode: "town", town: data });
   const worldTitle = asString(asRecord(args.boardState.world_seed).title, "Town Square");
+  const layoutSeed = buildLayoutSeed("town", [
+    worldTitle,
+    ...data.vendors.map((vendor) => vendor.id),
+    ...data.jobPostings.map((job) => job.id),
+  ]);
   return {
     mode: "town",
     title: worldTitle,
@@ -314,8 +354,13 @@ function buildTownScene(args: {
     contextSource: args.contextSource,
     warnings: args.warnings,
     metrics,
+    legend,
     hotspots,
     fallbackActions,
+    layout: {
+      version: 1,
+      seed: layoutSeed,
+    },
     grid: {
       cols: 12,
       rows: 8,
@@ -334,10 +379,11 @@ function buildTravelScene(args: {
   const data = parseTravelData({ boardState: args.boardState, summary: args.summary });
   const hotspots: NarrativeHotspot[] = [];
 
-  const routeWidth = Math.max(1, Math.min(8, data.routeSegments.length));
+  const routeCols = 4;
   data.routeSegments.forEach((segment, index) => {
-    const col = index % routeWidth;
-    const row = Math.floor(index / routeWidth);
+    const col = index % routeCols;
+    const row = Math.floor(index / routeCols);
+    const xIndex = row % 2 === 0 ? col : (routeCols - 1 - col);
     hotspots.push({
       id: `travel-segment-${segment.id}`,
       kind: "route_segment",
@@ -345,9 +391,9 @@ function buildTravelScene(args: {
       subtitle: `${segment.terrain} • danger ${segment.danger}`,
       description: "Probe this segment before committing movement.",
       rect: {
-        x: 1 + col,
-        y: 1 + row,
-        w: 1,
+        x: 1 + xIndex * 2,
+        y: 1 + row * 2,
+        w: 2,
         h: 1,
       },
       actions: buildTravelSegmentActions({
@@ -362,6 +408,10 @@ function buildTravelScene(args: {
         segment_id: segment.id,
         terrain: segment.terrain,
         danger: segment.danger,
+      },
+      visual: {
+        tier: "primary",
+        icon: "R",
       },
     });
   });
@@ -382,6 +432,11 @@ function buildTravelScene(args: {
         search_target: data.searchTarget,
         traces_found: data.dungeonTracesFound,
       },
+      visual: {
+        tier: "primary",
+        icon: "D",
+        emphasis: "pulse",
+      },
     });
   }
 
@@ -393,6 +448,10 @@ function buildTravelScene(args: {
     description: "Return to town to recover, trade, and re-plan.",
     rect: { x: 9, y: 5, w: 2, h: 2 },
     actions: buildTravelReturnTownActions(),
+    visual: {
+      tier: "secondary",
+      icon: "T",
+    },
   });
 
   const metrics: NarrativeSceneMetric[] = [
@@ -411,9 +470,20 @@ function buildTravelScene(args: {
     },
     { id: "goal", label: "Goal", value: data.travelGoal.replace(/_/g, " ") },
   ];
+  const legend: NarrativeSceneLegendItem[] = [
+    { id: "legend-travel-route", label: "R Route", detail: "probe each leg", tone: "neutral" },
+    { id: "legend-travel-dungeon", label: "D Entry", detail: "dungeon traces", tone: "warn" },
+    { id: "legend-travel-town", label: "T Return", detail: "reset and restock", tone: "good" },
+  ];
 
   const fallbackActions = buildModeFallbackActions({ mode: "travel", travel: data });
   const worldTitle = asString(asRecord(args.boardState.world_seed).title, "Overland Route");
+  const layoutSeed = buildLayoutSeed("travel", [
+    worldTitle,
+    data.travelGoal,
+    ...data.routeSegments.map((segment) => segment.id),
+    data.searchTarget ?? "",
+  ]);
 
   return {
     mode: "travel",
@@ -422,8 +492,13 @@ function buildTravelScene(args: {
     contextSource: args.contextSource,
     warnings: args.warnings,
     metrics,
+    legend,
     hotspots,
     fallbackActions,
+    layout: {
+      version: 1,
+      seed: layoutSeed,
+    },
     grid: {
       cols: 12,
       rows: 8,
@@ -470,6 +545,10 @@ function buildDungeonScene(args: {
         danger: room.danger,
         status,
       },
+      visual: {
+        tier: "primary",
+        icon: "RM",
+      },
     });
   });
 
@@ -497,6 +576,10 @@ function buildDungeonScene(args: {
         from_room_id: edge.from,
         to_room_id: edge.to,
       },
+      visual: {
+        tier: "secondary",
+        icon: "DR",
+      },
     });
   });
 
@@ -510,6 +593,10 @@ function buildDungeonScene(args: {
       actions: buildDungeonFeatureActions({ roomId: data.rooms[0]?.id ?? null, feature: "trap" }),
       meta: {
         trap_signals: data.trapSignals,
+      },
+      visual: {
+        tier: "secondary",
+        icon: "TR",
       },
     });
   }
@@ -525,6 +612,10 @@ function buildDungeonScene(args: {
       meta: {
         loot_nodes: data.lootNodes,
       },
+      visual: {
+        tier: "secondary",
+        icon: "LT",
+      },
     });
   }
 
@@ -536,6 +627,10 @@ function buildDungeonScene(args: {
       subtitle: "volatile effect node",
       rect: { x: 8, y: 6, w: 2, h: 2 },
       actions: buildDungeonFeatureActions({ roomId: data.rooms[0]?.id ?? null, feature: "altar" }),
+      visual: {
+        tier: "tertiary",
+        icon: "AL",
+      },
     });
   }
 
@@ -547,6 +642,10 @@ function buildDungeonScene(args: {
       subtitle: "progress gate",
       rect: { x: 6, y: 6, w: 2, h: 2 },
       actions: buildDungeonFeatureActions({ roomId: data.rooms[0]?.id ?? null, feature: "puzzle" }),
+      visual: {
+        tier: "tertiary",
+        icon: "PZ",
+      },
     });
   }
 
@@ -556,8 +655,20 @@ function buildDungeonScene(args: {
     { id: "loot", label: "Loot Nodes", value: String(data.lootNodes), tone: data.lootNodes > 0 ? "good" : "neutral" },
     { id: "factions", label: "Factions", value: String(data.factionPresence.length) },
   ];
+  const legend: NarrativeSceneLegendItem[] = [
+    { id: "legend-dungeon-room", label: "RM Room", detail: "core node", tone: "neutral" },
+    { id: "legend-dungeon-door", label: "DR Door", detail: "transition link", tone: "warn" },
+    { id: "legend-dungeon-trap", label: "TR Trap", detail: "hazard pressure", tone: data.trapSignals > 0 ? "warn" : "good" },
+    { id: "legend-dungeon-loot", label: "LT Loot", detail: "resource node", tone: data.lootNodes > 0 ? "good" : "neutral" },
+  ];
 
   const fallbackActions = buildModeFallbackActions({ mode: "dungeon", dungeon: data });
+  const layoutSeed = buildLayoutSeed("dungeon", [
+    ...data.rooms.map((room) => room.id),
+    ...data.edges.map((edge) => `${edge.from}->${edge.to}`),
+    data.trapSignals,
+    data.lootNodes,
+  ]);
   return {
     mode: "dungeon",
     title: "Dungeon Depths",
@@ -565,8 +676,13 @@ function buildDungeonScene(args: {
     contextSource: args.contextSource,
     warnings: args.warnings,
     metrics,
+    legend,
     hotspots,
     fallbackActions,
+    layout: {
+      version: 1,
+      seed: layoutSeed,
+    },
     grid: {
       cols: 12,
       rows: 8,
@@ -611,6 +727,11 @@ function buildCombatScene(args: {
         power: Math.floor(combatant.power),
         statuses: combatant.statuses,
       },
+      visual: {
+        tier: combatant.entity_type === "player" ? "secondary" : "primary",
+        icon: combatant.entity_type === "player" ? "ALY" : "ENY",
+        emphasis: combatant.id === data.activeTurnCombatantId ? "pulse" : "normal",
+      },
     };
   });
 
@@ -624,8 +745,19 @@ function buildCombatScene(args: {
     { id: "enemies", label: "Enemies", value: String(aliveEnemies), tone: aliveEnemies > 0 ? "warn" : "good" },
     { id: "quick_cast", label: "Quick Cast", value: String(readyQuickCasts), tone: readyQuickCasts > 0 ? "good" : "neutral" },
   ];
+  const legend: NarrativeSceneLegendItem[] = [
+    { id: "legend-combat-enemy", label: "ENY Enemy", detail: "pressure target", tone: "warn" },
+    { id: "legend-combat-ally", label: "ALY Ally", detail: "controlled unit", tone: "good" },
+    { id: "legend-combat-active", label: "ACT Active", detail: "active turn", tone: "neutral" },
+    { id: "legend-combat-blocked", label: "BLK Tile", detail: "movement obstacle", tone: "danger" },
+  ];
 
   const fallbackActions = buildModeFallbackActions({ mode: "combat", combat: data });
+  const layoutSeed = buildLayoutSeed("combat", [
+    data.session?.id ?? "",
+    ...data.combatants.map((combatant) => combatant.id),
+    ...data.blockedTiles.map((tile) => `${tile.x},${tile.y}`),
+  ]);
 
   return {
     mode: "combat",
@@ -634,8 +766,13 @@ function buildCombatScene(args: {
     contextSource: args.contextSource,
     warnings: args.warnings,
     metrics,
+    legend,
     hotspots,
     fallbackActions,
+    layout: {
+      version: 1,
+      seed: layoutSeed,
+    },
     grid: {
       cols: gridCols,
       rows: gridRows,

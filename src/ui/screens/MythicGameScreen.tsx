@@ -34,6 +34,7 @@ import { BookShell } from "@/ui/components/mythic/BookShell";
 import { NarrativePage } from "@/ui/components/mythic/NarrativePage";
 import { ShopDialog } from "@/ui/components/mythic/ShopDialog";
 import { SettingsPanel, type MythicRuntimeSettings } from "@/ui/components/mythic/SettingsPanel";
+import { actionSignature as boardActionSignature } from "@/ui/components/mythic/board2/actionBuilders";
 import { buildNarrativeBoardScene } from "@/ui/components/mythic/board2/adapters";
 import { NarrativeBoardPage } from "@/ui/components/mythic/board2/NarrativeBoardPage";
 
@@ -160,6 +161,8 @@ type UnifiedActionSource =
   | "combat_quick_cast"
   | "combat_enemy_tick";
 
+type BoardBaseActionSource = "assistant" | "runtime" | "companion" | "fallback";
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -244,32 +247,7 @@ function normalizeConsoleActionLabel(action: MythicUiAction): MythicUiAction {
 }
 
 function actionTargetSignature(action: MythicUiAction): string {
-  const labelKey = (action.label ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-  const hintKey = (action.hint_key ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-  const payload = action.payload ?? {};
-  const target = typeof payload.target_combatant_id === "string"
-    ? payload.target_combatant_id
-    : typeof payload.vendorId === "string"
-      ? payload.vendorId
-      : typeof payload.room_id === "string"
-        ? payload.room_id
-        : typeof payload.to_room_id === "string"
-          ? payload.to_room_id
-          : typeof payload.searchTarget === "string"
-            ? payload.searchTarget
-            : typeof payload.travel_probe === "string"
-              ? payload.travel_probe
-              : action.boardTarget ?? action.panel ?? action.id;
-  if (action.intent === "dm_prompt") {
-    return `${action.intent}:${hintKey || target}:${labelKey}`;
-  }
-  return `${action.intent}:${hintKey || target}:${labelKey}`;
+  return boardActionSignature(action);
 }
 
 function dedupeConsoleActions(candidates: MythicUiAction[]): MythicUiAction[] {
@@ -285,6 +263,37 @@ function dedupeConsoleActions(candidates: MythicUiAction[]): MythicUiAction[] {
     if (unique.length >= MAX_CONSOLE_ACTIONS) break;
   }
   return unique;
+}
+
+function buildBoardBaseActions(args: {
+  assistantActions: MythicUiAction[];
+  runtimeActions: MythicUiAction[];
+  companionAction: MythicUiAction | null;
+  fallbackActions: MythicUiAction[];
+}): { actions: MythicUiAction[]; sourceBySignature: Record<string, BoardBaseActionSource> } {
+  const sourceBySignature: Record<string, BoardBaseActionSource> = {};
+  const merged: MythicUiAction[] = [];
+  const push = (source: BoardBaseActionSource, actions: MythicUiAction[]) => {
+    actions.forEach((action) => {
+      const signature = actionTargetSignature(action);
+      if (!sourceBySignature[signature]) {
+        sourceBySignature[signature] = source;
+      }
+      merged.push(action);
+    });
+  };
+
+  push("assistant", args.assistantActions);
+  push("runtime", args.runtimeActions);
+  if (args.companionAction) {
+    push("companion", [args.companionAction]);
+  }
+  push("fallback", args.fallbackActions);
+
+  return {
+    actions: dedupeConsoleActions(merged),
+    sourceBySignature,
+  };
 }
 
 function isExpectedDmCancellationError(message: string): boolean {
@@ -1685,15 +1694,15 @@ export default function MythicGameScreen() {
     quickCastAvailability,
   ]);
 
-  const boardStripBaseActions = useMemo(() => {
-    const mergedActions: MythicUiAction[] = [
-      ...latestAssistantActions,
-      ...persistedRuntimeActions,
-      ...(companionFollowupAction ? [companionFollowupAction] : []),
-      ...boardScene.fallbackActions,
-    ];
-    return dedupeConsoleActions(mergedActions);
+  const boardStripBase = useMemo(() => {
+    return buildBoardBaseActions({
+      assistantActions: latestAssistantActions,
+      runtimeActions: persistedRuntimeActions,
+      companionAction: companionFollowupAction,
+      fallbackActions: boardScene.fallbackActions,
+    });
   }, [boardScene.fallbackActions, companionFollowupAction, latestAssistantActions, persistedRuntimeActions]);
+  const boardStripBaseActions = boardStripBase.actions;
 
   const selectQuickCastTarget = useCallback((targeting: string) => {
     if (targeting === "self") {
@@ -2265,6 +2274,7 @@ export default function MythicGameScreen() {
           <NarrativeBoardPage
             scene={boardScene}
             baseActions={boardStripBaseActions}
+            baseActionSourceBySignature={boardStripBase.sourceBySignature}
             isBusy={mythicDm.isLoading || isNarratedActionBusy || combat.isActing || combat.isTicking}
             transitionError={transitionError}
             combatStartError={combatStartError}
@@ -2358,6 +2368,8 @@ export default function MythicGameScreen() {
                 <div>combat_session_id: {combatSessionId ?? "none"}</div>
                 <div>active_panel: {activePanel}</div>
                 <div>board_actions: {boardStripBaseActions.length}</div>
+                <div>board_layout_seed: {boardScene.layout.seed}</div>
+                <div>board_legend_items: {boardScene.legend.length}</div>
                 <div>dm_context_loading: {mythicDmContext.isInitialLoading || mythicDmContext.isRefreshing ? "true" : "false"}</div>
                 <div>dm_context_warnings: {mythicDmContext.context?.warnings?.length ?? 0}</div>
                 {transitionError ? <div className="mt-2 text-destructive">transition_error: {transitionError}</div> : null}

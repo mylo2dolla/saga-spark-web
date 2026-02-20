@@ -9,6 +9,12 @@ interface BoardInspectCardProps {
   onAction: (action: MythicUiAction) => void;
 }
 
+function compactText(value: string, max = 120): string {
+  const clean = value.trim().replace(/\s+/g, " ");
+  if (!clean) return "";
+  return clean.length > max ? `${clean.slice(0, max).trim()}...` : clean;
+}
+
 function formatMeta(value: unknown): string {
   if (value === null || value === undefined) return "-";
   if (typeof value === "string") return value;
@@ -28,7 +34,7 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
 
   const metaRows = Object.entries(target.meta ?? {})
     .filter(([key]) => !key.startsWith("_"))
-    .slice(0, 8);
+    .slice(0, 10);
 
   return (
     <div className="rounded-lg border border-amber-200/30 bg-[linear-gradient(160deg,rgba(34,26,19,0.95),rgba(14,16,22,0.96))] p-3 text-amber-50 shadow-xl">
@@ -42,9 +48,15 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
         </Button>
       </div>
 
+      <div className="mt-2 rounded border border-amber-200/25 bg-black/20 px-2 py-1 text-[11px] text-amber-100/80">
+        <span className="font-semibold text-amber-100">Source</span>: {target.interaction.source === "hotspot" ? "hotspot" : "board probe"}
+        <span className="ml-2 text-amber-100/65">grid ({target.interaction.x}, {target.interaction.y})</span>
+      </div>
+
       {target.description ? <div className="mt-2 text-xs text-amber-100/80">{target.description}</div> : null}
 
-      <div className="mt-3 grid gap-2">
+      <div className="mt-3 space-y-2">
+        <div className="text-[11px] uppercase tracking-wide text-amber-100/65">Confirm Action</div>
         {target.actions.length === 0 ? (
           <div className="text-xs text-amber-100/65">No direct actions on this tile.</div>
         ) : (
@@ -54,10 +66,15 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
               size="sm"
               variant="secondary"
               disabled={props.isBusy}
-              className="justify-start"
+              className="h-auto w-full justify-start py-2 text-left"
               onClick={() => props.onAction(action)}
             >
-              {action.label}
+              <span className="flex w-full flex-col items-start gap-1">
+                <span>{action.label}</span>
+                {action.prompt ? (
+                  <span className="text-[10px] text-amber-100/70">{compactText(action.prompt)}</span>
+                ) : null}
+              </span>
             </Button>
           ))
         )}

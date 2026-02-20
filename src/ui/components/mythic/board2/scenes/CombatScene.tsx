@@ -1,5 +1,6 @@
-import type { MouseEvent } from "react";
 import { Button } from "@/components/ui/button";
+import { BoardGridLayer, readGridPointFromEvent } from "@/ui/components/mythic/board2/BoardGridLayer";
+import { BoardLegend } from "@/ui/components/mythic/board2/BoardLegend";
 import type { CombatSceneData, NarrativeBoardSceneModel, NarrativeHotspot } from "@/ui/components/mythic/board2/types";
 
 interface CombatSceneProps {
@@ -13,16 +14,6 @@ interface CombatSceneProps {
 function toPercent(value: number, total: number): string {
   if (total <= 0) return "0%";
   return `${Math.max(0, Math.min(100, (value / total) * 100))}%`;
-}
-
-function readGridPoint(event: MouseEvent<HTMLElement>, cols: number, rows: number): { x: number; y: number } {
-  const bounds = event.currentTarget.getBoundingClientRect();
-  const x = Math.floor(((event.clientX - bounds.left) / Math.max(1, bounds.width)) * cols);
-  const y = Math.floor(((event.clientY - bounds.top) / Math.max(1, bounds.height)) * rows);
-  return {
-    x: Math.max(0, Math.min(cols - 1, x)),
-    y: Math.max(0, Math.min(rows - 1, y)),
-  };
 }
 
 function hpPercent(current: number, max: number): number {
@@ -48,34 +39,15 @@ export function CombatScene(props: CombatSceneProps) {
         </div>
       </div>
 
-      <div
-        className="relative min-h-[260px] flex-1 overflow-hidden rounded-lg border border-red-200/35 bg-[radial-gradient(circle_at_50%_14%,rgba(248,113,113,0.2),rgba(8,8,16,0.95))]"
-        onClick={(event) => {
-          const point = readGridPoint(event, cols, rows);
-          props.onSelectMiss(point);
-        }}
+      <BoardGridLayer
+        cols={cols}
+        rows={rows}
+        blockedTiles={props.scene.grid.blockedTiles}
+        className="border-red-200/35 bg-[radial-gradient(circle_at_50%_14%,rgba(248,113,113,0.2),rgba(8,8,16,0.95))]"
+        gridLineColor="rgba(254,205,211,0.12)"
+        blockedTileClassName="border border-amber-200/35 bg-amber-400/20"
+        onSelectMiss={props.onSelectMiss}
       >
-        <div
-          className="absolute inset-0 opacity-30"
-          style={{
-            backgroundImage: "linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.08) 1px, transparent 1px)",
-            backgroundSize: `${100 / cols}% ${100 / rows}%`,
-          }}
-        />
-
-        {details.blockedTiles.map((tile) => (
-          <div
-            key={`blocked-${tile.x}-${tile.y}`}
-            className="absolute border border-amber-200/40 bg-amber-300/20"
-            style={{
-              left: toPercent(tile.x, cols),
-              top: toPercent(tile.y, rows),
-              width: toPercent(1, cols),
-              height: toPercent(1, rows),
-            }}
-          />
-        ))}
-
         {details.combatants.map((combatant) => {
           const x = Math.max(0, Math.min(cols - 1, Math.floor(combatant.x)));
           const y = Math.max(0, Math.min(rows - 1, Math.floor(combatant.y)));
@@ -89,7 +61,7 @@ export function CombatScene(props: CombatSceneProps) {
             <button
               key={combatant.id}
               type="button"
-              className={`absolute rounded-md border px-1 py-1 text-left text-[10px] text-white shadow-[0_0_0_1px_rgba(0,0,0,0.3)] ${tone} ${focused ? "ring-2 ring-amber-300" : ""} ${active ? "ring-2 ring-white/80" : ""}`}
+              className={`absolute rounded-md border px-1 py-1 text-left text-[10px] text-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)] ${tone} ${focused ? "ring-2 ring-amber-300" : ""} ${active ? "ring-2 ring-white/80" : ""}`}
               style={{
                 left: toPercent(x, cols),
                 top: toPercent(y, rows),
@@ -99,8 +71,7 @@ export function CombatScene(props: CombatSceneProps) {
               onClick={(event) => {
                 event.stopPropagation();
                 if (!hotspot) return;
-                const point = readGridPoint(event, cols, rows);
-                props.onSelectHotspot(hotspot, point);
+                props.onSelectHotspot(hotspot, readGridPointFromEvent(event, cols, rows));
               }}
             >
               <div className="truncate font-semibold">{combatant.name}</div>
@@ -110,7 +81,9 @@ export function CombatScene(props: CombatSceneProps) {
             </button>
           );
         })}
-      </div>
+      </BoardGridLayer>
+
+      <BoardLegend items={props.scene.legend} />
 
       <div className="grid gap-2 sm:grid-cols-2">
         <div className="rounded border border-red-200/30 bg-red-100/5 p-2 text-[11px] text-red-100/80">

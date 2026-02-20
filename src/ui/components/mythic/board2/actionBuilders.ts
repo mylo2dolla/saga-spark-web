@@ -9,6 +9,8 @@ import type {
   TravelSceneData,
 } from "@/ui/components/mythic/board2/types";
 
+const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative\s+update)$/i;
+
 function slugToken(value: string): string {
   const token = value
     .trim()
@@ -34,11 +36,15 @@ export function actionSignature(action: MythicUiAction): string {
         ? payload.room_id
         : typeof payload.to_room_id === "string"
           ? payload.to_room_id
-          : typeof payload.search_target === "string"
-            ? payload.search_target
-            : typeof payload.travel_probe === "string"
-            ? payload.travel_probe
-            : action.boardTarget ?? action.panel ?? action.id;
+          : typeof payload.searchTarget === "string"
+            ? payload.searchTarget
+            : typeof payload.search_target === "string"
+              ? payload.search_target
+              : typeof payload.travel_probe === "string"
+                ? payload.travel_probe
+                : typeof payload.travel_goal === "string"
+                  ? payload.travel_goal
+                  : action.boardTarget ?? action.panel ?? action.id;
   const labelKey = (action.label ?? "")
     .trim()
     .toLowerCase()
@@ -54,10 +60,12 @@ export function dedupeBoardActions(actions: MythicUiAction[], maxActions = 8): M
   const out: MythicUiAction[] = [];
   const seen = new Set<string>();
   for (const action of actions) {
+    if (LOW_SIGNAL_ACTION_LABEL.test(action.label ?? "")) continue;
     const normalized = {
       ...action,
       label: compactLabel(action.label || action.prompt || action.id),
     };
+    if (LOW_SIGNAL_ACTION_LABEL.test(normalized.label)) continue;
     const signature = actionSignature(normalized);
     if (seen.has(signature)) continue;
     seen.add(signature);

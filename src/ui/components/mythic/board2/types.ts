@@ -34,6 +34,13 @@ export interface NarrativeCellRect {
   h: number;
 }
 
+export interface NarrativeHotspotVisual {
+  tier?: "primary" | "secondary" | "tertiary";
+  icon?: string;
+  emphasis?: "normal" | "pulse" | "muted";
+  linkToHotspotId?: string;
+}
+
 export interface NarrativeHotspot {
   id: string;
   kind: NarrativeHotspotKind;
@@ -43,6 +50,7 @@ export interface NarrativeHotspot {
   rect: NarrativeCellRect;
   actions: MythicUiAction[];
   meta?: Record<string, unknown>;
+  visual?: NarrativeHotspotVisual;
 }
 
 export interface NarrativeInspectInteraction {
@@ -66,6 +74,13 @@ export interface NarrativeSceneMetric {
   id: string;
   label: string;
   value: string;
+  tone?: "neutral" | "good" | "warn" | "danger";
+}
+
+export interface NarrativeSceneLegendItem {
+  id: string;
+  label: string;
+  detail?: string;
   tone?: "neutral" | "good" | "warn" | "danger";
 }
 
@@ -124,8 +139,13 @@ export interface NarrativeBoardSceneModel {
   contextSource: "runtime_only" | "runtime_and_dm_context";
   warnings: string[];
   metrics: NarrativeSceneMetric[];
+  legend: NarrativeSceneLegendItem[];
   hotspots: NarrativeHotspot[];
   fallbackActions: MythicUiAction[];
+  layout: {
+    version: number;
+    seed: string;
+  };
   grid: {
     cols: number;
     rows: number;
