@@ -23,3 +23,13 @@ Original prompt: Implement Board Combat Dial-In Plan (Basic Actions, MP, Ally/En
   - ./scripts/smoke-vm-functions.sh: PASS
   - npm run smoke:board: PASS
 - Added docs/BOARD_COMBAT_DIALIN_2026-02-20.md with pass/fail matrix + request IDs.
+- Deployment:
+  - committed and pushed `main` to `origin` and `vault` at commit `8ead222`.
+  - deployed VM API to `root@api.mythweaver.online:/opt/mythic-api` via rsync + `docker compose up -d --build --force-recreate`.
+  - fixed production TLS binding by setting `MYTHIC_API_SITE=api.mythweaver.online` in VM `.env` and recreating caddy.
+  - health checks now pass: `https://api.mythweaver.online/healthz` -> 200.
+  - frontend deployed to Vercel production and aliased to `https://mythweaver.online`.
+- Post-deploy verification:
+  - `./scripts/smoke-vm-functions.sh` pass.
+  - `npm run smoke:board` pass.
+  - `https://mythweaver.online` opens with title `Saga Spark`.
