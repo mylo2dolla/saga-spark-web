@@ -48,7 +48,20 @@ function summarizeBoardHooks(state: unknown): Array<{ id: string; title: string;
   const rawObjectives = Array.isArray(payload.objectives) ? payload.objectives : [];
   const rawDiscovery = Array.isArray(payload.discovery_log) ? payload.discovery_log : [];
   const rawCheckins = Array.isArray(payload.companion_checkins) ? payload.companion_checkins : [];
-  const hooks = [...rawRumors, ...rawObjectives, ...rawDiscovery, ...rawCheckins];
+  const rawJobs = Array.isArray(payload.job_postings) ? payload.job_postings : [];
+  const roomState = payload.room_state && typeof payload.room_state === "object" ? payload.room_state as Record<string, unknown> : {};
+  const roomStateHooks = Object.entries(roomState).map(([roomId, value]) => {
+    const row = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    return {
+      id: `room:${roomId}`,
+      title: `Room ${roomId}`,
+      detail: [
+        typeof row.status === "string" ? `status ${row.status}` : null,
+        typeof row.last_action === "string" ? `action ${row.last_action}` : null,
+      ].filter((entry): entry is string => Boolean(entry)).join(" · "),
+    };
+  });
+  const hooks = [...rawRumors, ...rawObjectives, ...rawDiscovery, ...rawJobs, ...rawCheckins, ...roomStateHooks];
   const out: Array<{ id: string; title: string; detail: string | null }> = [];
   for (let idx = 0; idx < hooks.length; idx += 1) {
     const entry = hooks[idx];
@@ -88,6 +101,51 @@ function summarizeBoardHooks(state: unknown): Array<{ id: string; title: string;
     });
   }
   return out.slice(0, 16);
+}
+
+type BoardJobPosting = {
+  id: string;
+  title: string;
+  summary: string | null;
+  status: "open" | "accepted" | "completed";
+  rewardHint: string | null;
+  danger: string | null;
+};
+
+function readJobPostings(state: Record<string, unknown>): BoardJobPosting[] {
+  const rows = Array.isArray(state.job_postings) ? state.job_postings : [];
+  return rows
+    .map((entry, index) => {
+      if (!entry || typeof entry !== "object") return null;
+      const row = entry as Record<string, unknown>;
+      const id = typeof row.id === "string" && row.id.trim().length > 0 ? row.id.trim() : `job-${index + 1}`;
+      const title = typeof row.title === "string" && row.title.trim().length > 0 ? row.title.trim() : null;
+      const summary = typeof row.summary === "string" && row.summary.trim().length > 0 ? row.summary.trim() : null;
+      if (!title && !summary) return null;
+      const statusRaw = typeof row.status === "string" ? row.status.trim().toLowerCase() : "open";
+      const status = statusRaw === "accepted" || statusRaw === "completed" ? statusRaw : "open";
+      return {
+        id,
+        title: title ?? summary ?? `Posting ${index + 1}`,
+        summary,
+        status,
+        rewardHint: typeof row.reward_hint === "string" ? row.reward_hint : null,
+        danger: typeof row.danger === "string" ? row.danger : null,
+      } satisfies BoardJobPosting;
+    })
+    .filter((entry): entry is BoardJobPosting => Boolean(entry));
+}
+
+function readRoomStateSignals(state: Record<string, unknown>): Array<{ roomId: string; status: string | null; lastAction: string | null }> {
+  const raw = state.room_state && typeof state.room_state === "object" ? state.room_state as Record<string, unknown> : {};
+  return Object.entries(raw).map(([roomId, value]) => {
+    const row = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    return {
+      roomId,
+      status: typeof row.status === "string" ? row.status : null,
+      lastAction: typeof row.last_action === "string" ? row.last_action : null,
+    };
+  });
 }
 
 function normalizeReasonCode(value: string): string {
@@ -276,8 +334,72 @@ function deriveHookActions(args: {
   boardType: "town" | "travel" | "dungeon" | "combat";
   boardHooks: Array<{ id: string; title: string; detail: string | null }>;
   townVendors: Array<{ id: string; name: string }>;
+  boardState: Record<string, unknown>;
 }): MythicUiAction[] {
   const hookActions: MythicUiAction[] = [];
+  const discoveryFlags = args.boardState.discovery_flags && typeof args.boardState.discovery_flags === "object"
+    ? args.boardState.discovery_flags as Record<string, unknown>
+    : {};
+  const encounterTriggered = discoveryFlags.encounter_triggered === true;
+
+  if (args.boardType === "travel" && encounterTriggered) {
+    hookActions.push({
+      id: "hook-travel-encounter-combat",
+      label: "Engage Encounter",
+      intent: "combat_start",
+      boardTarget: "combat",
+      payload: {
+        trigger: "travel_discovery_flag",
+        encounter_triggered: true,
+      },
+      prompt: "I engage the revealed encounter immediately and narrate the committed outcome.",
+    });
+  }
+
+  if (args.boardType === "town") {
+    const postings = readJobPostings(args.boardState)
+      .filter((posting) => posting.status !== "completed")
+      .slice(0, 2);
+    for (const posting of postings) {
+      const actionKind = posting.status === "accepted" ? "complete" : "accept";
+      hookActions.push({
+        id: `job-${posting.id}-${actionKind}`,
+        label: posting.status === "accepted" ? `Resolve ${posting.title}` : `Take ${posting.title}`,
+        intent: "dm_prompt",
+        prompt: posting.summary
+          ? `I ${actionKind} this notice-board contract: ${posting.title}. ${posting.summary}`
+          : `I ${actionKind} this notice-board contract: ${posting.title}.`,
+        payload: {
+          board_feature: "notice_board",
+          job_posting_id: posting.id,
+          job_action: actionKind,
+          reward_hint: posting.rewardHint,
+          danger: posting.danger,
+        },
+      });
+    }
+  }
+
+  if (args.boardType === "dungeon") {
+    const roomSignals = readRoomStateSignals(args.boardState)
+      .filter((row) => row.status !== "secured" && row.status !== "looted")
+      .slice(0, 2);
+    for (const row of roomSignals) {
+      hookActions.push({
+        id: `room-followup-${row.roomId}`,
+        label: `Advance Room ${row.roomId}`,
+        intent: "dm_prompt",
+        prompt: `I push room ${row.roomId} forward from current state and resolve the next tactical beat.`,
+        payload: {
+          room_id: row.roomId,
+          action: "assess_room",
+          prior_status: row.status,
+          prior_action: row.lastAction,
+        },
+      });
+    }
+  }
+
   for (const hook of args.boardHooks) {
     if (hookActions.length >= 3) break;
     const normalizedTitle = hook.title.trim().toLowerCase().replace(/\s+/g, "_");
@@ -636,25 +758,28 @@ export default function MythicGameScreen() {
       boardType: board.board_type,
       boardHooks,
       townVendors,
+      boardState: boardStateRecord,
     });
-  }, [board, boardHooks, townVendors]);
+  }, [board, boardHooks, boardStateRecord, townVendors]);
 
   const transitionBoard = useCallback(async (
     toBoardType: "town" | "travel" | "dungeon",
     reason: string,
     payload?: Record<string, unknown>,
-  ) => {
-    if (!campaignId) return;
+  ): Promise<{ ok: boolean; data: Record<string, unknown> | null }> => {
+    if (!campaignId) return { ok: false, data: null };
     setTransitionError(null);
     try {
-      const { error } = await callEdgeFunction("mythic-board-transition", {
+      const { data, error } = await callEdgeFunction<Record<string, unknown>>("mythic-board-transition", {
         requireAuth: true,
         body: { campaignId, toBoardType, reason, payload: payload ?? {} },
       });
       if (error) throw error;
       await refetch();
+      return { ok: true, data: data ?? null };
     } catch (e) {
       setTransitionError(e instanceof Error ? e.message : "Failed to transition board");
+      return { ok: false, data: null };
     }
   }, [campaignId, refetch]);
 
@@ -881,6 +1006,8 @@ export default function MythicGameScreen() {
           intent: args.intent,
           state_changes: stateChanges,
           execution_error: executionError,
+          authoritative_mutation_applied: context.authoritative_mutation_applied === true,
+          combat_autostart_triggered: context.combat_autostart_triggered === true,
         });
       }
     } catch (error) {
@@ -1132,10 +1259,51 @@ export default function MythicGameScreen() {
               reason_code: reasonCode,
               reason_label: reasonLabel,
             };
-            await transitionBoard(target, reasonLabel, payload);
+            const transitionResult = await transitionBoard(target, reasonLabel, payload);
+            if (!transitionResult.ok) {
+              return {
+                stateChanges: [],
+                context: {
+                  board_target: target,
+                  transition_payload: payload,
+                  authoritative_mutation_applied: false,
+                },
+                error: "Board transition failed.",
+              };
+            }
+            const discoveryFlags = transitionResult.data && typeof transitionResult.data.discovery_flags === "object"
+              ? transitionResult.data.discovery_flags as Record<string, unknown>
+              : {};
+            let autoCombat = null as { combat_session_id: string } | null;
+            const shouldAutoStartCombat = discoveryFlags.encounter_triggered === true;
+            if (shouldAutoStartCombat) {
+              const started = await combat.startCombat(campaignId);
+              if (started.ok === false) {
+                setCombatStartError({ message: started.message, code: started.code, requestId: started.requestId });
+              } else {
+                autoCombat = { combat_session_id: started.combatSessionId };
+              }
+              screenLogger.info("mythic.action.combat_autostart", {
+                source,
+                intent: action.intent,
+                combat_autostart_triggered: true,
+                combat_started: Boolean(autoCombat),
+              });
+            }
             return {
-              stateChanges: [`Transitioned board to ${target}.`],
-              context: { board_target: target, transition_payload: payload },
+              stateChanges: [
+                `Transitioned board to ${target}.`,
+                ...(autoCombat ? ["Combat auto-started from encounter trigger."] : []),
+              ],
+              context: {
+                board_target: target,
+                transition_payload: payload,
+                transition_result: transitionResult.data,
+                discovery_flags: discoveryFlags,
+                authoritative_mutation_applied: true,
+                combat_autostart_triggered: shouldAutoStartCombat,
+                ...autoCombat,
+              },
             };
           }
           return {
@@ -1145,6 +1313,9 @@ export default function MythicGameScreen() {
         }
 
         if (action.intent === "dm_prompt") {
+          const payload = (action.payload && typeof action.payload === "object")
+            ? action.payload as Record<string, unknown>
+            : {};
           const companionId = typeof action.payload?.companion_id === "string"
             ? action.payload.companion_id
             : null;
@@ -1154,6 +1325,78 @@ export default function MythicGameScreen() {
           const companionHookType = typeof action.payload?.hook_type === "string"
             ? action.payload.hook_type
             : null;
+          const hasTravelProbe = typeof payload.travel_probe === "string" && payload.travel_probe.trim().length > 0;
+          const hasDungeonRoomAction = typeof payload.room_id === "string" && payload.room_id.trim().length > 0
+            && typeof payload.action === "string" && payload.action.trim().length > 0;
+          const isNoticeBoardPrompt = payload.board_feature === "notice_board"
+            || action.id.toLowerCase().includes("notice-board")
+            || action.id.toLowerCase().includes("job-");
+          if (
+            (board.board_type === "travel" && hasTravelProbe)
+            || (board.board_type === "dungeon" && hasDungeonRoomAction)
+            || (board.board_type === "town" && isNoticeBoardPrompt)
+          ) {
+            const target = board.board_type;
+            const reasonLabel = action.label?.trim() || "Board Interaction";
+            const reasonCode = normalizeReasonCode(action.id || reasonLabel);
+            const transitionPayload = {
+              ...payload,
+              from_chat: true,
+              reason_code: reasonCode,
+              reason_label: reasonLabel,
+            };
+            const transitionResult = await transitionBoard(target, reasonLabel, transitionPayload);
+            if (!transitionResult.ok) {
+              return {
+                stateChanges: [],
+                context: {
+                  board_target: target,
+                  authoritative_mutation_applied: false,
+                  transition_payload: transitionPayload,
+                },
+                error: "Board interaction failed to apply authoritative state mutation.",
+              };
+            }
+            const discoveryFlags = transitionResult.data && typeof transitionResult.data.discovery_flags === "object"
+              ? transitionResult.data.discovery_flags as Record<string, unknown>
+              : {};
+            let autoCombat = null as { combat_session_id: string } | null;
+            const shouldAutoStartCombat = discoveryFlags.encounter_triggered === true;
+            if (shouldAutoStartCombat) {
+              const started = await combat.startCombat(campaignId);
+              if (started.ok === false) {
+                setCombatStartError({ message: started.message, code: started.code, requestId: started.requestId });
+              } else {
+                autoCombat = { combat_session_id: started.combatSessionId };
+              }
+              screenLogger.info("mythic.action.combat_autostart", {
+                source,
+                intent: action.intent,
+                combat_autostart_triggered: true,
+                board_type: board.board_type,
+                combat_started: Boolean(autoCombat),
+              });
+            }
+            return {
+              stateChanges: [
+                `Applied ${board.board_type} board interaction.`,
+                ...(autoCombat ? ["Combat auto-started from encounter trigger."] : []),
+              ],
+              context: {
+                board_target: board.board_type,
+                companion_followup_resolved: Boolean(companionId),
+                companion_id: companionId,
+                companion_turn_index: companionTurnIndex,
+                companion_hook_type: companionHookType,
+                transition_payload: transitionPayload,
+                transition_result: transitionResult.data,
+                discovery_flags: discoveryFlags,
+                authoritative_mutation_applied: true,
+                combat_autostart_triggered: shouldAutoStartCombat,
+                ...autoCombat,
+              },
+            };
+          }
           return {
             stateChanges: ["Narration-only action requested from board interaction."],
             context: {
@@ -1162,6 +1405,7 @@ export default function MythicGameScreen() {
               companion_id: companionId,
               companion_turn_index: companionTurnIndex,
               companion_hook_type: companionHookType,
+              authoritative_mutation_applied: false,
             },
           };
         }

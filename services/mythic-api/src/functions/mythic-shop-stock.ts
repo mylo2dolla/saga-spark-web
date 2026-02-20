@@ -11,6 +11,7 @@ import type { FunctionContext, FunctionHandler } from "./types.js";
 const RequestSchema = z.object({
   campaignId: z.string().uuid(),
   vendorId: z.string().min(1).max(80),
+  refresh: z.boolean().optional().default(false),
 });
 
 type Rarity = "common" | "magical" | "unique" | "legendary" | "mythic" | "unhinged";
@@ -65,6 +66,134 @@ function pickClassRole(seed: number, label: string): string {
     { item: "controller", weight: 5 },
     { item: "support", weight: 4 },
   ]);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asNumericRecord(value: unknown): Record<string, number> {
+  const raw = asRecord(value);
+  if (!raw) return {};
+  const out: Record<string, number> = {};
+  for (const [key, entry] of Object.entries(raw)) {
+    const n = Number(entry);
+    if (!Number.isFinite(n)) continue;
+    out[key] = Math.trunc(n);
+  }
+  return out;
+}
+
+function modsFromAffixes(value: unknown): Record<string, number> {
+  if (!Array.isArray(value)) return {};
+  const out: Record<string, number> = {};
+  for (const row of value) {
+    const affix = asRecord(row);
+    if (!affix) continue;
+    const key = typeof affix.key === "string" ? affix.key.trim() : "";
+    const n = Number(affix.value);
+    if (!key || !Number.isFinite(n)) continue;
+    out[key] = (out[key] ?? 0) + Math.trunc(n);
+  }
+  return out;
+}
+
+function hasMeaningfulMods(mods: Record<string, number>): boolean {
+  return Object.values(mods).some((value) => Number.isFinite(value) && Math.abs(value) > 0);
+}
+
+function toRarity(value: unknown): Rarity {
+  if (
+    value === "common" ||
+    value === "magical" ||
+    value === "unique" ||
+    value === "legendary" ||
+    value === "mythic" ||
+    value === "unhinged"
+  ) {
+    return value;
+  }
+  return "common";
+}
+
+function sanitizeCachedStock(args: {
+  items: Array<Record<string, unknown>>;
+  seed: number;
+  level: number;
+  classRole: string;
+}): { items: Array<Record<string, unknown>>; repairsApplied: number } {
+  const out: Array<Record<string, unknown>> = [];
+  let repairsApplied = 0;
+  for (let idx = 0; idx < args.items.length; idx += 1) {
+    const entry = args.items[idx]!;
+    const item = asRecord(entry.item) ?? {};
+    const rarity = toRarity(item.rarity);
+    const rolled = rollStockItem({
+      seed: args.seed,
+      label: `shop:repair:${idx}`,
+      level: args.level,
+      rarity,
+      classRole: args.classRole,
+    });
+    const rolledItem = asRecord(rolled.item) ?? {};
+
+    let repaired = false;
+    const nextEntry: Record<string, unknown> = { ...entry };
+    const nextItem: Record<string, unknown> = {
+      ...rolledItem,
+      ...item,
+    };
+
+    let statMods = asNumericRecord(item.stat_mods);
+    if (!hasMeaningfulMods(statMods)) {
+      statMods = modsFromAffixes(item.affixes);
+      if (!hasMeaningfulMods(statMods)) {
+        statMods = asNumericRecord(rolledItem.stat_mods);
+      }
+      repaired = true;
+    }
+    if (!hasMeaningfulMods(statMods)) {
+      statMods = { offense: 1 };
+      repaired = true;
+    }
+    nextItem.stat_mods = statMods;
+
+    if (!Array.isArray(item.affixes) || item.affixes.length === 0) {
+      nextItem.affixes = Object.entries(statMods).map(([key, value]) => ({ key, value }));
+      repaired = true;
+    }
+
+    const name = typeof item.name === "string" && item.name.trim().length > 0 ? item.name.trim() : null;
+    if (!name) {
+      nextItem.name = rolledItem.name ?? "Vendor Item";
+      repaired = true;
+    }
+
+    const price = Number(entry.price);
+    if (!Number.isFinite(price) || price <= 0) {
+      nextEntry.price = rolled.price;
+      repaired = true;
+    }
+
+    if (!Number.isFinite(Number(item.required_level))) {
+      nextItem.required_level = rolledItem.required_level ?? 1;
+      repaired = true;
+    }
+    if (!Number.isFinite(Number(item.item_power))) {
+      nextItem.item_power = rolledItem.item_power ?? Math.max(1, Math.floor(args.level * 1.2));
+      repaired = true;
+    }
+    if (typeof item.bind_policy !== "string" || item.bind_policy.trim().length === 0) {
+      nextItem.bind_policy = rolledItem.bind_policy ?? "bind_on_equip";
+      repaired = true;
+    }
+
+    nextEntry.item = nextItem;
+    out.push(nextEntry);
+    if (repaired) repairsApplied += 1;
+  }
+  return { items: out, repairsApplied };
 }
 
 function rollStockItem(args: {
@@ -170,7 +299,7 @@ export const mythicShopStock: FunctionHandler = {
         });
       }
 
-      const { campaignId, vendorId } = parsed.data;
+      const { campaignId, vendorId, refresh } = parsed.data;
       const svc = createServiceClient();
 
       await assertCampaignAccess(svc, campaignId, user.userId);
@@ -202,12 +331,6 @@ export const mythicShopStock: FunctionHandler = {
 
       const vendorStockRoot = ((state as any).vendor_stock && typeof (state as any).vendor_stock === "object") ? ((state as any).vendor_stock as Record<string, unknown>) : {};
       const existingStock = vendorStockRoot[vendorId];
-      if (existingStock && typeof existingStock === "object") {
-        const items = (existingStock as Record<string, unknown>).items;
-        if (Array.isArray(items) && items.length > 0) {
-          return new Response(JSON.stringify({ ok: true, vendorId, vendorName, stock: existingStock, requestId }), { status: 200, headers: baseHeaders });
-        }
-      }
 
       const { data: topChar } = await svc
         .schema("mythic")
@@ -220,8 +343,81 @@ export const mythicShopStock: FunctionHandler = {
       const level = Math.max(1, Math.min(99, Number((topChar as { level?: unknown } | null)?.level ?? 1)));
 
       const boardSeed = Number((state as any).seed ?? 0) || 0;
-      const seed = (hashSeed(`shop-stock:${campaignId}:${vendorId}`) ^ boardSeed) >>> 0;
-      const classRole = pickClassRole(seed, "shop:role");
+      const baseSeed = (hashSeed(`shop-stock:${campaignId}:${vendorId}`) ^ boardSeed) >>> 0;
+      const classRole = pickClassRole(baseSeed, "shop:role");
+      if (!refresh && existingStock && typeof existingStock === "object") {
+        const existingRecord = existingStock as Record<string, unknown>;
+        const existingItems = Array.isArray(existingRecord.items)
+          ? existingRecord.items
+            .map((row) => asRecord(row))
+            .filter((row): row is Record<string, unknown> => Boolean(row))
+          : [];
+        if (existingItems.length > 0) {
+          const generation = Number.isFinite(Number(existingRecord.generation))
+            ? Math.max(0, Math.floor(Number(existingRecord.generation)))
+            : 0;
+          const cachedSeed = Number.isFinite(Number(existingRecord.seed))
+            ? Math.max(0, Math.floor(Number(existingRecord.seed)))
+            : ((baseSeed ^ hashSeed(`shop-generation:${generation}`)) >>> 0);
+          const { items: repairedItems, repairsApplied } = sanitizeCachedStock({
+            items: existingItems,
+            seed: cachedSeed,
+            level,
+            classRole,
+          });
+          if (repairsApplied > 0) {
+            const repairedStock = {
+              ...existingRecord,
+              items: repairedItems,
+              vendor_id: vendorId,
+              vendor_name: vendorName,
+              seed: cachedSeed,
+              generation,
+            };
+            const nextState: Record<string, unknown> = {
+              ...state,
+              vendor_stock: {
+                ...vendorStockRoot,
+                [vendorId]: repairedStock,
+              },
+            };
+            const { error: updErr } = await svc
+              .schema("mythic")
+              .from("boards")
+              .update({ state_json: nextState, updated_at: new Date().toISOString() })
+              .eq("id", (board as any).id);
+            if (updErr) throw updErr;
+            ctx.log.info("shop.stock.cached_repaired", {
+              request_id: requestId,
+              campaign_id: campaignId,
+              vendor_id: vendorId,
+              shop_stock_repaired: repairsApplied,
+              shop_stock_source: "cached_repaired",
+            });
+            return new Response(
+              JSON.stringify({ ok: true, vendorId, vendorName, source: "cached_repaired", repairs_applied: repairsApplied, stock: repairedStock, requestId }),
+              { status: 200, headers: baseHeaders },
+            );
+          }
+          ctx.log.info("shop.stock.cached", {
+            request_id: requestId,
+            campaign_id: campaignId,
+            vendor_id: vendorId,
+            shop_stock_source: "cached",
+          });
+          return new Response(
+            JSON.stringify({ ok: true, vendorId, vendorName, source: "cached", stock: existingRecord, requestId }),
+            { status: 200, headers: baseHeaders },
+          );
+        }
+      }
+
+      const previousGeneration = existingStock && typeof existingStock === "object" && Number.isFinite(Number((existingStock as Record<string, unknown>).generation))
+        ? Math.max(0, Math.floor(Number((existingStock as Record<string, unknown>).generation)))
+        : 0;
+      const generation = refresh ? previousGeneration + 1 : previousGeneration;
+      const seed = (baseSeed ^ hashSeed(`shop-generation:${generation}`)) >>> 0;
+      const stockSource = refresh ? "refreshed" : "generated";
 
       const count = 6;
       const items = Array.from({ length: count }).map((_, idx) => {
@@ -240,6 +436,7 @@ export const mythicShopStock: FunctionHandler = {
         vendor_name: vendorName,
         generated_at: new Date().toISOString(),
         seed,
+        generation,
         items,
       };
 
@@ -258,9 +455,15 @@ export const mythicShopStock: FunctionHandler = {
         .eq("id", (board as any).id);
       if (updErr) throw updErr;
 
-      ctx.log.info("shop.stock.generated", { request_id: requestId, campaign_id: campaignId, vendor_id: vendorId, items: count });
+      ctx.log.info("shop.stock.generated", {
+        request_id: requestId,
+        campaign_id: campaignId,
+        vendor_id: vendorId,
+        items: count,
+        shop_stock_source: stockSource,
+      });
 
-      return new Response(JSON.stringify({ ok: true, vendorId, vendorName, stock, requestId }), { status: 200, headers: baseHeaders });
+      return new Response(JSON.stringify({ ok: true, vendorId, vendorName, source: stockSource, stock, requestId }), { status: 200, headers: baseHeaders });
     } catch (error) {
       if (error instanceof AuthError) {
         const code = error.code === "auth_required" ? "auth_required" : "auth_invalid";
@@ -279,4 +482,3 @@ export const mythicShopStock: FunctionHandler = {
     }
   },
 };
-

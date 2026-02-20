@@ -13,6 +13,7 @@ import {
 import { sanitizeError } from "../shared/redact.js";
 import { computeTurnSeed } from "../shared/turn_seed.js";
 import { createTurnPrng } from "../shared/turn_prng.js";
+import { pickLootRarity, rarityBudget, rollLootItem } from "../shared/loot_roll.js";
 import {
   normalizeWorldPatches,
   parseDmNarratorOutput,
@@ -82,6 +83,7 @@ OUTPUT CONTRACT (STRICT)
   - scene_cache: object
   - companion_checkins: array of { companion_id, line, mood, urgency, hook_type }
   - action_chips: array of action chip objects (same shape as ui_actions)
+  - reward_hints: array of { key, detail?, weight? } for deterministic micro-reward scoring
 - "ui_actions" must contain 2-4 concrete intent suggestions for the current board state.
   Each action item must be an object with:
   - id (string), label (string), intent (enum), optional hint_key (string), optional prompt (string), optional payload (object).
@@ -722,6 +724,330 @@ function appendCompanionResolutionChip(args: {
       },
     },
   ];
+}
+
+type StoryRewardSummary = {
+  applied: boolean;
+  turn_id: string | null;
+  character_id: string | null;
+  xp_awarded: number;
+  loot_item_id: string | null;
+  loot_item_name: string | null;
+  reason: string | null;
+};
+
+function clampInt(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.floor(value)));
+}
+
+function stableIntFromText(raw: string): number {
+  let hash = 0;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash = (hash * 31 + raw.charCodeAt(i)) >>> 0;
+  }
+  return hash % 2_147_483_647;
+}
+
+function readRewardHints(value: unknown): Array<{ key: string; detail: string | null; weight: number }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return null;
+      const row = entry as Record<string, unknown>;
+      const key = typeof row.key === "string" ? row.key.trim() : "";
+      if (!key) return null;
+      const detail = typeof row.detail === "string" && row.detail.trim().length > 0 ? row.detail.trim() : null;
+      const weightRaw = Number(row.weight);
+      const weight = Number.isFinite(weightRaw) ? Math.max(0, Math.min(1, weightRaw)) : 0.5;
+      return { key, detail, weight };
+    })
+    .filter((entry): entry is { key: string; detail: string | null; weight: number } => Boolean(entry))
+    .slice(0, 8);
+}
+
+async function appendRewardDiscoveryEntry(args: {
+  svc: ReturnType<typeof createServiceClient>;
+  campaignId: string;
+  detail: Record<string, unknown>;
+}) {
+  const { data: activeBoard, error: boardErr } = await args.svc
+    .schema("mythic")
+    .from("boards")
+    .select("id,state_json")
+    .eq("campaign_id", args.campaignId)
+    .eq("status", "active")
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (boardErr || !activeBoard) return;
+  const state = asObject((activeBoard as Record<string, unknown>).state_json) ?? {};
+  const current = Array.isArray(state.discovery_log) ? state.discovery_log : [];
+  const nextDiscovery = [...current, args.detail].slice(-64);
+  const nextState = {
+    ...state,
+    discovery_log: nextDiscovery,
+  };
+  await args.svc
+    .schema("mythic")
+    .from("boards")
+    .update({ state_json: nextState, updated_at: new Date().toISOString() })
+    .eq("id", String((activeBoard as Record<string, unknown>).id));
+}
+
+async function applyDeterministicStoryReward(args: {
+  svc: ReturnType<typeof createServiceClient>;
+  campaignId: string;
+  playerId: string;
+  boardType: string;
+  turnId: string | null;
+  turnSeed: string;
+  actionContext: Record<string, unknown> | null;
+  boardState: Record<string, unknown> | null;
+  boardDelta: Record<string, unknown> | null;
+  requestId: string;
+  log: FunctionContext["log"];
+}): Promise<StoryRewardSummary> {
+  const summary: StoryRewardSummary = {
+    applied: false,
+    turn_id: args.turnId,
+    character_id: null,
+    xp_awarded: 0,
+    loot_item_id: null,
+    loot_item_name: null,
+    reason: null,
+  };
+  if (!args.turnId) {
+    summary.reason = "missing_turn_id";
+    return summary;
+  }
+  if (args.boardType === "combat") {
+    summary.reason = "combat_board";
+    return summary;
+  }
+
+  const intent = typeof args.actionContext?.intent === "string" ? args.actionContext.intent : "dm_prompt";
+  const excludedIntents = new Set(["refresh", "open_panel", "focus_target", "combat_start", "shop"]);
+  if (excludedIntents.has(intent)) {
+    summary.reason = `intent_excluded:${intent}`;
+    return summary;
+  }
+
+  const { data: character, error: charErr } = await args.svc
+    .schema("mythic")
+    .from("characters")
+    .select("id,level,class_json")
+    .eq("campaign_id", args.campaignId)
+    .eq("player_id", args.playerId)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (charErr || !character) {
+    summary.reason = "character_missing";
+    return summary;
+  }
+  const characterId = String((character as Record<string, unknown>).id);
+  summary.character_id = characterId;
+
+  const guardPayload = {
+    source: "story_reward",
+    request_id: args.requestId,
+    board_type: args.boardType,
+    intent,
+  };
+  const guard = await args.svc.rpc("turn_reward_guard", {
+    p_turn_id: args.turnId,
+    p_campaign_id: args.campaignId,
+    p_character_id: characterId,
+    p_reward_key: "story_reward_v1",
+    p_payload: guardPayload,
+  });
+  if (guard.error) {
+    summary.reason = "guard_failed";
+    args.log.warn("story_reward.guard_failed", {
+      request_id: args.requestId,
+      campaign_id: args.campaignId,
+      turn_id: args.turnId,
+      error: errMessage(guard.error, "guard failed"),
+    });
+    return summary;
+  }
+  const guardId = typeof guard.data === "string" ? guard.data : null;
+  if (!guardId) {
+    summary.reason = "duplicate_turn_reward";
+    return summary;
+  }
+
+  try {
+    const boardFlags = asObject(args.boardState?.discovery_flags) ?? {};
+    const rewardHints = readRewardHints(args.boardDelta?.reward_hints);
+    const actionPayload = asObject(args.actionContext?.payload) ?? {};
+    const actionSource = typeof args.actionContext?.source === "string" ? args.actionContext.source : null;
+
+    let xp = 18 + rewardHints.length * 9;
+    if (actionSource === "board_hotspot") xp += 6;
+    if (boardFlags.treasure_triggered === true) xp += 18;
+    if (boardFlags.dungeon_traces_found === true) xp += 12;
+    if (typeof actionPayload.job_action === "string" && actionPayload.job_action === "complete") xp += 24;
+    if (typeof actionPayload.action === "string" && String(actionPayload.action).includes("loot")) xp += 8;
+    xp = clampInt(xp, 12, 120);
+
+    const xpResult = await args.svc.rpc("mythic_apply_xp", {
+      character_id: characterId,
+      amount: xp,
+      reason: "story_progression",
+      metadata: {
+        turn_id: args.turnId,
+        turn_seed: args.turnSeed,
+        board_type: args.boardType,
+        intent,
+        reward_hints: rewardHints,
+      },
+    });
+    if (xpResult.error) throw xpResult.error;
+
+    const classJson = asObject((character as Record<string, unknown>).class_json) ?? {};
+    const role = typeof classJson.role === "string" ? classJson.role : "hybrid";
+    const weaponIdentity = asObject(classJson.weapon_identity);
+    const weaponHint = weaponIdentity && typeof weaponIdentity.family === "string" ? weaponIdentity.family : null;
+    const level = clampInt(Number((character as Record<string, unknown>).level ?? 1), 1, 99);
+
+    const lootChanceBase = 0.16 + rewardHints.reduce((acc, hint) => acc + (hint.weight * 0.08), 0);
+    const lootChance = Math.max(
+      0.08,
+      Math.min(
+        0.82,
+        lootChanceBase
+          + (boardFlags.treasure_triggered === true ? 0.25 : 0)
+          + (typeof actionPayload.job_action === "string" && actionPayload.job_action === "complete" ? 0.12 : 0),
+      ),
+    );
+    const lootRoll = (stableIntFromText(`${args.turnSeed}:story_reward:loot_roll`) % 1000) / 1000;
+    const grantLoot = lootRoll < lootChance;
+    let lootItemId: string | null = null;
+    let lootItemName: string | null = null;
+
+    if (grantLoot) {
+      const rewardSeed = stableIntFromText(`${args.turnSeed}:story_reward:item`);
+      const lootRarity = pickLootRarity(rewardSeed, `story:rarity:${args.turnId}`, level);
+      const itemPayload = rollLootItem({
+        seed: rewardSeed,
+        label: `story:${args.turnId}:item`,
+        level,
+        rarity: lootRarity,
+        classRole: role,
+        weaponFamilyHint: weaponHint,
+        campaignId: args.campaignId,
+        characterId,
+        source: "story_reward",
+        narrativeHook: "A prize earned from momentum, not luck.",
+      });
+      const { data: insertedItem, error: itemErr } = await args.svc
+        .schema("mythic")
+        .from("items")
+        .insert(itemPayload)
+        .select("id,name,rarity")
+        .maybeSingle();
+      if (itemErr) throw itemErr;
+      if (insertedItem) {
+        lootItemId = String((insertedItem as Record<string, unknown>).id);
+        lootItemName = typeof (insertedItem as Record<string, unknown>).name === "string"
+          ? String((insertedItem as Record<string, unknown>).name)
+          : null;
+        const { error: invErr } = await args.svc
+          .schema("mythic")
+          .from("inventory")
+          .insert({
+            character_id: characterId,
+            item_id: lootItemId,
+            container: "backpack",
+            quantity: 1,
+          });
+        if (invErr) throw invErr;
+
+        const { error: dropErr } = await args.svc
+          .schema("mythic")
+          .from("loot_drops")
+          .insert({
+            campaign_id: args.campaignId,
+            combat_session_id: null,
+            source: "story_reward",
+            rarity: (insertedItem as Record<string, unknown>).rarity ?? lootRarity,
+            budget_points: rarityBudget(lootRarity),
+            item_ids: [lootItemId],
+            payload: {
+              turn_id: args.turnId,
+              intent,
+              reward_hints: rewardHints,
+            },
+          });
+        if (dropErr) throw dropErr;
+      }
+    }
+
+    await args.svc.schema("mythic").from("dm_memory_events").insert({
+      campaign_id: args.campaignId,
+      player_id: args.playerId,
+      category: "story_reward",
+      severity: lootItemId ? 2 : 1,
+      payload: {
+        turn_id: args.turnId,
+        board_type: args.boardType,
+        intent,
+        xp_awarded: xp,
+        loot_item_id: lootItemId,
+        loot_item_name: lootItemName,
+      },
+    });
+
+    await appendRewardDiscoveryEntry({
+      svc: args.svc,
+      campaignId: args.campaignId,
+      detail: {
+        kind: "story_reward",
+        detail: lootItemName ? `+${xp} XP · ${lootItemName}` : `+${xp} XP`,
+        turn_id: args.turnId,
+        intent,
+      },
+    });
+
+    await args.svc
+      .schema("mythic")
+      .from("turn_reward_grants")
+      .update({
+        xp_amount: xp,
+        loot_item_id: lootItemId,
+        payload: {
+          ...guardPayload,
+          applied: true,
+          reward_hints: rewardHints,
+          loot_roll: lootRoll,
+          loot_chance: lootChance,
+          loot_item_name: lootItemName,
+        },
+      })
+      .eq("id", guardId);
+
+    return {
+      applied: true,
+      turn_id: args.turnId,
+      character_id: characterId,
+      xp_awarded: xp,
+      loot_item_id: lootItemId,
+      loot_item_name: lootItemName,
+      reason: "story_reward_applied",
+    };
+  } catch (error) {
+    await args.svc.schema("mythic").from("turn_reward_grants").delete().eq("id", guardId);
+    summary.reason = "reward_failed";
+    args.log.warn("story_reward.failed", {
+      request_id: args.requestId,
+      campaign_id: args.campaignId,
+      turn_id: args.turnId,
+      error: errMessage(error, "story reward failed"),
+    });
+    return summary;
+  }
 }
 
 function synthesizeRecoveryPayload(args: {
@@ -1532,6 +1858,34 @@ ${jsonOnlyContract()}
         );
       }
 
+      let committedBoardState = boardStateRecord;
+      const committedBoardId = typeof commitPayload.board_id === "string" ? commitPayload.board_id : null;
+      if (committedBoardId) {
+        const committedBoard = await svc
+          .schema("mythic")
+          .from("boards")
+          .select("state_json")
+          .eq("id", committedBoardId)
+          .maybeSingle();
+        if (!committedBoard.error && committedBoard.data) {
+          committedBoardState = asObject((committedBoard.data as Record<string, unknown>).state_json);
+        }
+      }
+
+      const rewardSummary = await applyDeterministicStoryReward({
+        svc,
+        campaignId,
+        playerId: user.userId,
+        boardType: boardType,
+        turnId: typeof commitPayload.turn_id === "string" ? commitPayload.turn_id : null,
+        turnSeed: turnSeed.toString(),
+        actionContext: actionContextRecord,
+        boardState: committedBoardState,
+        boardDelta: asObject(dmParsed.value.board_delta),
+        requestId: ctx.requestId,
+        log: ctx.log,
+      });
+
       dmResponseJson.meta = {
         ...(typeof dmResponseJson.meta === "object" && dmResponseJson.meta ? dmResponseJson.meta : {}),
         turn_id: commitPayload.turn_id ?? null,
@@ -1539,6 +1893,7 @@ ${jsonOnlyContract()}
         turn_seed: turnSeed.toString(),
         world_time: commitPayload.world_time ?? null,
         heat: commitPayload.heat ?? null,
+        reward_summary: rewardSummary,
       };
 
       ctx.log.info("dm.request.completed", {
@@ -1549,6 +1904,10 @@ ${jsonOnlyContract()}
         dm_validation_attempts: validationAttempts,
         dm_recovery_used: dmRecoveryUsed,
         dm_recovery_reason: dmRecoveryReason,
+        story_reward_applied: rewardSummary.applied,
+        story_reward_xp: rewardSummary.xp_awarded,
+        story_reward_loot_item_id: rewardSummary.loot_item_id,
+        story_reward_reason: rewardSummary.reason,
       });
 
       const outText = JSON.stringify(dmResponseJson);

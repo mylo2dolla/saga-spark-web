@@ -56,6 +56,8 @@ export function DungeonRoomScene(props: {
 }) {
   const title = typeof props.scene?.title === "string" ? props.scene.title : props.room.name;
   const mood = typeof props.scene?.mood === "string" ? props.scene.mood : "Cold stone, old dust, and pressure in the dark.";
+  const roomDanger = Number.isFinite(Number(props.room.danger)) ? Number(props.room.danger) : 0;
+  const roomThreatened = hasTag(props.room, "lair") || hasTag(props.room, "trap") || roomDanger >= 4;
 
   const hotspots = useMemo<Hotspot[]>(() => {
     const next: Hotspot[] = [];
@@ -191,33 +193,46 @@ export function DungeonRoomScene(props: {
       title: props.room.name,
       subtitle: "The room breathes through cracks you can’t see yet.",
       rect: { x: 14, y: 14, w: 68, h: 48 },
-      actions: [
-        {
-          id: `room-assess:${roomId}`,
-          label: "Assess The Room",
-          intent: "dm_prompt",
+        actions: [
+          {
+            id: `room-assess:${roomId}`,
+            label: "Assess The Room",
+            intent: "dm_prompt",
           prompt: `I assess ${props.room.name}, checking angles, exits, and any immediate threats.`,
           payload: { room_id: roomId, action: "assess_room" },
         },
-        {
-          id: `room-search:${roomId}`,
-          label: "Search For Loot",
-          intent: "dm_prompt",
-          prompt: `I search ${props.room.name} for hidden compartments, caches, and anything useful.`,
-          payload: { room_id: roomId, action: "search_room" },
-        },
-        {
-          id: `room-fallback:${roomId}`,
-          label: "Fall Back To Town",
-          intent: "town",
-          boardTarget: "town",
+          {
+            id: `room-search:${roomId}`,
+            label: "Search For Loot",
+            intent: "dm_prompt",
+            prompt: `I search ${props.room.name} for hidden compartments, caches, and anything useful.`,
+            payload: { room_id: roomId, action: "search_room" },
+          },
+          ...(roomThreatened
+            ? [{
+                id: `room-engage:${roomId}`,
+                label: "Engage Hostiles",
+                intent: "combat_start" as const,
+                boardTarget: "combat" as const,
+                payload: {
+                  trigger: "dungeon_room_threat",
+                  room_id: roomId,
+                  danger: roomDanger,
+                },
+              }]
+            : []),
+          {
+            id: `room-fallback:${roomId}`,
+            label: "Fall Back To Town",
+            intent: "town",
+            boardTarget: "town",
         },
       ],
       meta: { room_id: roomId, tags: props.room.tags, danger: props.room.danger ?? null, neighbors: props.neighbors.length },
     });
 
     return next;
-  }, [props.neighbors, props.room]);
+  }, [props.neighbors, props.room, roomDanger, roomThreatened]);
 
   const fogPulseAlpha = useMemo(() => {
     const base = hasTag(props.room, "lair") ? 0.26 : 0.18;

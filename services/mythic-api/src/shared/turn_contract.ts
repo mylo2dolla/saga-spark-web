@@ -85,6 +85,16 @@ export const CompanionCheckinSchema = z
 
 export type CompanionCheckin = z.infer<typeof CompanionCheckinSchema>;
 
+export const RewardHintSchema = z
+  .object({
+    key: z.string().trim().min(1).max(80),
+    detail: z.string().trim().min(1).max(240).optional(),
+    weight: z.number().min(0).max(1).optional(),
+  })
+  .strict();
+
+export type RewardHint = z.infer<typeof RewardHintSchema>;
+
 const BoardDeltaEntrySchema = z.union([
   z.string().trim().min(1).max(320),
   z.record(z.unknown()),
@@ -99,6 +109,7 @@ export const BoardDeltaSchema = z
     scene_cache: z.record(z.unknown()).optional(),
     companion_checkins: z.array(CompanionCheckinSchema).max(8).optional(),
     action_chips: z.array(UiActionSchema).max(8).optional(),
+    reward_hints: z.array(RewardHintSchema).max(8).optional(),
   })
   .strict();
 

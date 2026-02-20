@@ -192,6 +192,77 @@ export const mythicCombatStart: FunctionHandler = {
       throwIfError(startError, "start_combat_session");
       if (!combatId || typeof combatId !== "string") throw new Error("start_combat_session returned no id");
 
+      // Self-heal: ensure there is an active combat board bound to this combat session.
+      const { data: activeCombatBoard, error: activeCombatBoardError } = await svc
+        .schema("mythic")
+        .from("boards")
+        .select("id,combat_session_id,state_json")
+        .eq("campaign_id", campaignId)
+        .eq("status", "active")
+        .eq("board_type", "combat")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      throwIfError(activeCombatBoardError, "active combat board lookup");
+      if (!activeCombatBoard) {
+        const { error: archiveNonCombatError } = await svc
+          .schema("mythic")
+          .from("boards")
+          .update({ status: "archived", updated_at: new Date().toISOString() })
+          .eq("campaign_id", campaignId)
+          .eq("status", "active")
+          .neq("board_type", "combat");
+        throwIfError(archiveNonCombatError, "archive stale active boards");
+
+        const { error: insertCombatBoardError } = await svc
+          .schema("mythic")
+          .from("boards")
+          .insert({
+            campaign_id: campaignId,
+            board_type: "combat",
+            status: "active",
+            combat_session_id: combatId,
+            state_json: {
+              combat_session_id: combatId,
+              grid: { width: 12, height: 8 },
+              blocked_tiles: [],
+              seed,
+            },
+            ui_hints_json: {
+              camera: { x: 0, y: 0, zoom: 1 },
+              board_theme: "combat",
+            },
+          });
+        throwIfError(insertCombatBoardError, "insert combat board self-heal");
+        ctx.log.warn("combat_start.board_self_heal_created", {
+          request_id: requestId,
+          campaign_id: campaignId,
+          combat_session_id: combatId,
+        });
+      } else if (activeCombatBoard.combat_session_id !== combatId) {
+        const currentState = asObject(activeCombatBoard.state_json);
+        const { error: repairBoardError } = await svc
+          .schema("mythic")
+          .from("boards")
+          .update({
+            combat_session_id: combatId,
+            state_json: {
+              ...currentState,
+              combat_session_id: combatId,
+              seed,
+            },
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", activeCombatBoard.id);
+        throwIfError(repairBoardError, "repair combat board session binding");
+        ctx.log.warn("combat_start.board_self_heal_rebound", {
+          request_id: requestId,
+          campaign_id: campaignId,
+          combat_session_id: combatId,
+          board_id: activeCombatBoard.id,
+        });
+      }
+
       const lvl = character.level as number;
 
       const [hpMaxRes, powerMaxRes] = await Promise.all([

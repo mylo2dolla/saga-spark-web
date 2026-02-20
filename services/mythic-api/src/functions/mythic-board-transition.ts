@@ -43,6 +43,8 @@ interface ContinuityState {
   search_target: string | null;
   discovery_flags: Record<string, unknown>;
   companion_checkins: unknown[];
+  job_postings: unknown[];
+  room_state: Record<string, unknown>;
 }
 
 interface CompanionState {
@@ -284,6 +286,96 @@ function buildCompanionPresence(companions: CompanionState[]): Array<Record<stri
   }));
 }
 
+function normalizeJobPosting(entry: unknown, fallbackId: string): Record<string, unknown> | null {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const raw = entry as Record<string, unknown>;
+  const id = typeof raw.id === "string" && raw.id.trim().length > 0 ? raw.id.trim() : fallbackId;
+  const title = typeof raw.title === "string" && raw.title.trim().length > 0 ? raw.title.trim() : null;
+  const summary = typeof raw.summary === "string" && raw.summary.trim().length > 0 ? raw.summary.trim() : null;
+  if (!title && !summary) return null;
+  const statusRaw = typeof raw.status === "string" ? raw.status.trim().toLowerCase() : "open";
+  const status = statusRaw === "accepted" || statusRaw === "completed" ? statusRaw : "open";
+  return {
+    ...raw,
+    id,
+    title: title ?? summary,
+    summary,
+    status,
+  };
+}
+
+function buildTownJobPostings(args: {
+  seed: number;
+  factionNames: string[];
+  tension: number;
+  continuity: ContinuityState;
+  payload: Record<string, unknown>;
+}): Record<string, unknown>[] {
+  const factionA = args.factionNames[0] ?? "the watch";
+  const factionB = args.factionNames[1] ?? "the guild";
+  const tensionTier = args.tension >= 0.7 ? "high" : args.tension >= 0.4 ? "rising" : "low";
+  const base = [
+    {
+      id: `job-${rngInt(args.seed, "job:0:id", 100, 999)}`,
+      title: "Break The Supply Ring",
+      summary: `Hit ${factionB}'s courier chain before dusk and recover what they are hiding.`,
+      reward_hint: "xp_medium_loot_low",
+      danger: tensionTier,
+      status: "open",
+    },
+    {
+      id: `job-${rngInt(args.seed, "job:1:id", 100, 999)}`,
+      title: "Shadow The Scout Cell",
+      summary: `Track ${factionA} scouts from gate to safehouse without burning your cover.`,
+      reward_hint: "xp_medium_loot_medium",
+      danger: tensionTier === "high" ? "high" : "medium",
+      status: "open",
+    },
+    {
+      id: `job-${rngInt(args.seed, "job:2:id", 100, 999)}`,
+      title: "Recover A Lost Ledger",
+      summary: "Find the ledger, verify it, and decide who gets exposed in public.",
+      reward_hint: "xp_low_loot_medium",
+      danger: "medium",
+      status: "open",
+    },
+  ];
+  const continuityRows = args.continuity.job_postings
+    .map((entry, index) => normalizeJobPosting(entry, `job-prev-${index + 1}`))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+    .slice(-8);
+
+  const merged = new Map<string, Record<string, unknown>>();
+  for (const posting of base) {
+    merged.set(posting.id, posting);
+  }
+  for (const posting of continuityRows) {
+    merged.set(String(posting.id), { ...(merged.get(String(posting.id)) ?? {}), ...posting });
+  }
+
+  const payloadPostings = Array.isArray(args.payload.job_postings)
+    ? args.payload.job_postings
+      .map((entry, index) => normalizeJobPosting(entry, `job-payload-${index + 1}`))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+    : [];
+  for (const posting of payloadPostings) {
+    merged.set(String(posting.id), { ...(merged.get(String(posting.id)) ?? {}), ...posting });
+  }
+
+  const jobId = typeof args.payload.job_posting_id === "string" ? args.payload.job_posting_id.trim() : "";
+  const jobAction = typeof args.payload.job_action === "string" ? args.payload.job_action.trim().toLowerCase() : "";
+  if (jobId && merged.has(jobId)) {
+    const current = merged.get(jobId)!;
+    if (jobAction === "accept") {
+      merged.set(jobId, { ...current, status: "accepted", accepted_at: nowIso() });
+    } else if (jobAction === "complete") {
+      merged.set(jobId, { ...current, status: "completed", completed_at: nowIso() });
+    }
+  }
+
+  return Array.from(merged.values()).slice(0, 8);
+}
+
 function readContinuity(activeState: Record<string, unknown> | null): ContinuityState {
   const state = activeState ?? {};
   const consequenceFlags = asRecord(state.consequence_flags);
@@ -301,6 +393,8 @@ function readContinuity(activeState: Record<string, unknown> | null): Continuity
     search_target: typeof state.search_target === "string" ? state.search_target : null,
     discovery_flags: discoveryFlags,
     companion_checkins: asArray(state.companion_checkins),
+    job_postings: asArray(state.job_postings),
+    room_state: asRecord(state.room_state),
   };
 }
 
@@ -362,6 +456,18 @@ function buildTownState(args: {
       [...services],
     ]),
   }));
+  const jobPostings = buildTownJobPostings({
+    seed,
+    factionNames,
+    tension,
+    continuity,
+    payload,
+  });
+  const jobAction = typeof payload.job_action === "string" ? payload.job_action : null;
+  const jobPostingId = typeof payload.job_posting_id === "string" ? payload.job_posting_id : null;
+  const jobDiscovery = (jobAction && jobPostingId)
+    ? [{ kind: "job_posting", detail: `${jobAction}:${jobPostingId}` }]
+    : [];
 
   return {
     seed,
@@ -399,7 +505,9 @@ function buildTownState(args: {
       ...continuity.discovery_flags,
       ...asRecord(payload.discovery_flags),
     },
-    discovery_log: mergeDiscoveryLog(continuity.discovery_log, asArray(payload.discovery_log), 40),
+    discovery_log: mergeDiscoveryLog(continuity.discovery_log, [...jobDiscovery, ...asArray(payload.discovery_log)], 40),
+    job_postings: jobPostings,
+    room_state: continuity.room_state,
     companion_presence: buildCompanionPresence(companions),
     companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
   };
@@ -466,6 +574,19 @@ function buildTravelState(args: {
     { kind: "encounter", detail: encounterTriggered ? "triggered" : "none" },
     { kind: "treasure", detail: treasureTriggered ? "triggered" : "none" },
     { kind: "dungeon_traces", detail: dungeonTracesFound ? "found" : "none" },
+    {
+      kind: "probe_outcome",
+      detail: explicitProbe ? probeKind : "passive",
+      encounter_triggered: encounterTriggered,
+      treasure_triggered: treasureTriggered,
+      dungeon_traces_found: dungeonTracesFound,
+      encounter_type: encounterTriggered
+        ? rngPick(seed, "travel:encounter:type:log", ["bandits", "beast_pack", "rival_scouts", "ruin_wardens", "faction_ambush"])
+        : null,
+      treasure_type: treasureTriggered
+        ? rngPick(seed, "travel:treasure:type:log", ["cache", "supply_crate", "forgotten_relic", "coin_stash", "sealed_map"])
+        : null,
+    },
   ];
 
   return {
@@ -511,6 +632,8 @@ function buildTravelState(args: {
     discovery_log: mergeDiscoveryLog(continuity.discovery_log, [...discoveryLines, ...asArray(payload.discovery_log)], 48),
     transition_reason: reasonLabel,
     transition_reason_code: reasonCode,
+    job_postings: continuity.job_postings,
+    room_state: continuity.room_state,
     companion_presence: buildCompanionPresence(companions),
     companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
   };
@@ -544,6 +667,32 @@ function buildDungeonState(args: {
     from: rooms[i]!.id,
     to: room.id,
   }));
+  const roomState = {
+    ...continuity.room_state,
+  };
+  const roomId = typeof payload.room_id === "string" && payload.room_id.trim().length > 0 ? payload.room_id.trim() : null;
+  const roomAction = typeof payload.action === "string" && payload.action.trim().length > 0 ? payload.action.trim().toLowerCase() : null;
+  if (roomId) {
+    const current = asRecord(roomState[roomId]);
+    const visits = Number.isFinite(Number(current?.visits)) ? Math.max(0, Math.floor(Number(current?.visits))) : 0;
+    roomState[roomId] = {
+      ...(current ?? {}),
+      room_id: roomId,
+      last_action: roomAction ?? "assess_room",
+      visits: visits + 1,
+      status: roomAction === "loot_cache"
+        ? "looted"
+        : roomAction === "disarm_traps"
+          ? "secured"
+          : roomAction === "study_puzzle"
+            ? "investigating"
+            : current?.status ?? "active",
+      updated_at: nowIso(),
+    };
+  }
+  const roomDiscovery = roomId
+    ? [{ kind: "room_state", detail: `${roomId}:${roomAction ?? "assess_room"}` }]
+    : [];
 
   return {
     seed,
@@ -574,11 +723,13 @@ function buildDungeonState(args: {
     },
     discovery_log: mergeDiscoveryLog(
       continuity.discovery_log,
-      [{ kind: "board", detail: "dungeon" }, ...asArray(payload.discovery_log)],
+      [{ kind: "board", detail: "dungeon" }, ...roomDiscovery, ...asArray(payload.discovery_log)],
       48,
     ),
     travel_goal: "enter_dungeon",
     search_target: resolveSearchTarget(payload, continuity) ?? "dungeon",
+    job_postings: continuity.job_postings,
+    room_state: roomState,
     companion_presence: buildCompanionPresence(companions),
     companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
   };

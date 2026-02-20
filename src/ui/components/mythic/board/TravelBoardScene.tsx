@@ -356,6 +356,18 @@ export function TravelBoardScene(props: TravelBoardSceneProps) {
                     prompt: "I investigate these signs carefully, looking for threats, tracks, and opportunities.",
                     payload: { travel_probe: "investigate", encounter_seed: encounterHit.seed, tile_x: x, tile_y: y },
                   },
+                  {
+                    id: `travel-encounter-combat-${encounterHit.seed}`,
+                    label: "Engage Threat",
+                    intent: "combat_start",
+                    boardTarget: "combat",
+                    payload: {
+                      trigger: "travel_encounter",
+                      encounter_seed: encounterHit.seed,
+                      tile_x: x,
+                      tile_y: y,
+                    },
+                  },
                 ],
                 rect: { x: encounterHit.x - 4, y: encounterHit.y - 4, w: 8, h: 8 },
               });
@@ -375,6 +387,20 @@ export function TravelBoardScene(props: TravelBoardSceneProps) {
                     prompt: "I scout the route ahead, checking hazards, encounters, and hidden opportunities.",
                     payload: { travel_probe: "scout", tile_x: x, tile_y: y, interaction_source: "miss_click", board_type: "travel" },
                   },
+                  ...(encounterTriggered
+                    ? [{
+                        id: "travel-scout-combat",
+                        label: "Engage Encounter",
+                        intent: "combat_start" as const,
+                        boardTarget: "combat" as const,
+                        payload: {
+                          trigger: "travel_probe_encounter",
+                          travel_probe: "scout",
+                          tile_x: x,
+                          tile_y: y,
+                        },
+                      }]
+                    : []),
                 ],
               rect: { x: Math.max(0, x - 4), y: Math.max(0, y - 4), w: 8, h: 8 },
               interaction: { source: "miss_click", x, y },

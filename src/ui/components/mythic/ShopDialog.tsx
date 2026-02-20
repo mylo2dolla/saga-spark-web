@@ -16,7 +16,8 @@ type ShopStockPayload = {
   ok: boolean;
   vendorId: string;
   vendorName: string;
-  source?: "cached" | "generated" | "refreshed";
+  source?: "cached" | "cached_repaired" | "generated" | "refreshed";
+  repairs_applied?: number;
   stock: {
     vendor_id: string;
     vendor_name: string;
@@ -46,6 +47,30 @@ function labelRarity(r: unknown): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : "Common";
 }
 
+function readStatMods(item: Record<string, unknown>): Array<[string, number]> {
+  const raw = item.stat_mods;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const entries = Object.entries(raw)
+      .map(([key, value]) => [key, Number(value)] as const)
+      .filter(([, value]) => Number.isFinite(value));
+    if (entries.length > 0) {
+      return entries.map(([key, value]) => [key, Math.trunc(value)]);
+    }
+  }
+
+  const affixes = Array.isArray(item.affixes) ? item.affixes : [];
+  const fallback = new Map<string, number>();
+  for (const entry of affixes) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    const key = typeof row.key === "string" ? row.key.trim() : "";
+    const value = Number(row.value);
+    if (!key || !Number.isFinite(value)) continue;
+    fallback.set(key, (fallback.get(key) ?? 0) + Math.trunc(value));
+  }
+  return Array.from(fallback.entries());
+}
+
 export function ShopDialog(props: {
   open: boolean;
   campaignId: string;
@@ -61,6 +86,7 @@ export function ShopDialog(props: {
   const [error, setError] = useState<string | null>(null);
   const [stock, setStock] = useState<ShopStockPayload["stock"] | null>(null);
   const [stockSource, setStockSource] = useState<ShopStockPayload["source"] | null>(null);
+  const [repairsApplied, setRepairsApplied] = useState<number>(0);
 
   const displayName = useMemo(() => {
     if (props.vendorName && props.vendorName.trim().length > 0) return props.vendorName.trim();
@@ -88,6 +114,7 @@ export function ShopDialog(props: {
         if (!data?.ok) throw new Error("Failed to load shop stock");
         setStock(data.stock);
         setStockSource(data.source ?? null);
+        setRepairsApplied(Number.isFinite(Number(data.repairs_applied)) ? Math.max(0, Math.floor(Number(data.repairs_applied))) : 0);
       } catch (e) {
         const parsed = parseEdgeError(e, "Failed to load shop stock");
         setError(parsed.message);
@@ -157,6 +184,9 @@ export function ShopDialog(props: {
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded border border-border bg-background/20 px-3 py-2 text-[11px] text-muted-foreground">
             <div className="flex flex-wrap items-center gap-3">
               <span>Stock source: <span className="text-foreground">{stockSource ?? "unknown"}</span></span>
+              {stockSource === "cached_repaired" && repairsApplied > 0 ? (
+                <span>Repairs: <span className="text-foreground">{repairsApplied}</span></span>
+              ) : null}
               {stock?.generated_at ? (
                 <span>Generated: <span className="text-foreground">{new Date(stock.generated_at).toLocaleString()}</span></span>
               ) : null}
@@ -191,7 +221,7 @@ export function ShopDialog(props: {
               const slot = String((item as Record<string, unknown>).slot ?? "other");
               const requiredLevel = toInt((item as Record<string, unknown>).required_level, 1);
               const itemPower = toInt((item as Record<string, unknown>).item_power, 0);
-              const mods = (item as Record<string, unknown>).stat_mods as Record<string, unknown> | undefined;
+              const mods = readStatMods(item as Record<string, unknown>);
               const sold = Boolean(entry.sold);
               const price = toInt(entry.price, 0);
               const canAfford = props.coins >= price;
@@ -209,9 +239,9 @@ export function ShopDialog(props: {
                     </div>
                   </div>
 
-                  {mods && Object.keys(mods).length > 0 ? (
+                  {mods.length > 0 ? (
                     <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-muted-foreground">
-                      {Object.entries(mods)
+                      {mods
                         .filter(([k]) => !k.startsWith("_"))
                         .slice(0, 6)
                         .map(([k, v]) => (

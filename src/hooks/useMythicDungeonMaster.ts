@@ -4,6 +4,7 @@ import { callEdgeFunctionRaw } from "@/lib/edge";
 import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
 import { createLogger } from "@/lib/observability/logger";
+import type { MythicDmResponseMeta } from "@/types/mythic";
 
 type MessageRole = "user" | "assistant";
 
@@ -34,6 +35,7 @@ export interface MythicDmParsedPayload {
   ui_actions?: MythicUiAction[];
   scene?: Record<string, unknown>;
   effects?: Record<string, unknown>;
+  meta?: MythicDmResponseMeta;
 }
 
 export interface MythicDMMessage {
@@ -269,6 +271,7 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
           : [];
         const scene = asRecord(raw.scene) ?? undefined;
         const effects = asRecord(raw.effects) ?? undefined;
+        const meta = asRecord(raw.meta) as MythicDmResponseMeta | undefined;
         return {
           narration,
           ui_actions: actions.length > 0
@@ -276,6 +279,7 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
             : undefined,
           scene,
           effects,
+          meta,
         };
       }
     } catch {

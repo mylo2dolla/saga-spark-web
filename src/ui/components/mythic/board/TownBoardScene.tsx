@@ -140,6 +140,10 @@ export function TownBoardScene(props: TownBoardSceneProps) {
               label: "Read Postings",
               intent: "dm_prompt",
               prompt: "I read the notice board carefully, looking for contracts, bounties, and anything that smells like a trap.",
+              payload: {
+                board_feature: "notice_board",
+                job_action: "browse",
+              },
             },
             {
               id: "notice-board-quests",

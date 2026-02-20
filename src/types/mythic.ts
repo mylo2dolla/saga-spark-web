@@ -48,10 +48,36 @@ export interface MythicBoardState {
   companion_checkins?: MythicCompanionCheckin[];
   companion_presence?: Array<Record<string, unknown>>;
   action_chips?: MythicActionChip[];
+  job_postings?: Array<Record<string, unknown>>;
+  room_state?: Record<string, unknown>;
+  discovery_flags?: Record<string, unknown>;
   reason_code?: string;
   rumors?: unknown[];
   objectives?: unknown[];
   discovery_log?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface MythicStoryRewardSummary {
+  applied: boolean;
+  turn_id?: string | null;
+  character_id?: string | null;
+  xp_awarded?: number;
+  loot_item_id?: string | null;
+  loot_item_name?: string | null;
+  reason?: string | null;
+}
+
+export interface MythicDmResponseMeta {
+  turn_id?: string | null;
+  turn_index?: number | null;
+  turn_seed?: string | null;
+  world_time?: string | null;
+  heat?: number | null;
+  dm_validation_attempts?: number;
+  dm_recovery_used?: boolean;
+  dm_recovery_reason?: string | null;
+  reward_summary?: MythicStoryRewardSummary;
   [key: string]: unknown;
 }
 

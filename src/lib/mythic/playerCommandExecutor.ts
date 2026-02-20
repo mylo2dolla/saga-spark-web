@@ -21,7 +21,11 @@ interface ExecutorArgs {
   activeTurnCombatantId: string | null;
   playerCombatantId: string | null;
   focusedTargetCombatantId: string | null;
-  transitionBoard: (toBoardType: "town" | "travel" | "dungeon", reason: string, payload?: Record<string, unknown>) => Promise<void>;
+  transitionBoard: (
+    toBoardType: "town" | "travel" | "dungeon",
+    reason: string,
+    payload?: Record<string, unknown>,
+  ) => Promise<{ ok: boolean; data: Record<string, unknown> | null }>;
   startCombat: (
     campaignId: string,
   ) => Promise<{ ok: true; combatSessionId: string } | { ok: false; message: string; code: string | null; requestId: string | null }>;
@@ -142,7 +146,21 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
     }
 
     if (args.boardType !== target) {
-      await args.transitionBoard(target, `command:${command.intent}`, transitionPayload);
+      const transition = await args.transitionBoard(target, `command:${command.intent}`, transitionPayload);
+      if (!transition.ok) {
+        return {
+          handled: true,
+          error: `Failed to transition board to ${target}.`,
+          stateChanges: result.stateChanges,
+          narrationContext: {
+            ...narrativeBase(args),
+            state_changes: result.stateChanges,
+            board_target: target,
+            transition_payload: transitionPayload,
+            transition_failed: true,
+          },
+        };
+      }
       await Promise.all([args.refetchBoard(), args.refetchCombat()]);
       result.stateChanges.push(`Transitioned board to ${target}.`);
     } else {
@@ -206,9 +224,22 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
         },
         from_chat: true,
       };
-      await args.transitionBoard("travel", `command:${probe}`, {
+      const transition = await args.transitionBoard("travel", `command:${probe}`, {
         ...payload,
       });
+      if (!transition.ok) {
+        return {
+          handled: true,
+          error: `Travel probe failed (${probe}).`,
+          stateChanges: result.stateChanges,
+          narrationContext: {
+            ...narrativeBase(args),
+            state_changes: result.stateChanges,
+            probe,
+            transition_failed: true,
+          },
+        };
+      }
       await Promise.all([args.refetchBoard(), args.refetchCombat()]);
       result.stateChanges.push(`Travel probe rolled (${probe}).`);
     } else {
