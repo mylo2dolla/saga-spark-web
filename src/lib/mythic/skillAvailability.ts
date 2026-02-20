@@ -125,7 +125,7 @@ export function buildSkillAvailability(args: {
       const resourceCost = Number(skill.cost_json?.amount ?? 0);
       const hasEnoughPower = !playerCombatant || resourceCost <= 0 || Number(playerCombatant.power ?? 0) >= resourceCost;
       if (!reason && !hasEnoughPower) {
-        reason = `Needs ${Math.max(0, Math.floor(resourceCost))} power.`;
+        reason = `Needs ${Math.max(0, Math.floor(resourceCost))} MP.`;
       }
 
       return {

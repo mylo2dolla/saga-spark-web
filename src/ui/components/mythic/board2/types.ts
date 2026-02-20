@@ -118,15 +118,53 @@ export interface NarrativeCombatQuickCast {
   reason: string | null;
 }
 
+export interface NarrativeCombatCoreAction {
+  id: "basic_attack" | "basic_defend" | "basic_recover_mp";
+  label: string;
+  targeting: "single" | "self";
+  usableNow: boolean;
+  reason: string | null;
+}
+
+export interface NarrativeCombatHudEntity {
+  id: string;
+  name: string;
+  entityType: MythicCombatantRow["entity_type"];
+  hp: number;
+  hpMax: number;
+  mp: number;
+  mpMax: number;
+  armor: number;
+  isAlive: boolean;
+  isFocused: boolean;
+  isActiveTurn: boolean;
+}
+
+export interface NarrativeCombatDelta {
+  id: string;
+  eventType: "damage" | "healed" | "power_gain" | "power_drain" | "status_applied";
+  targetCombatantId: string | null;
+  amount: number | null;
+  turnIndex: number;
+  createdAt: string;
+  label: string;
+}
+
 export interface CombatSceneData {
   session: MythicCombatSessionRow | null;
   status: string;
   combatants: MythicCombatantRow[];
+  allies: MythicCombatantRow[];
+  enemies: MythicCombatantRow[];
   recentEvents: MythicActionEventRow[];
+  recentDeltas: NarrativeCombatDelta[];
   activeTurnCombatantId: string | null;
   playerCombatantId: string | null;
   focusedCombatantId: string | null;
   blockedTiles: Array<{ x: number; y: number }>;
+  playerHud: NarrativeCombatHudEntity | null;
+  focusedHud: NarrativeCombatHudEntity | null;
+  coreActions: NarrativeCombatCoreAction[];
   quickCast: NarrativeCombatQuickCast[];
 }
 

@@ -30,6 +30,8 @@ export function actionSignature(action: MythicUiAction): string {
   const payload = action.payload ?? {};
   const target = typeof payload.target_combatant_id === "string"
     ? payload.target_combatant_id
+    : typeof payload.quick_cast_skill_id === "string"
+      ? payload.quick_cast_skill_id
     : typeof payload.vendorId === "string"
       ? payload.vendorId
       : typeof payload.room_id === "string"
@@ -527,8 +529,25 @@ export function buildCombatantActions(args: {
   combatantId: string;
   combatantName: string;
   isFocused: boolean;
+  isEnemy: boolean;
 }): MythicUiAction[] {
   return [
+    ...(args.isEnemy
+      ? [
+          {
+            id: `combat-basic-attack-${slugToken(args.combatantId)}`,
+            label: `Attack ${args.combatantName}`,
+            intent: "dm_prompt" as const,
+            payload: {
+              quick_cast_skill_id: "basic_attack",
+              quick_cast_targeting: "single",
+              target_combatant_id: args.combatantId,
+              board_feature: "core_action",
+            },
+            prompt: `I execute a basic attack on ${args.combatantName} and narrate the committed combat result.`,
+          },
+        ]
+      : []),
     {
       id: `combat-focus-${slugToken(args.combatantId)}`,
       label: args.isFocused ? `Maintain focus: ${args.combatantName}` : `Focus ${args.combatantName}`,
@@ -546,6 +565,50 @@ export function buildCombatantActions(args: {
       payload: {
         board_feature: "combat_target",
         target_combatant_id: args.combatantId,
+      },
+    },
+  ];
+}
+
+export function buildCombatCoreActions(args: {
+  targetCombatantId?: string | null;
+  targetCombatantName?: string | null;
+}): MythicUiAction[] {
+  return [
+    {
+      id: `combat-core-attack-${slugToken(args.targetCombatantId ?? "auto")}`,
+      label: args.targetCombatantName ? `Attack ${args.targetCombatantName}` : "Attack",
+      intent: "dm_prompt",
+      prompt: args.targetCombatantName
+        ? `I execute a basic attack on ${args.targetCombatantName} and narrate committed impact.`
+        : "I execute a basic attack on the highest-pressure hostile and narrate committed impact.",
+      payload: {
+        quick_cast_skill_id: "basic_attack",
+        quick_cast_targeting: "single",
+        ...(args.targetCombatantId ? { target_combatant_id: args.targetCombatantId } : {}),
+        board_feature: "core_action",
+      },
+    },
+    {
+      id: "combat-core-defend",
+      label: "Defend",
+      intent: "dm_prompt",
+      prompt: "I take a defensive stance, fortify guard, and narrate the immediate mitigation effect.",
+      payload: {
+        quick_cast_skill_id: "basic_defend",
+        quick_cast_targeting: "self",
+        board_feature: "core_action",
+      },
+    },
+    {
+      id: "combat-core-recover-mp",
+      label: "Recover MP",
+      intent: "dm_prompt",
+      prompt: "I recover MP now and narrate the resource swing and tactical implication.",
+      payload: {
+        quick_cast_skill_id: "basic_recover_mp",
+        quick_cast_targeting: "self",
+        board_feature: "core_action",
       },
     },
   ];
@@ -600,16 +663,21 @@ export function buildDungeonFallbackActions(data: DungeonSceneData): MythicUiAct
 
 export function buildCombatFallbackActions(data: CombatSceneData): MythicUiAction[] {
   const active = data.combatants.find((entry) => entry.id === data.activeTurnCombatantId) ?? null;
-  const firstEnemy = data.combatants.find((entry) => entry.entity_type !== "player" && entry.is_alive) ?? null;
-  const combatantForFocus = active && active.entity_type !== "player" ? active : firstEnemy;
+  const firstEnemy = data.enemies.find((entry) => entry.is_alive) ?? null;
+  const combatantForFocus = active && !data.allies.some((ally) => ally.id === active.id) ? active : firstEnemy;
   const quickCast = data.quickCast.find((entry) => entry.usableNow) ?? null;
 
   return dedupeBoardActions([
+    ...buildCombatCoreActions({
+      targetCombatantId: combatantForFocus?.id ?? null,
+      targetCombatantName: combatantForFocus?.name ?? null,
+    }),
     ...(combatantForFocus
       ? buildCombatantActions({
           combatantId: combatantForFocus.id,
           combatantName: combatantForFocus.name,
           isFocused: data.focusedCombatantId === combatantForFocus.id,
+          isEnemy: true,
         })
       : []),
     ...(quickCast

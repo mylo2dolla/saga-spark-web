@@ -87,7 +87,7 @@ function defaultLabelForIntent(intent: MythicUiIntent): string {
   if (intent === "combat_start") return "Start Combat";
   if (intent === "combat_action") return "Combat Action";
   if (intent === "shop_action") return "Open Shop";
-  if (intent === "loadout_action") return "Open Loadout";
+  if (intent === "loadout_action") return "Open Panel";
   if (intent === "companion_action") return "Companion Follow-Up";
   if (intent === "open_panel") return "Open Panel";
   if (intent === "dm_prompt") return "Press The Scene";
@@ -171,7 +171,8 @@ function normalizeIntent(raw: string): MythicUiIntent | null {
   if (key === "combat_start" || key === "combat_begin" || key === "engage") return "combat_start";
   if (key === "combat_action" || key === "combat" || key === "attack" || key === "use_skill" || key === "focus_target") return "combat_action";
   if (key === "shop_action" || key === "shop" || key === "vendor") return "shop_action";
-  if (key === "loadout_action" || key === "open_panel" || key === "panel" || key === "open_menu" || key === "gear" || key === "loadout") return "loadout_action";
+  if (key === "open_panel" || key === "panel" || key === "open_menu") return "open_panel";
+  if (key === "loadout_action" || key === "gear" || key === "loadout") return "loadout_action";
   if (key === "companion_action" || key === "companion") return "companion_action";
   if (key === "dm_prompt" || key === "prompt" || key === "narrate") return "dm_prompt";
   if (key === "refresh") return "refresh";
@@ -221,20 +222,20 @@ function fallbackActionFromLine(line: string, index: number): MythicUiAction | n
   if (/(inventory|gear|equipment|loadout|skill|skills|progression|quest|character)/.test(lower)) {
     const panel: MythicUiAction["panel"] =
       /gear|equipment|inventory/.test(lower)
-        ? "gear"
+        ? "skills"
         : /loadout/.test(lower)
-          ? "loadouts"
+          ? "skills"
           : /skill/.test(lower)
             ? "skills"
             : /progression|level/.test(lower)
               ? "progression"
               : /quest/.test(lower)
                 ? "quests"
-                : "character";
+                : "status";
     return {
       id: `mythic-panel-${index + 1}`,
       label,
-      intent: "loadout_action",
+      intent: "open_panel",
       panel,
       prompt: clean,
     };

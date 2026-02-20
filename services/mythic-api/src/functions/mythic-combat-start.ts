@@ -31,6 +31,11 @@ function clampStat(n: number): number {
   return Math.min(100, Math.max(0, Math.floor(n)));
 }
 
+function scaleCompanionStat(base: number, seed: number, label: string, floor = 20): number {
+  const scaled = Math.floor(base * 0.78) + rngInt(seed, `${label}:jitter`, -6, 8);
+  return clampInt(scaled, floor, 100);
+}
+
 function toErrorMessage(error: unknown, context: string): string {
   if (!error) return `${context} failed`;
   if (error instanceof Error) return `${context}: ${error.message}`;
@@ -260,6 +265,73 @@ export const mythicCombatStart: FunctionHandler = {
         is_alive: true,
       };
 
+      const { data: companionRows, error: companionErr } = await svc
+        .schema("mythic")
+        .from("campaign_companions")
+        .select("companion_id,name,archetype,mood,urgency_bias")
+        .eq("campaign_id", campaignId)
+        .order("companion_id", { ascending: true })
+        .limit(2);
+      throwIfError(companionErr, "campaign companions lookup");
+
+      const companions = (companionRows ?? []).map((row: any, index: number) => {
+        const companionSeedKey = `companion:${row.companion_id ?? index + 1}`;
+        const companionLevel = clampInt(lvl - 1 + rngInt(seed, `${companionSeedKey}:lvl`, 0, 1), 1, 99);
+        const companionDefenseBoost = String(row.archetype ?? "").toLowerCase() === "tactician" ? 6 : 0;
+        const companionSupportBoost = String(row.archetype ?? "").toLowerCase() === "support" ? 8 : 0;
+        const companionMobilityBoost = String(row.archetype ?? "").toLowerCase() === "scout" ? 8 : 0;
+
+        const offense = scaleCompanionStat(derivedStats.offense, seed, `${companionSeedKey}:offense`);
+        const defense = scaleCompanionStat(derivedStats.defense + companionDefenseBoost, seed, `${companionSeedKey}:defense`);
+        const control = scaleCompanionStat(derivedStats.control, seed, `${companionSeedKey}:control`);
+        const support = scaleCompanionStat(derivedStats.support + companionSupportBoost, seed, `${companionSeedKey}:support`);
+        const mobility = scaleCompanionStat(derivedStats.mobility + companionMobilityBoost, seed, `${companionSeedKey}:mobility`);
+        const utility = scaleCompanionStat(derivedStats.utility, seed, `${companionSeedKey}:utility`);
+        const initiative = clampInt(mobility + rngInt(seed, `${companionSeedKey}:initiative`, 0, 20), 0, 999);
+        const companionHpMax = Math.max(36, Math.floor(hpMaxFinal * 0.72) + rngInt(seed, `${companionSeedKey}:hp`, -12, 14));
+        const companionPowerMax = Math.max(24, Math.floor(powerMaxFinal * 0.6) + rngInt(seed, `${companionSeedKey}:power`, -6, 8));
+
+        return {
+          combat_session_id: combatId,
+          entity_type: "summon",
+          player_id: user.userId,
+          character_id: null,
+          name: typeof row.name === "string" && row.name.trim().length > 0
+            ? row.name.trim()
+            : `Companion ${index + 1}`,
+          x: 1 + (index % 2),
+          y: 2 + Math.floor(index / 2),
+          lvl: companionLevel,
+          offense,
+          defense,
+          control,
+          support,
+          mobility,
+          utility,
+          weapon_power: Math.max(0, Math.floor(weaponPower * 0.65)),
+          armor_power: Math.max(0, Math.floor(armorPower * 0.65)),
+          hp: companionHpMax,
+          hp_max: companionHpMax,
+          power: companionPowerMax,
+          power_max: companionPowerMax,
+          armor: Math.max(0, Math.floor(armorBonus * 0.6)),
+          resist: Math.max(0, Math.floor(resistBonus * 0.6)),
+          statuses: [
+            {
+              id: "ally_companion",
+              expires_turn: null,
+              data: {
+                companion_id: row.companion_id ?? null,
+                mood: row.mood ?? null,
+                urgency_bias: row.urgency_bias ?? null,
+              },
+            },
+          ],
+          initiative,
+          is_alive: true,
+        };
+      });
+
       const enemyCount = rngInt(seed, `enemy_count:${combatId}`, 2, 4);
       const enemies = Array.from({ length: enemyCount }, (_, i) => {
         const base = 35 + rngInt(seed, `enemy:base:${i}`, 0, 25);
@@ -306,7 +378,7 @@ export const mythicCombatStart: FunctionHandler = {
       const { data: insertedCombatants, error: combatantsError } = await svc
         .schema("mythic")
         .from("combatants")
-        .insert([playerCombatant, ...enemies])
+        .insert([playerCombatant, ...companions, ...enemies])
         .select("id, name, initiative");
 
       throwIfError(combatantsError, "combatants insert");
@@ -387,6 +459,7 @@ export const mythicCombatStart: FunctionHandler = {
         combat_session_id: combatId,
         duration_ms: Date.now() - t0,
         enemy_count: enemyCount,
+        companion_count: companions.length,
       });
 
       return new Response(

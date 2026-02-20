@@ -235,20 +235,179 @@ function parseBlockedTiles(boardState: Record<string, unknown>): Array<{ x: numb
     .slice(0, 180);
 }
 
+function isAllyCombatant(entry: { player_id: string | null }): boolean {
+  return typeof entry.player_id === "string" && entry.player_id.trim().length > 0;
+}
+
+function toHudEntity(args: {
+  combatant: CombatSceneData["combatants"][number];
+  focusedId: string | null;
+  activeTurnId: string | null;
+}): CombatSceneData["playerHud"] {
+  return {
+    id: args.combatant.id,
+    name: args.combatant.name,
+    entityType: args.combatant.entity_type,
+    hp: Math.max(0, Math.floor(args.combatant.hp)),
+    hpMax: Math.max(1, Math.floor(args.combatant.hp_max)),
+    mp: Math.max(0, Math.floor(args.combatant.power)),
+    mpMax: Math.max(0, Math.floor(args.combatant.power_max)),
+    armor: Math.max(0, Math.floor(args.combatant.armor)),
+    isAlive: Boolean(args.combatant.is_alive),
+    isFocused: args.focusedId === args.combatant.id,
+    isActiveTurn: args.activeTurnId === args.combatant.id,
+  };
+}
+
+function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][number]) {
+  const payload = asRecord(event.payload);
+  const targetCombatantId = asString(payload.target_combatant_id) || null;
+  if (event.event_type === "damage") {
+    const amount = Math.max(0, Math.floor(asNumber(payload.damage_to_hp, asNumber(payload.final_damage, 0))));
+    return {
+      id: event.id,
+      eventType: "damage" as const,
+      targetCombatantId,
+      amount,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: amount > 0 ? `-${amount}` : "blocked",
+    };
+  }
+  if (event.event_type === "healed") {
+    const amount = Math.max(0, Math.floor(asNumber(payload.amount, 0)));
+    return {
+      id: event.id,
+      eventType: "healed" as const,
+      targetCombatantId,
+      amount,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: amount > 0 ? `+${amount}` : "+0",
+    };
+  }
+  if (event.event_type === "power_gain") {
+    const amount = Math.max(0, Math.floor(asNumber(payload.amount, 0)));
+    return {
+      id: event.id,
+      eventType: "power_gain" as const,
+      targetCombatantId,
+      amount,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: amount > 0 ? `+${amount} MP` : "+0 MP",
+    };
+  }
+  if (event.event_type === "power_drain") {
+    const amount = Math.max(0, Math.floor(asNumber(payload.amount, 0)));
+    return {
+      id: event.id,
+      eventType: "power_drain" as const,
+      targetCombatantId,
+      amount,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: amount > 0 ? `-${amount} MP` : "-0 MP",
+    };
+  }
+  if (event.event_type === "status_applied") {
+    const status = asRecord(payload.status);
+    const statusId = asString(status.id, "status");
+    return {
+      id: event.id,
+      eventType: "status_applied" as const,
+      targetCombatantId,
+      amount: null,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: statusId.replace(/_/g, " "),
+    };
+  }
+  return null;
+}
+
 function parseCombatData(args: {
   boardState: Record<string, unknown>;
   combatInput: NarrativeBoardAdapterInput["combat"];
 }): CombatSceneData {
+  const combatants = args.combatInput.combatants;
+  const allies = combatants.filter((entry) => isAllyCombatant(entry));
+  const enemies = combatants.filter((entry) => !isAllyCombatant(entry));
+  const playerCombatant = args.combatInput.playerCombatantId
+    ? combatants.find((entry) => entry.id === args.combatInput.playerCombatantId) ?? null
+    : null;
+  const focusedCombatant = args.combatInput.focusedCombatantId
+    ? combatants.find((entry) => entry.id === args.combatInput.focusedCombatantId) ?? null
+    : null;
+  const fallbackEnemy = enemies.find((entry) => entry.is_alive) ?? null;
+  const focusedHudCombatant = focusedCombatant ?? fallbackEnemy ?? null;
+  const isPlayersTurn = Boolean(
+    playerCombatant
+    && args.combatInput.activeTurnCombatantId
+    && playerCombatant.id === args.combatInput.activeTurnCombatantId,
+  );
+  const hasLiveEnemy = enemies.some((entry) => entry.is_alive);
+  const coreReason = !playerCombatant
+    ? "No player combatant."
+    : !playerCombatant.is_alive
+      ? "You are down."
+      : !isPlayersTurn
+        ? "Not your turn."
+        : null;
   const status = asString(args.combatInput.session?.status, "idle");
   return {
     session: args.combatInput.session,
     status,
-    combatants: args.combatInput.combatants,
-    recentEvents: args.combatInput.events.slice(-8),
+    combatants,
+    allies,
+    enemies,
+    recentEvents: args.combatInput.events.slice(-24),
+    recentDeltas: args.combatInput.events
+      .slice(-30)
+      .map((event) => parseCombatDelta(event))
+      .filter((event): event is NonNullable<ReturnType<typeof parseCombatDelta>> => Boolean(event))
+      .slice(-12),
     activeTurnCombatantId: args.combatInput.activeTurnCombatantId,
     playerCombatantId: args.combatInput.playerCombatantId,
     focusedCombatantId: args.combatInput.focusedCombatantId,
     blockedTiles: parseBlockedTiles(args.boardState),
+    playerHud: playerCombatant
+      ? toHudEntity({
+          combatant: playerCombatant,
+          focusedId: args.combatInput.focusedCombatantId,
+          activeTurnId: args.combatInput.activeTurnCombatantId,
+        })
+      : null,
+    focusedHud: focusedHudCombatant
+      ? toHudEntity({
+          combatant: focusedHudCombatant,
+          focusedId: args.combatInput.focusedCombatantId,
+          activeTurnId: args.combatInput.activeTurnCombatantId,
+        })
+      : null,
+    coreActions: [
+      {
+        id: "basic_attack",
+        label: "Attack",
+        targeting: "single",
+        usableNow: coreReason === null && hasLiveEnemy,
+        reason: coreReason ?? (hasLiveEnemy ? null : "No enemies alive."),
+      },
+      {
+        id: "basic_defend",
+        label: "Defend",
+        targeting: "self",
+        usableNow: coreReason === null,
+        reason: coreReason,
+      },
+      {
+        id: "basic_recover_mp",
+        label: "Recover MP",
+        targeting: "self",
+        usableNow: coreReason === null,
+        reason: coreReason,
+      },
+    ],
     quickCast: args.combatInput.quickCastAvailability.map((entry) => ({
       skillId: entry.skillId,
       name: entry.name,
@@ -719,6 +878,7 @@ function buildCombatScene(args: {
         combatantId: combatant.id,
         combatantName: combatant.name,
         isFocused: data.focusedCombatantId === combatant.id,
+        isEnemy: !isAllyCombatant(combatant),
       }),
       meta: {
         combatant_id: combatant.id,
@@ -728,15 +888,15 @@ function buildCombatScene(args: {
         statuses: combatant.statuses,
       },
       visual: {
-        tier: combatant.entity_type === "player" ? "secondary" : "primary",
-        icon: combatant.entity_type === "player" ? "ALY" : "ENY",
+        tier: isAllyCombatant(combatant) ? "secondary" : "primary",
+        icon: isAllyCombatant(combatant) ? "ALY" : "ENY",
         emphasis: combatant.id === data.activeTurnCombatantId ? "pulse" : "normal",
       },
     };
   });
 
-  const aliveEnemies = data.combatants.filter((entry) => entry.entity_type !== "player" && entry.is_alive).length;
-  const aliveAllies = data.combatants.filter((entry) => entry.entity_type === "player" && entry.is_alive).length;
+  const aliveEnemies = data.enemies.filter((entry) => entry.is_alive).length;
+  const aliveAllies = data.allies.filter((entry) => entry.is_alive).length;
   const readyQuickCasts = data.quickCast.filter((entry) => entry.usableNow).length;
 
   const metrics: NarrativeSceneMetric[] = [

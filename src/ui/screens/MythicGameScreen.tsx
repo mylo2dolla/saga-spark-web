@@ -120,7 +120,7 @@ function normalizeReasonCode(value: string): string {
 function mapPanelTab(panel: string | undefined): MythicPanelTab | null {
   if (!panel) return null;
   if (panel === "status" || panel === "character" || panel === "progression") return "status";
-  if (panel === "loadout" || panel === "loadouts" || panel === "gear") return "loadout";
+  if (panel === "loadout" || panel === "loadouts" || panel === "gear") return "skills";
   if (panel === "skills") return "skills";
   if (panel === "combat") return "combat";
   if (panel === "quests") return "quests";
@@ -320,7 +320,7 @@ function synthesizePromptFromAction(action: MythicUiAction, args: {
     return "I commit to combat now and want the exact mechanical outcome narrated.";
   }
   if (action.intent === "open_panel" || action.intent === "loadout_action") {
-    return `I open the ${action.panel ?? "character"} panel and cross-check it against current narrative state.`;
+    return `I open the ${action.panel ?? "skills"} panel and cross-check it against current narrative state.`;
   }
   if (action.intent === "focus_target" || action.intent === "combat_action") {
     const target = typeof action.payload?.target_combatant_id === "string"
@@ -1346,14 +1346,18 @@ export default function MythicGameScreen() {
               };
             }
             const targeting = typeof payload.quick_cast_targeting === "string" ? payload.quick_cast_targeting : "single";
+            const payloadTargetCombatantId = typeof payload.target_combatant_id === "string" ? payload.target_combatant_id : null;
+            const payloadTarget = payloadTargetCombatantId
+              ? combatState.combatants.find((entry) => entry.id === payloadTargetCombatantId && entry.is_alive) ?? null
+              : null;
             const focusedTarget = focusedCombatantId
               ? combatState.combatants.find((entry) => entry.id === focusedCombatantId && entry.is_alive) ?? null
               : null;
-            const activeEnemy = activeTurnCombatant && activeTurnCombatant.entity_type !== "player" && activeTurnCombatant.is_alive
+            const activeEnemy = activeTurnCombatant && activeTurnCombatant.player_id === null && activeTurnCombatant.is_alive
               ? activeTurnCombatant
               : null;
-            const fallbackEnemy = combatState.combatants.find((entry) => entry.entity_type !== "player" && entry.is_alive) ?? null;
-            const selected = focusedTarget ?? activeEnemy ?? fallbackEnemy;
+            const fallbackEnemy = combatState.combatants.find((entry) => entry.player_id === null && entry.is_alive) ?? null;
+            const selected = payloadTarget ?? focusedTarget ?? activeEnemy ?? fallbackEnemy;
             const target = targeting === "self"
               ? { kind: "self" } as const
               : targeting === "single"
@@ -1711,10 +1715,10 @@ export default function MythicGameScreen() {
     const focusedTarget = focusedCombatantId
       ? combatState.combatants.find((entry) => entry.id === focusedCombatantId && entry.is_alive) ?? null
       : null;
-    const activeEnemy = activeTurnCombatant && activeTurnCombatant.entity_type !== "player" && activeTurnCombatant.is_alive
+    const activeEnemy = activeTurnCombatant && activeTurnCombatant.player_id === null && activeTurnCombatant.is_alive
       ? activeTurnCombatant
       : null;
-    const fallbackEnemy = combatState.combatants.find((entry) => entry.entity_type !== "player" && entry.is_alive) ?? null;
+    const fallbackEnemy = combatState.combatants.find((entry) => entry.player_id === null && entry.is_alive) ?? null;
     const selected = focusedTarget ?? activeEnemy ?? fallbackEnemy;
     if (!selected) return null;
     if (targeting === "single") {
@@ -1850,7 +1854,6 @@ export default function MythicGameScreen() {
 
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant={activePanel === "status" ? "default" : "secondary"} onClick={() => setActivePanel("status")}>Status</Button>
-        <Button size="sm" variant={activePanel === "loadout" ? "default" : "secondary"} onClick={() => setActivePanel("loadout")}>Loadout</Button>
         <Button size="sm" variant={activePanel === "skills" ? "default" : "secondary"} onClick={() => setActivePanel("skills")}>Skills</Button>
         <Button size="sm" variant={activePanel === "combat" ? "default" : "secondary"} onClick={() => setActivePanel("combat")}>Combat</Button>
         <Button size="sm" variant={activePanel === "quests" ? "default" : "secondary"} onClick={() => setActivePanel("quests")}>Quests</Button>
@@ -1996,7 +1999,7 @@ export default function MythicGameScreen() {
               Equipped slots: {equippedActiveSkills.length}/{Math.max(1, loadoutSlotCap)}
             </div>
             {equippedActiveSkills.length === 0 ? (
-              <div className="text-xs text-muted-foreground">No equipped active abilities. Open Loadout to equip skills.</div>
+              <div className="text-xs text-muted-foreground">No equipped active abilities are currently active.</div>
             ) : (
               <div className="space-y-2">
                 {equippedActiveSkills.map((skill) => (
@@ -2331,7 +2334,7 @@ export default function MythicGameScreen() {
                     <div><span className="font-medium text-amber-100">Natural:</span> "go to town", "travel to dungeon", "start combat", "use fireball on raider"</div>
                     <div><span className="font-medium text-amber-100">Slash:</span> <code>/travel town|travel|dungeon</code></div>
                     <div><span className="font-medium text-amber-100">Slash:</span> <code>/combat start</code></div>
-                    <div><span className="font-medium text-amber-100">Slash:</span> <code>/skills</code> <code>/status</code> <code>/menu loadout</code></div>
+                    <div><span className="font-medium text-amber-100">Slash:</span> <code>/skills</code> <code>/status</code> <code>/menu skills</code></div>
                     <div><span className="font-medium text-amber-100">Slash:</span> <code>/skill &lt;name&gt; @&lt;target&gt;</code></div>
                   </div>
                 </div>

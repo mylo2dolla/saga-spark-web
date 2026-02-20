@@ -137,6 +137,16 @@ function titleCaseWords(input: string): string {
     .replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
+function remapLegacyLoadoutPanel(panelRaw: unknown): Exclude<NarratorUiAction["panel"], undefined> {
+  const panel = typeof panelRaw === "string" ? panelRaw.trim().toLowerCase() : "";
+  if (!panel) return "skills";
+  if (panel === "loadout" || panel === "loadouts" || panel === "gear" || panel === "character") return "skills";
+  if (panel === "skills" || panel === "progression" || panel === "quests" || panel === "commands" || panel === "settings") {
+    return panel;
+  }
+  return "skills";
+}
+
 function compactLabel(text: string, maxLen = 80): string {
   const clean = text.trim().replace(/\s+/g, " ");
   if (!clean) return "";
@@ -228,7 +238,7 @@ function repairActionLabel(args: {
   }
 
   if (args.intent === "loadout_action") {
-    const panel = typeof args.action.panel === "string" ? args.action.panel : "character";
+    const panel = remapLegacyLoadoutPanel(args.action.panel);
     return `Open ${titleCaseWords(panel)}`;
   }
   if (args.intent === "combat_action") {
@@ -287,7 +297,7 @@ function stableHintKey(args: {
 
 function synthesizeActionPrompt(action: NarratorUiAction, boardType: string): string {
   if (action.prompt && action.prompt.trim().length > 0) return action.prompt.trim();
-  if (action.intent === "loadout_action") return `I open the ${action.panel ?? "character"} panel and review the live state.`;
+  if (action.intent === "loadout_action") return `I open the ${remapLegacyLoadoutPanel(action.panel)} panel and review the live state.`;
   if (action.intent === "shop_action") return "I check current vendor stock and prices before buying.";
   if (action.intent === "combat_start") return "I engage hostiles and begin combat now.";
   if (action.intent === "quest_action") {
@@ -326,7 +336,7 @@ function sanitizeUiActions(args: {
         index,
       });
       const boardTarget = action.boardTarget ?? boardTargetAlias ?? boardTargetForIntent(intent);
-      const panel = intent === "loadout_action" ? (action.panel ?? "character") : action.panel;
+      const panel = intent === "loadout_action" ? remapLegacyLoadoutPanel(action.panel) : action.panel;
       const prompt = synthesizeActionPrompt({ ...action, intent, boardTarget, panel, label }, boardType);
       const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : undefined;
       return {

@@ -86,7 +86,77 @@ function skillMultFor(skillName: string, targetHpPct: number): number {
   if (skillName === "boss_cleave") return 1.35;
   if (skillName === "boss_mark") return 0.85;
   if (skillName === "boss_vuln") return 0.95;
+  if (skillName === "basic_attack") return 1.0;
   return 1.1;
+}
+
+function isAllyTeamMember(combatant: Combatant): boolean {
+  return typeof combatant.player_id === "string" && combatant.player_id.trim().length > 0;
+}
+
+function sameTeam(a: Combatant, b: Combatant): boolean {
+  return isAllyTeamMember(a) === isAllyTeamMember(b);
+}
+
+function hpPercentOf(c: Combatant): number {
+  if (Number(c.hp_max) <= 0) return 1;
+  return Math.max(0, Math.min(1, Number(c.hp) / Number(c.hp_max)));
+}
+
+function tileDistance(a: Combatant, b: Combatant): number {
+  return Math.abs(Number(a.x) - Number(b.x)) + Math.abs(Number(a.y) - Number(b.y));
+}
+
+function pickPrimaryTarget(args: {
+  actor: Combatant;
+  opponents: Combatant[];
+  seed: number;
+  label: string;
+}): Combatant {
+  const ranked = [...args.opponents].sort((left, right) => {
+    const hpDelta = hpPercentOf(left) - hpPercentOf(right);
+    if (Math.abs(hpDelta) > 0.001) return hpDelta;
+    const distDelta = tileDistance(args.actor, left) - tileDistance(args.actor, right);
+    if (distDelta !== 0) return distDelta;
+    return String(left.id).localeCompare(String(right.id));
+  });
+  const top = ranked.slice(0, Math.min(2, ranked.length));
+  if (top.length === 1) return top[0]!;
+  const pick = rngInt(args.seed, `${args.label}:target_pick`, 0, top.length - 1);
+  return top[pick]!;
+}
+
+function companionSkillPlan(args: {
+  actor: Combatant;
+  primaryTarget: Combatant;
+  opponents: Combatant[];
+}): { skillKey: string; skillName: string; targets: Combatant[] } {
+  const hpPct = hpPercentOf(args.actor);
+  const mpPct = Number(args.actor.power_max) > 0
+    ? Math.max(0, Math.min(1, Number(args.actor.power) / Number(args.actor.power_max)))
+    : 1;
+
+  if (hpPct <= 0.35) {
+    return {
+      skillKey: "basic_defend",
+      skillName: "Defend",
+      targets: [args.actor],
+    };
+  }
+
+  if (mpPct <= 0.3 && Number(args.actor.power_max) > 0) {
+    return {
+      skillKey: "basic_recover_mp",
+      skillName: "Recover MP",
+      targets: [args.actor],
+    };
+  }
+
+  return {
+    skillKey: "basic_attack",
+    skillName: "Attack",
+    targets: [args.primaryTarget],
+  };
 }
 
 export const mythicCombatTick: FunctionHandler = {
@@ -177,7 +247,7 @@ export const mythicCombatTick: FunctionHandler = {
         if (actorErr) throw actorErr;
         if (!actor) throw new Error("Turn actor not found");
 
-        if ((actor as any).entity_type === "player") {
+        if ((actor as any).entity_type === "player" && (actor as any).player_id === user.userId) {
           requiresPlayerAction = true;
           finalNextActor = (actor as any).id;
           break;
@@ -216,67 +286,84 @@ export const mythicCombatTick: FunctionHandler = {
           continue;
         }
 
-        const { data: opponentsRows, error: opponentsErr } = await svc
+        const { data: livingRows, error: livingErr } = await svc
           .schema("mythic")
           .from("combatants")
           .select("*")
           .eq("combat_session_id", combatSessionId)
-          .eq("entity_type", "player")
           .eq("is_alive", true);
-        if (opponentsErr) throw opponentsErr;
-        const opponents = (opponentsRows ?? []) as Combatant[];
+        if (livingErr) throw livingErr;
+        const living = (livingRows ?? []) as Combatant[];
+        const opponents = living.filter((entry) => !sameTeam(actorAfterTick, entry));
         if (!opponents.length) {
           ended = true;
           break;
         }
 
-        const target = opponents[rngInt(seed, `tick:${turnIndex}:target`, 0, opponents.length - 1)]!;
-        const targetHpPct = (target as any).hp_max > 0 ? Number((target as any).hp) / Number((target as any).hp_max) : 0;
+        const primaryTarget = pickPrimaryTarget({
+          actor: actorAfterTick,
+          opponents,
+          seed,
+          label: `tick:${turnIndex}`,
+        });
+        const targetHpPct = hpPercentOf(primaryTarget);
 
         let skillName = "Savage Swipe";
         let skillKey = "npc_swipe";
-        let targets: Combatant[] = [target];
+        let targets: Combatant[] = [primaryTarget];
 
-        const { data: bossRow } = await svc
-          .schema("mythic")
-          .from("boss_instances")
-          .select("id,current_phase,enrage_turn,boss_templates(phases_json)")
-          .eq("combat_session_id", combatSessionId)
-          .eq("combatant_id", (actorAfterTick as any).id)
-          .maybeSingle();
+        const isCompanionTurn = (actorAfterTick as any).entity_type === "summon" && isAllyTeamMember(actorAfterTick);
+        if (isCompanionTurn) {
+          const plan = companionSkillPlan({
+            actor: actorAfterTick,
+            primaryTarget,
+            opponents,
+          });
+          skillKey = plan.skillKey;
+          skillName = plan.skillName;
+          targets = plan.targets;
+        } else {
+          const { data: bossRow } = await svc
+            .schema("mythic")
+            .from("boss_instances")
+            .select("id,current_phase,enrage_turn,boss_templates(phases_json)")
+            .eq("combat_session_id", combatSessionId)
+            .eq("combatant_id", (actorAfterTick as any).id)
+            .maybeSingle();
 
-        if (bossRow) {
-          const phases = Array.isArray((bossRow as any)?.boss_templates?.phases_json)
-            ? ((bossRow as any).boss_templates.phases_json as Array<Record<string, unknown>>)
-            : [];
-          const hpPct = (actorAfterTick as any).hp_max > 0 ? Number((actorAfterTick as any).hp) / Number((actorAfterTick as any).hp_max) : 1;
-          let nextPhase = Number((bossRow as any).current_phase ?? 1);
-          for (const phaseRow of phases) {
-            const p = Number(phaseRow.phase ?? 1);
-            const threshold = Number(phaseRow.hp_below_pct ?? 1);
-            if (Number.isFinite(p) && Number.isFinite(threshold) && hpPct <= threshold) {
-              nextPhase = Math.max(nextPhase, p);
+          if (bossRow) {
+            const phases = Array.isArray((bossRow as any)?.boss_templates?.phases_json)
+              ? ((bossRow as any).boss_templates.phases_json as Array<Record<string, unknown>>)
+              : [];
+            const hpPct = (actorAfterTick as any).hp_max > 0 ? Number((actorAfterTick as any).hp) / Number((actorAfterTick as any).hp_max) : 1;
+            let nextPhase = Number((bossRow as any).current_phase ?? 1);
+            for (const phaseRow of phases) {
+              const p = Number(phaseRow.phase ?? 1);
+              const threshold = Number(phaseRow.hp_below_pct ?? 1);
+              if (Number.isFinite(p) && Number.isFinite(threshold) && hpPct <= threshold) {
+                nextPhase = Math.max(nextPhase, p);
+              }
             }
-          }
-          if (nextPhase !== Number((bossRow as any).current_phase ?? 1)) {
-            await svc.schema("mythic").from("boss_instances").update({
-              current_phase: nextPhase,
-              updated_at: new Date().toISOString(),
-            }).eq("id", (bossRow as any).id);
-            await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "phase_shift", {
-              combatant_id: (actorAfterTick as any).id,
-              phase: nextPhase,
-              hp_pct: hpPct,
-            });
-          }
+            if (nextPhase !== Number((bossRow as any).current_phase ?? 1)) {
+              await svc.schema("mythic").from("boss_instances").update({
+                current_phase: nextPhase,
+                updated_at: new Date().toISOString(),
+              }).eq("id", (bossRow as any).id);
+              await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "phase_shift", {
+                combatant_id: (actorAfterTick as any).id,
+                phase: nextPhase,
+                hp_pct: hpPct,
+              });
+            }
 
-          const phaseRow = phases.find((row) => Number(row.phase ?? 1) === nextPhase) ?? phases[0] ?? {};
-          const pool = Array.isArray((phaseRow as any).skill_pool) ? (phaseRow as any).skill_pool.map((x: unknown) => String(x)) : [];
-          skillKey = pickBossSkill(seed, `tick:${turnIndex}:boss`, pool);
-          skillName = skillKey.replaceAll("_", " ");
+            const phaseRow = phases.find((row) => Number(row.phase ?? 1) === nextPhase) ?? phases[0] ?? {};
+            const pool = Array.isArray((phaseRow as any).skill_pool) ? (phaseRow as any).skill_pool.map((x: unknown) => String(x)) : [];
+            skillKey = pickBossSkill(seed, `tick:${turnIndex}:boss`, pool);
+            skillName = skillKey.replaceAll("_", " ");
 
-          if (skillKey === "boss_cleave") {
-            targets = opponents;
+            if (skillKey === "boss_cleave") {
+              targets = opponents;
+            }
           }
         }
 
@@ -286,85 +373,147 @@ export const mythicCombatTick: FunctionHandler = {
           target_count: targets.length,
         });
 
-        for (const t of targets) {
-          const { data: dmgJson, error: dmgErr } = await svc.rpc("mythic_compute_damage", {
-            seed,
-            label: `tick:${combatSessionId}:turn:${turnIndex}:actor:${(actorAfterTick as any).id}:target:${(t as any).id}`,
-            lvl: (actorAfterTick as any).lvl,
-            offense: (actorAfterTick as any).offense,
-            mobility: (actorAfterTick as any).mobility,
-            utility: (actorAfterTick as any).utility,
-            weapon_power: (actorAfterTick as any).weapon_power ?? 0,
-            skill_mult: skillMultFor(skillKey, targetHpPct),
-            resist: Number((t as any).resist ?? 0) + Number((t as any).armor ?? 0),
-            spread_pct: 0.1,
+        if (skillKey === "basic_defend") {
+          const armorGain = Math.max(4, Math.floor(Number((actorAfterTick as any).defense) * 0.22) + Math.floor(Number((actorAfterTick as any).support) * 0.12));
+          const nextArmor = Math.max(0, Number((actorAfterTick as any).armor ?? 0) + armorGain);
+          const currentStatuses = Array.isArray((actorAfterTick as any).statuses) ? (actorAfterTick as any).statuses : [];
+          const nextStatuses = currentStatuses.filter((status: any) => {
+            const id = String(status?.id ?? "");
+            return id !== "barrier" && id !== "guard";
           });
-          if (dmgErr) throw dmgErr;
-          const roll = (dmgJson ?? {}) as Record<string, unknown>;
-          const rawDamage = Math.max(0, Number((roll as any).final_damage ?? 0));
-          const shield = Math.max(0, Number((t as any).armor ?? 0));
-          const absorbed = Math.min(shield, rawDamage);
-          const hpDelta = Math.max(0, rawDamage - absorbed);
-          const nextArmor = shield - absorbed;
-          const nextHp = Math.max(0, Number((t as any).hp ?? 0) - hpDelta);
-          const died = nextHp <= 0.0001;
-
-          const { error: updateTargetErr } = await svc
+          nextStatuses.push({
+            id: "barrier",
+            expires_turn: turnIndex + 1,
+            stacks: 1,
+            data: { amount: armorGain, source: skillKey },
+          });
+          nextStatuses.push({
+            id: "guard",
+            expires_turn: turnIndex + 1,
+            stacks: 1,
+            data: { amount: armorGain, source: skillKey },
+          });
+          const { error: updateErr } = await svc
             .schema("mythic")
             .from("combatants")
             .update({
               armor: nextArmor,
-              hp: nextHp,
-              is_alive: died ? false : (t as any).is_alive,
+              statuses: nextStatuses,
               updated_at: new Date().toISOString(),
             })
-            .eq("id", (t as any).id)
+            .eq("id", (actorAfterTick as any).id)
             .eq("combat_session_id", combatSessionId);
-          if (updateTargetErr) throw updateTargetErr;
+          if (updateErr) throw updateErr;
 
-          await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "damage", {
-            source_combatant_id: (actorAfterTick as any).id,
-            target_combatant_id: (t as any).id,
-            roll,
-            shield_absorbed: absorbed,
-            damage_to_hp: hpDelta,
-            hp_after: nextHp,
-            armor_after: nextArmor,
+          await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "status_applied", {
+            target_combatant_id: (actorAfterTick as any).id,
+            status: { id: "barrier", amount: armorGain, duration_turns: 1 },
           });
-
-          if (skillKey === "boss_mark" || skillKey === "boss_vuln") {
-            const { data: targetRow } = await svc
-              .schema("mythic")
-              .from("combatants")
-              .select("statuses")
-              .eq("id", (t as any).id)
-              .eq("combat_session_id", combatSessionId)
-              .maybeSingle();
-            const statusList = Array.isArray((targetRow as any)?.statuses) ? (targetRow as any).statuses : [];
-            const nextStatuses = statusList.filter((s: any) => String(s?.id ?? "") !== "vulnerable");
-            nextStatuses.push({
-              id: "vulnerable",
-              expires_turn: turnIndex + 2,
-              stacks: 1,
-              data: { source: skillKey },
+          await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "status_applied", {
+            target_combatant_id: (actorAfterTick as any).id,
+            status: { id: "guard", amount: armorGain, duration_turns: 1 },
+          });
+        } else if (skillKey === "basic_recover_mp") {
+          const recoverAmount = Math.max(6, Math.floor(Number((actorAfterTick as any).utility) * 0.18) + Math.floor(Number((actorAfterTick as any).support) * 0.12));
+          const beforePower = Math.max(0, Number((actorAfterTick as any).power ?? 0));
+          const nextPower = Math.min(Math.max(0, Number((actorAfterTick as any).power_max ?? 0)), beforePower + recoverAmount);
+          const gained = Math.max(0, nextPower - beforePower);
+          const { error: recoverErr } = await svc
+            .schema("mythic")
+            .from("combatants")
+            .update({
+              power: nextPower,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", (actorAfterTick as any).id)
+            .eq("combat_session_id", combatSessionId);
+          if (recoverErr) throw recoverErr;
+          await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "power_gain", {
+            target_combatant_id: (actorAfterTick as any).id,
+            amount: gained,
+            power_after: nextPower,
+          });
+        } else {
+          for (const t of targets) {
+            const { data: dmgJson, error: dmgErr } = await svc.rpc("mythic_compute_damage", {
+              seed,
+              label: `tick:${combatSessionId}:turn:${turnIndex}:actor:${(actorAfterTick as any).id}:target:${(t as any).id}`,
+              lvl: (actorAfterTick as any).lvl,
+              offense: (actorAfterTick as any).offense,
+              mobility: (actorAfterTick as any).mobility,
+              utility: (actorAfterTick as any).utility,
+              weapon_power: (actorAfterTick as any).weapon_power ?? 0,
+              skill_mult: skillMultFor(skillKey, targetHpPct),
+              resist: Number((t as any).resist ?? 0) + Number((t as any).armor ?? 0),
+              spread_pct: 0.1,
             });
-            await svc
+            if (dmgErr) throw dmgErr;
+            const roll = (dmgJson ?? {}) as Record<string, unknown>;
+            const rawDamage = Math.max(0, Number((roll as any).final_damage ?? 0));
+            const shield = Math.max(0, Number((t as any).armor ?? 0));
+            const absorbed = Math.min(shield, rawDamage);
+            const hpDelta = Math.max(0, rawDamage - absorbed);
+            const nextArmor = shield - absorbed;
+            const nextHp = Math.max(0, Number((t as any).hp ?? 0) - hpDelta);
+            const died = nextHp <= 0.0001;
+
+            const { error: updateTargetErr } = await svc
               .schema("mythic")
               .from("combatants")
-              .update({ statuses: nextStatuses, updated_at: new Date().toISOString() })
+              .update({
+                armor: nextArmor,
+                hp: nextHp,
+                is_alive: died ? false : (t as any).is_alive,
+                updated_at: new Date().toISOString(),
+              })
               .eq("id", (t as any).id)
               .eq("combat_session_id", combatSessionId);
-            await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "status_applied", {
-              target_combatant_id: (t as any).id,
-              status: { id: "vulnerable", duration_turns: 2 },
-            });
-          }
+            if (updateTargetErr) throw updateTargetErr;
 
-          if (died) {
-            await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "death", {
+            await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "damage", {
+              source_combatant_id: (actorAfterTick as any).id,
               target_combatant_id: (t as any).id,
-              by: { combatant_id: (actorAfterTick as any).id, skill_id: skillKey },
+              roll,
+              shield_absorbed: absorbed,
+              damage_to_hp: hpDelta,
+              hp_after: nextHp,
+              armor_after: nextArmor,
             });
+
+            if (skillKey === "boss_mark" || skillKey === "boss_vuln") {
+              const { data: targetRow } = await svc
+                .schema("mythic")
+                .from("combatants")
+                .select("statuses")
+                .eq("id", (t as any).id)
+                .eq("combat_session_id", combatSessionId)
+                .maybeSingle();
+              const statusList = Array.isArray((targetRow as any)?.statuses) ? (targetRow as any).statuses : [];
+              const nextStatuses = statusList.filter((s: any) => String(s?.id ?? "") !== "vulnerable");
+              nextStatuses.push({
+                id: "vulnerable",
+                expires_turn: turnIndex + 2,
+                stacks: 1,
+                data: { source: skillKey },
+              });
+              await svc
+                .schema("mythic")
+                .from("combatants")
+                .update({ statuses: nextStatuses, updated_at: new Date().toISOString() })
+                .eq("id", (t as any).id)
+                .eq("combat_session_id", combatSessionId);
+              await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "status_applied", {
+                target_combatant_id: (t as any).id,
+                status: { id: "vulnerable", duration_turns: 2 },
+              });
+            }
+
+            if (died) {
+              await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "death", {
+                target_combatant_id: (t as any).id,
+                by: { combatant_id: (actorAfterTick as any).id, skill_id: skillKey },
+              });
+            }
           }
         }
 

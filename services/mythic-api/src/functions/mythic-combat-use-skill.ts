@@ -22,11 +22,13 @@ const TargetSchema = z.union([
   z.object({ kind: z.literal("tile"), x: z.number().int(), y: z.number().int() }),
 ]);
 
+const BuiltInSkillSchema = z.enum(["basic_attack", "basic_defend", "basic_recover_mp"]);
+
 const RequestSchema = z.object({
   campaignId: z.string().uuid(),
   combatSessionId: z.string().uuid(),
   actorCombatantId: z.string().uuid(),
-  skillId: z.string().uuid(),
+  skillId: z.union([z.string().uuid(), BuiltInSkillSchema]),
   target: TargetSchema,
 });
 
@@ -69,6 +71,8 @@ type SkillRow = {
   cost_json: Record<string, unknown>;
   effects_json: Record<string, unknown>;
 };
+
+type BuiltInSkillId = z.infer<typeof BuiltInSkillSchema>;
 
 type TurnOrderRow = { combatant_id: string };
 
@@ -270,6 +274,95 @@ function effectiveAttackerStats(c: CombatantRow): { offense: number; mobility: n
   };
 }
 
+function allegianceKey(combatant: CombatantRow): string {
+  const playerId = typeof combatant.player_id === "string" ? combatant.player_id.trim() : "";
+  return playerId ? `party:${playerId}` : "enemy";
+}
+
+function areAllies(a: CombatantRow, b: CombatantRow): boolean {
+  return allegianceKey(a) === allegianceKey(b);
+}
+
+function asBuiltInSkillId(value: string): BuiltInSkillId | null {
+  return value === "basic_attack" || value === "basic_defend" || value === "basic_recover_mp"
+    ? value
+    : null;
+}
+
+function buildBuiltInSkill(args: {
+  id: BuiltInSkillId;
+  actor: CombatantRow;
+}): SkillRow {
+  if (args.id === "basic_attack") {
+    const rangeTiles = Math.max(1, Math.min(6, Math.floor(args.actor.mobility / 20) + 2));
+    return {
+      id: args.id,
+      character_id: args.actor.character_id ?? "builtin",
+      kind: "active",
+      targeting: "single",
+      targeting_json: {
+        shape: "single",
+        metric: "manhattan",
+        requires_los: true,
+        blocks_on_walls: true,
+        friendly_fire: false,
+      },
+      name: "Attack",
+      description: "Reliable strike that advances the turn.",
+      range_tiles: rangeTiles,
+      cooldown_turns: 0,
+      cost_json: { amount: 0, resource_id: "mp" },
+      effects_json: { damage: { skill_mult: 1.0 } },
+    };
+  }
+  if (args.id === "basic_defend") {
+    const guardAmount = Math.max(4, Math.floor(args.actor.defense * 0.22) + Math.floor(args.actor.support * 0.1));
+    return {
+      id: args.id,
+      character_id: args.actor.character_id ?? "builtin",
+      kind: "active",
+      targeting: "self",
+      targeting_json: {
+        shape: "self",
+        metric: "manhattan",
+        requires_los: false,
+        blocks_on_walls: false,
+        friendly_fire: true,
+      },
+      name: "Defend",
+      description: "Raise guard, gain armor, and reduce incoming pressure.",
+      range_tiles: 0,
+      cooldown_turns: 0,
+      cost_json: { amount: 0, resource_id: "mp" },
+      effects_json: {
+        barrier: { amount: guardAmount, duration_turns: 1 },
+      },
+    };
+  }
+  const recoverAmount = Math.max(6, Math.floor(args.actor.utility * 0.18) + Math.floor(args.actor.support * 0.12));
+  return {
+    id: args.id,
+    character_id: args.actor.character_id ?? "builtin",
+    kind: "active",
+    targeting: "self",
+    targeting_json: {
+      shape: "self",
+      metric: "manhattan",
+      requires_los: false,
+      blocks_on_walls: false,
+      friendly_fire: true,
+    },
+    name: "Recover MP",
+    description: "Rebuild MP reserves to enable stronger actions.",
+    range_tiles: 0,
+    cooldown_turns: 0,
+    cost_json: { amount: 0, resource_id: "mp" },
+    effects_json: {
+      power_gain: { amount: recoverAmount },
+    },
+  };
+}
+
 export const mythicCombatUseSkill: FunctionHandler = {
   name: "mythic-combat-use-skill",
   auth: "required",
@@ -349,23 +442,35 @@ export const mythicCombatUseSkill: FunctionHandler = {
         .maybeSingle<CombatantRow>();
       if (actorError) throw actorError;
       if (!actor || !(actor as any).is_alive) return new Response(JSON.stringify({ error: "Actor is not alive" }), { status: 409, headers: baseHeaders });
-      if ((actor as any).entity_type === "player" && (actor as any).player_id !== user.userId) {
+      if ((actor as any).player_id !== user.userId) {
         return new Response(JSON.stringify({ error: "Actor does not belong to you" }), { status: 403, headers: baseHeaders });
       }
 
-      const { data: skill, error: skillError } = await svc
-        .schema("mythic")
-        .from("skills")
-        .select("id, character_id, kind, targeting, targeting_json, name, description, range_tiles, cooldown_turns, cost_json, effects_json")
-        .eq("id", skillId)
-        .maybeSingle<SkillRow>();
-      if (skillError) throw skillError;
-      if (!skill) return new Response(JSON.stringify({ error: "Skill not found" }), { status: 404, headers: baseHeaders });
-      if ((skill as any).kind !== "active" && (skill as any).kind !== "ultimate") {
-        return new Response(JSON.stringify({ error: "Only active/ultimate skills can be used in combat" }), { status: 409, headers: baseHeaders });
+      const builtInSkillId = asBuiltInSkillId(skillId);
+      let skill: SkillRow | null = null;
+
+      if (builtInSkillId) {
+        skill = buildBuiltInSkill({ id: builtInSkillId, actor });
+      } else {
+        const { data: skillRow, error: skillError } = await svc
+          .schema("mythic")
+          .from("skills")
+          .select("id, character_id, kind, targeting, targeting_json, name, description, range_tiles, cooldown_turns, cost_json, effects_json")
+          .eq("id", skillId)
+          .maybeSingle<SkillRow>();
+        if (skillError) throw skillError;
+        if (!skillRow) return new Response(JSON.stringify({ error: "Skill not found" }), { status: 404, headers: baseHeaders });
+        if ((skillRow as any).kind !== "active" && (skillRow as any).kind !== "ultimate") {
+          return new Response(JSON.stringify({ error: "Only active/ultimate skills can be used in combat" }), { status: 409, headers: baseHeaders });
+        }
+        if (!(actor as any).character_id || (skillRow as any).character_id !== (actor as any).character_id) {
+          return new Response(JSON.stringify({ error: "Skill does not belong to actor" }), { status: 403, headers: baseHeaders });
+        }
+        skill = skillRow;
       }
-      if (!(actor as any).character_id || (skill as any).character_id !== (actor as any).character_id) {
-        return new Response(JSON.stringify({ error: "Skill does not belong to actor" }), { status: 403, headers: baseHeaders });
+
+      if (!skill) {
+        return new Response(JSON.stringify({ error: "Skill not found" }), { status: 404, headers: baseHeaders });
       }
 
       assertContentAllowed([
@@ -381,7 +486,7 @@ export const mythicCombatUseSkill: FunctionHandler = {
 
       const cost = getFlatCost(((skill as any).cost_json ?? {}) as Record<string, unknown>);
       if (cost.amount > 0 && Number((actor as any).power) < cost.amount) {
-        return new Response(JSON.stringify({ error: "Not enough power to cast" }), { status: 409, headers: baseHeaders });
+        return new Response(JSON.stringify({ error: "Not enough MP to cast" }), { status: 409, headers: baseHeaders });
       }
 
       const targetingJson = asObject((skill as any).targeting_json);
@@ -471,8 +576,7 @@ export const mythicCombatUseSkill: FunctionHandler = {
         combatants: (allCombatants ?? []) as CombatantRow[],
       }).filter((c) => (c as any).is_alive);
 
-      const isAlly = (a: CombatantRow, b: CombatantRow) => (a as any).entity_type === (b as any).entity_type && (a as any).player_id === (b as any).player_id;
-      const filteredTargets = friendlyFire ? allTargets : allTargets.filter((t) => !isAlly(actor, t) || (t as any).id === (actor as any).id);
+      const filteredTargets = friendlyFire ? allTargets : allTargets.filter((t) => !areAllies(actor, t) || (t as any).id === (actor as any).id);
 
       const nextPower = Math.max(0, Math.floor(Number((actor as any).power) - cost.amount));
       const updates: Partial<CombatantRow> = { power: nextPower as any };
@@ -594,6 +698,15 @@ export const mythicCombatUseSkill: FunctionHandler = {
           actor_id: (actor as any).id,
           turn_index: turnIndex,
         });
+        if (builtInSkillId === "basic_defend") {
+          nextStatuses = setSimpleStatus(nextStatuses, "guard", turnIndex + 1, { source_skill_id: (skill as any).id, amount });
+          events.push({
+            event_type: "status_applied",
+            payload: { target_combatant_id: (actor as any).id, status: { id: "guard", duration_turns: 1, amount } },
+            actor_id: (actor as any).id,
+            turn_index: turnIndex,
+          });
+        }
       }
 
       const selfDebuff = asObject((effects as any).self_debuff);
@@ -804,7 +917,7 @@ export const mythicCombatUseSkill: FunctionHandler = {
       if (Object.keys(heal).length > 0) {
         const targets = shape === "self"
           ? [actor]
-          : allTargets.filter((t) => isAlly(actor, t) || (t as any).id === (actor as any).id);
+          : allTargets.filter((t) => areAllies(actor, t) || (t as any).id === (actor as any).id);
         const amount = Math.max(0, Math.floor(Number((heal as any).amount ?? 0)));
         for (const target of targets) {
           const newHp = Math.min(Number((target as any).hp_max), Number((target as any).hp ?? 0) + amount);
@@ -828,7 +941,7 @@ export const mythicCombatUseSkill: FunctionHandler = {
       if (Object.keys(cleanse).length > 0) {
         const targets = shape === "self"
           ? [actor]
-          : allTargets.filter((t) => isAlly(actor, t) || (t as any).id === (actor as any).id);
+          : allTargets.filter((t) => areAllies(actor, t) || (t as any).id === (actor as any).id);
         const ids = Array.isArray((cleanse as any).ids)
           ? (cleanse as any).ids.map((x: unknown) => String(x))
           : null;
