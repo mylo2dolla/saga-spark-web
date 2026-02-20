@@ -81,3 +81,29 @@ This record captures closeout work after rewriting history to remove a leaked AP
 ### Residual issues observed
 - Long-running DM narration requests can still surface `Operation timed out after 95000ms` / cancellation in UI during chained actions.
 - No `turn_commit_failed` (`campaign_id is ambiguous`) regression observed in this stabilization pass.
+
+## Narrative Board Hardening Follow-Up (2026-02-20)
+
+### Fixes applied
+- Serialized narrated DM actions behind a shared queue in `src/ui/screens/MythicGameScreen.tsx` so chained actions do not overlap and cancel one another.
+- Routed campaign intro narration through the same queue and set `abortPrevious: false` for intro/action DM sends.
+- Increased narrated-action DM timeout to `110000ms` (`DM_ACTION_TIMEOUT_MS`) to reduce false timeout noise on slow generations.
+- Added cancellation-aware handling:
+  - `src/hooks/useMythicDungeonMaster.ts` now supports `suppressErrorToast` and suppresses expected abort/cancel toasts.
+  - `src/ui/screens/MythicGameScreen.tsx` now treats expected cancel/abort as non-fatal in narrated action handling.
+- Added DM/queue guard to enemy auto-turn trigger so it does not fire while DM narration is active or a narrated action is already queued.
+
+### Validation rerun
+- `npm run typecheck` -> pass.
+- `npm run build` -> pass.
+- `npx playwright test tests/game-smoke.spec.ts` -> pass.
+- `./scripts/smoke-vm-functions.sh` -> pass.
+- `npm run smoke:board` -> pass with request IDs:
+  - `mythic-create-campaign` `2d961f2b-33e7-46fb-8910-0f6a1f037b24`
+  - `mythic-create-character` `ea153722-8cff-494d-a743-61e0b8e5d12f`
+  - `mythic-dm-context` `2711c104-753b-4481-a244-100ca381c0a7`
+  - `mythic-dungeon-master` `b0d4abab-a597-4c48-b624-c716a94381e0`
+  - `mythic-runtime-transition:travel` `d1f5e5fc-2dd9-4a33-bc29-150f47507c71`
+  - `mythic-runtime-transition:dungeon` `95fdfc79-d5a7-45d4-b312-29aebc4e8e91`
+  - `mythic-runtime-transition:town` `cbcb80b0-63f0-4991-b8bb-381df56ec4c6`
+  - `mythic-combat-start` `4acb97dc-16cb-4adc-bc93-d66c71375ace`

@@ -148,6 +148,7 @@ function loadMythicSettings(): MythicRuntimeSettings {
 }
 
 const MAX_CONSOLE_ACTIONS = 6;
+const DM_ACTION_TIMEOUT_MS = 110_000;
 const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative update)$/i;
 const screenLogger = createLogger("mythic-game-screen");
 
@@ -284,6 +285,16 @@ function dedupeConsoleActions(candidates: MythicUiAction[]): MythicUiAction[] {
     if (unique.length >= MAX_CONSOLE_ACTIONS) break;
   }
   return unique;
+}
+
+function isExpectedDmCancellationError(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized.includes("operation cancelled")
+    || normalized.includes("request cancelled")
+    || normalized.includes("dm request cancelled")
+    || normalized.includes("aborterror")
+    || normalized.includes("aborted");
 }
 
 function synthesizePromptFromAction(action: MythicUiAction, args: {
@@ -515,8 +526,10 @@ export default function MythicGameScreen() {
   const [selectedLoadoutSkillIds, setSelectedLoadoutSkillIds] = useState<string[]>([]);
   const [isSavingLoadout, setIsSavingLoadout] = useState(false);
   const [isAdvancingTurn, setIsAdvancingTurn] = useState(false);
+  const [isNarratedActionBusy, setIsNarratedActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const autoTickKeyRef = useRef<string | null>(null);
+  const narratedActionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lastPlayerInputRef = useRef<string>("");
   const [activePanel, setActivePanel] = useState<MythicPanelTab>("status");
   const [utilityDrawerOpen, setUtilityDrawerOpen] = useState(false);
@@ -790,6 +803,20 @@ export default function MythicGameScreen() {
   const dmMessageCount = mythicDm.messages.length;
   const dmLoading = mythicDm.isLoading;
   const sendDmMessage = mythicDm.sendMessage;
+  const enqueueNarratedAction = useCallback((task: () => Promise<void>) => {
+    const queued = narratedActionQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        setIsNarratedActionBusy(true);
+        try {
+          await task();
+        } finally {
+          setIsNarratedActionBusy(false);
+        }
+      });
+    narratedActionQueueRef.current = queued.catch(() => undefined);
+    return queued;
+  }, []);
 
   const refreshAllState = useCallback(async () => {
     const started = Date.now();
@@ -842,38 +869,51 @@ export default function MythicGameScreen() {
       intro_version: introVersion,
     });
 
-    void sendDmMessage(
-      "Open this campaign with immediate direction tied to seeded hooks and current board truth.",
-      {
-        appendUser: false,
-        timeoutMs: 95_000,
-        idempotencyKey,
-        actionContext: {
-          source: "campaign_intro_auto",
-          intent: "dm_prompt",
-          action_id: "campaign_intro_opening_v1",
-          payload: {
-            intro_opening: true,
-            intro_version: introVersion,
+    void enqueueNarratedAction(async () => {
+      try {
+        await sendDmMessage(
+          "Open this campaign with immediate direction tied to seeded hooks and current board truth.",
+          {
+            appendUser: false,
+            timeoutMs: DM_ACTION_TIMEOUT_MS,
+            suppressErrorToast: true,
+            abortPrevious: false,
+            idempotencyKey,
+            actionContext: {
+              source: "campaign_intro_auto",
+              intent: "dm_prompt",
+              action_id: "campaign_intro_opening_v1",
+              payload: {
+                intro_opening: true,
+                intro_version: introVersion,
+              },
+            },
           },
-        },
-      },
-    ).then(async () => {
-      await refreshAllState();
-      screenLogger.info("mythic.intro.completed", {
-        campaign_id: campaignId,
-        user_id: user.id,
-        intro_version: introVersion,
-      });
-    }).catch((error) => {
-      const message = error instanceof Error ? error.message : "Failed to generate opening narration.";
-      setActionError(message);
-      screenLogger.warn("mythic.intro.failed", {
-        campaign_id: campaignId,
-        user_id: user.id,
-        intro_version: introVersion,
-        error: message,
-      });
+        );
+        await refreshAllState();
+        screenLogger.info("mythic.intro.completed", {
+          campaign_id: campaignId,
+          user_id: user.id,
+          intro_version: introVersion,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to generate opening narration.";
+        if (isExpectedDmCancellationError(message)) {
+          screenLogger.info("mythic.intro.cancelled", {
+            campaign_id: campaignId,
+            user_id: user.id,
+            intro_version: introVersion,
+          });
+          return;
+        }
+        setActionError(message);
+        screenLogger.warn("mythic.intro.failed", {
+          campaign_id: campaignId,
+          user_id: user.id,
+          intro_version: introVersion,
+          error: message,
+        });
+      }
     });
   }, [
     board,
@@ -881,6 +921,7 @@ export default function MythicGameScreen() {
     character,
     dmLoading,
     dmMessageCount,
+    enqueueNarratedAction,
     introPending,
     introVersion,
     logIntroSkip,
@@ -889,7 +930,7 @@ export default function MythicGameScreen() {
     user,
   ]);
 
-  const runNarratedAction = useCallback(async (args: {
+  const runNarratedAction = useCallback((args: {
     source: UnifiedActionSource;
     intent: string;
     actionId?: string;
@@ -903,97 +944,108 @@ export default function MythicGameScreen() {
       error?: string | null;
     }>;
   }) => {
-    if (!campaignId) return;
+    if (!campaignId) return Promise.resolve();
+    return enqueueNarratedAction(async () => {
+      const actionTraceId = crypto.randomUUID();
+      let prompt = args.prompt.trim();
+      let stateChanges: string[] = [];
+      let context: Record<string, unknown> = {};
+      let executionError: string | null = null;
+      screenLogger.info("mythic.action.start", {
+        action_trace_id: actionTraceId,
+        source: args.source,
+        intent: args.intent,
+        action_id: args.actionId ?? null,
+      });
 
-    const actionTraceId = crypto.randomUUID();
-    let prompt = args.prompt.trim();
-    let stateChanges: string[] = [];
-    let context: Record<string, unknown> = {};
-    let executionError: string | null = null;
-    screenLogger.info("mythic.action.start", {
-      action_trace_id: actionTraceId,
-      source: args.source,
-      intent: args.intent,
-      action_id: args.actionId ?? null,
-    });
-
-    try {
-      if (args.execute) {
-        const result = await args.execute();
-        if (Array.isArray(result.stateChanges)) stateChanges = result.stateChanges;
-        if (result.context && typeof result.context === "object") context = result.context;
-        if (typeof result.prompt === "string" && result.prompt.trim().length > 0) prompt = result.prompt.trim();
-        if (typeof result.error === "string" && result.error.trim().length > 0) executionError = result.error.trim();
-        screenLogger.info("mythic.action.execute_result", {
+      try {
+        if (args.execute) {
+          const result = await args.execute();
+          if (Array.isArray(result.stateChanges)) stateChanges = result.stateChanges;
+          if (result.context && typeof result.context === "object") context = result.context;
+          if (typeof result.prompt === "string" && result.prompt.trim().length > 0) prompt = result.prompt.trim();
+          if (typeof result.error === "string" && result.error.trim().length > 0) executionError = result.error.trim();
+          screenLogger.info("mythic.action.execute_result", {
+            action_trace_id: actionTraceId,
+            source: args.source,
+            intent: args.intent,
+            state_changes: stateChanges,
+            execution_error: executionError,
+            authoritative_mutation_applied: context.authoritative_mutation_applied === true,
+            combat_autostart_triggered: context.combat_autostart_triggered === true,
+          });
+        }
+      } catch (error) {
+        executionError = error instanceof Error ? error.message : "Action execution failed.";
+        screenLogger.warn("mythic.action.execute_failed", {
           action_trace_id: actionTraceId,
           source: args.source,
           intent: args.intent,
-          state_changes: stateChanges,
           execution_error: executionError,
-          authoritative_mutation_applied: context.authoritative_mutation_applied === true,
-          combat_autostart_triggered: context.combat_autostart_triggered === true,
         });
       }
-    } catch (error) {
-      executionError = error instanceof Error ? error.message : "Action execution failed.";
-      screenLogger.warn("mythic.action.execute_failed", {
-        action_trace_id: actionTraceId,
-        source: args.source,
-        intent: args.intent,
-        execution_error: executionError,
-      });
-    }
 
-    const narrationPrompt = prompt.length > 0
-      ? prompt
-      : executionError
-        ? `I attempted ${args.intent}, but it failed: ${executionError}. Narrate the failure against committed state.`
-        : `I execute ${args.intent}. Narrate outcome from committed Mythic state.`;
+      const narrationPrompt = prompt.length > 0
+        ? prompt
+        : executionError
+          ? `I attempted ${args.intent}, but it failed: ${executionError}. Narrate the failure against committed state.`
+          : `I execute ${args.intent}. Narrate outcome from committed Mythic state.`;
 
-    try {
-      await mythicDm.sendMessage(narrationPrompt, {
-        appendUser: args.appendUser !== false,
-        timeoutMs: 95_000,
-        idempotencyKey: `${campaignId}:${actionTraceId}`,
-        actionContext: {
-          action_trace_id: actionTraceId,
-          source: args.source,
-          intent: args.intent,
-          action_id: args.actionId ?? null,
-          payload: args.payload ?? null,
-          state_changes: stateChanges,
-          execution_error: executionError,
-          ...context,
-        },
-      });
-    } catch (error) {
-      const dmError = error instanceof Error ? error.message : "Failed to reach Mythic DM.";
-      setActionError(dmError);
-      toast.error(dmError);
-      screenLogger.error("mythic.action.dm_failed", error, {
-        action_trace_id: actionTraceId,
-        source: args.source,
-        intent: args.intent,
-      });
+      try {
+        await mythicDm.sendMessage(narrationPrompt, {
+          appendUser: args.appendUser !== false,
+          timeoutMs: DM_ACTION_TIMEOUT_MS,
+          suppressErrorToast: true,
+          abortPrevious: false,
+          idempotencyKey: `${campaignId}:${actionTraceId}`,
+          actionContext: {
+            action_trace_id: actionTraceId,
+            source: args.source,
+            intent: args.intent,
+            action_id: args.actionId ?? null,
+            payload: args.payload ?? null,
+            state_changes: stateChanges,
+            execution_error: executionError,
+            ...context,
+          },
+        });
+      } catch (error) {
+        const dmError = error instanceof Error ? error.message : "Failed to reach Mythic DM.";
+        if (isExpectedDmCancellationError(dmError)) {
+          screenLogger.info("mythic.action.dm_cancelled", {
+            action_trace_id: actionTraceId,
+            source: args.source,
+            intent: args.intent,
+          });
+        } else {
+          setActionError(dmError);
+          toast.error(dmError);
+          screenLogger.error("mythic.action.dm_failed", error, {
+            action_trace_id: actionTraceId,
+            source: args.source,
+            intent: args.intent,
+          });
+        }
+        await refreshAllState();
+        setDmContextRefreshSignal((prev) => prev + 1);
+        return;
+      }
+
       await refreshAllState();
       setDmContextRefreshSignal((prev) => prev + 1);
-      return;
-    }
-
-    await refreshAllState();
-    setDmContextRefreshSignal((prev) => prev + 1);
-    screenLogger.info("mythic.action.refresh_complete", {
-      action_trace_id: actionTraceId,
-      source: args.source,
-      intent: args.intent,
-      state_changes: stateChanges,
-      execution_error: executionError,
+      screenLogger.info("mythic.action.refresh_complete", {
+        action_trace_id: actionTraceId,
+        source: args.source,
+        intent: args.intent,
+        state_changes: stateChanges,
+        execution_error: executionError,
+      });
+      if (executionError) {
+        setActionError(executionError);
+        toast.error(executionError);
+      }
     });
-    if (executionError) {
-      setActionError(executionError);
-      toast.error(executionError);
-    }
-  }, [campaignId, mythicDm, refreshAllState]);
+  }, [campaignId, enqueueNarratedAction, mythicDm, refreshAllState]);
 
   const handlePlayerInput = useCallback(async (message: string) => {
     if (!campaignId) return;
@@ -1702,7 +1754,7 @@ export default function MythicGameScreen() {
   }, [campaignId, combat, refetch, refetchCombatState]);
 
   useEffect(() => {
-    if (!canAdvanceNpcTurn || isAdvancingTurn || combat.isTicking) return;
+    if (!canAdvanceNpcTurn || isAdvancingTurn || isNarratedActionBusy || dmLoading || combat.isTicking) return;
     const key = `${combatSessionId}:${combatState.session?.current_turn_index ?? -1}:${activeTurnCombatant?.id ?? "none"}`;
     if (autoTickKeyRef.current === key) return;
     autoTickKeyRef.current = key;
@@ -1714,7 +1766,9 @@ export default function MythicGameScreen() {
     combat.isTicking,
     combatSessionId,
     combatState.session?.current_turn_index,
+    dmLoading,
     isAdvancingTurn,
+    isNarratedActionBusy,
   ]);
 
   const isInitialScreenLoading = authLoading || boardInitialLoading || charInitialLoading || isBootstrapping;
@@ -2183,7 +2237,7 @@ export default function MythicGameScreen() {
         leftPage={(
           <NarrativePage
             messages={mythicDm.messages}
-            isDmLoading={mythicDm.isLoading}
+            isDmLoading={mythicDm.isLoading || isNarratedActionBusy}
             currentResponse={mythicDm.currentResponse}
             operationAttempt={mythicDm.operation?.attempt}
             operationNextRetryAt={mythicDm.operation?.next_retry_at}
@@ -2211,7 +2265,7 @@ export default function MythicGameScreen() {
           <NarrativeBoardPage
             scene={boardScene}
             baseActions={boardStripBaseActions}
-            isBusy={mythicDm.isLoading || combat.isActing || combat.isTicking}
+            isBusy={mythicDm.isLoading || isNarratedActionBusy || combat.isActing || combat.isTicking}
             transitionError={transitionError}
             combatStartError={combatStartError}
             dmContextError={mythicDmContext.error}
@@ -2298,6 +2352,7 @@ export default function MythicGameScreen() {
                 <div>mode: {board.board_type}</div>
                 <div>dm_messages: {mythicDm.messages.length}</div>
                 <div>dm_loading: {mythicDm.isLoading ? "true" : "false"}</div>
+                <div>narrated_action_busy: {isNarratedActionBusy ? "true" : "false"}</div>
                 <div>state_refreshing: {isStateRefreshing ? "true" : "false"}</div>
                 <div>board_id: {board.id}</div>
                 <div>combat_session_id: {combatSessionId ?? "none"}</div>

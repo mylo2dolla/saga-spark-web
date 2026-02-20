@@ -56,6 +56,8 @@ interface SendOptions {
   actionContext?: Record<string, unknown>;
   idempotencyKey?: string;
   timeoutMs?: number;
+  suppressErrorToast?: boolean;
+  abortPrevious?: boolean;
 }
 
 const MAX_HISTORY_MESSAGES = 16;
@@ -342,7 +344,10 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         append_user: shouldAppendUser,
       });
 
-      abortRef.current?.abort();
+      const shouldAbortPrevious = options?.abortPrevious !== false;
+      if (shouldAbortPrevious) {
+        abortRef.current?.abort();
+      }
       const controller = new AbortController();
       abortRef.current = controller;
       setIsLoading(true);
@@ -448,7 +453,12 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
           campaign_id: campaignId,
           action_trace_id: actionTraceId,
         });
-        toast.error(error instanceof Error ? error.message : "Failed to reach Mythic DM");
+        const message = error instanceof Error ? error.message : "Failed to reach Mythic DM";
+        const normalized = message.toLowerCase();
+        const isExpectedCancel = normalized.includes("cancelled") || normalized.includes("aborted");
+        if (!options?.suppressErrorToast && !isExpectedCancel) {
+          toast.error(message);
+        }
         setCurrentResponse("");
         throw error;
       } finally {
