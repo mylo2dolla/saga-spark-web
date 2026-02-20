@@ -7,11 +7,22 @@ import { rngInt, rngPick } from "../shared/mythic_rng.js";
 import { sanitizeError } from "../shared/redact.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
+const RuntimeModeSchema = z.enum(["town", "travel", "dungeon", "combat"]);
+
 const RequestSchema = z.object({
   campaignId: z.string().uuid(),
-  toBoardType: z.enum(["town", "travel", "dungeon", "combat"]),
+  toMode: RuntimeModeSchema.optional(),
+  toBoardType: RuntimeModeSchema.optional(),
   reason: z.string().max(200).optional(),
   payload: z.record(z.unknown()).optional(),
+}).superRefine((value, ctx) => {
+  if (!value.toMode && !value.toBoardType) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["toMode"],
+      message: "toMode is required",
+    });
+  }
 });
 
 type TemplateKey =
@@ -913,8 +924,8 @@ async function applyReputationDelta(args: {
   if (upsertError) throw upsertError;
 }
 
-export const mythicBoardTransition: FunctionHandler = {
-  name: "mythic-board-transition",
+export const mythicRuntimeTransition: FunctionHandler = {
+  name: "mythic-runtime-transition",
   auth: "required",
   async handle(req: Request, ctx: FunctionContext): Promise<Response> {
     const requestId = ctx.requestId;
@@ -931,7 +942,8 @@ export const mythicBoardTransition: FunctionHandler = {
         );
       }
 
-      const { campaignId, toBoardType } = parsed.data;
+      const { campaignId } = parsed.data;
+      const toMode = parsed.data.toMode ?? parsed.data.toBoardType!;
       const rawReason = parsed.data.reason ?? "manual";
       const payload = asRecord(parsed.data.payload ?? {});
       const reasonCode = typeof payload.reason_code === "string"
@@ -961,25 +973,25 @@ export const mythicBoardTransition: FunctionHandler = {
       }
       const worldTension = Number((tensionQuery.data as { tension?: unknown } | null)?.tension ?? 0.25);
 
-      const activeBoardsQuery = await svc
+      const activeRuntimeQuery = await svc
         .schema("mythic")
-        .from("boards")
-        .select("id, board_type, state_json, updated_at, combat_session_id")
+        .from("campaign_runtime")
+        .select("id, mode, state_json, updated_at, combat_session_id, status")
         .eq("campaign_id", campaignId)
         .eq("status", "active")
         .order("updated_at", { ascending: false });
-      if (activeBoardsQuery.error) throw activeBoardsQuery.error;
+      if (activeRuntimeQuery.error) throw activeRuntimeQuery.error;
 
-      const activeBoards = (activeBoardsQuery.data ?? []) as Array<Record<string, unknown>>;
-      if (activeBoards.length > 1) {
-        warnings.push("duplicate_active_boards_detected:archiving_old_rows");
+      const activeRuntimeRows = (activeRuntimeQuery.data ?? []) as Array<Record<string, unknown>>;
+      if (activeRuntimeRows.length > 1) {
+        warnings.push("duplicate_active_runtime_rows_detected:archiving_old_rows");
       }
-      const activeBoard = activeBoards[0] ?? null;
-      const activeState = activeBoard ? asRecord(activeBoard.state_json) : {};
-      const continuity = readContinuity(activeBoard ? activeState : null);
+      const activeRuntime = activeRuntimeRows[0] ?? null;
+      const activeState = activeRuntime ? asRecord(activeRuntime.state_json) : {};
+      const continuity = readContinuity(activeRuntime ? activeState : null);
       const transitionCountQuery = await svc
         .schema("mythic")
-        .from("board_transitions")
+        .from("runtime_events")
         .select("id", { count: "exact", head: true })
         .eq("campaign_id", campaignId);
       if (transitionCountQuery.error) throw transitionCountQuery.error;
@@ -990,15 +1002,15 @@ export const mythicBoardTransition: FunctionHandler = {
         ? Number(continuity.seed)
         : Number.isFinite(worldSeedBase)
           ? worldSeedBase
-          : hashSeed(`${campaignId}:${reasonCode}:${toBoardType}`);
-      const phaseOffset = toBoardType === "town" ? 1 : toBoardType === "travel" ? 2 : toBoardType === "dungeon" ? 3 : 4;
+          : hashSeed(`${campaignId}:${reasonCode}:${toMode}`);
+      const phaseOffset = toMode === "town" ? 1 : toMode === "travel" ? 2 : toMode === "dungeon" ? 3 : 4;
       const variationOffset = hashSeed(`${campaignId}:${reasonCode}:${transitionCount}`) % 5000;
       const seed = seedBase + phaseOffset + variationOffset;
 
       let nextState: Record<string, unknown>;
-      if (toBoardType === "town") {
+      if (toMode === "town") {
         nextState = buildTownState({ seed, world, continuity, factionNames, tension: worldTension, companions, payload });
-      } else if (toBoardType === "travel") {
+      } else if (toMode === "travel") {
         nextState = buildTravelState({
           seed,
           world,
@@ -1010,7 +1022,7 @@ export const mythicBoardTransition: FunctionHandler = {
           companions,
           payload,
         });
-      } else if (toBoardType === "dungeon") {
+      } else if (toMode === "dungeon") {
         nextState = buildDungeonState({ seed, world, continuity, factionNames, tension: worldTension, companions, payload });
       } else {
         nextState = {
@@ -1024,34 +1036,55 @@ export const mythicBoardTransition: FunctionHandler = {
         };
       }
 
-      const archivedBoardIds = activeBoards
+      const archivedRuntimeIds = activeRuntimeRows
+        .slice(1)
         .map((row) => (typeof row.id === "string" ? row.id : null))
         .filter((id): id is string => Boolean(id));
-      if (archivedBoardIds.length > 0) {
+      if (archivedRuntimeIds.length > 0) {
         const { error: archiveError } = await svc
           .schema("mythic")
-          .from("boards")
+          .from("campaign_runtime")
           .update({ status: "archived", updated_at: nowIso() })
-          .in("id", archivedBoardIds);
+          .in("id", archivedRuntimeIds);
         if (archiveError) throw archiveError;
       }
 
-      const insertedBoard = await svc
-        .schema("mythic")
-        .from("boards")
-        .insert({
-          campaign_id: campaignId,
-          board_type: toBoardType,
-          status: "active",
-          state_json: nextState,
-          ui_hints_json: {
-            camera: { x: 0, y: 0, zoom: 1.0 },
-            board_theme: world.template_key,
-          },
-        })
-        .select("id")
-        .maybeSingle();
-      if (insertedBoard.error) throw insertedBoard.error;
+      let runtimeId: string;
+      if (activeRuntime && typeof activeRuntime.id === "string") {
+        const { error: runtimeUpdateError } = await svc
+          .schema("mythic")
+          .from("campaign_runtime")
+          .update({
+            mode: toMode,
+            state_json: nextState,
+            ui_hints_json: {
+              camera: { x: 0, y: 0, zoom: 1.0 },
+              runtime_theme: world.template_key,
+            },
+            updated_at: nowIso(),
+          })
+          .eq("id", activeRuntime.id);
+        if (runtimeUpdateError) throw runtimeUpdateError;
+        runtimeId = activeRuntime.id;
+      } else {
+        const runtimeInsert = await svc
+          .schema("mythic")
+          .from("campaign_runtime")
+          .insert({
+            campaign_id: campaignId,
+            mode: toMode,
+            status: "active",
+            state_json: nextState,
+            ui_hints_json: {
+              camera: { x: 0, y: 0, zoom: 1.0 },
+              runtime_theme: world.template_key,
+            },
+          })
+          .select("id")
+          .single();
+        if (runtimeInsert.error) throw runtimeInsert.error;
+        runtimeId = String((runtimeInsert.data as { id: string }).id);
+      }
 
       const transitionPayload = {
         ...payload,
@@ -1064,13 +1097,13 @@ export const mythicBoardTransition: FunctionHandler = {
 
       const { error: transitionError } = await svc
         .schema("mythic")
-        .from("board_transitions")
+        .from("runtime_events")
         .insert({
           campaign_id: campaignId,
-          from_board_type: typeof (activeBoard as any)?.board_type === "string" ? (activeBoard as any).board_type : null,
-          to_board_type: toBoardType,
+          runtime_id: runtimeId,
+          from_mode: typeof activeRuntime?.mode === "string" ? activeRuntime.mode : null,
+          to_mode: toMode,
           reason,
-          animation: "page_turn",
           payload_json: transitionPayload,
         });
       if (transitionError) throw transitionError;
@@ -1080,15 +1113,15 @@ export const mythicBoardTransition: FunctionHandler = {
           svc,
           campaignId,
           playerId: user.userId,
-          category: "board_transition",
+          category: "runtime_transition",
           severity: 2,
           payload: {
-            from_board_type: typeof (activeBoard as any)?.board_type === "string" ? (activeBoard as any).board_type : null,
-            to_board_type: toBoardType,
+            from_mode: typeof activeRuntime?.mode === "string" ? activeRuntime.mode : null,
+            to_mode: toMode,
             reason,
             transition_payload: transitionPayload,
             reason_code: reasonCode,
-            board_id: (insertedBoard.data as any)?.id ?? null,
+            runtime_id: runtimeId,
           },
         });
       } catch (error) {
@@ -1105,12 +1138,12 @@ export const mythicBoardTransition: FunctionHandler = {
           severity = 3;
         } else if (lowerReason.includes("shop")) {
           delta = 3;
-        } else if (toBoardType === "dungeon") {
+        } else if (toMode === "dungeon") {
           delta = 2;
-        } else if (toBoardType === "travel" && Boolean(asRecord((nextState as any).discovery_flags).encounter_triggered)) {
+        } else if (toMode === "travel" && Boolean(asRecord((nextState as any).discovery_flags).encounter_triggered)) {
           delta = -2;
           severity = 2;
-        } else if (toBoardType === "travel" && Boolean(asRecord((nextState as any).discovery_flags).dungeon_traces_found)) {
+        } else if (toMode === "travel" && Boolean(asRecord((nextState as any).discovery_flags).dungeon_traces_found)) {
           delta = 4;
           severity = 2;
         }
@@ -1127,7 +1160,7 @@ export const mythicBoardTransition: FunctionHandler = {
               evidence: {
                 reason,
                 reason_code: reasonCode,
-                to_board_type: toBoardType,
+                to_mode: toMode,
                 transition_payload: transitionPayload,
                 faction_name: factionTarget.name,
               },
@@ -1138,18 +1171,19 @@ export const mythicBoardTransition: FunctionHandler = {
         }
       }
 
-      ctx.log.info("board_transition.success", {
+      ctx.log.info("runtime_transition.success", {
         request_id: requestId,
         campaign_id: campaignId,
-        to_board_type: toBoardType,
+        to_mode: toMode,
         warnings: warnings.length,
       });
 
       return new Response(
         JSON.stringify({
           ok: true,
-          board_id: (insertedBoard.data as any)?.id ?? null,
-          board_type: toBoardType,
+          runtime_id: runtimeId,
+          mode: toMode,
+          board_type: toMode,
           reason_code: reasonCode,
           travel_goal: (nextState as any).travel_goal ?? null,
           search_target: (nextState as any).search_target ?? null,
@@ -1169,9 +1203,9 @@ export const mythicBoardTransition: FunctionHandler = {
         return new Response(JSON.stringify({ error: error.message, code: error.code, requestId }), { status: error.status, headers: baseHeaders });
       }
       const normalized = sanitizeError(error);
-      ctx.log.error("board_transition.failed", { request_id: requestId, error: normalized.message, code: normalized.code });
+      ctx.log.error("runtime_transition.failed", { request_id: requestId, error: normalized.message, code: normalized.code });
       return new Response(
-        JSON.stringify({ error: normalized.message || "Failed to transition board", code: normalized.code ?? "board_transition_failed", requestId }),
+        JSON.stringify({ error: normalized.message || "Failed to transition runtime", code: normalized.code ?? "runtime_transition_failed", requestId }),
         { status: 500, headers: baseHeaders },
       );
     }

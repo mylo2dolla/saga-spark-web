@@ -6,13 +6,12 @@ const MAX_ACTION_LABEL_LEN = 80;
 const GENERIC_ACTION_LABEL_RX = /^(action\s+\d+|narrative\s+update)$/i;
 
 export const UiActionIntentSchema = z.enum([
-  "town",
-  "travel",
-  "dungeon",
+  "quest_action",
   "combat_start",
-  "shop",
-  "focus_target",
-  "open_panel",
+  "combat_action",
+  "shop_action",
+  "loadout_action",
+  "companion_action",
   "dm_prompt",
   "refresh",
 ]);
@@ -24,26 +23,52 @@ function normalizeUiIntent(value: unknown): UiActionIntent | null {
   const key = value.trim().toLowerCase();
   if (!key) return null;
 
-  if (key === "town" || key === "travel" || key === "dungeon" || key === "combat_start" || key === "shop" || key === "focus_target" || key === "open_panel" || key === "dm_prompt" || key === "refresh") {
+  if (
+    key === "quest_action" ||
+    key === "combat_start" ||
+    key === "combat_action" ||
+    key === "shop_action" ||
+    key === "loadout_action" ||
+    key === "companion_action" ||
+    key === "dm_prompt" ||
+    key === "refresh"
+  ) {
     return key;
   }
 
   if (key === "combat" || key === "battle" || key === "fight" || key === "engage" || key === "combat_begin") {
     return "combat_start";
   }
-
-  if (key === "board_transition" || key === "transition" || key === "board_transition_travel") {
-    return "travel";
-  }
-  if (key === "board_transition_town" || key === "return_town") {
-    return "town";
-  }
-  if (key === "board_transition_dungeon" || key === "enter_dungeon") {
-    return "dungeon";
+  if (key === "combat_turn" || key === "use_skill" || key === "attack" || key === "focus_target") {
+    return "combat_action";
   }
 
-  if (key === "panel" || key === "open_menu") {
-    return "open_panel";
+  if (
+    key === "board_transition" ||
+    key === "transition" ||
+    key === "board_transition_travel" ||
+    key === "board_transition_town" ||
+    key === "return_town" ||
+    key === "board_transition_dungeon" ||
+    key === "enter_dungeon" ||
+    key === "travel" ||
+    key === "town" ||
+    key === "dungeon" ||
+    key === "quest"
+  ) {
+    return "quest_action";
+  }
+
+  if (key === "panel" || key === "open_menu" || key === "open_panel" || key === "loadout" || key === "gear") {
+    return "loadout_action";
+  }
+
+  if (key === "shop" || key === "vendor" || key === "merchant") {
+    return "shop_action";
+  }
+
+  if (key === "companion" || key === "companion_followup") {
+    return "companion_action";
   }
 
   if (key === "prompt" || key === "narrate") {
@@ -198,6 +223,7 @@ export const DmNarratorOutputSchema = z
     scene: z.record(z.unknown()).optional(),
     effects: z.record(z.unknown()).optional(),
     ui_actions: z.array(UiActionSchema).max(8).optional(),
+    runtime_delta: BoardDeltaSchema.optional(),
     board_delta: BoardDeltaSchema.optional(),
     patches: z.array(z.unknown()).optional(),
     roll_log: z.array(RollLogEntrySchema).max(256).optional(),
@@ -240,7 +266,8 @@ export function parseDmNarratorOutput(rawText: string):
 
   // Content policy validation on text fields.
   try {
-    const checkins = result.data.board_delta?.companion_checkins ?? [];
+    const delta = result.data.runtime_delta ?? result.data.board_delta;
+    const checkins = delta?.companion_checkins ?? [];
     assertContentAllowed([
       { path: "narration", value: result.data.narration },
       { path: "scene.environment", value: typeof result.data.scene?.environment === "string" ? result.data.scene.environment : null },

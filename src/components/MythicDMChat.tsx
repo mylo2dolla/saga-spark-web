@@ -5,15 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { MythicDMMessage } from "@/hooks/useMythicDungeonMaster";
-import type { MythicUiAction } from "@/hooks/useMythicDungeonMaster";
 
 interface Props {
   messages: MythicDMMessage[];
   isLoading: boolean;
   currentResponse: string;
   onSendMessage: (message: string) => void;
-  actions?: MythicUiAction[];
-  onAction?: (action: MythicUiAction) => void;
   voiceEnabled?: boolean;
   voiceSupported?: boolean;
   voiceBlocked?: boolean;
@@ -29,8 +26,6 @@ export function MythicDMChat({
   isLoading,
   currentResponse,
   onSendMessage,
-  actions,
-  onAction,
   voiceEnabled,
   voiceSupported,
   voiceBlocked,
@@ -183,27 +178,6 @@ export function MythicDMChat({
       </div>
 
       <div className="border-t border-border p-3">
-        {actions && actions.length > 0 ? (
-          <div className="mb-2 flex max-h-[68px] flex-wrap gap-2 overflow-hidden">
-            {actions.slice(0, 6).map((action) => (
-              <Button
-                key={action.id}
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="h-8 max-w-[210px] justify-start overflow-hidden text-ellipsis whitespace-nowrap border border-amber-200/25 bg-amber-100/10 text-amber-50 hover:bg-amber-100/15"
-                onClick={() => {
-                  if (!onAction) return;
-                  onAction(action);
-                }}
-                disabled={isLoading}
-              >
-                {action.label}
-              </Button>
-            ))}
-          </div>
-        ) : null}
-
         {typeof voiceEnabled === "boolean" ? (
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
             <Button

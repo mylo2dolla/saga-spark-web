@@ -37,7 +37,7 @@ echo
 endpoints=(
   mythic-apply-xp
   mythic-bootstrap
-  mythic-board-transition
+  mythic-runtime-transition
   mythic-combat-start
   mythic-combat-tick
   mythic-combat-use-skill

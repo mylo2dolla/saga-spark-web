@@ -9,10 +9,15 @@ import type { MythicDmResponseMeta } from "@/types/mythic";
 type MessageRole = "user" | "assistant";
 
 export type MythicUiIntent =
+  | "quest_action"
   | "town"
   | "travel"
   | "dungeon"
   | "combat_start"
+  | "combat_action"
+  | "shop_action"
+  | "loadout_action"
+  | "companion_action"
   | "shop"
   | "focus_target"
   | "open_panel"
@@ -26,7 +31,7 @@ export interface MythicUiAction {
   prompt?: string;
   hint_key?: string;
   boardTarget?: "town" | "travel" | "dungeon" | "combat";
-  panel?: "character" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "commands" | "settings";
+  panel?: "status" | "character" | "loadout" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
   payload?: Record<string, unknown>;
 }
 
@@ -76,7 +81,12 @@ function titleCaseWords(input: string): string {
 }
 
 function defaultLabelForIntent(intent: MythicUiIntent): string {
+  if (intent === "quest_action") return "Advance Quest";
   if (intent === "combat_start") return "Start Combat";
+  if (intent === "combat_action") return "Combat Action";
+  if (intent === "shop_action") return "Open Shop";
+  if (intent === "loadout_action") return "Open Loadout";
+  if (intent === "companion_action") return "Companion Follow-Up";
   if (intent === "open_panel") return "Open Panel";
   if (intent === "dm_prompt") return "Press The Scene";
   if (intent === "focus_target") return "Focus Target";
@@ -155,19 +165,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function normalizeIntent(raw: string): MythicUiIntent | null {
   const key = raw.trim().toLowerCase();
-  if (
-    key === "town" ||
-    key === "travel" ||
-    key === "dungeon" ||
-    key === "combat_start" ||
-    key === "shop" ||
-    key === "focus_target" ||
-    key === "open_panel" ||
-    key === "dm_prompt" ||
-    key === "refresh"
-  ) {
-    return key;
-  }
+  if (key === "quest_action" || key === "quest" || key === "objective") return "quest_action";
+  if (key === "combat_start" || key === "combat_begin" || key === "engage") return "combat_start";
+  if (key === "combat_action" || key === "combat" || key === "attack" || key === "use_skill" || key === "focus_target") return "combat_action";
+  if (key === "shop_action" || key === "shop" || key === "vendor") return "shop_action";
+  if (key === "loadout_action" || key === "open_panel" || key === "panel" || key === "open_menu" || key === "gear" || key === "loadout") return "loadout_action";
+  if (key === "companion_action" || key === "companion") return "companion_action";
+  if (key === "dm_prompt" || key === "prompt" || key === "narrate") return "dm_prompt";
+  if (key === "refresh") return "refresh";
+  // One-release ingress normalization for legacy board intents.
+  if (key === "town" || key === "travel" || key === "dungeon") return "quest_action";
   return null;
 }
 
@@ -178,7 +185,7 @@ function normalizeUiAction(entry: unknown, index: number): MythicUiAction | null
   if (!intent) return null;
   const prompt = typeof raw.prompt === "string" && raw.prompt.trim() ? raw.prompt.trim() : undefined;
   const panelRaw = String(raw.panel ?? "").toLowerCase();
-  const panel = panelRaw === "character" || panelRaw === "gear" || panelRaw === "skills" || panelRaw === "loadouts" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "commands" || panelRaw === "settings"
+  const panel = panelRaw === "status" || panelRaw === "character" || panelRaw === "loadout" || panelRaw === "gear" || panelRaw === "skills" || panelRaw === "loadouts" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "combat" || panelRaw === "companions" || panelRaw === "shop" || panelRaw === "commands" || panelRaw === "settings"
     ? panelRaw
     : undefined;
   const boardTargetRaw = String(raw.boardTarget ?? raw.board_target ?? "").toLowerCase();
@@ -225,28 +232,31 @@ function fallbackActionFromLine(line: string, index: number): MythicUiAction | n
     return {
       id: `mythic-panel-${index + 1}`,
       label,
-      intent: "open_panel",
+      intent: "loadout_action",
       panel,
       prompt: clean,
     };
   }
   if (/(travel|journey|depart|route|road)/.test(lower)) {
-    return { id: `mythic-travel-${index + 1}`, label, intent: "travel", boardTarget: "travel", prompt: clean };
+    return { id: `mythic-travel-${index + 1}`, label, intent: "quest_action", boardTarget: "travel", payload: { mode: "travel" }, prompt: clean };
   }
   if (/(town|market|vendor|inn|restock)/.test(lower)) {
-    return { id: `mythic-town-${index + 1}`, label, intent: "town", boardTarget: "town", prompt: clean };
+    return { id: `mythic-town-${index + 1}`, label, intent: "quest_action", boardTarget: "town", payload: { mode: "town" }, prompt: clean };
   }
   if (/(dungeon|ruin|cave|crypt|explore)/.test(lower)) {
-    return { id: `mythic-dungeon-${index + 1}`, label, intent: "dungeon", boardTarget: "dungeon", prompt: clean };
+    return { id: `mythic-dungeon-${index + 1}`, label, intent: "quest_action", boardTarget: "dungeon", payload: { mode: "dungeon" }, prompt: clean };
   }
   if (/(combat|fight|battle|attack|engage)/.test(lower)) {
-    return { id: `mythic-combat-${index + 1}`, label, intent: "combat_start", boardTarget: "combat", prompt: clean };
+    return { id: `mythic-combat-${index + 1}`, label, intent: "combat_start", boardTarget: "combat", payload: { mode: "combat" }, prompt: clean };
   }
   if (/(shop|vendor|merchant|blacksmith|armorer|alchemist)/.test(lower)) {
-    return { id: `mythic-shop-${index + 1}`, label, intent: "shop", prompt: clean };
+    return { id: `mythic-shop-${index + 1}`, label, intent: "shop_action", prompt: clean };
+  }
+  if (/(companion|ally|sidekick)/.test(lower)) {
+    return { id: `mythic-companion-${index + 1}`, label, intent: "companion_action", prompt: clean };
   }
   if (/(talk|speak|ask|investigate|scout|rumor|faction|plan)/.test(lower)) {
-    return { id: `mythic-prompt-${index + 1}`, label, intent: "dm_prompt", prompt: clean };
+    return { id: `mythic-quest-${index + 1}`, label, intent: "quest_action", prompt: clean };
   }
   return null;
 }

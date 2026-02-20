@@ -1,0 +1,128 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { callEdgeFunction } from "@/lib/edge";
+import { formatError } from "@/ui/data/async";
+import type { MythicDmContextResponse } from "@/types/mythic";
+
+interface UseMythicDmContextOptions {
+  boardUpdatedAt?: string | null;
+  refreshSignal?: number;
+  pollMsVisible?: number;
+}
+
+export function useMythicDmContext(
+  campaignId: string | undefined,
+  options: UseMythicDmContextOptions = {},
+) {
+  const [context, setContext] = useState<MythicDmContextResponse | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
+  const hasLoadedOnceRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const lastBoardUpdatedAtRef = useRef<string | null>(null);
+
+  const fetchContext = useCallback(async () => {
+    if (!campaignId) {
+      if (isMountedRef.current) {
+        setContext(null);
+        setError(null);
+        setIsInitialLoading(false);
+        setIsRefreshing(false);
+      }
+      hasLoadedOnceRef.current = false;
+      lastBoardUpdatedAtRef.current = null;
+      return;
+    }
+
+    if (inFlightRef.current) return;
+
+    try {
+      inFlightRef.current = true;
+      if (isMountedRef.current) {
+        if (hasLoadedOnceRef.current) {
+          setIsRefreshing(true);
+        } else {
+          setIsInitialLoading(true);
+        }
+        setError(null);
+      }
+
+      const { data, error: edgeError } = await callEdgeFunction<MythicDmContextResponse>("mythic-dm-context", {
+        requireAuth: true,
+        timeoutMs: 20_000,
+        maxRetries: 1,
+        body: { campaignId },
+      });
+      if (edgeError) throw edgeError;
+      if (!data?.ok) {
+        throw new Error("DM context request returned an invalid payload.");
+      }
+
+      if (isMountedRef.current) {
+        setContext(data);
+      }
+    } catch (err) {
+      const message = formatError(err, "Failed to load DM context");
+      if (isMountedRef.current) {
+        setError(message);
+      }
+    } finally {
+      inFlightRef.current = false;
+      hasLoadedOnceRef.current = true;
+      if (isMountedRef.current) {
+        setIsInitialLoading(false);
+        setIsRefreshing(false);
+      }
+    }
+  }, [campaignId]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    if (campaignId) {
+      hasLoadedOnceRef.current = false;
+      setIsInitialLoading(true);
+      setIsRefreshing(false);
+    }
+    void fetchContext();
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [campaignId, fetchContext]);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    const incoming = options.boardUpdatedAt ?? null;
+    if (!incoming) return;
+    if (lastBoardUpdatedAtRef.current === incoming) return;
+    lastBoardUpdatedAtRef.current = incoming;
+    if (!hasLoadedOnceRef.current) return;
+    void fetchContext();
+  }, [campaignId, fetchContext, options.boardUpdatedAt]);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    if (!hasLoadedOnceRef.current) return;
+    void fetchContext();
+  }, [campaignId, fetchContext, options.refreshSignal]);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    const pollMs = Math.max(4_000, Math.min(60_000, Math.floor(options.pollMsVisible ?? 12_000)));
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      void fetchContext();
+    }, pollMs);
+    return () => clearInterval(interval);
+  }, [campaignId, fetchContext, options.pollMsVisible]);
+
+  return {
+    context,
+    isInitialLoading,
+    isRefreshing,
+    error,
+    refetch: fetchContext,
+  };
+}

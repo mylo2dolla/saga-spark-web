@@ -404,26 +404,52 @@ export async function settleCombat(args: SettlementArgs): Promise<SettlementResu
     }
   }
 
-  const { data: lastBoard } = await svc
+  const runtimeQuery = await svc
     .schema("mythic")
-    .from("boards")
-    .select("id, board_type")
+    .from("campaign_runtime")
+    .select("id,mode,state_json")
     .eq("campaign_id", campaignId)
-    .neq("board_type", "combat")
-    .order("updated_at", { ascending: false })
-    .limit(1)
+    .eq("status", "active")
     .maybeSingle();
+  if (runtimeQuery.error) throw runtimeQuery.error;
 
-  if (lastBoard) {
-    await svc.schema("mythic").from("boards").update({ status: "active", updated_at: new Date().toISOString() }).eq("id", (lastBoard as { id: string }).id);
-    await svc.schema("mythic").from("boards").update({ status: "archived", updated_at: new Date().toISOString() }).eq("combat_session_id", combatSessionId);
+  const runtimeRow = runtimeQuery.data as { id: string; mode: string; state_json: Record<string, unknown> } | null;
+  if (runtimeRow) {
+    const rawState = runtimeRow.state_json && typeof runtimeRow.state_json === "object"
+      ? runtimeRow.state_json
+      : {};
+    const returnModeRaw = typeof rawState.return_mode === "string" ? rawState.return_mode : null;
+    const fallbackMode = runtimeRow.mode === "combat" ? "town" : runtimeRow.mode;
+    const nextMode = returnModeRaw === "town" || returnModeRaw === "travel" || returnModeRaw === "dungeon" || returnModeRaw === "combat"
+      ? returnModeRaw
+      : (fallbackMode === "town" || fallbackMode === "travel" || fallbackMode === "dungeon" || fallbackMode === "combat"
+        ? fallbackMode
+        : "town");
+    const nextState = {
+      ...rawState,
+      combat_session_id: null,
+      return_mode: null,
+    };
+
+    const runtimeUpdate = await svc
+      .schema("mythic")
+      .from("campaign_runtime")
+      .update({
+        mode: nextMode,
+        combat_session_id: null,
+        state_json: nextState,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", runtimeRow.id);
+    if (runtimeUpdate.error) throw runtimeUpdate.error;
 
     const existingTransition = await svc
       .schema("mythic")
-      .from("board_transitions")
+      .from("runtime_events")
       .select("id,payload_json")
       .eq("campaign_id", campaignId)
-      .eq("from_board_type", "combat")
+      .eq("runtime_id", runtimeRow.id)
+      .eq("from_mode", "combat")
       .eq("reason", "combat_end")
       .order("created_at", { ascending: false })
       .limit(20);
@@ -437,12 +463,12 @@ export async function settleCombat(args: SettlementArgs): Promise<SettlementResu
     });
 
     if (!hasExistingTransition) {
-      const { error: transitionError } = await svc.schema("mythic").from("board_transitions").insert({
+      const { error: transitionError } = await svc.schema("mythic").from("runtime_events").insert({
         campaign_id: campaignId,
-        from_board_type: "combat",
-        to_board_type: (lastBoard as { board_type: string }).board_type,
+        runtime_id: runtimeRow.id,
+        from_mode: "combat",
+        to_mode: nextMode,
         reason: "combat_end",
-        animation: "page_turn",
         payload_json: {
           combat_session_id: combatSessionId,
           outcome: { won, alive_players: alivePlayers.length, alive_npcs: aliveNpcs.length },

@@ -73,9 +73,9 @@ function jsonOnlyContract() {
   return `
 OUTPUT CONTRACT (STRICT)
 - Respond with ONE JSON object ONLY. No markdown. No backticks. No prose outside JSON.
-- Your JSON must include: {"narration": string, "scene": object, "board_delta": object, "ui_actions": array}.
+- Your JSON must include: {"narration": string, "scene": object, "runtime_delta": object, "ui_actions": array}.
 - "scene" must include board-synced hints when applicable: "environment", "mood", "focus", "travel_goal".
-- "board_delta" must be an object containing only supported keys:
+- "runtime_delta" must be an object containing only supported keys:
   - rumors: array
   - objectives: array
   - discovery_log: array
@@ -87,9 +87,9 @@ OUTPUT CONTRACT (STRICT)
 - "ui_actions" must contain 2-4 concrete intent suggestions for the current board state.
   Each action item must be an object with:
   - id (string), label (string), intent (enum), optional hint_key (string), optional prompt (string), optional payload (object).
-  - intent must be one of: town, travel, dungeon, combat_start, shop, focus_target, open_panel, dm_prompt, refresh.
+  - intent must be one of: quest_action, combat_start, combat_action, shop_action, loadout_action, companion_action, dm_prompt, refresh.
   When suggesting a shop/vendor in town:
-  - intent MUST be "shop"
+  - intent MUST be "shop_action"
   - payload MUST include {"vendorId": "<id from board.state_summary.vendors>"}.
 - Optional:
   - "effects": object with optional ambient/comic effect hints.
@@ -150,29 +150,42 @@ function isGenericActionLabel(value: string): boolean {
 function canonicalIntent(value: string): NarratorUiAction["intent"] {
   const key = value.trim().toLowerCase();
   if (
-    key === "town" ||
-    key === "travel" ||
-    key === "dungeon" ||
+    key === "quest_action" ||
     key === "combat_start" ||
-    key === "shop" ||
-    key === "focus_target" ||
-    key === "open_panel" ||
+    key === "combat_action" ||
+    key === "shop_action" ||
+    key === "loadout_action" ||
+    key === "companion_action" ||
     key === "dm_prompt" ||
     key === "refresh"
   ) {
     return key;
   }
-  if (key === "combat" || key === "fight" || key === "battle" || key === "engage") return "combat_start";
-  if (key === "panel" || key === "open_menu") return "open_panel";
+  if (key === "combat" || key === "fight" || key === "battle" || key === "engage" || key === "combat_begin") return "combat_start";
+  if (key === "focus_target" || key === "attack" || key === "use_skill") return "combat_action";
+  if (key === "panel" || key === "open_menu" || key === "open_panel" || key === "loadout" || key === "gear") return "loadout_action";
+  if (key === "shop" || key === "vendor") return "shop_action";
+  if (key === "companion") return "companion_action";
   if (key === "prompt" || key === "narrate") return "dm_prompt";
-  if (key === "board_transition_town" || key === "return_town") return "town";
-  if (key === "board_transition_dungeon" || key === "enter_dungeon") return "dungeon";
-  if (key === "board_transition_travel" || key === "transition" || key === "board_transition") return "travel";
+  if (
+    key === "board_transition_town" ||
+    key === "return_town" ||
+    key === "board_transition_dungeon" ||
+    key === "enter_dungeon" ||
+    key === "board_transition_travel" ||
+    key === "transition" ||
+    key === "board_transition" ||
+    key === "town" ||
+    key === "travel" ||
+    key === "dungeon" ||
+    key === "quest"
+  ) {
+    return "quest_action";
+  }
   return "dm_prompt";
 }
 
 function boardTargetForIntent(intent: NarratorUiAction["intent"]): NarratorUiAction["boardTarget"] | undefined {
-  if (intent === "town" || intent === "travel" || intent === "dungeon") return intent;
   if (intent === "combat_start") return "combat";
   return undefined;
 }
@@ -203,7 +216,7 @@ function repairActionLabel(args: {
   const promptLabel = typeof args.action.prompt === "string" ? compactLabel(args.action.prompt, 56) : "";
   if (promptLabel && !isGenericActionLabel(promptLabel)) return promptLabel;
 
-  if (args.intent === "shop") {
+  if (args.intent === "shop_action") {
     const vendors = extractVendorsFromBoardSummary(args.boardSummary);
     const payloadVendorId = typeof (args.action.payload as Record<string, unknown> | undefined)?.vendorId === "string"
       ? String((args.action.payload as Record<string, unknown>).vendorId)
@@ -214,11 +227,11 @@ function repairActionLabel(args: {
     return vendorName ? `Check ${vendorName}` : "Check Vendor Stock";
   }
 
-  if (args.intent === "open_panel") {
+  if (args.intent === "loadout_action") {
     const panel = typeof args.action.panel === "string" ? args.action.panel : "character";
     return `Open ${titleCaseWords(panel)}`;
   }
-  if (args.intent === "focus_target") {
+  if (args.intent === "combat_action") {
     const target = typeof (args.action.payload as Record<string, unknown> | undefined)?.target_combatant_id === "string"
       ? String((args.action.payload as Record<string, unknown>).target_combatant_id)
       : "Target";
@@ -226,9 +239,17 @@ function repairActionLabel(args: {
   }
   if (args.intent === "combat_start") return "Start Combat";
   if (args.intent === "refresh") return "Refresh State";
-  if (args.intent === "town") return "Head To Town";
-  if (args.intent === "travel") return "Push The Route";
-  if (args.intent === "dungeon") return "Enter The Dungeon";
+  if (args.intent === "quest_action") {
+    const payload = args.action.payload && typeof args.action.payload === "object"
+      ? args.action.payload as Record<string, unknown>
+      : {};
+    const mode = typeof payload.mode === "string" ? payload.mode : args.action.boardTarget ?? null;
+    if (mode === "town") return "Head To Town";
+    if (mode === "travel") return "Push The Route";
+    if (mode === "dungeon") return "Enter The Dungeon";
+    return "Advance Quest";
+  }
+  if (args.intent === "companion_action") return "Follow Companion";
 
   const anchor = typeof args.boardSummary?.travel_goal === "string"
     ? args.boardSummary.travel_goal
@@ -266,13 +287,19 @@ function stableHintKey(args: {
 
 function synthesizeActionPrompt(action: NarratorUiAction, boardType: string): string {
   if (action.prompt && action.prompt.trim().length > 0) return action.prompt.trim();
-  if (action.intent === "open_panel") return `I open the ${action.panel ?? "character"} panel and review the live state.`;
-  if (action.intent === "shop") return "I check current vendor stock and prices before buying.";
+  if (action.intent === "loadout_action") return `I open the ${action.panel ?? "character"} panel and review the live state.`;
+  if (action.intent === "shop_action") return "I check current vendor stock and prices before buying.";
   if (action.intent === "combat_start") return "I engage hostiles and begin combat now.";
-  if (action.intent === "town") return "I route back to town and reassess the board hooks.";
-  if (action.intent === "travel") return "I travel onward and pressure the next objective.";
-  if (action.intent === "dungeon") return "I descend into the dungeon and clear the first threat angle.";
-  if (action.intent === "focus_target") return "I focus that target and prepare the next strike.";
+  if (action.intent === "quest_action") {
+    const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : {};
+    const mode = typeof payload.mode === "string" ? payload.mode : action.boardTarget ?? null;
+    if (mode === "town") return "I route back to town and reassess runtime hooks.";
+    if (mode === "travel") return "I travel onward and pressure the next objective.";
+    if (mode === "dungeon") return "I descend into the dungeon and clear the first threat angle.";
+    return "I advance the active quest from committed runtime state.";
+  }
+  if (action.intent === "combat_action") return "I focus that target and prepare the next strike.";
+  if (action.intent === "companion_action") return "I follow companion guidance and request the next concrete step.";
   if (action.intent === "refresh") return "Refresh the board state and summarize what changed.";
   return boardType === "combat"
     ? `I commit to ${action.label.toLowerCase()} and want the result narrated from current combat events.`
@@ -299,7 +326,7 @@ function sanitizeUiActions(args: {
         index,
       });
       const boardTarget = action.boardTarget ?? boardTargetAlias ?? boardTargetForIntent(intent);
-      const panel = intent === "open_panel" ? (action.panel ?? "character") : action.panel;
+      const panel = intent === "loadout_action" ? (action.panel ?? "character") : action.panel;
       const prompt = synthesizeActionPrompt({ ...action, intent, boardTarget, panel, label }, boardType);
       const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : undefined;
       return {
@@ -558,12 +585,13 @@ function compactCharacterPayload(character: unknown) {
 function compactBoardPayload(board: unknown) {
   if (!board || typeof board !== "object") return board;
   const raw = board as Record<string, unknown>;
+  const boardType = raw.board_type ?? raw.mode ?? null;
   return {
     campaign_id: raw.campaign_id ?? null,
     board_id: raw.board_id ?? raw.id ?? null,
-    board_type: raw.board_type ?? null,
+    board_type: boardType,
     status: raw.status ?? null,
-    state_summary: summarizeBoardState(raw.board_type, raw.state_json ?? null),
+    state_summary: summarizeBoardState(boardType, raw.state_json ?? null),
     ui_hints_json: raw.ui_hints_json ?? null,
     active_scene_id: raw.active_scene_id ?? null,
     combat_session_id: raw.combat_session_id ?? null,
@@ -663,7 +691,7 @@ function buildCompanionFollowupAction(checkin: CompanionCheckinLite): NarratorUi
   return {
     id: `companion-followup-${checkin.companion_id}-${checkin.turn_index ?? 0}`,
     label: compactLabel(`Check ${labelBase}`),
-    intent: "dm_prompt",
+    intent: "companion_action",
     hint_key: `companion_followup:${checkin.companion_id}:${checkin.turn_index ?? 0}`,
     prompt: `I follow ${labelBase}'s check-in: "${checkin.line}". Give the immediate tactical step from current board truth.`,
     payload: {
@@ -713,7 +741,7 @@ function appendCompanionResolutionChip(args: {
     {
       id: `companion-resolved-${companionId}-${turnIndex ?? "na"}`,
       label: "Companion Debrief Logged",
-      intent: "dm_prompt",
+      intent: "companion_action",
       hint_key: `companion_resolved:${companionId}:${turnIndex ?? "na"}`,
       prompt: `Companion follow-up ${companionId} has been resolved this turn.`,
       payload: {
@@ -771,17 +799,17 @@ async function appendRewardDiscoveryEntry(args: {
   campaignId: string;
   detail: Record<string, unknown>;
 }) {
-  const { data: activeBoard, error: boardErr } = await args.svc
+  const { data: runtimeRow, error: runtimeErr } = await args.svc
     .schema("mythic")
-    .from("boards")
+    .from("campaign_runtime")
     .select("id,state_json")
     .eq("campaign_id", args.campaignId)
     .eq("status", "active")
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (boardErr || !activeBoard) return;
-  const state = asObject((activeBoard as Record<string, unknown>).state_json) ?? {};
+  if (runtimeErr || !runtimeRow) return;
+  const state = asObject((runtimeRow as Record<string, unknown>).state_json) ?? {};
   const current = Array.isArray(state.discovery_log) ? state.discovery_log : [];
   const nextDiscovery = [...current, args.detail].slice(-64);
   const nextState = {
@@ -790,9 +818,9 @@ async function appendRewardDiscoveryEntry(args: {
   };
   await args.svc
     .schema("mythic")
-    .from("boards")
+    .from("campaign_runtime")
     .update({ state_json: nextState, updated_at: new Date().toISOString() })
-    .eq("id", String((activeBoard as Record<string, unknown>).id));
+    .eq("id", String((runtimeRow as Record<string, unknown>).id));
 }
 
 async function applyDeterministicStoryReward(args: {
@@ -1092,12 +1120,18 @@ function synthesizeRecoveryPayload(args: {
         ? [{
             id: `recovery-shop-${vendors[0].id}`,
             label: `Check ${vendors[0].name}`,
-            intent: "shop",
+            intent: "shop_action",
             payload: { vendorId: vendors[0].id },
             prompt: `I check ${vendors[0].name} for contract and inventory changes tied to current board hooks.`,
           } satisfies NarratorUiAction]
         : []),
-      { id: "recovery-town-travel", label: "Push To Travel", intent: "travel", boardTarget: "travel" },
+      {
+        id: "recovery-town-travel",
+        label: "Push To Travel",
+        intent: "quest_action",
+        boardTarget: "travel",
+        payload: { mode: "travel" },
+      },
       {
         id: "recovery-town-hooks",
         label: "Work The Board Hooks",
@@ -1108,18 +1142,18 @@ function synthesizeRecoveryPayload(args: {
     : boardType === "travel"
       ? [
         { id: "recovery-travel-scout", label: "Scout The Route", intent: "dm_prompt", prompt: "I scout the route and pressure the immediate travel threat." },
-        { id: "recovery-travel-dungeon", label: "Enter Dungeon", intent: "dungeon", boardTarget: "dungeon" },
-        { id: "recovery-travel-town", label: "Return To Town", intent: "town", boardTarget: "town" },
+        { id: "recovery-travel-dungeon", label: "Enter Dungeon", intent: "quest_action", boardTarget: "dungeon", payload: { mode: "dungeon" } },
+        { id: "recovery-travel-town", label: "Return To Town", intent: "quest_action", boardTarget: "town", payload: { mode: "town" } },
       ]
       : boardType === "dungeon"
         ? [
           { id: "recovery-dungeon-assess", label: "Assess This Room", intent: "dm_prompt", prompt: "I assess this room for threats, exits, and objective leverage." },
           { id: "recovery-dungeon-proceed", label: "Press The Next Door", intent: "dm_prompt", prompt: "I press the next doorway and narrate committed outcomes only." },
-          { id: "recovery-dungeon-retreat", label: "Fall Back To Town", intent: "town", boardTarget: "town" },
+          { id: "recovery-dungeon-retreat", label: "Fall Back To Town", intent: "quest_action", boardTarget: "town", payload: { mode: "town" } },
         ]
         : [
           { id: "recovery-combat-read", label: "Combat Read", intent: "dm_prompt", prompt: "Give me the immediate tactical read from committed combat events." },
-          { id: "recovery-combat-focus", label: "Focus Target", intent: "focus_target", payload: { target_combatant_id: context?.active_turn_combatant_id ?? null } },
+          { id: "recovery-combat-focus", label: "Focus Target", intent: "combat_action", payload: { target_combatant_id: context?.active_turn_combatant_id ?? null } },
           { id: "recovery-combat-refresh", label: "Refresh State", intent: "refresh" },
         ];
 
@@ -1168,6 +1202,17 @@ function synthesizeRecoveryPayload(args: {
       travel_goal: typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
     },
     ui_actions: sanitizedActions,
+    runtime_delta: {
+      rumors: [{ title: "Pressure Spike", detail: actionSummary }],
+      objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
+      discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
+      scene_cache: {
+        environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
+        mood: "tense forward momentum",
+        focus: actionSummary,
+      },
+      action_chips: actionChips,
+    },
     board_delta: {
       rumors: [{ title: "Pressure Spike", detail: actionSummary }],
       objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
@@ -1290,40 +1335,63 @@ export const mythicDungeonMaster: FunctionHandler = {
 
       let board: Record<string, unknown> | null = null;
       {
-        const boardView = await svc
+        const runtimeRows = await svc
           .schema("mythic")
-          .from("v_board_state_for_dm")
-          .select("*")
+          .from("campaign_runtime")
+          .select("id,campaign_id,mode,status,state_json,ui_hints_json,combat_session_id,updated_at")
           .eq("campaign_id", campaignId)
+          .eq("status", "active")
           .order("updated_at", { ascending: false })
           .limit(2);
-        if (boardView.error) {
-          warnings.push(`v_board_state_for_dm unavailable: ${errMessage(boardView.error, "query failed")}`);
+        if (runtimeRows.error) {
+          warnings.push(`campaign_runtime unavailable: ${errMessage(runtimeRows.error, "query failed")}`);
         } else {
-          const rows = ((boardView.data ?? []) as Record<string, unknown>[]);
+          const rows = ((runtimeRows.data ?? []) as Record<string, unknown>[]);
           if (rows.length > 1) {
-            warnings.push("duplicate_active_boards_detected:using_latest_view_row");
+            warnings.push("duplicate_active_runtime_rows_detected:using_latest_runtime_row");
           }
-          board = rows[0] ?? null;
+          const activeRuntime = rows[0] ?? null;
+          if (activeRuntime) {
+            const transitions = await svc
+              .schema("mythic")
+              .from("runtime_events")
+              .select("id,from_mode,to_mode,reason,payload_json,created_at")
+              .eq("campaign_id", campaignId)
+              .order("created_at", { ascending: false })
+              .limit(12);
+            if (transitions.error) {
+              warnings.push(`runtime_events unavailable: ${errMessage(transitions.error, "query failed")}`);
+            }
+            board = {
+              ...activeRuntime,
+              board_type: activeRuntime.mode,
+              recent_transitions: transitions.data ?? [],
+            };
+          }
         }
 
         if (!board) {
-          const fallback = await svc
+          const seedRuntime = await svc
             .schema("mythic")
-            .from("boards")
-            .select("id,campaign_id,board_type,status,state_json,ui_hints_json,active_scene_id,combat_session_id,updated_at")
-            .eq("campaign_id", campaignId)
-            .eq("status", "active")
-            .order("updated_at", { ascending: false })
-            .limit(2);
-          if (fallback.error) {
-            warnings.push(`boards fallback failed: ${errMessage(fallback.error, "query failed")}`);
+            .from("campaign_runtime")
+            .insert({
+              campaign_id: campaignId,
+              mode: "town",
+              status: "active",
+              state_json: {},
+              ui_hints_json: {},
+            })
+            .select("id,campaign_id,mode,status,state_json,ui_hints_json,combat_session_id,updated_at")
+            .single();
+          if (seedRuntime.error) {
+            warnings.push(`campaign_runtime seed failed: ${errMessage(seedRuntime.error, "query failed")}`);
           } else {
-            const rows = ((fallback.data ?? []) as Record<string, unknown>[]);
-            if (rows.length > 1) {
-              warnings.push("duplicate_active_boards_detected:using_latest_board_row");
-            }
-            board = rows[0] ?? null;
+            const runtime = seedRuntime.data as Record<string, unknown>;
+            board = {
+              ...runtime,
+              board_type: runtime.mode,
+              recent_transitions: [],
+            };
           }
         }
       }
@@ -1431,6 +1499,18 @@ export const mythicDungeonMaster: FunctionHandler = {
       const boardPayloadRecord = asObject(compactBoard);
       const boardSummaryRecord = asObject(boardPayloadRecord?.state_summary);
       const boardStateRecord = asObject((board as Record<string, unknown> | null)?.state_json);
+      const boardDiscoveryFlags = asObject(boardStateRecord?.discovery_flags);
+      const introPendingBefore = boardDiscoveryFlags?.intro_pending === true;
+      const actionContextPayload = asObject(actionContextRecord?.payload);
+      const introMode = introPendingBefore
+        || (typeof actionContextRecord?.source === "string" && actionContextRecord.source === "campaign_intro_auto")
+        || actionContextPayload?.intro_opening === true;
+      const introVersion = Number.isFinite(Number(boardDiscoveryFlags?.intro_version))
+        ? Math.max(1, Number(boardDiscoveryFlags?.intro_version))
+        : 1;
+      const introSource = typeof boardDiscoveryFlags?.intro_source === "string"
+        ? boardDiscoveryFlags.intro_source
+        : "bootstrap";
       const compactCompanions = Array.isArray(companionsRaw)
         ? companionsRaw
           .map((row) => asObject(row))
@@ -1484,6 +1564,14 @@ export const mythicDungeonMaster: FunctionHandler = {
           .map((id) => id.trim());
         return new Set(ids);
       })();
+      const introPromptDirective = introMode
+        ? [
+          "INTRO MODE IS ACTIVE.",
+          "This is the first campaign entry and must provide immediate, concrete direction.",
+          "Narration must open the scenario tied to seeded world hooks, then present 3-4 actionable next moves.",
+          "runtime_delta.discovery_flags must set intro_pending=false.",
+        ].join("\n")
+        : "";
 
       const systemPrompt = `
 You are the Mythic Weave Dungeon Master entity.
@@ -1533,13 +1621,14 @@ RULES YOU MUST OBEY
 - Narration must be compact and high-signal: ${NARRATION_MIN_WORDS}-${NARRATION_MAX_WORDS} words total, max 2 short paragraphs.
 - No filler, no recap padding, no repeated adjectives.
 - Narration quality is primary. scene/effects should help render visual board state updates.
-- Provide a non-empty board_delta object that pushes forward rumors/objectives/discovery state.
+- Provide a non-empty runtime_delta object that pushes forward rumors/objectives/discovery state.
 - Provide 2-4 grounded ui_actions tied to active board context (avoid generic labels like "Action 1").
-- Mirror those action candidates into board_delta.action_chips so chips stay dynamic after refresh.
+- Mirror those action candidates into runtime_delta.action_chips so dynamic actions persist after refresh.
 - If command execution context is provided, narrate outcomes using that state delta and avoid contradiction.
 - Violence/gore allowed. Harsh language allowed.
 - Mild sexuality / playful sexy banter allowed.
 - Sexual violence, coercion, rape, underage sexual content, and pornographic explicit content are forbidden.
+${introPromptDirective}
 ${jsonOnlyContract()}
 `;
 
@@ -1554,6 +1643,16 @@ ${jsonOnlyContract()}
         model: requestedModel,
         provider: "openai",
         warning_count: warnings.length,
+        intro_mode: introMode,
+        intro_pending_before: introPendingBefore,
+      });
+      ctx.log.info("dm.intro.mode", {
+        request_id: ctx.requestId,
+        campaign_id: campaignId,
+        intro_mode: introMode,
+        intro_pending_before: introPendingBefore,
+        intro_version: introVersion,
+        intro_source: introSource,
       });
 
       const maxAttempts = 3;
@@ -1563,10 +1662,174 @@ ${jsonOnlyContract()}
       let validationAttempts = 0;
       let dmRecoveryUsed = false;
       let dmRecoveryReason: string | null = null;
+      let introCleared = false;
       const actionBoardType = typeof boardPayloadRecord?.board_type === "string"
         ? String(boardPayloadRecord.board_type)
         : "town";
       const fallbackVendorId = Array.from(allowedVendorIds.values())[0] ?? null;
+      const buildIntroFallbackActions = (): NarratorUiAction[] => {
+        const vendors = extractVendorsFromBoardSummary(boardSummaryRecord);
+        const base: NarratorUiAction[] = [
+          {
+            id: "intro-opening-brief",
+            label: "Read Local Briefing",
+            intent: "dm_prompt",
+            hint_key: "intro:opening_brief",
+            prompt: "Open with the immediate threat, best leverage path, and first concrete move from board truth.",
+            payload: { intro_opening: true, board_feature: "notice_board" },
+          },
+          {
+            id: "intro-opening-travel",
+            label: "Scout Outer Route",
+            intent: "quest_action",
+            boardTarget: "travel",
+            hint_key: "intro:travel_probe",
+            prompt: "I scout the outer route and pressure the first high-value lead.",
+            payload: { intro_opening: true, mode: "travel", travel_probe: "scout_route" },
+          },
+          {
+            id: "intro-opening-dungeon",
+            label: "Press The Hotspot",
+            intent: "quest_action",
+            boardTarget: "dungeon",
+            hint_key: "intro:dungeon_push",
+            prompt: "I press the nearest hotspot and force an immediate consequence.",
+            payload: { intro_opening: true, mode: "dungeon", search_target: "hotspot" },
+          },
+        ];
+        if (vendors[0]) {
+          base.splice(1, 0, {
+            id: `intro-opening-shop-${vendors[0].id}`,
+            label: `Check ${vendors[0].name}`,
+            intent: "shop_action",
+            hint_key: "intro:vendor_scan",
+            payload: { vendorId: vendors[0].id, intro_opening: true },
+            prompt: `I check ${vendors[0].name} for mission-critical supplies and leverage.`,
+          });
+        }
+        return sanitizeUiActions({
+          actions: base,
+          boardType: actionBoardType,
+          boardSummary: boardSummaryRecord,
+        }).slice(0, 4);
+      };
+      const applyIntroTurnNormalization = (payload: DmNarratorOutput): DmNarratorOutput => {
+        if (!introMode) return payload;
+
+        const fallbackActions = buildIntroFallbackActions();
+        const mergedActions = sanitizeUiActions({
+          actions: [...(payload.ui_actions ?? []), ...fallbackActions],
+          boardType: actionBoardType,
+          boardSummary: boardSummaryRecord,
+        });
+        const dedupedActions: NarratorUiAction[] = [];
+        const seenActionKeys = new Set<string>();
+        for (const action of mergedActions) {
+          const key = `${action.hint_key ?? action.id}:${action.intent}`;
+          if (seenActionKeys.has(key)) continue;
+          seenActionKeys.add(key);
+          dedupedActions.push(action);
+          if (dedupedActions.length >= 4) break;
+        }
+        let introActions = dedupedActions;
+        if (introActions.length < 3) {
+          introActions = fallbackActions.slice(0, 4);
+        }
+
+        const introScene = asObject(payload.scene) ?? {};
+        const environment = typeof introScene.environment === "string"
+          ? introScene.environment
+          : typeof boardSummaryRecord?.weather === "string"
+            ? boardSummaryRecord.weather
+            : titleCaseWords(actionBoardType);
+        const mood = typeof introScene.mood === "string" ? introScene.mood : "urgent onboarding momentum";
+        const focus = typeof introScene.focus === "string"
+          ? introScene.focus
+          : "Immediate starter hooks and first tactical commitment.";
+        const travelGoal = typeof introScene.travel_goal === "string"
+          ? introScene.travel_goal
+          : typeof boardSummaryRecord?.travel_goal === "string"
+            ? boardSummaryRecord.travel_goal
+            : null;
+
+        const introRuntimeDeltaBase = asObject(payload.runtime_delta ?? payload.board_delta) ?? {};
+        const introRumors = Array.isArray(introRuntimeDeltaBase.rumors) && introRuntimeDeltaBase.rumors.length > 0
+          ? introRuntimeDeltaBase.rumors
+          : [{ title: "Starter Pressure", detail: focus }];
+        const introObjectives = Array.isArray(introRuntimeDeltaBase.objectives) && introRuntimeDeltaBase.objectives.length > 0
+          ? introRuntimeDeltaBase.objectives
+          : [{ title: "Make First Move", description: "Commit one starter action and lock initial momentum." }];
+        const introDiscovery = Array.isArray(introRuntimeDeltaBase.discovery_log)
+          ? [...introRuntimeDeltaBase.discovery_log]
+          : [];
+        if (introDiscovery.length === 0) {
+          introDiscovery.push({
+            kind: "intro_opening",
+            detail: "Opening narration committed from seeded starter direction.",
+            intro_version: introVersion,
+          });
+        }
+
+        const existingDeltaFlags = asObject(introRuntimeDeltaBase.discovery_flags) ?? {};
+        const normalizedFlags: Record<string, unknown> = {
+          ...boardDiscoveryFlags,
+          ...existingDeltaFlags,
+          intro_pending: false,
+          intro_version: introVersion,
+          intro_source: introSource,
+        };
+        introCleared = normalizedFlags.intro_pending === false;
+
+        return {
+          ...payload,
+          scene: {
+            ...introScene,
+            environment,
+            mood,
+            focus,
+            travel_goal: travelGoal,
+          },
+          ui_actions: introActions,
+          runtime_delta: {
+            ...introRuntimeDeltaBase,
+            rumors: introRumors,
+            objectives: introObjectives,
+            discovery_log: introDiscovery,
+            discovery_flags: normalizedFlags,
+            scene_cache: {
+              ...(asObject(introRuntimeDeltaBase.scene_cache) ?? {}),
+              environment,
+              mood,
+              focus,
+              travel_goal: travelGoal,
+            },
+            action_chips: sanitizeUiActions({
+              actions: introActions,
+              boardType: actionBoardType,
+              boardSummary: boardSummaryRecord,
+            }).slice(0, 6),
+          },
+          board_delta: {
+            ...introRuntimeDeltaBase,
+            rumors: introRumors,
+            objectives: introObjectives,
+            discovery_log: introDiscovery,
+            discovery_flags: normalizedFlags,
+            scene_cache: {
+              ...(asObject(introRuntimeDeltaBase.scene_cache) ?? {}),
+              environment,
+              mood,
+              focus,
+              travel_goal: travelGoal,
+            },
+            action_chips: sanitizeUiActions({
+              actions: introActions,
+              boardType: actionBoardType,
+              boardSummary: boardSummaryRecord,
+            }).slice(0, 6),
+          },
+        };
+      };
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         validationAttempts = attempt;
@@ -1594,7 +1857,7 @@ ${jsonOnlyContract()}
                 `Previous validation errors: ${JSON.stringify(lastErrors).slice(0, 2400)}.`,
                 "Previous invalid JSON candidate (may be malformed):",
                 dmText.slice(0, 3200),
-                "Rewrite from scratch as ONE valid JSON object with scene + board_delta + 2-4 ui_actions.",
+                "Rewrite from scratch as ONE valid JSON object with scene + runtime_delta + 2-4 ui_actions.",
               ].join("\n"),
             },
           ];
@@ -1638,8 +1901,9 @@ ${jsonOnlyContract()}
           continue;
         }
 
-        if (!parsedOut.value.board_delta || typeof parsedOut.value.board_delta !== "object") {
-          lastErrors = ["board_delta_missing_or_invalid"];
+        const deltaPayload = asObject(parsedOut.value.runtime_delta ?? parsedOut.value.board_delta);
+        if (!deltaPayload) {
+          lastErrors = ["runtime_delta_missing_or_invalid"];
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
           dmParsed = { ok: false, errors: lastErrors };
           continue;
@@ -1651,7 +1915,7 @@ ${jsonOnlyContract()}
           boardSummary: boardSummaryRecord,
         })
           .map((action): NarratorUiAction => {
-            if (action.intent !== "shop") return action;
+            if (action.intent !== "shop_action") return action;
             const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : {};
             const vendorId = typeof payload.vendorId === "string" ? payload.vendorId : null;
             if (vendorId && allowedVendorIds.has(vendorId)) return action;
@@ -1665,7 +1929,7 @@ ${jsonOnlyContract()}
               ...action,
               intent: "dm_prompt" as const,
               label: "Work A Lead",
-              prompt: action.prompt ?? "I press a concrete lead from current board hooks and commit the next move.",
+              prompt: action.prompt ?? "I press a concrete lead from current runtime hooks and commit the next move.",
               payload: { ...payload, vendor_unavailable: true },
             } as NarratorUiAction;
           });
@@ -1696,7 +1960,7 @@ ${jsonOnlyContract()}
 
         // Additional validation: if suggesting shop actions, vendorId must match board summary.
         const badShop = actions.find((action) => {
-          if (action.intent !== "shop") return false;
+          if (action.intent !== "shop_action") return false;
           const vendorId = (action.payload as Record<string, unknown> | undefined)?.vendorId;
           return typeof vendorId !== "string" || !allowedVendorIds.has(vendorId);
         });
@@ -1709,7 +1973,7 @@ ${jsonOnlyContract()}
         }
 
         let boardDeltaActionChips = sanitizeUiActions({
-          actions: parsedOut.value.board_delta?.action_chips ?? actions,
+          actions: (deltaPayload.action_chips as NarratorUiAction[] | undefined) ?? actions,
           boardType: actionBoardType,
           boardSummary: boardSummaryRecord,
         });
@@ -1730,17 +1994,19 @@ ${jsonOnlyContract()}
           actionContext: actionContextRecord,
         }).slice(-6);
 
-        const boardDelta = {
-          ...parsedOut.value.board_delta,
+        const runtimeDelta = {
+          ...deltaPayload,
           action_chips: boardDeltaActionChips,
         };
+        const normalizedPayload = applyIntroTurnNormalization({
+          ...parsedOut.value,
+          ui_actions: actions,
+          runtime_delta: runtimeDelta,
+          board_delta: runtimeDelta,
+        });
         dmParsed = {
           ok: true,
-          value: {
-            ...parsedOut.value,
-            ui_actions: actions,
-            board_delta: boardDelta,
-          },
+          value: normalizedPayload,
         };
         break;
       }
@@ -1755,20 +2021,20 @@ ${jsonOnlyContract()}
         });
         dmParsed = {
           ok: true,
-          value: synthesizeRecoveryPayload({
+          value: applyIntroTurnNormalization(synthesizeRecoveryPayload({
             boardType: actionBoardType,
             boardSummary: boardSummaryRecord,
             boardState: boardStateRecord,
             actionContext: actionContextRecord,
             lastErrors,
-          }),
+          })),
         };
       }
 
       const boardType = (compactBoard as Record<string, unknown> | null)?.board_type;
       const boardId = (compactBoard as Record<string, unknown> | null)?.board_id;
       if (typeof boardType !== "string" || typeof boardId !== "string") {
-        return new Response(JSON.stringify({ error: "Active board not found", code: "board_not_found", requestId: ctx.requestId }), {
+        return new Response(JSON.stringify({ error: "Active runtime not found", code: "runtime_not_found", requestId: ctx.requestId }), {
           status: 404,
           headers: { "Content-Type": "application/json" },
         });
@@ -1802,6 +2068,9 @@ ${jsonOnlyContract()}
           dm_validation_attempts: validationAttempts,
           dm_recovery_used: dmRecoveryUsed,
           dm_recovery_reason: dmRecoveryReason,
+          dm_intro_mode: introMode,
+          dm_intro_pending_before: introPendingBefore,
+          dm_intro_cleared: introCleared,
         },
         turn: {
           expected_turn_index: expectedTurnIndex,
@@ -1859,16 +2128,21 @@ ${jsonOnlyContract()}
       }
 
       let committedBoardState = boardStateRecord;
-      const committedBoardId = typeof commitPayload.board_id === "string" ? commitPayload.board_id : null;
-      if (committedBoardId) {
-        const committedBoard = await svc
+      const committedRuntimeId =
+        typeof commitPayload.runtime_id === "string"
+          ? commitPayload.runtime_id
+          : typeof commitPayload.board_id === "string"
+            ? commitPayload.board_id
+            : null;
+      if (committedRuntimeId) {
+        const committedRuntime = await svc
           .schema("mythic")
-          .from("boards")
+          .from("campaign_runtime")
           .select("state_json")
-          .eq("id", committedBoardId)
+          .eq("id", committedRuntimeId)
           .maybeSingle();
-        if (!committedBoard.error && committedBoard.data) {
-          committedBoardState = asObject((committedBoard.data as Record<string, unknown>).state_json);
+        if (!committedRuntime.error && committedRuntime.data) {
+          committedBoardState = asObject((committedRuntime.data as Record<string, unknown>).state_json);
         }
       }
 
@@ -1881,7 +2155,7 @@ ${jsonOnlyContract()}
         turnSeed: turnSeed.toString(),
         actionContext: actionContextRecord,
         boardState: committedBoardState,
-        boardDelta: asObject(dmParsed.value.board_delta),
+        boardDelta: asObject(dmParsed.value.runtime_delta ?? dmParsed.value.board_delta),
         requestId: ctx.requestId,
         log: ctx.log,
       });
@@ -1904,11 +2178,23 @@ ${jsonOnlyContract()}
         dm_validation_attempts: validationAttempts,
         dm_recovery_used: dmRecoveryUsed,
         dm_recovery_reason: dmRecoveryReason,
+        dm_intro_mode: introMode,
+        dm_intro_pending_before: introPendingBefore,
+        dm_intro_cleared: introCleared,
         story_reward_applied: rewardSummary.applied,
         story_reward_xp: rewardSummary.xp_awarded,
         story_reward_loot_item_id: rewardSummary.loot_item_id,
         story_reward_reason: rewardSummary.reason,
       });
+      if (introMode) {
+        ctx.log.info("dm.intro.cleared", {
+          request_id: ctx.requestId,
+          campaign_id: campaignId,
+          intro_pending_before: introPendingBefore,
+          intro_cleared: introCleared,
+          turn_id: commitPayload.turn_id ?? null,
+        });
+      }
 
       const outText = JSON.stringify(dmResponseJson);
       const response = new Response(streamOpenAiDelta(outText), {

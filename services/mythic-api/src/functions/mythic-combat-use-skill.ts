@@ -431,15 +431,15 @@ export const mythicCombatUseSkill: FunctionHandler = {
         return new Response(JSON.stringify({ error: "Target out of range" }), { status: 409, headers: baseHeaders });
       }
 
-      const { data: boardRow } = await svc
+      const { data: runtimeRow } = await svc
         .schema("mythic")
-        .from("boards")
+        .from("campaign_runtime")
         .select("state_json")
-        .eq("combat_session_id", combatSessionId)
+        .eq("campaign_id", campaignId)
         .eq("status", "active")
         .maybeSingle();
-      const blockedTiles = Array.isArray((boardRow as any)?.state_json?.blocked_tiles)
-        ? ((boardRow as any).state_json.blocked_tiles as Array<{ x: number; y: number }>)
+      const blockedTiles = Array.isArray((runtimeRow as any)?.state_json?.blocked_tiles)
+        ? ((runtimeRow as any).state_json.blocked_tiles as Array<{ x: number; y: number }>)
         : [];
       const blockedSet = toBlockedSet(blockedTiles);
 

@@ -82,14 +82,14 @@ async function main() {
     "select " +
       "to_regclass($1) is not null as has_v_combat_state_for_dm, " +
       "to_regclass($2) is not null as has_v_character_state_for_dm, " +
-      "to_regclass($3) is not null as has_v_board_state_for_dm",
+      "to_regclass($3) is not null as has_v_board_state_for_dm_legacy",
     ["mythic.v_combat_state_for_dm", "mythic.v_character_state_for_dm", "mythic.v_board_state_for_dm"],
   );
 
   out.tables = await queryOne(
     "select " +
-      "to_regclass($1) is not null as has_boards, " +
-      "to_regclass($2) is not null as has_board_transitions, " +
+      "to_regclass($1) is not null as has_campaign_runtime, " +
+      "to_regclass($2) is not null as has_runtime_events, " +
       "to_regclass($3) is not null as has_combat_sessions, " +
       "to_regclass($4) is not null as has_action_events, " +
       "to_regclass($5) is not null as has_characters, " +
@@ -97,8 +97,8 @@ async function main() {
       "to_regclass($7) is not null as has_items, " +
       "to_regclass($8) is not null as has_inventory",
     [
-      "mythic.boards",
-      "mythic.board_transitions",
+      "mythic.campaign_runtime",
+      "mythic.runtime_events",
       "mythic.combat_sessions",
       "mythic.action_events",
       "mythic.characters",

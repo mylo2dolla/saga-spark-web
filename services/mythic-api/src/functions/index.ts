@@ -1,7 +1,6 @@
 import type { FunctionHandler } from "./types.js";
 import { mythicApplyXp } from "./mythic-apply-xp.js";
 import { mythicBootstrap } from "./mythic-bootstrap.js";
-import { mythicBoardTransition } from "./mythic-board-transition.js";
 import { mythicCombatStart } from "./mythic-combat-start.js";
 import { mythicCombatTick } from "./mythic-combat-tick.js";
 import { mythicCombatUseSkill } from "./mythic-combat-use-skill.js";
@@ -13,6 +12,7 @@ import { mythicFieldGenerate } from "./mythic-field-generate.js";
 import { mythicGenerateLoot } from "./mythic-generate-loot.js";
 import { mythicJoinCampaign } from "./mythic-join-campaign.js";
 import { mythicListCampaigns } from "./mythic-list-campaigns.js";
+import { mythicRuntimeTransition } from "./mythic-runtime-transition.js";
 import { mythicInventoryEquip } from "./mythic-inventory-equip.js";
 import { mythicInventoryUnequip } from "./mythic-inventory-unequip.js";
 import { mythicRecomputeCharacter } from "./mythic-recompute-character.js";
@@ -24,7 +24,7 @@ import { mythicTts } from "./mythic-tts.js";
 const handlers: FunctionHandler[] = [
   mythicApplyXp,
   mythicBootstrap,
-  mythicBoardTransition,
+  mythicRuntimeTransition,
   mythicCombatStart,
   mythicCombatTick,
   mythicCombatUseSkill,

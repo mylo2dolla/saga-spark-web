@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
+import { buildStarterDirection } from "../shared/intro_seed.js";
 import {
   enforceRateLimit,
   getIdempotentResponse,
@@ -191,6 +192,14 @@ function makeTownState(args: {
 }) {
   const { campaignId, name, description, templateKey, seed, factionNames } = args;
   const services = makeTemplateServices(templateKey);
+  const starter = buildStarterDirection({
+    seed,
+    templateKey,
+    campaignName: name,
+    campaignDescription: description,
+    factionNames,
+    source: "create_campaign",
+  });
   return {
     campaign_id: campaignId,
     template_key: templateKey,
@@ -211,8 +220,14 @@ function makeTownState(args: {
     factions_present: factionNames,
     guard_alertness: 0.35,
     bounties: [],
-    rumors: [],
+    rumors: starter.rumors,
+    objectives: starter.objectives,
+    discovery_log: starter.discovery_log,
+    action_chips: starter.action_chips,
     consequence_flags: {},
+    discovery_flags: starter.discovery_flags,
+    room_state: {},
+    companion_checkins: [],
   };
 }
 
@@ -364,7 +379,7 @@ export const mythicCreateCampaign: FunctionHandler = {
         }
       };
 
-      // Critical seed invariants: campaign ownership visibility + member row + active board must succeed.
+      // Critical seed invariants: campaign ownership visibility + member row + active runtime must succeed.
       await runCritical(
         "campaign_members",
         svc.from("campaign_members").insert({
@@ -374,10 +389,10 @@ export const mythicCreateCampaign: FunctionHandler = {
         }),
       );
       await runCritical(
-        "boards",
-        svc.schema("mythic").from("boards").insert({
+        "campaign_runtime",
+        svc.schema("mythic").from("campaign_runtime").insert({
           campaign_id: campaign.id,
-          board_type: "town",
+          mode: "town",
           status: "active",
           state_json: townState,
           ui_hints_json: {

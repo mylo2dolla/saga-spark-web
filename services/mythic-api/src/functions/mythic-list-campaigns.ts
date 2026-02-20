@@ -116,21 +116,21 @@ export const mythicListCampaigns: FunctionHandler = {
 
       const ids = campaigns.map((c) => c.id);
 
-      const [{ data: allMembers, error: allMembersError }, { data: activeBoards, error: activeBoardsError }] = await Promise.all([
+      const [{ data: allMembers, error: allMembersError }, { data: activeRuntimeRows, error: activeRuntimeError }] = await Promise.all([
         svc
           .from("campaign_members")
           .select("campaign_id")
           .in("campaign_id", ids),
         svc
           .schema("mythic")
-          .from("boards")
+          .from("campaign_runtime")
           .select("campaign_id")
           .in("campaign_id", ids)
           .eq("status", "active"),
       ]);
 
       if (allMembersError) throw allMembersError;
-      if (activeBoardsError) throw activeBoardsError;
+      if (activeRuntimeError) throw activeRuntimeError;
 
       let worldProfiles: Array<{ campaign_id: string }> = [];
       let degraded = false;
@@ -166,19 +166,19 @@ export const mythicListCampaigns: FunctionHandler = {
       }
 
       const profileSet = new Set((worldProfiles ?? []).map((row) => (row as { campaign_id?: string }).campaign_id).filter(Boolean));
-      const boardSet = new Set((activeBoards ?? []).map((row) => (row as { campaign_id?: string }).campaign_id).filter(Boolean));
+      const runtimeSet = new Set((activeRuntimeRows ?? []).map((row) => (row as { campaign_id?: string }).campaign_id).filter(Boolean));
       const membershipMap = new Map(memberRows.map((row) => [row.campaign_id, row]));
 
       const summaries: CampaignSummary[] = campaigns.map((campaign) => {
         const hasProfile = profileSet.has(campaign.id);
-        const hasBoard = boardSet.has(campaign.id);
+        const hasRuntime = runtimeSet.has(campaign.id);
         let healthStatus: HealthStatus = "needs_migration";
         let healthDetail: string | null = null;
-        if (hasProfile && hasBoard) {
+        if (hasProfile && hasRuntime) {
           healthStatus = "ready";
-        } else if (!hasBoard) {
+        } else if (!hasRuntime) {
           healthStatus = "broken";
-          healthDetail = "Missing active board";
+          healthDetail = "Missing active runtime";
         } else {
           healthStatus = "needs_migration";
           healthDetail = "Missing world profile";

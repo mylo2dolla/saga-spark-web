@@ -13,7 +13,6 @@ const RequestSchema = z.object({
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
 });
 
-type MythicBoardType = "town" | "dungeon" | "travel" | "combat";
 type StatKey = "offense" | "defense" | "control" | "support" | "mobility" | "utility";
 
 const STAT_KEYS: StatKey[] = ["offense", "defense", "control", "support", "mobility", "utility"];
@@ -111,20 +110,20 @@ export const mythicCombatStart: FunctionHandler = {
         });
       }
 
-      // Active board seed -> stable encounter seed.
-      const { data: activeBoard, error: activeBoardError } = await svc
+      // Active runtime seed -> stable encounter seed.
+      const { data: activeRuntime, error: activeRuntimeError } = await svc
         .schema("mythic")
-        .from("boards")
-        .select("id, board_type, state_json")
+        .from("campaign_runtime")
+        .select("id, mode, state_json, combat_session_id")
         .eq("campaign_id", campaignId)
         .eq("status", "active")
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      throwIfError(activeBoardError, "active board lookup");
+      throwIfError(activeRuntimeError, "active runtime lookup");
 
       const boardSeed = (() => {
-        const s = (activeBoard as { state_json?: any } | null)?.state_json?.seed;
+        const s = (activeRuntime as { state_json?: any } | null)?.state_json?.seed;
         return typeof s === "number" && Number.isFinite(s) ? Math.floor(s) : 12345;
       })();
 
@@ -178,7 +177,7 @@ export const mythicCombatStart: FunctionHandler = {
       // Start combat session + activate combat board + transition + combat_start event.
       const sceneJson = {
         kind: "encounter",
-        started_from: (activeBoard as { board_type?: MythicBoardType } | null)?.board_type ?? null,
+        started_from: (activeRuntime as { mode?: string } | null)?.mode ?? null,
       };
 
       const startRes = await svc.rpc("mythic_start_combat_session", {
@@ -192,75 +191,32 @@ export const mythicCombatStart: FunctionHandler = {
       throwIfError(startError, "start_combat_session");
       if (!combatId || typeof combatId !== "string") throw new Error("start_combat_session returned no id");
 
-      // Self-heal: ensure there is an active combat board bound to this combat session.
-      const { data: activeCombatBoard, error: activeCombatBoardError } = await svc
-        .schema("mythic")
-        .from("boards")
-        .select("id,combat_session_id,state_json")
-        .eq("campaign_id", campaignId)
-        .eq("status", "active")
-        .eq("board_type", "combat")
-        .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      throwIfError(activeCombatBoardError, "active combat board lookup");
-      if (!activeCombatBoard) {
-        const { error: archiveNonCombatError } = await svc
+      let runtimeId = typeof (activeRuntime as { id?: unknown } | null)?.id === "string"
+        ? String((activeRuntime as { id: string }).id)
+        : null;
+      let runtimeState = asObject((activeRuntime as { state_json?: unknown } | null)?.state_json);
+      if (!runtimeId) {
+        const runtimeInsert = await svc
           .schema("mythic")
-          .from("boards")
-          .update({ status: "archived", updated_at: new Date().toISOString() })
-          .eq("campaign_id", campaignId)
-          .eq("status", "active")
-          .neq("board_type", "combat");
-        throwIfError(archiveNonCombatError, "archive stale active boards");
-
-        const { error: insertCombatBoardError } = await svc
-          .schema("mythic")
-          .from("boards")
+          .from("campaign_runtime")
           .insert({
             campaign_id: campaignId,
-            board_type: "combat",
+            mode: "combat",
             status: "active",
-            combat_session_id: combatId,
             state_json: {
               combat_session_id: combatId,
               grid: { width: 12, height: 8 },
               blocked_tiles: [],
               seed,
             },
-            ui_hints_json: {
-              camera: { x: 0, y: 0, zoom: 1 },
-              board_theme: "combat",
-            },
-          });
-        throwIfError(insertCombatBoardError, "insert combat board self-heal");
-        ctx.log.warn("combat_start.board_self_heal_created", {
-          request_id: requestId,
-          campaign_id: campaignId,
-          combat_session_id: combatId,
-        });
-      } else if (activeCombatBoard.combat_session_id !== combatId) {
-        const currentState = asObject(activeCombatBoard.state_json);
-        const { error: repairBoardError } = await svc
-          .schema("mythic")
-          .from("boards")
-          .update({
+            ui_hints_json: { camera: { x: 0, y: 0, zoom: 1 }, board_theme: "combat" },
             combat_session_id: combatId,
-            state_json: {
-              ...currentState,
-              combat_session_id: combatId,
-              seed,
-            },
-            updated_at: new Date().toISOString(),
           })
-          .eq("id", activeCombatBoard.id);
-        throwIfError(repairBoardError, "repair combat board session binding");
-        ctx.log.warn("combat_start.board_self_heal_rebound", {
-          request_id: requestId,
-          campaign_id: campaignId,
-          combat_session_id: combatId,
-          board_id: activeCombatBoard.id,
-        });
+          .select("id,state_json")
+          .single();
+        throwIfError(runtimeInsert.error, "insert campaign runtime");
+        runtimeId = String((runtimeInsert.data as { id: string }).id);
+        runtimeState = asObject((runtimeInsert.data as { state_json?: unknown }).state_json);
       }
 
       const lvl = character.level as number;
@@ -383,33 +339,29 @@ export const mythicCombatStart: FunctionHandler = {
         y: rngInt(seed, `walls:y:${i}`, 1, 4),
       }));
 
-      const { data: updatedBoards, error: boardUpdateError } = await svc
+      if (!runtimeId) throw new Error("Runtime row missing during combat start");
+      const previousMode = typeof (activeRuntime as { mode?: unknown } | null)?.mode === "string"
+        ? String((activeRuntime as { mode: string }).mode)
+        : null;
+      const nextRuntimeState = {
+        ...runtimeState,
+        combat_session_id: combatId,
+        return_mode: previousMode && previousMode !== "combat" ? previousMode : (runtimeState.return_mode ?? "town"),
+        grid: { width: 12, height: 8 },
+        blocked_tiles: blockedTiles,
+        seed,
+      };
+      const { error: runtimeUpdateError } = await svc
         .schema("mythic")
-        .from("boards")
+        .from("campaign_runtime")
         .update({
-          state_json: {
-            combat_session_id: combatId,
-            grid: { width: 12, height: 8 },
-            blocked_tiles: blockedTiles,
-            seed,
-          },
+          mode: "combat",
+          combat_session_id: combatId,
+          state_json: nextRuntimeState,
           updated_at: new Date().toISOString(),
         })
-        .eq("combat_session_id", combatId)
-        .eq("status", "active");
-      throwIfError(boardUpdateError, "combat board update");
-      if (!updatedBoards) {
-        // `update` without select returns null, but we still want to ensure row matched.
-        const { data: verifyBoard, error: verifyError } = await svc
-          .schema("mythic")
-          .from("boards")
-          .select("id")
-          .eq("combat_session_id", combatId)
-          .eq("status", "active")
-          .maybeSingle();
-        throwIfError(verifyError, "combat board verify");
-        if (!verifyBoard) throw new Error("Combat board update affected 0 rows");
-      }
+        .eq("id", runtimeId);
+      throwIfError(runtimeUpdateError, "runtime combat state update");
 
       const roundStartRes = await svc.rpc("mythic_append_action_event", {
         combat_session_id: combatId,

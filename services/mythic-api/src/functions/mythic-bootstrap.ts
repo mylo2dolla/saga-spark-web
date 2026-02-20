@@ -4,6 +4,7 @@ import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { AuthzError, assertCampaignAccess } from "../shared/authz.js";
 import { rngInt, rngPick } from "../shared/mythic_rng.js";
+import { buildStarterDirection, mergeStarterDirectionIntoState } from "../shared/intro_seed.js";
 import { enforceRateLimit } from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
@@ -116,7 +117,20 @@ const makeBaselineFactions = (template: TemplateKey): Array<{ name: string; desc
   }
 };
 
-const makeTownState = (seed: number, templateKey: TemplateKey, factionNames: string[]) => {
+const makeTownState = (args: {
+  seed: number;
+  templateKey: TemplateKey;
+  factionNames: string[];
+  campaignName: string;
+  campaignDescription: string;
+}) => {
+  const {
+    seed,
+    templateKey,
+    factionNames,
+    campaignName,
+    campaignDescription,
+  } = args;
   const vendorCount = rngInt(seed, "town:vendors", 1, 3);
   const vendors = Array.from({ length: vendorCount }).map((_, idx) => ({
     id: `vendor_${idx + 1}`,
@@ -128,6 +142,14 @@ const makeTownState = (seed: number, templateKey: TemplateKey, factionNames: str
       ["heal", "enchant"],
     ]),
   }));
+  const starter = buildStarterDirection({
+    seed,
+    templateKey,
+    campaignName,
+    campaignDescription,
+    factionNames,
+    source: "bootstrap",
+  });
 
   return {
     seed,
@@ -138,10 +160,21 @@ const makeTownState = (seed: number, templateKey: TemplateKey, factionNames: str
     factions_present: factionNames,
     guard_alertness: rngInt(seed, "town:guard", 10, 60) / 100,
     bounties: [],
-    rumors: [],
+    rumors: starter.rumors,
+    objectives: starter.objectives,
+    discovery_log: starter.discovery_log,
+    action_chips: starter.action_chips,
+    discovery_flags: starter.discovery_flags,
+    room_state: {},
+    companion_checkins: [],
     consequence_flags: {},
   };
 };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
 
 export const mythicBootstrap: FunctionHandler = {
   name: "mythic-bootstrap",
@@ -172,6 +205,17 @@ export const mythicBootstrap: FunctionHandler = {
 
       const svc = createServiceClient();
       await assertCampaignAccess(svc, campaignId, user.userId);
+
+      const { data: campaign, error: campaignError } = await svc
+        .from("campaigns")
+        .select("id, owner_id, name, description")
+        .eq("id", campaignId)
+        .maybeSingle();
+      if (campaignError) throw campaignError;
+      const profileTitle = String((campaign as { name?: string | null })?.name ?? "").trim();
+      const profileDescription = String((campaign as { description?: string | null })?.description ?? "").trim();
+      const campaignName = profileTitle.length > 0 ? profileTitle : `Campaign ${campaignId.slice(0, 8)}`;
+      const campaignDescription = profileDescription.length > 0 ? profileDescription : "World seed generated from campaign bootstrap.";
 
       // Ensure DM state rows exist.
       await svc.schema("mythic").from("dm_campaign_state").upsert({ campaign_id: campaignId }, { onConflict: "campaign_id" });
@@ -214,32 +258,38 @@ export const mythicBootstrap: FunctionHandler = {
         warnings.push(`faction_seed_warning:${factionSeedError.message}`);
       }
 
-      // Ensure there is an active board.
-      const { data: activeBoard, error: boardError } = await svc
+      // Ensure there is an active runtime row.
+      const { data: activeRuntime, error: runtimeError } = await svc
         .schema("mythic")
-        .from("boards")
-        .select("id, board_type, status")
+        .from("campaign_runtime")
+        .select("id, mode, status, state_json")
         .eq("campaign_id", campaignId)
         .eq("status", "active")
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (boardError) throw boardError;
+      if (runtimeError) throw runtimeError;
 
-      if (!activeBoard) {
+      if (!activeRuntime) {
         const seedBase = hashSeed(`bootstrap:${campaignId}`);
-        const townState = makeTownState(seedBase, templateKey, factionNames);
+        const townState = makeTownState({
+          seed: seedBase,
+          templateKey,
+          factionNames,
+          campaignName,
+          campaignDescription,
+        });
 
-        const { error: insertBoardError } = await svc.schema("mythic").from("boards").insert({
+        const { error: insertRuntimeError } = await svc.schema("mythic").from("campaign_runtime").insert({
           campaign_id: campaignId,
-          board_type: "town",
+          mode: "town",
           status: "active",
           state_json: townState,
           ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
         });
 
-        if (insertBoardError) throw insertBoardError;
+        if (insertRuntimeError) throw insertRuntimeError;
 
         if (factionNames.length === 0) {
           await svc.schema("mythic").from("factions").upsert(
@@ -252,22 +302,47 @@ export const mythicBootstrap: FunctionHandler = {
             { onConflict: "campaign_id,name" },
           );
         }
+      } else if (activeRuntime.mode === "town") {
+        const activeState = asRecord((activeRuntime as { state_json?: unknown }).state_json) ?? {};
+        const discoveryFlags = asRecord(activeState.discovery_flags) ?? {};
+        if (discoveryFlags.intro_pending !== true) {
+          const { data: latestTurn, error: turnErr } = await svc
+            .schema("mythic")
+            .from("turns")
+            .select("id")
+            .eq("campaign_id", campaignId)
+            .order("turn_index", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (turnErr) {
+            warnings.push(`turn_lookup_warning:${turnErr.message ?? "unknown"}`);
+          } else if (!latestTurn) {
+            const seedBase = hashSeed(`bootstrap:${campaignId}`);
+            const starter = buildStarterDirection({
+              seed: seedBase,
+              templateKey,
+              campaignName,
+              campaignDescription,
+              factionNames,
+              source: "bootstrap",
+            });
+            const mergedState = mergeStarterDirectionIntoState(activeState, starter);
+            const patchRuntime = await svc
+              .schema("mythic")
+              .from("campaign_runtime")
+              .update({ state_json: mergedState })
+              .eq("id", activeRuntime.id);
+            if (patchRuntime.error) {
+              warnings.push(`intro_seed_patch_warning:${patchRuntime.error.message ?? "unknown"}`);
+            }
+          }
+        }
       }
-
-      const { data: campaign, error: campaignError } = await svc
-        .from("campaigns")
-        .select("id, owner_id, name, description")
-        .eq("id", campaignId)
-        .maybeSingle();
-      if (campaignError) throw campaignError;
-
-      const profileTitle = String((campaign as { name?: string | null })?.name ?? "").trim();
-      const profileDescription = String((campaign as { description?: string | null })?.description ?? "").trim();
       const profilePayload = {
         campaign_id: campaignId,
-        seed_title: profileTitle.length > 0 ? profileTitle : `Campaign ${campaignId.slice(0, 8)}`,
-        seed_description: profileDescription.length > 0 ? profileDescription : "World seed generated from campaign bootstrap.",
-        template_key: "custom",
+        seed_title: campaignName,
+        seed_description: campaignDescription,
+        template_key: templateKey,
         world_profile_json: {
           source: "mythic-bootstrap",
           campaign_name: profileTitle,

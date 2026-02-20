@@ -214,12 +214,13 @@ function compactCharacterPayload(character: unknown) {
 function compactBoardPayload(board: unknown) {
   if (!board || typeof board !== "object") return board;
   const raw = board as Record<string, unknown>;
+  const boardType = raw.board_type ?? raw.mode ?? null;
   return {
     campaign_id: raw.campaign_id ?? null,
     board_id: raw.board_id ?? raw.id ?? null,
-    board_type: raw.board_type ?? null,
+    board_type: boardType,
     status: raw.status ?? null,
-    state_summary: summarizeBoardState(raw.board_type, raw.state_json ?? null),
+    state_summary: summarizeBoardState(boardType, raw.state_json ?? null),
     ui_hints_json: raw.ui_hints_json ?? null,
     active_scene_id: raw.active_scene_id ?? null,
     combat_session_id: raw.combat_session_id ?? null,
@@ -294,41 +295,42 @@ export const mythicDmContext: FunctionHandler = {
 
       const warnings: string[] = [];
 
-      // Authoritative board payload (active board + last transitions), with table fallback.
+      // Authoritative runtime payload.
       let board: Record<string, unknown> | null = null;
       {
-        const { data, error } = await svc
+        const runtimeQuery = await svc
           .schema("mythic")
-          .from("v_board_state_for_dm")
-          .select("*")
+          .from("campaign_runtime")
+          .select("id,campaign_id,mode,status,state_json,ui_hints_json,combat_session_id,updated_at")
           .eq("campaign_id", campaignId)
+          .eq("status", "active")
           .order("updated_at", { ascending: false })
           .limit(2);
-        if (error) {
-          warnings.push(`v_board_state_for_dm unavailable: ${errMessage(error, "query failed")}`);
-          const fallback = await svc
-            .schema("mythic")
-            .from("boards")
-            .select("id,campaign_id,board_type,status,state_json,ui_hints_json,combat_session_id,updated_at")
-            .eq("campaign_id", campaignId)
-            .eq("status", "active")
-            .order("updated_at", { ascending: false })
-            .limit(2);
-          if (fallback.error) {
-            warnings.push(`boards fallback failed: ${errMessage(fallback.error, "query failed")}`);
-          } else {
-            const fallbackRows = ((fallback.data ?? []) as Record<string, unknown>[]);
-            if (fallbackRows.length > 1) {
-              warnings.push("duplicate_active_boards_detected:using_latest_board_row");
-            }
-            board = fallbackRows[0] ?? null;
-          }
+        if (runtimeQuery.error) {
+          warnings.push(`campaign_runtime unavailable: ${errMessage(runtimeQuery.error, "query failed")}`);
         } else {
-          const rows = ((data ?? []) as Record<string, unknown>[]);
+          const rows = ((runtimeQuery.data ?? []) as Record<string, unknown>[]);
           if (rows.length > 1) {
-            warnings.push("duplicate_active_boards_detected:using_latest_view_row");
+            warnings.push("duplicate_active_runtime_rows_detected:using_latest_runtime_row");
           }
-          board = rows[0] ?? null;
+          const activeRuntime = rows[0] ?? null;
+          if (activeRuntime) {
+            const transitions = await svc
+              .schema("mythic")
+              .from("runtime_events")
+              .select("id,from_mode,to_mode,reason,payload_json,created_at")
+              .eq("campaign_id", campaignId)
+              .order("created_at", { ascending: false })
+              .limit(12);
+            if (transitions.error) {
+              warnings.push(`runtime_events unavailable: ${errMessage(transitions.error, "query failed")}`);
+            }
+            board = {
+              ...activeRuntime,
+              board_type: activeRuntime.mode,
+              recent_transitions: transitions.data ?? [],
+            };
+          }
         }
       }
 

@@ -51,6 +51,7 @@ function narrativeBase(args: ExecutorArgs): Record<string, unknown> {
   return {
     command: args.command.cleaned,
     intent: args.command.intent,
+    mode: args.boardType,
     board_type: args.boardType,
     explicit_command: args.command.explicit,
   };
@@ -150,11 +151,12 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
       if (!transition.ok) {
         return {
           handled: true,
-          error: `Failed to transition board to ${target}.`,
+          error: `Failed to transition mode to ${target}.`,
           stateChanges: result.stateChanges,
           narrationContext: {
             ...narrativeBase(args),
             state_changes: result.stateChanges,
+            mode_target: target,
             board_target: target,
             transition_payload: transitionPayload,
             transition_failed: true,
@@ -162,14 +164,15 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
         };
       }
       await Promise.all([args.refetchBoard(), args.refetchCombat()]);
-      result.stateChanges.push(`Transitioned board to ${target}.`);
+      result.stateChanges.push(`Transitioned mode to ${target}.`);
     } else {
-      result.stateChanges.push(`Already on ${target} board.`);
+      result.stateChanges.push(`Already in ${target} mode.`);
     }
     result.handled = true;
     result.narrationContext = {
       ...narrativeBase(args),
       state_changes: result.stateChanges,
+      mode_target: target,
       board_target: target,
       transition_payload: transitionPayload,
     };

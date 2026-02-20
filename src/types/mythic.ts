@@ -10,10 +10,15 @@ export interface MythicCompanionCheckin {
 }
 
 export type MythicUiIntent =
+  | "quest_action"
   | "town"
   | "travel"
   | "dungeon"
   | "combat_start"
+  | "combat_action"
+  | "shop_action"
+  | "loadout_action"
+  | "companion_action"
   | "shop"
   | "focus_target"
   | "open_panel"
@@ -27,7 +32,7 @@ export interface MythicActionChip {
   hint_key?: string;
   prompt?: string;
   boardTarget?: "town" | "travel" | "dungeon" | "combat";
-  panel?: "character" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "commands" | "settings";
+  panel?: "status" | "character" | "loadout" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
   payload?: Record<string, unknown>;
   companion_id?: string;
   turn_index?: number;
@@ -43,6 +48,16 @@ export interface MythicBoardTransitionPayload {
   [key: string]: unknown;
 }
 
+export interface MythicDiscoveryFlags {
+  intro_pending?: boolean;
+  intro_version?: number;
+  intro_seeded_at?: string;
+  intro_source?: "create_campaign" | "join_campaign" | "bootstrap" | "migration";
+  intro_opening_requested_at?: string;
+  intro_opening_failed_at?: string;
+  [key: string]: unknown;
+}
+
 export interface MythicBoardState {
   scene_cache?: Record<string, unknown>;
   companion_checkins?: MythicCompanionCheckin[];
@@ -50,7 +65,7 @@ export interface MythicBoardState {
   action_chips?: MythicActionChip[];
   job_postings?: Array<Record<string, unknown>>;
   room_state?: Record<string, unknown>;
-  discovery_flags?: Record<string, unknown>;
+  discovery_flags?: MythicDiscoveryFlags;
   reason_code?: string;
   rumors?: unknown[];
   objectives?: unknown[];
@@ -78,6 +93,62 @@ export interface MythicDmResponseMeta {
   dm_recovery_used?: boolean;
   dm_recovery_reason?: string | null;
   reward_summary?: MythicStoryRewardSummary;
+  [key: string]: unknown;
+}
+
+export interface MythicDmContextBoardPayload {
+  campaign_id: string | null;
+  board_id: string | null;
+  board_type: MythicBoardType | string | null;
+  status: string | null;
+  state_summary: Record<string, unknown> | null;
+  ui_hints_json: Record<string, unknown> | null;
+  active_scene_id: string | null;
+  combat_session_id: string | null;
+  updated_at: string | null;
+  recent_transitions: Array<Record<string, unknown>> | null;
+  [key: string]: unknown;
+}
+
+export interface MythicDmContextCharacterPayload {
+  character_id: string | null;
+  campaign_id: string | null;
+  player_id: string | null;
+  name: string | null;
+  level: number | null;
+  updated_at: string | null;
+  base_stats: Record<string, unknown> | null;
+  resources: Record<string, unknown> | null;
+  derived: Record<string, unknown> | null;
+  class_json: Record<string, unknown> | null;
+  skills: Array<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+export interface MythicDmContextCombatPayload {
+  combat_session_id: string | null;
+  campaign_id: string | null;
+  status: string | null;
+  seed: number | null;
+  current_turn_index: number | null;
+  scene_json: Record<string, unknown> | null;
+  dm_payload: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
+export interface MythicDmContextResponse {
+  ok: boolean;
+  campaign_id: string;
+  player_id: string | null;
+  board: MythicDmContextBoardPayload | null;
+  character: MythicDmContextCharacterPayload | null;
+  combat: MythicDmContextCombatPayload | null;
+  rules: Record<string, unknown> | null;
+  script: Record<string, unknown> | null;
+  dm_campaign_state: Record<string, unknown> | null;
+  dm_world_tension: Record<string, unknown> | null;
+  warnings: string[];
+  requestId?: string;
   [key: string]: unknown;
 }
 
@@ -179,7 +250,7 @@ export interface MythicProgressionEventRow {
 
 export interface MythicQuestThreadRow {
   id: string;
-  source: "dm_memory" | "board_transition" | "progression" | "loot_drop" | "reputation";
+  source: "dm_memory" | "runtime_transition" | "board_transition" | "progression" | "loot_drop" | "reputation";
   event_type: string;
   title: string;
   detail: string;

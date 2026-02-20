@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { rngInt, rngPick } from "../shared/mythic_rng.js";
+import { buildStarterDirection } from "../shared/intro_seed.js";
 import {
   enforceRateLimit,
   getIdempotentResponse,
@@ -37,7 +38,12 @@ const makeName = (seed: number, label: string): string => {
   return `${a}${b}`;
 };
 
-const makeTownState = (seed: number) => {
+const makeTownState = (args: {
+  seed: number;
+  campaignName: string;
+  campaignDescription: string;
+}) => {
+  const { seed, campaignName, campaignDescription } = args;
   const vendorCount = rngInt(seed, "town:vendors", 1, 3);
   const vendors = Array.from({ length: vendorCount }).map((_, idx) => ({
     id: `vendor_${idx + 1}`,
@@ -49,6 +55,14 @@ const makeTownState = (seed: number) => {
       ["heal", "enchant"],
     ]),
   }));
+  const starter = buildStarterDirection({
+    seed,
+    templateKey: "custom",
+    campaignName,
+    campaignDescription,
+    factionNames: [],
+    source: "join_campaign",
+  });
 
   return {
     seed,
@@ -58,7 +72,13 @@ const makeTownState = (seed: number) => {
     factions_present: [],
     guard_alertness: rngInt(seed, "town:guard", 10, 60) / 100,
     bounties: [],
-    rumors: [],
+    rumors: starter.rumors,
+    objectives: starter.objectives,
+    discovery_log: starter.discovery_log,
+    action_chips: starter.action_chips,
+    discovery_flags: starter.discovery_flags,
+    room_state: {},
+    companion_checkins: [],
     consequence_flags: {},
   };
 };
@@ -175,60 +195,45 @@ export const mythicJoinCampaign: FunctionHandler = {
         warnings.push(`dm_world_tension:${tensionSeed.error.message ?? "unknown"}`);
       }
 
-      const { data: activeBoards, error: activeBoardError } = await svc
+      const { data: activeRuntimeRows, error: activeRuntimeError } = await svc
         .schema("mythic")
-        .from("boards")
+        .from("campaign_runtime")
         .select("id,updated_at")
         .eq("campaign_id", campaign.id)
         .eq("status", "active")
         .order("updated_at", { ascending: false })
         .limit(5);
-      if (activeBoardError) throw activeBoardError;
-      if ((activeBoards?.length ?? 0) > 1) {
-        warnings.push("duplicate_active_boards_detected:using_latest_board_row");
-        const newest = activeBoards?.[0]?.id ?? null;
+      if (activeRuntimeError) throw activeRuntimeError;
+      if ((activeRuntimeRows?.length ?? 0) > 1) {
+        warnings.push("duplicate_active_runtime_rows_detected:using_latest_runtime_row");
+        const newest = activeRuntimeRows?.[0]?.id ?? null;
         if (newest) {
-          const extras = (activeBoards ?? []).slice(1).map((row) => row.id);
+          const extras = (activeRuntimeRows ?? []).slice(1).map((row) => row.id);
           if (extras.length > 0) {
             const { error: archiveErr } = await svc
               .schema("mythic")
-              .from("boards")
+              .from("campaign_runtime")
               .update({ status: "archived" })
               .in("id", extras);
-            if (archiveErr) warnings.push(`archive_duplicate_boards:${archiveErr.message ?? "unknown"}`);
+            if (archiveErr) warnings.push(`archive_duplicate_runtime_rows:${archiveErr.message ?? "unknown"}`);
           }
         }
       }
-      const activeBoard = activeBoards?.[0] ?? null;
+      const activeRuntime = activeRuntimeRows?.[0] ?? null;
 
-      if (!activeBoard) {
-        const { data: latestBoard, error: latestBoardErr } = await svc
-          .schema("mythic")
-          .from("boards")
-          .select("id,status,board_type")
-          .eq("campaign_id", campaign.id)
-          .neq("board_type", "combat")
-          .order("updated_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (latestBoardErr) throw latestBoardErr;
-        if (latestBoard?.id) {
-          const { error: activateErr } = await svc
-            .schema("mythic")
-            .from("boards")
-            .update({ status: "active" })
-            .eq("id", latestBoard.id);
-          if (activateErr) throw activateErr;
-        } else {
-          const { error: boardInsertError } = await svc.schema("mythic").from("boards").insert({
-            campaign_id: campaign.id,
-            board_type: "town",
-            status: "active",
-            state_json: makeTownState(seedBase),
-            ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
-          });
-          if (boardInsertError) throw boardInsertError;
-        }
+      if (!activeRuntime) {
+        const { error: runtimeInsertError } = await svc.schema("mythic").from("campaign_runtime").insert({
+          campaign_id: campaign.id,
+          mode: "town",
+          status: "active",
+          state_json: makeTownState({
+            seed: seedBase,
+            campaignName: String(campaign.name ?? "Mythic Campaign"),
+            campaignDescription: String(campaign.description ?? "A dangerous world in motion."),
+          }),
+          ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
+        });
+        if (runtimeInsertError) throw runtimeInsertError;
       }
 
       const worldProfilePayload = {

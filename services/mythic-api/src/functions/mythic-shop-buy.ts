@@ -116,30 +116,30 @@ export const mythicShopBuy: FunctionHandler = {
         });
       }
 
-      const { data: board, error: boardErr } = await svc
+      const { data: runtime, error: runtimeErr } = await svc
         .schema("mythic")
-        .from("boards")
-        .select("id, board_type, state_json, updated_at")
+        .from("campaign_runtime")
+        .select("id, mode, state_json, updated_at")
         .eq("campaign_id", campaignId)
         .eq("status", "active")
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (boardErr) throw boardErr;
-      if (!board) {
-        return new Response(JSON.stringify({ error: "No active board found", code: "board_missing", requestId }), {
+      if (runtimeErr) throw runtimeErr;
+      if (!runtime) {
+        return new Response(JSON.stringify({ error: "No active runtime found", code: "runtime_missing", requestId }), {
           status: 404,
           headers: baseHeaders,
         });
       }
-      if ((board as any).board_type !== "town") {
-        return new Response(JSON.stringify({ error: "Shops are only available in town.", code: "board_not_town", requestId }), {
+      if ((runtime as any).mode !== "town") {
+        return new Response(JSON.stringify({ error: "Shops are only available in town.", code: "runtime_not_town", requestId }), {
           status: 409,
           headers: baseHeaders,
         });
       }
 
-      const state = ((board as any).state_json && typeof (board as any).state_json === "object") ? ((board as any).state_json as Record<string, unknown>) : {};
+      const state = ((runtime as any).state_json && typeof (runtime as any).state_json === "object") ? ((runtime as any).state_json as Record<string, unknown>) : {};
       const { vendorStockRoot, stock } = pullVendorStock(state, vendorId);
       if (!stock) {
         return new Response(JSON.stringify({ error: "Vendor stock not found. Open the shop first.", code: "vendor_stock_missing", requestId }), {
@@ -288,9 +288,9 @@ export const mythicShopBuy: FunctionHandler = {
 
       const { error: boardUpdErr } = await svc
         .schema("mythic")
-        .from("boards")
+        .from("campaign_runtime")
         .update({ state_json: nextState, updated_at: new Date().toISOString() })
-        .eq("id", (board as any).id);
+        .eq("id", (runtime as any).id);
       if (boardUpdErr) throw boardUpdErr;
 
       await svc.schema("mythic").from("dm_memory_events").insert({
@@ -338,4 +338,3 @@ export const mythicShopBuy: FunctionHandler = {
     }
   },
 };
-

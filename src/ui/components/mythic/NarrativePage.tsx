@@ -1,13 +1,11 @@
 import { Button } from "@/components/ui/button";
 import { MythicDMChat } from "@/components/MythicDMChat";
-import type { MythicDMMessage, MythicUiAction } from "@/hooks/useMythicDungeonMaster";
+import type { MythicDMMessage } from "@/hooks/useMythicDungeonMaster";
 
 interface NarrativePageProps {
   messages: MythicDMMessage[];
   isDmLoading: boolean;
   currentResponse: string;
-  actions?: MythicUiAction[];
-  onAction?: (action: MythicUiAction) => void;
   operationAttempt?: number;
   operationNextRetryAt?: number;
   actionError: string | null;
@@ -63,8 +61,6 @@ export function NarrativePage(props: NarrativePageProps) {
             messages={props.messages}
             isLoading={props.isDmLoading}
             currentResponse={props.currentResponse}
-            actions={props.actions}
-            onAction={props.onAction}
             voiceEnabled={props.voiceEnabled}
             voiceSupported={props.voiceSupported}
             voiceBlocked={props.voiceBlocked}

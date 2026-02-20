@@ -128,11 +128,13 @@ export function useMythicCharacter(campaignId: string | undefined) {
 
       if (invError) throw invError;
 
+      const mythic = supabase.schema("mythic") as any;
+
       const [
         { data: loadouts, error: loadoutsError },
         { data: progressionEvents, error: progressionError },
         { data: memoryEvents, error: memoryError },
-        { data: boardTransitions, error: transitionsError },
+        { data: runtimeTransitions, error: transitionsError },
         { data: lootDrops, error: lootError },
         { data: reputationEvents, error: reputationError },
         { data: factions, error: factionsError },
@@ -159,10 +161,9 @@ export function useMythicCharacter(campaignId: string | undefined) {
             .or(`player_id.eq.${user.id},player_id.is.null`)
             .order("created_at", { ascending: false })
             .limit(30),
-          supabase
-            .schema("mythic")
-            .from("board_transitions")
-            .select("id,from_board_type,to_board_type,reason,payload_json,created_at")
+          mythic
+            .from("runtime_events")
+            .select("id,from_mode,to_mode,reason,payload_json,created_at")
             .eq("campaign_id", campaignId)
             .order("created_at", { ascending: false })
             .limit(30),
@@ -239,10 +240,10 @@ export function useMythicCharacter(campaignId: string | undefined) {
         });
       }
 
-      for (const transition of (boardTransitions ?? []) as Array<Record<string, unknown>>) {
+      for (const transition of (runtimeTransitions ?? []) as Array<Record<string, unknown>>) {
         const id = safeString(transition.id, crypto.randomUUID());
-        const fromBoard = safeString(transition.from_board_type, "?").toUpperCase();
-        const toBoard = safeString(transition.to_board_type, "?").toUpperCase();
+        const fromBoard = safeString(transition.from_mode ?? transition.from_board_type, "?").toUpperCase();
+        const toBoard = safeString(transition.to_mode ?? transition.to_board_type, "?").toUpperCase();
         const payload = transition.payload_json && typeof transition.payload_json === "object"
           ? transition.payload_json as Record<string, unknown>
           : {};
@@ -257,8 +258,8 @@ export function useMythicCharacter(campaignId: string | undefined) {
         if (searchTarget) detailParts.push(`Target: ${searchTarget}`);
         questThreads.push({
           id: `transition:${id}`,
-          source: "board_transition",
-          event_type: "board_transition",
+          source: "runtime_transition",
+          event_type: "runtime_transition",
           title: `${fromBoard} -> ${toBoard}`,
           detail: detailParts.join(" · "),
           severity: 1,
