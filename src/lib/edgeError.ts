@@ -80,6 +80,15 @@ export function toFriendlyEdgeError(error: unknown, fallback = "Request failed")
   const parsed = parseEdgeError(error, fallback);
   const lowerMessage = parsed.message.toLowerCase();
 
+  if (lowerMessage.includes("failed to fetch") || lowerMessage.includes("edge_fetch_failed")) {
+    return {
+      ...parsed,
+      title: "Network/CORS blocked",
+      description: "Browser could not reach the VM API. Check VITE_MYTHIC_FUNCTIONS_BASE_URL, VM availability, and allowed CORS origins.",
+      code: parsed.code ?? "network_unreachable",
+    };
+  }
+
   if (parsed.code === "network_unreachable" || parsed.code === "upstream_timeout") {
     return {
       ...parsed,

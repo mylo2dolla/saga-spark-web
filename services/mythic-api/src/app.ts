@@ -6,6 +6,19 @@ import { randomUUID } from "node:crypto";
 import { registerFunctionsRoutes } from "./routes/functions.js";
 import { getConfig } from "./shared/env.js";
 
+function isLocalDevOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    const host = parsed.hostname.toLowerCase();
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:")
+      && (host === "localhost" || host === "127.0.0.1" || host === "::1")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function buildApp() {
   const config = getConfig();
 
@@ -36,6 +49,7 @@ export async function buildApp() {
   await app.register(cors, {
     origin: (origin, cb) => {
       if (!origin) return cb(null, true);
+      if (isLocalDevOrigin(origin)) return cb(null, true);
       if (config.allowedOrigins.length === 0) return cb(null, true);
       cb(null, config.allowedOrigins.includes(origin));
     },

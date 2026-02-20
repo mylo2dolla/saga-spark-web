@@ -12,6 +12,10 @@ import type { FunctionContext, FunctionHandler } from "./types.js";
 const TargetingEnum = z.enum(["self", "single", "tile", "area"]);
 const SkillKindEnum = z.enum(["active", "passive", "ultimate", "crafting", "life"]);
 
+type ForgeCompactionMode = "none" | "auto_condensed";
+type ForgeRefinementReason = "llm" | "timeout" | "invalid_json" | "schema_invalid" | "provider_error" | "deterministic_fallback";
+type ForgeFailureReason = Exclude<ForgeRefinementReason, "llm" | "deterministic_fallback">;
+
 const TargetingJsonSchema = z
   .object({
     shape: z.string().optional(),
@@ -73,6 +77,49 @@ const RequestSchema = z.object({
 });
 
 const CLASS_FORGE_REFINEMENT_TIMEOUT_MS = 19_000;
+const CLASS_FORGE_PRIMARY_TIMEOUT_MS = 13_500;
+const CLASS_FORGE_MIN_REPAIR_TIMEOUT_MS = 2_500;
+const FORGE_CONCEPT_TARGET_MIN_CHARS = 280;
+const FORGE_CONCEPT_TARGET_MAX_CHARS = 420;
+
+const GENERIC_SKILL_NAME_RX = /^(action|ability|skill|trait|passive|ultimate)\s*\d*(?:\s*[:\-]\s*(?:strike|guard|blast|carve|defense|utility|effect)?)?$/i;
+const LOW_SIGNAL_SKILL_NAME_RX = /^(strike|guard|ultimate|pressure wave|reposition|disrupt|weakness exploit|passive a|passive b|burst strike)$/i;
+const LOW_SIGNAL_SKILL_DESCRIPTION_RX = /^(a basic|movement tool\.?|defense tool\.?|burst tool\.?|control\/utility tool\.?|passive [ab] description\.?|uses [a-z0-9_\s]+ targeting at range \d+\.?)/i;
+
+class ForgeRefinementError extends Error {
+  reason: ForgeFailureReason;
+  rawContent: string | null;
+
+  constructor(reason: ForgeFailureReason, message: string, rawContent: string | null = null) {
+    super(message);
+    this.name = "ForgeRefinementError";
+    this.reason = reason;
+    this.rawContent = rawContent;
+  }
+}
+
+function trimText(value: string, max: number): string {
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= max) return cleaned;
+  return cleaned.slice(0, max).replace(/\s+\S*$/g, "").trim();
+}
+
+function compactSentence(text: string, max: number): string {
+  const normalized = trimText(text.replace(/[.!?]+$/g, ""), max);
+  return normalized;
+}
+
+function titleSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return trimmed.slice(0, 1).toUpperCase() + trimmed.slice(1);
+}
+
+function lowerSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return trimmed.slice(0, 1).toLowerCase() + trimmed.slice(1);
+}
 
 function normalizeConcept(s: string): string {
   return s
@@ -88,6 +135,18 @@ function titleCaseWords(input: string): string {
     .filter(Boolean)
     .slice(0, 4)
     .map((word) => word.slice(0, 1).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function formatSkillName(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => {
+      if (/^[ivx]+$/i.test(part)) return part.toUpperCase();
+      if (/^[a-z]{1,2}$/i.test(part)) return part.toUpperCase();
+      return part.slice(0, 1).toUpperCase() + part.slice(1).toLowerCase();
+    })
     .join(" ");
 }
 
@@ -120,9 +179,163 @@ function extractAssistantContent(payload: unknown): string | null {
   return joined.length > 0 ? joined : null;
 }
 
+function hash32(input: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function pickByHash<T>(arr: readonly T[], key: string): T {
+  return arr[hash32(key) % arr.length]!;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item).toLowerCase()).filter(Boolean);
+}
+
+function hasAny(haystack: string, needles: string[]): boolean {
+  return needles.some((n) => haystack.includes(n));
+}
+
+function condenseClassConceptForForge(input: string): {
+  value: string;
+  raw_chars: number;
+  used_chars: number;
+  mode: ForgeCompactionMode;
+} {
+  const raw = input.replace(/\s+/g, " ").trim();
+  if (!raw) {
+    return { value: "Mythic hybrid fighter with a risky burst loop and visible punish window.", raw_chars: 0, used_chars: 74, mode: "auto_condensed" };
+  }
+
+  if (raw.length <= FORGE_CONCEPT_TARGET_MAX_CHARS) {
+    return {
+      value: raw,
+      raw_chars: raw.length,
+      used_chars: raw.length,
+      mode: "none",
+    };
+  }
+
+  const sentences = (raw.match(/[^.!?]+[.!?]*/g) ?? [])
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const normalized = sentences.length > 0 ? sentences : [raw];
+
+  const pick = (rx: RegExp, fallbackIndex: number) =>
+    normalized.find((sentence) => rx.test(sentence.toLowerCase())) ?? normalized[Math.min(fallbackIndex, normalized.length - 1)] ?? raw;
+
+  const archetypeRaw = pick(/\b(assassin|guardian|mage|warlock|cleric|paladin|ninja|duelist|hunter|skirmisher|controller|support|tank|hybrid|spellblade|berserk|reaver|witch|oracle)\b/i, 0);
+  const tacticalRaw = pick(/\b(loop|combo|tempo|burst|dash|zone|control|stagger|reposition|pressure|execute|setup|rotation|flank|resource|cooldown|position)\b/i, 1);
+  const weaknessRaw = pick(/\b(weak|cost|risk|drawback|fragile|overheat|glass|resource|telegraph|cooldown|punish|crash|exposed|counterplay|interrupt)\b/i, normalized.length - 1);
+
+  const archetype = titleSentence(compactSentence(archetypeRaw, 140));
+  const tactical = lowerSentence(compactSentence(tacticalRaw, 140));
+  const weakness = lowerSentence(compactSentence(weaknessRaw, 120));
+
+  let composed = `${archetype}. Tactical loop: ${tactical}. Cost: ${weakness}.`.replace(/\s+/g, " ").trim();
+  composed = trimText(composed, FORGE_CONCEPT_TARGET_MAX_CHARS);
+
+  if (composed.length < FORGE_CONCEPT_TARGET_MIN_CHARS) {
+    const extras = normalized
+      .filter((sentence) => sentence !== archetypeRaw && sentence !== tacticalRaw && sentence !== weaknessRaw)
+      .map((sentence) => compactSentence(sentence, 110))
+      .filter(Boolean);
+    for (const extra of extras) {
+      const candidate = `${composed} ${titleSentence(extra)}.`.replace(/\s+/g, " ").trim();
+      if (candidate.length > FORGE_CONCEPT_TARGET_MAX_CHARS) break;
+      composed = candidate;
+      if (composed.length >= FORGE_CONCEPT_TARGET_MIN_CHARS) break;
+    }
+  }
+
+  return {
+    value: trimText(composed, FORGE_CONCEPT_TARGET_MAX_CHARS),
+    raw_chars: raw.length,
+    used_chars: trimText(composed, FORGE_CONCEPT_TARGET_MAX_CHARS).length,
+    mode: "auto_condensed",
+  };
+}
+
+function classifyFailureFromMessage(message: string): ForgeFailureReason {
+  const lower = message.toLowerCase();
+  if (lower.includes("timed out") || lower.includes("timeout")) return "timeout";
+  if (lower.includes("schema")) return "schema_invalid";
+  if (lower.includes("json")) return "invalid_json";
+  return "provider_error";
+}
+
+function toForgeRefinementError(error: unknown): ForgeRefinementError {
+  if (error instanceof ForgeRefinementError) return error;
+  const normalized = sanitizeError(error);
+  const message = normalized.message || "OpenAI refinement failed";
+  return new ForgeRefinementError(classifyFailureFromMessage(message), message);
+}
+
+function ensureUniqueSkillName(name: string, used: Set<string>, idx: number, seedKey: string): string {
+  let candidate = trimText(name, 80);
+  if (!candidate) candidate = `Mythic Move ${idx + 1}`;
+  let normalized = candidate.toLowerCase();
+  if (!used.has(normalized)) {
+    used.add(normalized);
+    return candidate;
+  }
+
+  const suffixes = ["Prime", "Vector", "Mk II", "Reprise", "Overdrive", "Final"];
+  for (const suffix of suffixes) {
+    const next = trimText(`${candidate} ${pickByHash(suffixes, `${seedKey}:${suffix}`)}`, 80);
+    normalized = next.toLowerCase();
+    if (!used.has(normalized)) {
+      used.add(normalized);
+      return next;
+    }
+  }
+
+  candidate = trimText(`${candidate} ${idx + 1}`, 80);
+  normalized = candidate.toLowerCase();
+  used.add(normalized);
+  return candidate;
+}
+
+function primarySkillTag(skill: z.infer<typeof SkillSchema>): string {
+  if (skill.kind === "passive") return "passive";
+  if (skill.kind === "ultimate") return "ultimate";
+  const tags = asStringArray((skill.effects_json as { tags?: unknown } | null)?.tags);
+  if (tags.includes("movement") || tags.includes("mobility")) return "movement";
+  if (tags.includes("defense") || tags.includes("shield") || tags.includes("mitigation")) return "defense";
+  if (tags.includes("burst") || tags.includes("execute")) return "burst";
+  if (tags.includes("control") || tags.includes("stun") || tags.includes("stagger")) return "control";
+  if (tags.includes("utility") || tags.includes("cleanse")) return "utility";
+  if (tags.includes("damage")) return "damage";
+  return "utility";
+}
+
+function counterplaySummary(counterplay: Record<string, unknown>): string {
+  const notes = typeof counterplay.notes === "string" ? counterplay.notes.trim() : "";
+  if (notes) return trimText(notes.replace(/[.!?]+$/g, ""), 160);
+
+  const keys = Object.keys(counterplay);
+  if (keys.includes("countered_by")) return "bait the cooldown, then punish overcommit";
+  if (keys.includes("avoided_by")) return "reposition early and deny line-of-sight";
+  if (keys.includes("resisted_by")) return "stack resist and force the caster to overextend";
+  return "track timing windows and punish the recovery";
+}
+
+function skillTargetClause(skill: z.infer<typeof SkillSchema>): string {
+  if (skill.targeting === "self") return "anchors your own position";
+  if (skill.targeting === "single") return `hunts a single target out to ${skill.range_tiles} tiles`;
+  if (skill.targeting === "tile") return `projects pressure across a tile lane out to ${skill.range_tiles} tiles`;
+  return `sweeps an area out to ${skill.range_tiles} tiles`;
+}
+
 function deterministicRefinement(input: {
   classDescription: string;
   kit: ReturnType<typeof generateMechanicalKit>;
+  seed: number;
 }): z.infer<typeof ResponseSchema> {
   const concept = normalizeConcept(input.classDescription);
   const conceptTitle = titleCaseWords(concept) || "Mythic Vanguard";
@@ -134,76 +347,187 @@ function deterministicRefinement(input: {
     skirmisher: "Shadowrunner",
     hybrid: "Spellblade",
   };
-  const className = `${conceptTitle} ${roleTitles[input.kit.role]}`.slice(0, 60).trim();
-  const roleLine = {
-    tank: "frontline pressure and denial",
-    dps: "burst damage and target execution",
-    support: "stabilization and team tempo",
-    controller: "zone control and disruption",
-    skirmisher: "flanking and hit-run pressure",
-    hybrid: "mixed pressure with flexible utility",
-  }[input.kit.role];
 
-  const classDescription = [
-    `A ${input.kit.role} kit forged from "${input.classDescription.trim()}".`,
-    `This class specializes in ${roleLine}, pivots around ${String(input.kit.resources.primary_id).toUpperCase()}, and punishes indecision with ruthless tempo.`,
-  ].join(" ");
-
-  const verbsByTag: Record<string, string> = {
-    damage: "carve",
-    shield: "fortify",
-    aoe: "blast",
-    control: "pin",
-    mobility: "slip",
-    cleanse: "purge",
-    heal: "stitch",
-    ultimate: "erase",
-    utility: "outplay",
+  const roleLine: Record<z.infer<typeof ResponseSchema>["role"], string> = {
+    tank: "frontline denial, durability spikes, and retaliation windows",
+    dps: "burst execution and clean finish windows",
+    support: "tempo stabilization and team pressure conversion",
+    controller: "space control, lockouts, and disruption chains",
+    skirmisher: "flanking pressure, movement abuse, and hit-run tempo",
+    hybrid: "mixed pressure with flexible utility pivots",
   };
 
-  const refinedSkills = input.kit.skills.map((skill, idx) => {
-    const tags = Array.isArray((skill.effects_json as { tags?: unknown })?.tags)
-      ? ((skill.effects_json as { tags: unknown[] }).tags.map((t) => String(t).toLowerCase()))
-      : [];
-    const actionVerb = tags.find((tag) => verbsByTag[tag]) ? verbsByTag[tags.find((tag) => verbsByTag[tag]) as string] : "strike";
-    const prefix = skill.kind === "ultimate"
-      ? "Final"
-      : skill.kind === "passive"
-        ? "Trait"
-        : skill.kind === "life"
-          ? "Instinct"
-          : skill.kind === "crafting"
-            ? "Craft"
-            : "Skill";
-    const generatedName = `${prefix} ${idx + 1}: ${actionVerb}`.slice(0, 80);
-    const description = [
-      `Uses ${String(input.kit.resources.primary_id).toUpperCase()} to ${actionVerb} with ${skill.targeting} targeting at range ${skill.range_tiles}.`,
-      `Counterplay: ${typeof skill.counterplay === "object" ? "respect cooldown windows and positioning." : "track the timing and punish overcommit."}`,
-    ].join(" ");
+  const className = trimText(`${conceptTitle} ${roleTitles[input.kit.role]}`, 60);
+  const classDescription = trimText(
+    `A ${input.kit.role} forged from "${trimText(input.classDescription, 180)}". This kit leans into ${roleLine[input.kit.role]}, weaponizes ${String(input.kit.resources.primary_id).toUpperCase()}, and dares enemies to punish your risk windows before you cash out.`,
+    2000,
+  );
+
+  const roleWordBank: Record<z.infer<typeof ResponseSchema>["role"], string[]> = {
+    tank: ["Iron", "Stone", "Bastion", "Aegis", "Bulwark", "Rampart"],
+    dps: ["Razor", "Rend", "Execution", "Blood", "Sever", "Reaver"],
+    support: ["Ward", "Lifeline", "Anchor", "Mercy", "Pulse", "Sanctum"],
+    controller: ["Hex", "Lock", "Null", "Snare", "Grave", "Flux"],
+    skirmisher: ["Shadow", "Slip", "Rift", "Ghost", "Lunge", "Stalker"],
+    hybrid: ["Arc", "Warp", "Spell", "Ruin", "Mythic", "Split"],
+  };
+
+  const weaponWordBank: Record<z.infer<typeof ResponseSchema>["weapon_identity"]["family"], string[]> = {
+    blades: ["Edge", "Fang", "Sever", "Lacer", "Slice"],
+    axes: ["Cleaver", "Hatchet", "Chop", "Rend", "Split"],
+    blunt: ["Hammer", "Maul", "Impact", "Crush", "Breaker"],
+    polearms: ["Pike", "Lance", "Halberd", "Skewer", "Thrust"],
+    ranged: ["Volley", "Bolt", "Tracer", "Deadeye", "Longshot"],
+    focus: ["Sigil", "Rune", "Arc", "Hex", "Catalyst"],
+    body: ["Claw", "Howl", "Pounce", "Ripper", "Feral"],
+    absurd: ["Glitch", "Chaos", "Jester", "Warp", "Mayhem"],
+  };
+
+  const tagWordBank: Record<string, string[]> = {
+    passive: ["Instinct", "Doctrine", "Rhythm", "Oath", "Protocol"],
+    movement: ["Dash", "Slip", "Blink", "Lunge", "Pivot"],
+    defense: ["Aegis", "Ward", "Brace", "Bastion", "Shield"],
+    burst: ["Rend", "Rupture", "Sever", "Break", "Spike"],
+    control: ["Snare", "Lock", "Clamp", "Pin", "Hex"],
+    utility: ["Feint", "Bait", "Shift", "Circuit", "Setup"],
+    damage: ["Strike", "Slash", "Crack", "Impact", "Volley"],
+    ultimate: ["Cataclysm", "Finale", "Overdrive", "Judgment", "Eclipse"],
+  };
+
+  const resource = String(input.kit.resources.primary_id ?? "resource").toUpperCase();
+  const weaknessLabel = input.kit.weakness.id.replace(/_/g, " ");
+  const usedNames = new Set<string>();
+
+  const skills = input.kit.skills.map((skill, idx) => {
+    const tag = primarySkillTag(skill);
+    const seedKey = `${input.seed}:${input.kit.role}:${input.kit.weaponFamily}:${tag}:${idx}:${concept}`;
+
+    let name = "";
+    if (skill.kind === "passive") {
+      name = `${pickByHash(roleWordBank[input.kit.role], `${seedKey}:role`)} ${pickByHash(tagWordBank.passive, `${seedKey}:passive`)}`;
+    } else if (skill.kind === "ultimate") {
+      name = `${pickByHash(tagWordBank.ultimate, `${seedKey}:ultimate`)} ${pickByHash(["Protocol", "Storm", "Break", "Vector", "Cascade"], `${seedKey}:ultimate_suffix`)}`;
+    } else {
+      name = `${pickByHash(tagWordBank[tag] ?? tagWordBank.utility, `${seedKey}:tag`)} ${pickByHash(weaponWordBank[input.kit.weaponFamily], `${seedKey}:weapon`)}`;
+    }
+
+    const named = ensureUniqueSkillName(formatSkillName(name), usedNames, idx, seedKey);
+    const targetClause = skillTargetClause(skill);
+    const counter = counterplaySummary(skill.counterplay);
+    const roleDirective = roleLine[input.kit.role];
+
+    const description = trimText(
+      `${named} ${targetClause} and drives ${roleDirective}. It spends ${resource} to open momentum swings while exposing ${weaknessLabel} if you overcommit. Counterplay: ${counter}.`,
+      2000,
+    );
+
     return {
       ...skill,
-      name: generatedName,
-      description: description.slice(0, 2000),
+      name: named,
+      description,
     };
   });
 
   return {
     class_name: className,
-    class_description: classDescription.slice(0, 2000),
+    class_description: classDescription,
     weapon_identity: {
       family: input.kit.weaponFamily,
-      notes: `Deterministic fallback profile for ${conceptTitle}.`,
+      notes: `Prefers ${input.kit.weaponFamily} pressure patterns and tempo control over passive trading.`,
     },
     role: input.kit.role,
     base_stats: input.kit.baseStats,
     resources: input.kit.resources,
-    weakness: input.kit.weakness,
-    skills: refinedSkills,
+    weakness: {
+      id: input.kit.weakness.id,
+      description: trimText(input.kit.weakness.description, 2000),
+      counterplay: trimText(input.kit.weakness.counterplay, 2000),
+    },
+    skills,
   };
 }
 
-function hasAny(haystack: string, needles: string[]): boolean {
-  return needles.some((n) => haystack.includes(n));
+function isGenericSkillName(name: string): boolean {
+  const trimmed = name.replace(/\s+/g, " ").trim();
+  if (!trimmed) return true;
+  if (GENERIC_SKILL_NAME_RX.test(trimmed)) return true;
+  if (LOW_SIGNAL_SKILL_NAME_RX.test(trimmed)) return true;
+  if (trimmed.split(/\s+/).length === 1 && /^(guard|strike|ultimate|passive)$/i.test(trimmed)) return true;
+  return false;
+}
+
+function isLowSignalDescription(description: string): boolean {
+  const trimmed = description.replace(/\s+/g, " ").trim();
+  if (!trimmed) return true;
+  if (trimmed.length < 40) return true;
+  if (LOW_SIGNAL_SKILL_DESCRIPTION_RX.test(trimmed.toLowerCase())) return true;
+  return false;
+}
+
+function repairRefinedOutput(args: {
+  refined: z.infer<typeof ResponseSchema>;
+  fallback: z.infer<typeof ResponseSchema>;
+}): z.infer<typeof ResponseSchema> {
+  const used = new Set<string>();
+  const skills = args.refined.skills.map((skill, idx) => {
+    const fallbackSkill = args.fallback.skills[Math.min(idx, args.fallback.skills.length - 1)] ?? args.fallback.skills[0]!;
+    let name = trimText(skill.name ?? "", 80);
+    if (isGenericSkillName(name)) {
+      name = fallbackSkill.name;
+    }
+    name = ensureUniqueSkillName(name, used, idx, `repair:${idx}:${name}`);
+
+    let description = trimText(skill.description ?? "", 2000);
+    if (isLowSignalDescription(description)) {
+      description = fallbackSkill.description;
+    }
+
+    return {
+      ...skill,
+      name,
+      description,
+    };
+  });
+
+  const className = trimText(args.refined.class_name, 60);
+  const safeClassName = className.length < 4 || /^mythic\s+(class|kit)$/i.test(className)
+    ? args.fallback.class_name
+    : className;
+
+  const classDescription = trimText(args.refined.class_description, 2000);
+  const safeClassDescription = classDescription.length < 60 ? args.fallback.class_description : classDescription;
+
+  return {
+    ...args.refined,
+    class_name: safeClassName,
+    class_description: safeClassDescription,
+    skills,
+  };
+}
+
+function parseRefinedResponse(content: string): z.infer<typeof ResponseSchema> {
+  const jsonText = extractJsonObject(content);
+  if (!jsonText) {
+    throw new ForgeRefinementError("invalid_json", "OpenAI response was not valid JSON", content);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    throw new ForgeRefinementError("invalid_json", "OpenAI returned malformed JSON", content);
+  }
+
+  const refined = ResponseSchema.safeParse(parsed);
+  if (!refined.success) {
+    throw new ForgeRefinementError(
+      "schema_invalid",
+      `OpenAI output failed schema validation: ${JSON.stringify(refined.error.flatten())}`,
+      jsonText,
+    );
+  }
+
+  return refined.data;
 }
 
 function generateMechanicalKit(input: {
@@ -327,9 +651,7 @@ function generateMechanicalKit(input: {
   const primary = resourceId;
   const mkCost = (amount: number) => ({ resource_id: primary, amount, type: "flat", when: "on_cast" });
 
-  // Mechanics-first skeleton; names/descriptions will be rewritten by the LLM.
   const skills = [
-    // Passives
     {
       kind: "passive" as const,
       targeting: "self" as const,
@@ -365,44 +687,18 @@ function generateMechanicalKit(input: {
       counterplay: { countered_by: ["deny_triggers"], notes: "Shuts off if the enemy plays clean." },
       narration_style: "comic-brutal",
     },
-
-    // Actives
-    {
-      kind: "active" as const,
-      targeting: "single" as const,
-      targeting_json: { shape: "single", metric: "manhattan", requires_los: true, blocks_on_walls: true },
-      name: "Strike",
-      description: "A basic single-target strike.",
-      range_tiles: weaponFamily === "ranged" ? 6 : 1,
-      cooldown_turns: 0,
-      cost_json: mkCost(5),
-      effects_json: {
-        tags: ["damage"],
-        base: 8,
-        stat: role === "support" ? "support" : "offense",
-        type: weaponFamily === "focus" ? "arcane" : "physical",
-      },
-      scaling_json: { scales_with: [role === "support" ? "support" : "offense"], curve: "power_at_level" },
-      counterplay: { countered_by: ["armor", "cover"], notes: "Line-of-sight matters." },
-      narration_style: "comic-brutal",
-    },
     {
       kind: "active" as const,
       targeting: "tile" as const,
-      targeting_json: { shape: "area", metric: "manhattan", radius: 1, friendly_fire: false, requires_los: true },
-      name: "Pressure Wave",
-      description: "Area pressure effect.",
+      targeting_json: { shape: "line", metric: "manhattan", length: 4, width: 1, friendly_fire: false, requires_los: false, blocks_on_walls: true },
+      name: "Reposition",
+      description: "Movement tool.",
       range_tiles: 4,
       cooldown_turns: 2,
-      cost_json: mkCost(15),
-      effects_json: {
-        tags: ["damage", "control"],
-        base: 6,
-        stat: role === "controller" ? "control" : "offense",
-        status: { id: "stagger", turns: 1 },
-      },
-      scaling_json: { scales_with: [role === "controller" ? "control" : "offense"], curve: "power_at_level" },
-      counterplay: { countered_by: ["spread_out"], notes: "Do not clump up." },
+      cost_json: mkCost(10),
+      effects_json: { tags: ["movement"], move: { dash_tiles: 3 }, onomatopoeia: "WHOOSH!" },
+      scaling_json: { scales_with: ["mobility"], curve: "power_at_level" },
+      counterplay: { avoided_by: ["root"], notes: "Root/stun stops reposition." },
       narration_style: "comic-brutal",
     },
     {
@@ -410,37 +706,84 @@ function generateMechanicalKit(input: {
       targeting: "self" as const,
       targeting_json: { shape: "self", metric: "manhattan" },
       name: "Guard",
-      description: "Defensive stance.",
+      description: "Defense tool.",
       range_tiles: 0,
       cooldown_turns: 3,
+      cost_json: mkCost(12),
+      effects_json: { tags: ["defense"], barrier: { amount: 20, duration_turns: 2 }, weakness_hook: weakness.id },
+      scaling_json: { scales_with: ["defense", "support"], curve: "power_at_level" },
+      counterplay: { countered_by: ["pierce", "dispel"], notes: "Piercing attacks reduce barrier." },
+      narration_style: "comic-brutal",
+    },
+    {
+      kind: "active" as const,
+      targeting: "single" as const,
+      targeting_json: { shape: "single", metric: "manhattan", requires_los: true },
+      name: "Burst Strike",
+      description: "Burst tool.",
+      range_tiles: weaponFamily === "ranged" ? 5 : 1,
+      cooldown_turns: 1,
+      cost_json: mkCost(15),
+      effects_json: { tags: ["burst"], damage: { skill_mult: 1.35, tags: [weaponFamily, "physical"] }, gore: true },
+      scaling_json: { scales_with: ["offense"], curve: "power_at_level" },
+      counterplay: { avoided_by: ["dodge", "block"], notes: "Telegraphed burst can be punished." },
+      narration_style: "comic-brutal",
+    },
+    {
+      kind: "active" as const,
+      targeting: "area" as const,
+      targeting_json: { shape: "area", metric: "manhattan", radius: 1, friendly_fire: false, requires_los: false, blocks_on_walls: true },
+      name: "Disrupt",
+      description: "Control/utility tool.",
+      range_tiles: 4,
+      cooldown_turns: 3,
+      cost_json: mkCost(18),
+      effects_json: {
+        tags: ["control"],
+        status: { id: "stun", duration_turns: 1, stacking: "none" },
+        apply_chance: { function: "mythic.status_apply_chance", uses: ["control", "utility"] },
+      },
+      scaling_json: { scales_with: ["control", "utility"], curve: "power_at_level" },
+      counterplay: { resisted_by: ["resolve"], notes: "Resolve/resist reduces chance." },
+      narration_style: "comic-brutal",
+    },
+    {
+      kind: "active" as const,
+      targeting: "single" as const,
+      targeting_json: { shape: "single", metric: "manhattan", requires_los: true },
+      name: "Weakness Exploit",
+      description: "Utility tool that bakes in the weakness-by-design.",
+      range_tiles: 3,
+      cooldown_turns: 2,
       cost_json: mkCost(10),
       effects_json: {
-        tags: ["defense"],
-        shield: { amount: 10, turns: 2 },
-        weakness_exploit: weakness.id,
+        tags: ["utility"],
+        self_debuff: { id: weakness.id, intensity: 1, duration_turns: 1 },
+        bonus: { crit_chance_add: 0.12, note: "High reward, self-exposure." },
+        onomatopoeia: "CLICK-CLACK!",
       },
-      scaling_json: { scales_with: ["defense"], curve: "power_at_level" },
-      counterplay: { countered_by: ["pierce", "dispel"], notes: "Shield can be broken." },
+      scaling_json: { scales_with: ["utility", "mobility"], curve: "power_at_level" },
+      counterplay: { punished_by: ["focus_fire"], notes: "Self-exposure invites punishment." },
       narration_style: "comic-brutal",
     },
     {
       kind: "ultimate" as const,
       targeting: "area" as const,
-      targeting_json: { shape: "area", metric: "manhattan", radius: 2, friendly_fire: false, requires_los: true },
+      targeting_json: { shape: "cone", metric: "manhattan", length: 5, width: 3, friendly_fire: false, requires_los: false, blocks_on_walls: true },
       name: "Ultimate",
-      description: "Big finishing move.",
+      description: "Dramatic, risky, consequence-heavy.",
       range_tiles: 5,
-      cooldown_turns: 6,
-      cost_json: mkCost(35),
+      cooldown_turns: 5,
+      cost_json: mkCost(40),
       effects_json: {
-        tags: ["damage", "execute"],
-        base: 18,
-        stat: role === "support" ? "support" : role === "controller" ? "control" : "offense",
-        type: weaponFamily === "focus" ? "arcane" : "physical",
-        weakness_exploit: weakness.id,
+        tags: ["ultimate"],
+        damage: { skill_mult: 2.2, tags: [weaponFamily, "finisher"] },
+        drawback: { id: weakness.id, intensity: 2, duration_turns: 2 },
+        world_reaction: { note: "The DM notices. Factions notice. The world notices." },
+        onomatopoeia: "KRA-KADOOM!!",
       },
-      scaling_json: { scales_with: [role === "support" ? "support" : role === "controller" ? "control" : "offense"], curve: "power_at_level" },
-      counterplay: { countered_by: ["interrupt", "spread_out"], notes: "Telegraphed; punish overcommit." },
+      scaling_json: { scales_with: ["offense", "utility"], curve: "power_at_level" },
+      counterplay: { avoided_by: ["spread_out"], notes: "Cone/area can be dodged by positioning." },
       narration_style: "comic-brutal",
     },
   ];
@@ -474,41 +817,28 @@ export const mythicCreateCharacter: FunctionHandler = {
       const { campaignId, characterName, classDescription } = parsedBody.data;
       const seed = parsedBody.data.seed ?? rngInt(Date.now() % 2147483647, `seed:${campaignId}:${user.userId}`, 0, 2147483647);
 
+      const conceptCompaction = condenseClassConceptForForge(classDescription);
+      const forgeConcept = conceptCompaction.value;
+
       const svc = createServiceClient();
       await assertCampaignAccess(svc, campaignId, user.userId);
 
-      const kit = generateMechanicalKit({ seed, classDescription });
+      const kit = generateMechanicalKit({ seed, classDescription: forgeConcept });
+      const deterministicFallback = deterministicRefinement({ classDescription: forgeConcept, kit, seed });
 
-      // Fetch canonical rules/script for prompt grounding.
-      const { data: rulesRow, error: rulesError } = await svc
-        .schema("mythic")
-        .from("game_rules")
-        .select("rules")
-        .eq("name", "mythic-weave-rules-v1")
-        .maybeSingle();
-      if (rulesError) throw rulesError;
-
-      const { data: scriptRow, error: scriptError } = await svc
-        .schema("mythic")
-        .from("generator_scripts")
-        .select("content")
-        .eq("name", "mythic-weave-core")
-        .eq("is_active", true)
-        .order("version", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (scriptError) throw scriptError;
-
-      const canonicalRules = rulesRow?.rules ? JSON.stringify(rulesRow.rules) : "{}";
-      const canonicalScript = scriptRow?.content ?? "";
-
-      // Ask OpenAI to rewrite names/descriptions only; mechanics stay deterministic.
-      const systemPrompt = `You are generating a Mythic Weave class kit.\\n\\nCANONICAL GENERATOR SCRIPT (authoritative):\\n${canonicalScript}\\n\\nCANONICAL RULES JSON (authoritative):\\n${canonicalRules}\\n\\nTASK:\\n- You will receive a deterministic mechanics skeleton JSON (numbers, cooldowns, targeting, costs, effects_json/scaling_json/counterplay).\\n- Do NOT change any numeric values, cooldowns, range_tiles, targeting, targeting_json, or cost_json.\\n- Improve ONLY these fields: class_name, class_description, weapon_identity.notes (optional), weakness.description/counterplay (may rephrase but keep meaning), each skill.name, each skill.description.\\n- Tone: living comic book, mischievous ruthless DM energy. Use onomatopoeia inside descriptions sparingly.\\n- NO sexual content. NO sexual violence. Violence/gore allowed. Profanity allowed.\\n\\nOutput MUST be ONLY valid JSON matching this schema:\\n{\\n  "class_name": string,\\n  "class_description": string,\\n  "weapon_identity": {"family": string, "notes"?: string},\\n  "role": string,\\n  "base_stats": {offense:int, defense:int, control:int, support:int, mobility:int, utility:int},\\n  "resources": object,\\n  "weakness": {id:string, description:string, counterplay:string},\\n  "skills": [ {kind, targeting, targeting_json, name, description, range_tiles, cooldown_turns, cost_json, effects_json, scaling_json, counterplay, narration_style} ]\\n}`;
+      const systemPrompt = [
+        "You are refining Mythic class kit narrative text.",
+        "Do not alter numeric mechanics, targeting, cooldowns, costs, scaling, or effect payloads.",
+        "Only improve class_name, class_description, weapon_identity.notes, weakness description/counterplay, and each skill name/description.",
+        "Return only valid JSON matching the provided skeleton schema.",
+        "Style: living comic-book dark fantasy with tactical clarity.",
+        "No markdown.",
+      ].join("\n");
 
       const skeleton = {
-        class_name: "",
-        class_description: "",
-        weapon_identity: { family: kit.weaponFamily },
+        class_name: deterministicFallback.class_name,
+        class_description: deterministicFallback.class_description,
+        weapon_identity: { family: kit.weaponFamily, notes: deterministicFallback.weapon_identity.notes },
         role: kit.role,
         base_stats: kit.baseStats,
         resources: kit.resources,
@@ -516,59 +846,141 @@ export const mythicCreateCharacter: FunctionHandler = {
         skills: kit.skills,
       };
 
+      const primaryUserPrompt = [
+        `CLASS CONCEPT (condensed for latency): ${forgeConcept}`,
+        `SEED: ${seed}`,
+        "TASK:",
+        "- Keep all mechanics unchanged.",
+        "- Improve flavor and specificity of names/descriptions.",
+        "- Ensure each skill name is distinct and non-generic.",
+        "- Keep output JSON schema-compatible.",
+        "MECHANICS SKELETON:",
+        JSON.stringify(skeleton),
+      ].join("\n");
+
       const warnings: string[] = [];
+      const attemptOutcomes: string[] = [];
       let provider = "openai";
       let model = "gpt-4o-mini";
-      let refinedData: z.infer<typeof ResponseSchema> = deterministicRefinement({ classDescription, kit });
+      let refinedData: z.infer<typeof ResponseSchema> = deterministicFallback;
       let refinementMode: "llm" | "deterministic_fallback" = "deterministic_fallback";
+      let refinementReason: ForgeRefinementReason = "deterministic_fallback";
+      let lastFailure: ForgeRefinementError | null = null;
+
       const refinementStartedAt = Date.now();
       try {
-        const completion = await mythicOpenAIChatCompletions(
+        const primary = await mythicOpenAIChatCompletions(
           {
             temperature: 0.2,
+            max_tokens: 1100,
             messages: [
               { role: "system", content: systemPrompt },
-              {
-                role: "user",
-                content: `CLASS CONCEPT: ${classDescription}\\nSEED: ${seed}\\n\\nMECHANICS SKELETON (do not change numbers):\\n${JSON.stringify(skeleton)}`,
-              },
+              { role: "user", content: primaryUserPrompt },
             ],
           },
           "gpt-4o-mini",
-          { timeoutMs: CLASS_FORGE_REFINEMENT_TIMEOUT_MS },
+          { timeoutMs: CLASS_FORGE_PRIMARY_TIMEOUT_MS },
         );
-        provider = completion.provider;
-        model = completion.model;
-        const content = extractAssistantContent(completion.data);
-        if (!content) {
-          throw new Error("OpenAI returned an empty response for class refinement");
+
+        provider = primary.provider;
+        model = primary.model;
+
+        const primaryContent = extractAssistantContent(primary.data);
+        if (!primaryContent) {
+          throw new ForgeRefinementError("provider_error", "OpenAI returned an empty response for class refinement");
         }
-        const jsonText = extractJsonObject(content);
-        if (!jsonText) {
-          throw new Error("OpenAI response was not valid JSON");
-        }
-        const parsedJson = JSON.parse(jsonText);
-        const refined = ResponseSchema.safeParse(parsedJson);
-        if (!refined.success) {
-          throw new Error(`OpenAI output failed schema validation: ${JSON.stringify(refined.error.flatten())}`);
-        }
-        refinedData = refined.data;
+
+        refinedData = parseRefinedResponse(primaryContent);
         refinementMode = "llm";
+        refinementReason = "llm";
+        attemptOutcomes.push("primary:ok");
       } catch (error) {
         if (error instanceof AiProviderError && error.code === "openai_not_configured") {
           throw error;
         }
-        const normalized = sanitizeError(error);
-        const message = (normalized.message || "OpenAI refinement failed").slice(0, 220);
-        warnings.push(`openai_refinement_fallback:${message}`);
-        ctx.log.warn("create_character.refinement_fallback", {
-          request_id: ctx.requestId,
-          reason: message,
-        });
+
+        const failure = toForgeRefinementError(error);
+        lastFailure = failure;
+        refinementReason = failure.reason;
+        attemptOutcomes.push(`primary:${failure.reason}`);
+
+        const elapsed = Date.now() - refinementStartedAt;
+        const remaining = Math.max(0, CLASS_FORGE_REFINEMENT_TIMEOUT_MS - elapsed - 250);
+
+        if (remaining >= CLASS_FORGE_MIN_REPAIR_TIMEOUT_MS) {
+          try {
+            const repairMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: primaryUserPrompt },
+            ];
+            if (failure.rawContent && failure.rawContent.trim().length > 0) {
+              repairMessages.push({ role: "assistant", content: failure.rawContent.slice(0, 12_000) });
+            }
+            repairMessages.push({
+              role: "user",
+              content: [
+                "Repair the previous output and return corrected JSON only.",
+                `failure_reason: ${failure.reason}`,
+                `failure_detail: ${trimText(failure.message, 240)}`,
+                "Do not change any mechanics fields.",
+                "Ensure every skill name is distinct and non-generic.",
+              ].join("\n"),
+            });
+
+            const repair = await mythicOpenAIChatCompletions(
+              {
+                temperature: 0,
+                max_tokens: 1100,
+                messages: repairMessages,
+              },
+              "gpt-4o-mini",
+              { timeoutMs: remaining },
+            );
+
+            provider = repair.provider;
+            model = repair.model;
+
+            const repairContent = extractAssistantContent(repair.data);
+            if (!repairContent) {
+              throw new ForgeRefinementError("provider_error", "OpenAI repair attempt returned empty output");
+            }
+
+            refinedData = parseRefinedResponse(repairContent);
+            refinementMode = "llm";
+            refinementReason = "llm";
+            attemptOutcomes.push("repair:ok");
+          } catch (repairError) {
+            if (repairError instanceof AiProviderError && repairError.code === "openai_not_configured") {
+              throw repairError;
+            }
+            const repairFailure = toForgeRefinementError(repairError);
+            lastFailure = repairFailure;
+            refinementReason = repairFailure.reason;
+            attemptOutcomes.push(`repair:${repairFailure.reason}`);
+          }
+        }
       }
+
+      if (refinementMode !== "llm") {
+        refinedData = deterministicFallback;
+        if (lastFailure) {
+          warnings.push(`openai_refinement_fallback:${trimText(lastFailure.message || "OpenAI refinement failed", 220)}`);
+          ctx.log.warn("create_character.refinement_fallback", {
+            request_id: ctx.requestId,
+            reason: trimText(lastFailure.message || "OpenAI refinement failed", 220),
+            refinement_reason: refinementReason,
+            attempts: attemptOutcomes,
+          });
+        }
+      }
+
+      refinedData = repairRefinedOutput({
+        refined: refinedData,
+        fallback: deterministicFallback,
+      });
+
       const refinementMs = Date.now() - refinementStartedAt;
 
-      // Enforce content policy on stored text fields.
       assertContentAllowed([
         { path: "class_name", value: refinedData.class_name },
         { path: "class_description", value: refinedData.class_description },
@@ -580,7 +992,6 @@ export const mythicCreateCharacter: FunctionHandler = {
         ]),
       ]);
 
-      // Persist character and skills.
       const classJson = {
         class_name: refinedData.class_name,
         class_description: refinedData.class_description,
@@ -589,6 +1000,8 @@ export const mythicCreateCharacter: FunctionHandler = {
         weakness: refinedData.weakness,
         seed,
         concept: classDescription,
+        forge_concept: forgeConcept,
+        concept_compaction: conceptCompaction,
       };
 
       const normalizeResources = (
@@ -604,7 +1017,7 @@ export const mythicCreateCharacter: FunctionHandler = {
       };
 
       const dbWriteStartedAt = Date.now();
-      // Create new or update existing by player+campaign+name.
+
       const { data: existingChars, error: existingError } = await svc
         .schema("mythic")
         .from("characters")
@@ -644,7 +1057,6 @@ export const mythicCreateCharacter: FunctionHandler = {
           .eq("id", characterId);
         if (updErr) throw updErr;
 
-        // Delete old skills for this character (skills are not append-only; safe to rebuild kit).
         const { error: delSkillsErr } = await svc
           .schema("mythic")
           .from("skills")
@@ -701,6 +1113,7 @@ export const mythicCreateCharacter: FunctionHandler = {
         .insert(skillRows)
         .select("id");
       if (insSkillsErr) throw insSkillsErr;
+
       const dbWriteMs = Date.now() - dbWriteStartedAt;
       const totalMs = Date.now() - totalStartedAt;
 
@@ -709,6 +1122,11 @@ export const mythicCreateCharacter: FunctionHandler = {
         campaign_id: campaignId,
         character_id: characterId,
         forge_refinement_mode: refinementMode,
+        forge_refinement_reason: refinementReason,
+        forge_refinement_attempts: attemptOutcomes,
+        forge_concept_raw_chars: conceptCompaction.raw_chars,
+        forge_concept_used_chars: conceptCompaction.used_chars,
+        forge_concept_compaction_mode: conceptCompaction.mode,
         forge_total_ms: totalMs,
         forge_refinement_ms: refinementMs,
         forge_db_write_ms: dbWriteMs,
@@ -738,6 +1156,8 @@ export const mythicCreateCharacter: FunctionHandler = {
             db_write: dbWriteMs,
           },
           refinement_mode: refinementMode,
+          refinement_reason: refinementReason,
+          concept_compaction: conceptCompaction,
           requestId: ctx.requestId,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },

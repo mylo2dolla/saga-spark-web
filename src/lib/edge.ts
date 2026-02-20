@@ -48,6 +48,7 @@ const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_BASE_MS = 350;
 const MAX_CONCURRENT_EDGE_CALLS = 6;
 const MAX_RESPONSE_SNIPPET = 2000;
+const MAX_IDEMPOTENCY_KEY_LEN = 180;
 
 let activeEdgeCalls = 0;
 type QueuedEdgeCall = {
@@ -59,6 +60,41 @@ const edgeCallQueue: QueuedEdgeCall[] = [];
 
 const inFlightJsonCalls = new Map<string, Promise<unknown>>();
 const inFlightRawCalls = new Map<string, Promise<Response>>();
+
+const fnv1a32Hex = (input: string): string => {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+};
+
+const asciiSlug = (value: string, maxLen = 96): string => {
+  const normalized = value
+    .normalize("NFKC")
+    .replace(/[^\x20-\x7e]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9._~-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!normalized) return "";
+  return normalized.slice(0, maxLen);
+};
+
+const normalizeIdempotencyKey = (value?: string): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const clean = asciiSlug(trimmed, MAX_IDEMPOTENCY_KEY_LEN);
+  if (clean && clean.length <= MAX_IDEMPOTENCY_KEY_LEN) return clean;
+
+  const hash = fnv1a32Hex(trimmed);
+  const prefix = asciiSlug(trimmed, 64);
+  const fallback = prefix ? `${prefix}-${hash}` : `key-${hash}`;
+  return fallback.slice(0, MAX_IDEMPOTENCY_KEY_LEN);
+};
 
 const ensureEnv = () => {
   if (!SUPABASE_URL || !SUPABASE_API_KEY || !FUNCTIONS_BASE_URL) {
@@ -179,6 +215,7 @@ const buildHeaders = async (
   options?: EdgeOptions,
 ): Promise<{ headers: EdgeHeaders; skipped: boolean; authError: Error | null }> => {
   ensureEnv();
+  const idempotencyKey = normalizeIdempotencyKey(options?.idempotencyKey);
   const { accessToken, authError } = await getAuthContext(options?.requireAuth);
   if (authError) {
     return {
@@ -196,7 +233,7 @@ const buildHeaders = async (
       "Content-Type": "application/json",
       apikey: SUPABASE_API_KEY!,
       ...(options?.headers ?? {}),
-      ...(options?.idempotencyKey ? { "x-idempotency-key": options.idempotencyKey } : {}),
+      ...(idempotencyKey ? { "x-idempotency-key": idempotencyKey } : {}),
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     skipped: false,
@@ -427,13 +464,16 @@ const responseForAuthError = (authError: Error) => ({
   skipped: true,
 });
 
-const buildRequestHeaders = (options: EdgeOptions | undefined, token: string | null): EdgeHeaders => ({
-  "Content-Type": "application/json",
-  apikey: SUPABASE_API_KEY!,
-  ...(options?.headers ? buildInvokeHeaders(options.headers) ?? {} : {}),
-  ...(options?.idempotencyKey ? { "x-idempotency-key": options.idempotencyKey } : {}),
-  ...(token ? { Authorization: `Bearer ${token}` } : {}),
-});
+const buildRequestHeaders = (options: EdgeOptions | undefined, token: string | null): EdgeHeaders => {
+  const idempotencyKey = normalizeIdempotencyKey(options?.idempotencyKey);
+  return {
+    "Content-Type": "application/json",
+    apikey: SUPABASE_API_KEY!,
+    ...(options?.headers ? buildInvokeHeaders(options.headers) ?? {} : {}),
+    ...(idempotencyKey ? { "x-idempotency-key": idempotencyKey } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+};
 
 export async function callEdgeFunction<T>(
   name: string,
@@ -441,7 +481,8 @@ export async function callEdgeFunction<T>(
 ): Promise<{ data: T | null; error: Error | null; status: number; raw: Response; skipped: boolean }> {
   ensureEnv();
 
-  const dedupeKey = options?.idempotencyKey ? `${name}:${options.idempotencyKey}` : null;
+  const normalizedIdempotencyKey = normalizeIdempotencyKey(options?.idempotencyKey);
+  const dedupeKey = normalizedIdempotencyKey ? `${name}:${normalizedIdempotencyKey}` : null;
   if (dedupeKey && inFlightJsonCalls.has(dedupeKey)) {
     const existing = inFlightJsonCalls.get(dedupeKey) as Promise<{ data: T | null; error: Error | null; status: number; raw: Response; skipped: boolean }>;
     return await existing;
@@ -626,7 +667,8 @@ export async function callEdgeFunctionRaw(
   name: string,
   options?: EdgeRawOptions,
 ): Promise<Response> {
-  const dedupeKey = options?.idempotencyKey ? `${name}:${options.idempotencyKey}` : null;
+  const normalizedIdempotencyKey = normalizeIdempotencyKey(options?.idempotencyKey);
+  const dedupeKey = normalizedIdempotencyKey ? `${name}:${normalizedIdempotencyKey}` : null;
   if (dedupeKey && inFlightRawCalls.has(dedupeKey)) {
     return await inFlightRawCalls.get(dedupeKey)!;
   }

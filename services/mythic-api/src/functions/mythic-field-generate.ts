@@ -26,6 +26,9 @@ const RequestSchema = z.object({
   context: z.record(z.unknown()).optional(),
 });
 
+const CLASS_CONCEPT_TARGET_MIN_CHARS = 220;
+const CLASS_CONCEPT_TARGET_MAX_CHARS = 420;
+
 function fieldDirective(fieldType: z.infer<typeof RequestSchema>["fieldType"]): string {
   switch (fieldType) {
     case "campaign_name":
@@ -33,7 +36,7 @@ function fieldDirective(fieldType: z.infer<typeof RequestSchema>["fieldType"]): 
     case "campaign_description":
       return "Output a concise world seed description (3-7 sentences) with setting, conflict, tone, and first hook.";
     case "class_concept":
-      return "Output a vivid class concept paragraph with fantasy/comic flair and tactical identity.";
+      return "Output exactly 2-3 sentences (220-420 chars) defining archetype identity, tactical loop, and explicit weakness/cost with fantasy/comic flair.";
     case "character_name":
       return "Output one distinct character name, 1-3 words max.";
     case "dm_action":
@@ -54,7 +57,7 @@ function maxLengthForField(fieldType: z.infer<typeof RequestSchema>["fieldType"]
     case "campaign_description":
       return 2000;
     case "class_concept":
-      return 2000;
+      return CLASS_CONCEPT_TARGET_MAX_CHARS;
     case "character_name":
       return 60;
     case "dm_action":
@@ -69,6 +72,62 @@ function maxLengthForField(fieldType: z.infer<typeof RequestSchema>["fieldType"]
 }
 
 const trimTo = (text: string, max: number) => (text.length > max ? text.slice(0, max).trimEnd() : text);
+
+function compactSentence(text: string, max: number): string {
+  const normalized = text.replace(/\s+/g, " ").trim().replace(/[.!?]+$/g, "");
+  if (!normalized) return "";
+  if (normalized.length <= max) return normalized;
+  return normalized.slice(0, max).replace(/\s+\S*$/g, "").trim();
+}
+
+function titleSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return trimmed.slice(0, 1).toUpperCase() + trimmed.slice(1);
+}
+
+function lowerSentence(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return trimmed.slice(0, 1).toLowerCase() + trimmed.slice(1);
+}
+
+function condenseClassConceptText(input: string): string {
+  const cleaned = input.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+
+  const sentences = (cleaned.match(/[^.!?]+[.!?]*/g) ?? [])
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const normalized = sentences.length > 0 ? sentences : [cleaned];
+
+  const pick = (rx: RegExp, fallbackIndex: number) =>
+    normalized.find((sentence) => rx.test(sentence.toLowerCase())) ?? normalized[Math.min(fallbackIndex, normalized.length - 1)] ?? cleaned;
+
+  const archetypeRaw = pick(/\b(assassin|guardian|mage|warlock|cleric|paladin|ninja|duelist|hunter|skirmisher|controller|support|tank|hybrid|spellblade|berserk)\b/i, 0);
+  const tacticalRaw = pick(/\b(loop|combo|tempo|burst|dash|zone|control|stagger|reposition|pressure|execute|setup|rotation)\b/i, 1);
+  const weaknessRaw = pick(/\b(weak|cost|risk|drawback|fragile|overheat|glass|resource|telegraph|cooldown|punish|crash|exposed)\b/i, normalized.length - 1);
+
+  const archetype = titleSentence(compactSentence(archetypeRaw, 130));
+  const tactical = lowerSentence(compactSentence(tacticalRaw, 140));
+  const weakness = lowerSentence(compactSentence(weaknessRaw, 130));
+
+  let composed = `${archetype}. Tactical loop: ${tactical}. Cost: ${weakness}.`.replace(/\s+/g, " ").trim();
+  composed = trimTo(composed, CLASS_CONCEPT_TARGET_MAX_CHARS);
+  if (composed.length >= CLASS_CONCEPT_TARGET_MIN_CHARS) return composed;
+
+  const extras = normalized
+    .filter((sentence) => sentence !== archetypeRaw && sentence !== tacticalRaw && sentence !== weaknessRaw)
+    .map((sentence) => compactSentence(sentence, 120))
+    .filter(Boolean);
+  for (const extra of extras) {
+    const candidate = `${composed} ${titleSentence(extra)}.`.replace(/\s+/g, " ").trim();
+    if (candidate.length > CLASS_CONCEPT_TARGET_MAX_CHARS) break;
+    composed = candidate;
+    if (composed.length >= CLASS_CONCEPT_TARGET_MIN_CHARS) break;
+  }
+  return trimTo(composed, CLASS_CONCEPT_TARGET_MAX_CHARS);
+}
 
 function deterministicFieldText(input: {
   mode: "random" | "expand";
@@ -88,6 +147,12 @@ function deterministicFieldText(input: {
   };
 
   if (input.mode === "expand" && input.currentText.trim().length > 0) {
+    if (input.fieldType === "class_concept") {
+      const expanded = input.currentText.trim().length > CLASS_CONCEPT_TARGET_MAX_CHARS
+        ? condenseClassConceptText(input.currentText)
+        : `${input.currentText.trim()} Lock in one explicit resource cost, one risk window, and one finisher condition tied to positioning.`;
+      return trimTo(condenseClassConceptText(expanded), CLASS_CONCEPT_TARGET_MAX_CHARS);
+    }
     const suffix = pick([
       "Add pressure points, rival factions, and one immediate objective.",
       "Add one concrete risk, one tactical opportunity, and one compelling hook.",
@@ -120,7 +185,10 @@ function deterministicFieldText(input: {
     case "campaign_description":
       return `${premise} Start in ${theme} and secure a foothold before the first strike force arrives.`;
     case "class_concept":
-      return `A relentless skirmisher forged in ${theme}, blending improvised tech, brutal close-quarters discipline, and high-risk burst windows to outplay stronger enemies in collapsing terrain.`;
+      return trimTo(
+        `A ruthless class forged in ${theme} that controls tempo through violent repositioning and burst windows. Core loop: mark weak angles, force movement, then cash out with short-cooldown finishers before enemies stabilize. Cost: every high-output sequence exposes you to punish if your setup is interrupted.`,
+        CLASS_CONCEPT_TARGET_MAX_CHARS,
+      );
     case "character_name":
       return pick(["Kael Voss", "Nyx Calder", "Ira Stone", "Mara Hex", "Jax Riven"], 19);
     case "dm_action":
@@ -194,9 +262,16 @@ export const mythicFieldGenerate: FunctionHandler = {
       }
 
       const directive = fieldDirective(fieldType);
-      const modeRules = mode === "random"
-        ? "If currentText is empty, generate from world/campaign context. If not empty, you may still use it as optional hint."
-        : "Expand and refine currentText while preserving intent and theme. Add concrete details and tactical flavor.";
+      const isClassConcept = fieldType === "class_concept";
+      const modeRules = isClassConcept
+        ? mode === "random"
+          ? "Generate exactly 2-3 sentences within 220-420 chars. Include archetype identity, tactical loop, and explicit weakness/cost."
+          : currentText.trim().length > CLASS_CONCEPT_TARGET_MAX_CHARS
+            ? "Compress and refine currentText to exactly 2-3 sentences within 220-420 chars while preserving core intent."
+            : "Expand currentText into exactly 2-3 sentences within 220-420 chars. Must include tactical loop and explicit weakness/cost."
+        : mode === "random"
+          ? "If currentText is empty, generate from world/campaign context. If not empty, you may still use it as optional hint."
+          : "Expand and refine currentText while preserving intent and theme. Add concrete details and tactical flavor.";
 
       const system = [
         "You generate concise game text for Mythic Weave.",
@@ -218,10 +293,11 @@ export const mythicFieldGenerate: FunctionHandler = {
 
       let text = "";
       let source: "llm" | "deterministic_fallback" = "llm";
+      const maxTokens = isClassConcept ? 170 : 350;
       const completion = await mythicOpenAIChatCompletions(
         {
           temperature: mode === "random" ? 0.8 : 0.45,
-          max_tokens: 350,
+          max_tokens: maxTokens,
           messages: [
             { role: "system", content: system },
             { role: "user", content: userPrompt },
@@ -243,7 +319,8 @@ export const mythicFieldGenerate: FunctionHandler = {
       }
 
       const fieldMax = maxLengthForField(fieldType);
-      const finalText = trimTo(text, fieldMax);
+      const normalizedText = isClassConcept ? condenseClassConceptText(text) : text;
+      const finalText = trimTo(normalizedText, fieldMax);
 
       assertContentAllowed([{ path: "generated_text", value: finalText }]);
 

@@ -198,6 +198,12 @@ export interface MythicCreateCharacterResponse {
     db_write: number;
   };
   refinement_mode?: "llm" | "deterministic_fallback";
+  refinement_reason?: "llm" | "timeout" | "invalid_json" | "schema_invalid" | "provider_error" | "deterministic_fallback";
+  concept_compaction?: {
+    raw_chars: number;
+    used_chars: number;
+    mode: "none" | "auto_condensed";
+  };
 }
 
 export interface MythicBootstrapRequest {
