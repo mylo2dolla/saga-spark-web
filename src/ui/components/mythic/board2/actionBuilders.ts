@@ -37,13 +37,17 @@ export function actionSignature(action: MythicUiAction): string {
           : typeof payload.search_target === "string"
             ? payload.search_target
             : typeof payload.travel_probe === "string"
-              ? payload.travel_probe
-              : action.boardTarget ?? action.panel ?? action.id;
-  const promptKey = (action.prompt ?? "")
+            ? payload.travel_probe
+            : action.boardTarget ?? action.panel ?? action.id;
+  const labelKey = (action.label ?? "")
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
-  return `${action.intent}:${target}:${promptKey}`;
+  const hintKey = (action.hint_key ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  return `${action.intent}:${hintKey || target}:${labelKey}`;
 }
 
 export function dedupeBoardActions(actions: MythicUiAction[], maxActions = 8): MythicUiAction[] {

@@ -243,18 +243,14 @@ function normalizeConsoleActionLabel(action: MythicUiAction): MythicUiAction {
 }
 
 function actionTargetSignature(action: MythicUiAction): string {
-  const normalizedPrompt = (action.prompt ?? "")
+  const labelKey = (action.label ?? "")
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
-  if (action.intent === "dm_prompt") {
-    const textKey = (action.prompt ?? action.label)
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, " ");
-    return `${action.intent}:${textKey || action.id}:${normalizedPrompt}`;
-  }
-
+  const hintKey = (action.hint_key ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
   const payload = action.payload ?? {};
   const target = typeof payload.target_combatant_id === "string"
     ? payload.target_combatant_id
@@ -266,8 +262,13 @@ function actionTargetSignature(action: MythicUiAction): string {
           ? payload.to_room_id
           : typeof payload.searchTarget === "string"
             ? payload.searchTarget
-            : action.boardTarget ?? action.panel ?? action.id;
-  return `${action.intent}:${target}:${normalizedPrompt}`;
+            : typeof payload.travel_probe === "string"
+              ? payload.travel_probe
+              : action.boardTarget ?? action.panel ?? action.id;
+  if (action.intent === "dm_prompt") {
+    return `${action.intent}:${hintKey || target}:${labelKey}`;
+  }
+  return `${action.intent}:${hintKey || target}:${labelKey}`;
 }
 
 function dedupeConsoleActions(candidates: MythicUiAction[]): MythicUiAction[] {
