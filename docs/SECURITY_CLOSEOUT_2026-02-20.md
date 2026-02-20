@@ -19,6 +19,7 @@ This record captures closeout work after rewriting history to remove a leaked AP
 - Removed temporary remote branches:
   - `origin/codex/sanitized-main-env-clean-20260220`
   - `vault/codex/sanitized-main-env-clean-20260220`
+- Enabled GitHub Secret Scanning and Push Protection for `mylo2dolla/saga-spark-web`.
 - Expired reflogs and ran aggressive local garbage collection.
 - Verified tracked files and reachable history are clean for OpenAI key patterns.
 
@@ -27,9 +28,6 @@ This record captures closeout work after rewriting history to remove a leaked AP
   - Rotate exposed key.
   - Revoke old key.
   - Create new least-privilege key.
-- GitHub repository settings:
-  - Enable Secret Scanning.
-  - Enable Push Protection.
 
 ## Runtime Secret Sync + Restart
 - VM API host: `api.mythweaver.online`
