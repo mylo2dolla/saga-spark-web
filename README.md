@@ -156,6 +156,24 @@ WHERE schemaname = 'public'
 npm run build
 ```
 
+## Security guardrails
+
+Install local git hooks:
+
+```bash
+bash scripts/install-git-hooks.sh
+```
+
+Run secret scans manually:
+
+```bash
+bash scripts/secret-scan.sh --tracked
+bash scripts/secret-scan.sh --history
+```
+
+Closeout record:
+- `docs/SECURITY_CLOSEOUT_2026-02-20.md`
+
 ## Production hardening checks
 
 Run the baseline production checks before shipping:
