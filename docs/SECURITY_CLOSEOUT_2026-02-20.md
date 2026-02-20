@@ -22,12 +22,12 @@ This record captures closeout work after rewriting history to remove a leaked AP
 - Enabled GitHub Secret Scanning and Push Protection for `mylo2dolla/saga-spark-web`.
 - Expired reflogs and ran aggressive local garbage collection.
 - Verified tracked files and reachable history are clean for OpenAI key patterns.
+- OpenAI key rotation completed (user-confirmed): old key revoked and replacement key created on 2026-02-20.
+- Synced new `OPENAI_API_KEY` to local runtime file (`services/mythic-api/.env`) and VM runtime file (`/opt/mythic-api/.env`).
+- Verified local/VM key parity by hash and restarted `mythic-api` container with `docker compose up -d --build` and `--force-recreate`.
 
-## External Controls (Manual Dashboard Access Required)
-- OpenAI dashboard key rotation:
-  - Rotate exposed key.
-  - Revoke old key.
-  - Create new least-privilege key.
+## Remaining Manual Controls
+- None.
 
 ## Runtime Secret Sync + Restart
 - VM API host: `api.mythweaver.online`
@@ -46,7 +46,7 @@ This record captures closeout work after rewriting history to remove a leaked AP
   - `npx playwright test tests/game-smoke.spec.ts`
 - VM auth smoke:
   - `./scripts/smoke-vm-functions.sh`
-- Production flow checks:
-  - `mythic-dungeon-master`
-  - `mythic-dm-context`
-  - `mythic-combat-start`
+- Authenticated production flow checks (2026-02-20T17:56:22Z):
+  - `mythic-dm-context` -> `200` (request_id `e817d906-649f-4296-ae48-475a8ab8ecc3`)
+  - `mythic-dungeon-master` -> `200` SSE (request_id `bdfab9c0-d663-4ad4-b192-73c4480567e9`)
+  - `mythic-combat-start` -> `400 character_missing` (request_id `8135d41b-ec38-4a71-baad-0710c3d43798`, expected for campaign without a character)
