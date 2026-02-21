@@ -72,6 +72,11 @@ export interface MythicBoardState {
   job_postings?: Array<Record<string, unknown>>;
   room_state?: Record<string, unknown>;
   discovery_flags?: MythicDiscoveryFlags;
+  town_npcs?: Array<Record<string, unknown>>;
+  town_relationships?: Record<string, unknown>;
+  town_grudges?: Record<string, unknown>;
+  town_activity_log?: Array<Record<string, unknown> | string>;
+  town_clock?: Record<string, unknown>;
   reason_code?: string;
   rumors?: unknown[];
   objectives?: unknown[];

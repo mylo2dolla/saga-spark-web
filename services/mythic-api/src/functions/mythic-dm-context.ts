@@ -84,6 +84,31 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       raw.world_seed && typeof raw.world_seed === "object"
         ? raw.world_seed as Record<string, unknown>
         : null;
+    const townNpcs = Array.isArray(raw.town_npcs)
+      ? raw.town_npcs
+        .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+      : [];
+    const npcSamples = townNpcs.slice(0, 6).map((entry) => ({
+      id: entry.id ?? null,
+      name: entry.name ?? null,
+      role: entry.role ?? null,
+      faction: entry.faction ?? null,
+      mood: entry.mood ?? null,
+      relationship: entry.relationship ?? null,
+      grudge: entry.grudge ?? null,
+      schedule_state: entry.schedule_state ?? null,
+    }));
+    const relationshipPressure = npcSamples.reduce((acc, entry) => {
+      const rel = Number(entry.relationship ?? 0);
+      return acc + (Number.isFinite(rel) ? Math.abs(Math.floor(rel)) : 0);
+    }, 0);
+    const grudgeSamples = npcSamples
+      .filter((entry) => Number(entry.grudge ?? 0) > 0)
+      .slice(0, 4)
+      .map((entry) => ({
+        name: entry.name,
+        grudge: entry.grudge,
+      }));
     return {
       template_key: raw.template_key ?? null,
       world_title: worldSeed?.title ?? null,
@@ -95,6 +120,10 @@ function summarizeBoardState(boardType: unknown, stateJson: unknown) {
       objective_samples: sampleEntries(raw.objectives, 4),
       faction_count: Array.isArray(raw.factions_present) ? raw.factions_present.length : 0,
       guard_alertness: raw.guard_alertness ?? null,
+      npc_count: townNpcs.length,
+      npc_samples: npcSamples,
+      relationship_pressure: relationshipPressure,
+      grudge_samples: grudgeSamples,
       companion_presence: companionPresence,
       companion_checkins: companionCheckins,
     };

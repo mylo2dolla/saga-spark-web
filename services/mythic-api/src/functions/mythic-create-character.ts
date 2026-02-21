@@ -364,34 +364,34 @@ function deterministicRefinement(input: {
   );
 
   const roleWordBank: Record<z.infer<typeof ResponseSchema>["role"], string[]> = {
-    tank: ["Iron", "Stone", "Bastion", "Aegis", "Bulwark", "Rampart"],
-    dps: ["Razor", "Rend", "Execution", "Blood", "Sever", "Reaver"],
-    support: ["Ward", "Lifeline", "Anchor", "Mercy", "Pulse", "Sanctum"],
-    controller: ["Hex", "Lock", "Null", "Snare", "Grave", "Flux"],
-    skirmisher: ["Shadow", "Slip", "Rift", "Ghost", "Lunge", "Stalker"],
-    hybrid: ["Arc", "Warp", "Spell", "Ruin", "Mythic", "Split"],
+    tank: ["Aegis", "Stoneheart", "Lionguard", "Ironbound", "Bastion", "Wardwall"],
+    dps: ["Raven", "Bloodthorn", "Nightfang", "Stormrend", "Suncleaver", "Dreadedge"],
+    support: ["Dawn", "Hallow", "Lifebloom", "Moonward", "Kindled", "Mercy"],
+    controller: ["Hex", "Graveseal", "Starbind", "Ruinmark", "Thornlock", "Nullspire"],
+    skirmisher: ["Shade", "Swiftwind", "Ghoststep", "Riftdash", "Duskpierce", "Mistral"],
+    hybrid: ["Spellfire", "Mythglass", "Runeblade", "Astral", "Tempest", "Fate"],
   };
 
   const weaponWordBank: Record<z.infer<typeof ResponseSchema>["weapon_identity"]["family"], string[]> = {
-    blades: ["Edge", "Fang", "Sever", "Lacer", "Slice"],
-    axes: ["Cleaver", "Hatchet", "Chop", "Rend", "Split"],
-    blunt: ["Hammer", "Maul", "Impact", "Crush", "Breaker"],
-    polearms: ["Pike", "Lance", "Halberd", "Skewer", "Thrust"],
-    ranged: ["Volley", "Bolt", "Tracer", "Deadeye", "Longshot"],
-    focus: ["Sigil", "Rune", "Arc", "Hex", "Catalyst"],
+    blades: ["Edge", "Fang", "Saber", "Lancer", "Sever"],
+    axes: ["Cleaver", "Hewer", "Rend", "Splitter", "Goreaxe"],
+    blunt: ["Hammer", "Maul", "Crush", "Breaker", "Sunder"],
+    polearms: ["Pike", "Lance", "Halberd", "Skewer", "Driftlance"],
+    ranged: ["Volley", "Bolt", "Deadeye", "Longshot", "Hawkeye"],
+    focus: ["Sigil", "Rune", "Arc", "Catalyst", "Glyph"],
     body: ["Claw", "Howl", "Pounce", "Ripper", "Feral"],
-    absurd: ["Glitch", "Chaos", "Jester", "Warp", "Mayhem"],
+    absurd: ["Chaos", "Jester", "Warp", "Mayhem", "Trickster"],
   };
 
   const tagWordBank: Record<string, string[]> = {
-    passive: ["Instinct", "Doctrine", "Rhythm", "Oath", "Protocol"],
-    movement: ["Dash", "Slip", "Blink", "Lunge", "Pivot"],
-    defense: ["Aegis", "Ward", "Brace", "Bastion", "Shield"],
-    burst: ["Rend", "Rupture", "Sever", "Break", "Spike"],
-    control: ["Snare", "Lock", "Clamp", "Pin", "Hex"],
-    utility: ["Feint", "Bait", "Shift", "Circuit", "Setup"],
+    passive: ["Instinct", "Doctrine", "Rhythm", "Oath", "Vow"],
+    movement: ["Dash", "Slip", "Blink", "Lunge", "Ghoststep"],
+    defense: ["Aegis", "Ward", "Brace", "Bastion", "Shieldwall"],
+    burst: ["Rend", "Rupture", "Sever", "Break", "Sundering"],
+    control: ["Snare", "Bind", "Clamp", "Pin", "Hex"],
+    utility: ["Feint", "Shift", "Pivot", "Weave", "Sleight"],
     damage: ["Strike", "Slash", "Crack", "Impact", "Volley"],
-    ultimate: ["Cataclysm", "Finale", "Overdrive", "Judgment", "Eclipse"],
+    ultimate: ["Cataclysm", "Finale", "Doomfall", "Judgment", "Starbreak"],
   };
 
   const resource = String(input.kit.resources.primary_id ?? "resource").toUpperCase();
@@ -406,7 +406,7 @@ function deterministicRefinement(input: {
     if (skill.kind === "passive") {
       name = `${pickByHash(roleWordBank[input.kit.role], `${seedKey}:role`)} ${pickByHash(tagWordBank.passive, `${seedKey}:passive`)}`;
     } else if (skill.kind === "ultimate") {
-      name = `${pickByHash(tagWordBank.ultimate, `${seedKey}:ultimate`)} ${pickByHash(["Protocol", "Storm", "Break", "Vector", "Cascade"], `${seedKey}:ultimate_suffix`)}`;
+      name = `${pickByHash(tagWordBank.ultimate, `${seedKey}:ultimate`)} ${pickByHash(["Storm", "Wrath", "Crown", "Cascade", "Nova"], `${seedKey}:ultimate_suffix`)}`;
     } else {
       name = `${pickByHash(tagWordBank[tag] ?? tagWordBank.utility, `${seedKey}:tag`)} ${pickByHash(weaponWordBank[input.kit.weaponFamily], `${seedKey}:weapon`)}`;
     }
@@ -656,8 +656,8 @@ function generateMechanicalKit(input: {
       kind: "passive" as const,
       targeting: "self" as const,
       targeting_json: { shape: "self", metric: "manhattan" },
-      name: "Passive A",
-      description: "Passive A description.",
+      name: "Battle Instinct",
+      description: "Your instinct hardens your opening exchanges and keeps tempo in your favor.",
       range_tiles: 0,
       cooldown_turns: 0,
       cost_json: {},
@@ -673,8 +673,8 @@ function generateMechanicalKit(input: {
       kind: "passive" as const,
       targeting: "self" as const,
       targeting_json: { shape: "self", metric: "manhattan" },
-      name: "Passive B",
-      description: "Passive B description.",
+      name: "Hunter's Oath",
+      description: "You gain momentum from critical windows and collapses in enemy posture.",
       range_tiles: 0,
       cooldown_turns: 0,
       cost_json: {},
@@ -691,8 +691,8 @@ function generateMechanicalKit(input: {
       kind: "active" as const,
       targeting: "tile" as const,
       targeting_json: { shape: "line", metric: "manhattan", length: 4, width: 1, friendly_fire: false, requires_los: false, blocks_on_walls: true },
-      name: "Reposition",
-      description: "Movement tool.",
+      name: "Shadowstep",
+      description: "Dash through lanes and seize positional tempo.",
       range_tiles: 4,
       cooldown_turns: 2,
       cost_json: mkCost(10),
@@ -705,8 +705,8 @@ function generateMechanicalKit(input: {
       kind: "active" as const,
       targeting: "self" as const,
       targeting_json: { shape: "self", metric: "manhattan" },
-      name: "Guard",
-      description: "Defense tool.",
+      name: "Iron Guard",
+      description: "Brace and fortify against incoming pressure.",
       range_tiles: 0,
       cooldown_turns: 3,
       cost_json: mkCost(12),
@@ -719,8 +719,8 @@ function generateMechanicalKit(input: {
       kind: "active" as const,
       targeting: "single" as const,
       targeting_json: { shape: "single", metric: "manhattan", requires_los: true },
-      name: "Burst Strike",
-      description: "Burst tool.",
+      name: "Fire Strike",
+      description: "A committed strike that cashes in offensive tempo.",
       range_tiles: weaponFamily === "ranged" ? 5 : 1,
       cooldown_turns: 1,
       cost_json: mkCost(15),
@@ -733,8 +733,8 @@ function generateMechanicalKit(input: {
       kind: "active" as const,
       targeting: "area" as const,
       targeting_json: { shape: "area", metric: "manhattan", radius: 1, friendly_fire: false, requires_los: false, blocks_on_walls: true },
-      name: "Disrupt",
-      description: "Control/utility tool.",
+      name: "Thunder Snare",
+      description: "Disrupt enemy formation with a stunning pulse.",
       range_tiles: 4,
       cooldown_turns: 3,
       cost_json: mkCost(18),
@@ -751,8 +751,8 @@ function generateMechanicalKit(input: {
       kind: "active" as const,
       targeting: "single" as const,
       targeting_json: { shape: "single", metric: "manhattan", requires_los: true },
-      name: "Weakness Exploit",
-      description: "Utility tool that bakes in the weakness-by-design.",
+      name: "Expose Faultline",
+      description: "Read weakness and carve open a punish window.",
       range_tiles: 3,
       cooldown_turns: 2,
       cost_json: mkCost(10),

@@ -397,7 +397,10 @@ function isMechanicalExecutionError(message: string): boolean {
     || normalized.includes("line of sight blocked")
     || normalized.includes("cannot move to selected tile")
     || normalized.includes("no valid target")
-    || normalized.includes("no valid targets in area");
+    || normalized.includes("no valid targets in area")
+    || normalized.includes("failed (409)")
+    || normalized.includes("mythic-combat-use-skill failed")
+    || normalized.includes("mythic-combat-tick failed");
 }
 
 function enrichCombatEventBatchForNarration(

@@ -147,6 +147,31 @@ function compactNarration(text: string, maxWords = NARRATION_MAX_WORDS): string 
   return `${sliced}...`;
 }
 
+function sanitizeNarrationForPlayer(text: string, boardType: string): string {
+  const normalizedBoard = boardType.trim().toLowerCase();
+  const lines = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const sanitizedLines = lines
+    .filter((line) => !/^\s*resolved\s+\d+\s+non-player turn steps\b/i.test(line))
+    .map((line) => line
+      .replace(/\bcampaign_[a-z0-9_]+\b/gi, "opening move")
+      .replace(/\b[a-z0-9]+(?:_[a-z0-9]+){2,}_v\d+\b/gi, "opening move")
+      .replace(/\bA combatant\b/gi, "A fighter")
+      .replace(/\btags?\s+the\s+line\b/gi, "presses the line")
+      .replace(/\s+/g, " ")
+      .trim())
+    .filter((line) => line.length > 0);
+  const joined = sanitizedLines.join(" ");
+  if (!joined) {
+    return normalizedBoard === "combat"
+      ? "Steel and spellfire collide. Pick a target and force the next exchange."
+      : "The board holds steady pressure. Commit your next move.";
+  }
+  return joined;
+}
+
 function compactPromptMessage(content: string): string {
   const clean = content.trim().replace(/\s+/g, " ");
   if (clean.length <= MAX_PROMPT_MESSAGE_CHARS) return clean;
@@ -468,7 +493,10 @@ function sanitizeUiActions(args: {
     .map((action, index) => {
       const actionRaw = action as NarratorUiAction & { board_target?: NarratorUiAction["boardTarget"]; hint_key?: string };
       const { board_target: boardTargetAlias, ...actionNoAlias } = actionRaw;
-      const intent = canonicalIntent(String(action.intent ?? "dm_prompt"));
+      let intent = canonicalIntent(String(action.intent ?? "dm_prompt"));
+      if (boardType === "combat" && (intent === "quest_action" || intent === "combat_start")) {
+        intent = "dm_prompt";
+      }
       const label = repairActionLabel({
         action,
         intent,
@@ -476,7 +504,9 @@ function sanitizeUiActions(args: {
         boardSummary,
         index,
       });
-      const boardTarget = action.boardTarget ?? boardTargetAlias ?? boardTargetForIntent(intent);
+      const boardTarget = boardType === "combat"
+        ? undefined
+        : (action.boardTarget ?? boardTargetAlias ?? boardTargetForIntent(intent));
       const panel = intent === "open_panel" ? remapLegacyPanel(action.panel) : action.panel;
       const prompt = synthesizeActionPrompt({ ...action, intent, boardTarget, panel, label }, boardType);
       const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : undefined;
@@ -1341,12 +1371,21 @@ function synthesizeRecoveryPayload(args: {
   const boardType = (args.boardType === "combat" || combatEventBatch.length > 0) ? "combat" : args.boardType;
   const boardLabel = titleCaseWords(boardType || "board");
   const actionIntent = typeof context?.intent === "string" ? context.intent : "dm_prompt";
-  const actionPrompt = typeof context?.payload === "object" && context?.payload
+  const rawActionPrompt = typeof context?.payload === "object" && context?.payload
     && typeof (context.payload as Record<string, unknown>).prompt === "string"
     ? String((context.payload as Record<string, unknown>).prompt)
-    : typeof context?.action_id === "string"
-      ? String(context.action_id)
-      : null;
+    : null;
+  const rawActionId = typeof context?.action_id === "string" ? String(context.action_id) : null;
+  const actionPrompt = (() => {
+    const source = rawActionPrompt && rawActionPrompt.trim().length > 0 ? rawActionPrompt : rawActionId;
+    if (!source) return null;
+    const clean = source
+      .trim()
+      .replace(/\b[a-z0-9]+(?:_[a-z0-9]+){2,}_v\d+\b/gi, "opening move")
+      .replace(/\b[a-z0-9]+(?:_[a-z0-9]+){2,}\b/gi, (token) => token.includes("_") ? token.replace(/_/g, " ") : token)
+      .replace(/\s+/g, " ");
+    return clean.length > 0 ? clean : null;
+  })();
   const stateChanges = Array.isArray(context?.state_changes)
     ? context?.state_changes.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).slice(0, 3)
     : [];
@@ -1369,13 +1408,13 @@ function synthesizeRecoveryPayload(args: {
         if (typeof payload?.source_name === "string" && payload.source_name.trim().length > 0) return payload.source_name.trim();
         if (typeof payload?.actor_name === "string" && payload.actor_name.trim().length > 0) return payload.actor_name.trim();
         if (typeof payload?.actor_display === "string" && payload.actor_display.trim().length > 0) return payload.actor_display.trim();
-        if (actorId) return `Combatant ${actorId.slice(0, 6)}`;
-        return "Combatant";
+        if (actorId) return `Fighter ${actorId.slice(0, 4).toUpperCase()}`;
+        return "A fighter";
       })();
       const target = (() => {
         if (typeof payload?.target_name === "string" && payload.target_name.trim().length > 0) return payload.target_name.trim();
         if (typeof payload?.target_display === "string" && payload.target_display.trim().length > 0) return payload.target_display.trim();
-        if (targetId) return `Combatant ${targetId.slice(0, 6)}`;
+        if (targetId) return `target ${targetId.slice(0, 4).toUpperCase()}`;
         return "target";
       })();
       const amount = Number(
@@ -1412,16 +1451,29 @@ function synthesizeRecoveryPayload(args: {
       if (eventType === "status_applied") {
         const status = asObject(payload?.status);
         const statusId = typeof status?.id === "string" ? status.id : (typeof payload?.status_id === "string" ? payload.status_id : "pressure");
-        return `${actor} tags ${target} with ${statusId.replace(/_/g, " ")}.`;
+        return `${actor} afflicts ${target} with ${statusId.replace(/_/g, " ")}.`;
+      }
+      if (eventType === "status_tick") {
+        const statusId = typeof payload?.status_id === "string" ? payload.status_id : "status";
+        return amountText
+          ? `${target} bleeds ${amountText} from ${statusId.replace(/_/g, " ")}.`
+          : `${statusId.replace(/_/g, " ")} pressure keeps ticking on ${target}.`;
+      }
+      if (eventType === "status_expired") {
+        const statusId = typeof payload?.status_id === "string" ? payload.status_id : "status";
+        return `${target}'s ${statusId.replace(/_/g, " ")} fades.`;
+      }
+      if (eventType === "armor_shred") {
+        return amountText ? `${actor} shreds ${amountText} armor from ${target}.` : `${actor} shreds ${target}'s guard.`;
       }
       if (eventType === "power_gain") {
-        return amountText ? `${actor} recovers ${amountText} MP.` : `${actor} recovers MP.`;
+        return amountText ? `${actor} recovers ${amountText} MP.` : `${actor} regains MP.`;
       }
       if (eventType === "power_drain") {
-        return amountText ? `${actor} strips ${amountText} MP from ${target}.` : `${actor} strips MP from ${target}.`;
+        return amountText ? `${actor} drains ${amountText} MP from ${target}.` : `${actor} drains MP from ${target}.`;
       }
       if (eventType === "death") {
-        return `${target} goes down hard.`;
+        return `${target} drops and is out of the fight.`;
       }
       if (eventType === "xp_gain") {
         return amountText ? `XP payout locked: +${amountText}.` : "XP payout locked.";
@@ -1481,6 +1533,13 @@ function synthesizeRecoveryPayload(args: {
         : `The ${boardLabel} board answers with hard state, not fog: positions, hooks, and pressure are already committed for this turn.`,
       `${recoveryBeat}`,
     ].join(" ");
+  const cleanNarrative = narrative
+    .replace(/\bcampaign_[a-z0-9_]+\b/gi, "opening move")
+    .replace(/\bresolved\s+\d+\s+non-player turn steps\b/gi, "Enemy pressure keeps moving")
+    .replace(/\bA combatant\b/gi, "A fighter")
+    .replace(/\btags?\s+the\s+line\b/gi, "presses the line")
+    .replace(/\s+/g, " ")
+    .trim();
 
   const vendors = extractVendorsFromBoardSummary(args.boardSummary);
   const baseActions: NarratorUiAction[] = boardType === "town"
@@ -1563,7 +1622,7 @@ function synthesizeRecoveryPayload(args: {
 
   return {
     schema_version: "mythic.dm.narrator.v1",
-    narration: narrative,
+    narration: cleanNarrative,
     scene: {
       environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
       mood: "dark tactical pressure",
@@ -2040,9 +2099,15 @@ ${jsonOnlyContract()}
       let dmRecoveryReason: string | null = null;
       let dmFastRecovery = false;
       let introCleared = false;
-      const actionBoardType = typeof boardPayloadRecord?.board_type === "string"
-        ? String(boardPayloadRecord.board_type)
-        : "town";
+      const actionBoardType = (() => {
+        const boardTypeFromPayload = typeof boardPayloadRecord?.board_type === "string"
+          ? String(boardPayloadRecord.board_type)
+          : "town";
+        const hasCombatEventBatch = Array.isArray(actionContextRecord?.combat_event_batch)
+          && actionContextRecord.combat_event_batch.length > 0;
+        if (hasCombatEventBatch) return "combat";
+        return boardTypeFromPayload;
+      })();
       const fallbackVendorId = Array.from(allowedVendorIds.values())[0] ?? null;
       const buildIntroFallbackActions = (): NarratorUiAction[] => {
         const vendors = extractVendorsFromBoardSummary(boardSummaryRecord);
@@ -2477,7 +2542,10 @@ ${jsonOnlyContract()}
 
       const dmResponseJson: Record<string, unknown> = {
         ...dmParsed.value,
-        narration: compactNarration(dmParsed.value.narration, NARRATION_MAX_WORDS),
+        narration: compactNarration(
+          sanitizeNarrationForPlayer(dmParsed.value.narration, String(boardType)),
+          NARRATION_MAX_WORDS,
+        ),
         schema_version: dmParsed.value.schema_version ?? "mythic.dm.narrator.v1",
         roll_log: prng.rollLog,
         meta: {

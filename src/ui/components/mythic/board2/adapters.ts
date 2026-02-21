@@ -5,6 +5,7 @@ import {
   buildDungeonRoomActions,
   buildModeFallbackActions,
   buildTownGateActions,
+  buildTownNpcActions,
   buildTownNoticeBoardActions,
   buildTownVendorActions,
   buildTravelDungeonEntryActions,
@@ -130,6 +131,54 @@ function parseTownData(args: {
   const rumors = normalizeTextList(args.boardState.rumors);
   const fallbackRumors = summarySamples(args.summary, "rumor_samples");
   const factions = normalizeTextList(args.boardState.factions_present);
+  const relationships = asRecord(args.boardState.town_relationships);
+  const grudges = asRecord(args.boardState.town_grudges);
+  const npcs = asArray(args.boardState.town_npcs)
+    .map((entry, index) => {
+      const row = asRecord(entry);
+      const id = asString(row.id, `npc_${index + 1}`);
+      const relationshipRaw = asNumber(
+        row.relationship,
+        asNumber(relationships[id], 0),
+      );
+      const grudgeRaw = asNumber(
+        row.grudge,
+        asNumber(grudges[id], 0),
+      );
+      const locationPayload = asRecord(row.location_tile);
+      const x = Math.max(0, Math.min(11, Math.floor(asNumber(locationPayload.x, index % 4))));
+      const y = Math.max(0, Math.min(7, Math.floor(asNumber(locationPayload.y, 5 + Math.floor(index / 4)))));
+      return {
+        id,
+        name: asString(row.name, `Town NPC ${index + 1}`),
+        role: asString(row.role, "local"),
+        faction: asString(row.faction, "independent"),
+        mood: asString(row.mood, "steady"),
+        relationship: Math.max(-100, Math.min(100, Math.round(relationshipRaw))),
+        grudge: Math.max(0, Math.min(100, Math.round(grudgeRaw))),
+        locationTile: { x, y },
+        scheduleState: asString(row.schedule_state, "idle"),
+      };
+    })
+    .slice(0, 12);
+  const activityLog = asArray(args.boardState.town_activity_log)
+    .map((entry) => {
+      if (typeof entry === "string") return entry.trim();
+      if (!entry || typeof entry !== "object") return "";
+      const row = entry as Record<string, unknown>;
+      const actor = asString(row.npc_name) || asString(row.npc_id) || "Someone";
+      const action = asString(row.action) || asString(row.kind) || "moves";
+      const detail = asString(row.detail);
+      return `${actor} ${action}${detail ? ` · ${detail}` : ""}`;
+    })
+    .filter((entry) => entry.length > 0)
+    .slice(-12);
+  const relationshipPressure = npcs
+    .slice(0, 8)
+    .reduce((acc, entry) => acc + Math.abs(entry.relationship), 0);
+  const grudgePressure = npcs
+    .slice(0, 8)
+    .reduce((acc, entry) => acc + entry.grudge, 0);
 
   return {
     vendors,
@@ -137,6 +186,10 @@ function parseTownData(args: {
     jobPostings: jobs,
     rumors: rumors.length > 0 ? rumors : fallbackRumors,
     factionsPresent: factions,
+    npcs,
+    relationshipPressure,
+    grudgePressure,
+    activityLog,
   };
 }
 
@@ -477,6 +530,54 @@ function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][
       label: statusId.replace(/_/g, " "),
     };
   }
+  if (event.event_type === "status_tick") {
+    const statusId = asString(payload.status_id, "status");
+    const amount = Math.max(0, Math.round(asNumber(payload.amount, asNumber(payload.damage_to_hp, 0))));
+    return {
+      id: event.id,
+      eventType: "status_tick" as const,
+      targetCombatantId,
+      amount: amount > 0 ? amount : null,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: amount > 0 ? `${statusId.replace(/_/g, " ")} ${amount}` : `${statusId.replace(/_/g, " ")} tick`,
+    };
+  }
+  if (event.event_type === "status_expired") {
+    const statusId = asString(payload.status_id, "status");
+    return {
+      id: event.id,
+      eventType: "status_expired" as const,
+      targetCombatantId,
+      amount: null,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: `${statusId.replace(/_/g, " ")} faded`,
+    };
+  }
+  if (event.event_type === "armor_shred") {
+    const amount = Math.max(0, Math.round(asNumber(payload.amount, 0)));
+    return {
+      id: event.id,
+      eventType: "armor_shred" as const,
+      targetCombatantId,
+      amount: amount > 0 ? amount : null,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: amount > 0 ? `Armor -${amount}` : "Armor shredded",
+    };
+  }
+  if (event.event_type === "death") {
+    return {
+      id: event.id,
+      eventType: "death" as const,
+      targetCombatantId: targetCombatantId || asString(payload.combatant_id) || null,
+      amount: null,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: "Defeated",
+    };
+  }
   if (event.event_type === "moved") {
     const from = parseGridPoint(payload.from);
     const to = parseGridPoint(payload.to);
@@ -496,12 +597,45 @@ function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][
   return null;
 }
 
+function statusFamily(statusIdRaw: string): string {
+  const id = statusIdRaw.trim().toLowerCase();
+  if (!id) return "";
+  if (id.includes("bleed") || id.includes("blood")) return "bleed";
+  if (id.includes("poison") || id.includes("venom") || id.includes("toxin")) return "poison";
+  if (id.includes("burn") || id.includes("ignite") || id.includes("scorch")) return "burn";
+  if (id.includes("guard") || id.includes("parry")) return "guard";
+  if (id.includes("barrier") || id.includes("shield") || id.includes("ward")) return "barrier";
+  if (id.includes("vulnerable") || id.includes("exposed")) return "vulnerable";
+  if (id.includes("stun") || id.includes("stagger") || id.includes("daze")) return "stunned";
+  return id;
+}
+
+function buildStatusFamiliesByCombatant(
+  combatants: NarrativeBoardAdapterInput["combat"]["combatants"],
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  combatants.forEach((combatant) => {
+    const statuses = Array.isArray(combatant.statuses) ? combatant.statuses : [];
+    const families = statuses
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+      .map((entry) => statusFamily(asString(entry.id)))
+      .filter((entry) => entry.length > 0);
+    if (families.length > 0) {
+      const uniqueFamilies = [...new Set<string>(families)].slice(0, 4);
+      out[combatant.id] = uniqueFamilies;
+    }
+  });
+  return out;
+}
+
 function parseCombatData(args: {
   boardState: Record<string, unknown>;
   combatInput: NarrativeBoardAdapterInput["combat"];
 }): CombatSceneData {
   const allCombatants = args.combatInput.combatants;
   const combatants = allCombatants.filter((entry) => entry.is_alive && Number(entry.hp) > 0);
+  const statusFamiliesByCombatant = buildStatusFamiliesByCombatant(allCombatants);
   const allies = combatants.filter((entry) => isAllyCombatant(entry));
   const enemies = combatants.filter((entry) => !isAllyCombatant(entry));
   const playerCombatant = args.combatInput.playerCombatantId
@@ -585,6 +719,7 @@ function parseCombatData(args: {
       .map((event) => parseCombatDelta(event))
       .filter((event): event is NonNullable<ReturnType<typeof parseCombatDelta>> => Boolean(event))
       .slice(-12),
+    statusFamiliesByCombatant,
     activeTurnCombatantId: args.combatInput.activeTurnCombatantId,
     playerCombatantId: args.combatInput.playerCombatantId,
     focusedCombatantId: args.combatInput.focusedCombatantId,
@@ -788,7 +923,8 @@ function toneForCombatDelta(type: CombatSceneData["recentDeltas"][number]["event
   if (type === "damage" || type === "power_drain") return "danger";
   if (type === "miss") return "warn";
   if (type === "healed" || type === "power_gain") return "good";
-  if (type === "status_applied") return "warn";
+  if (type === "status_applied" || type === "status_tick" || type === "armor_shred") return "warn";
+  if (type === "death") return "danger";
   return "neutral";
 }
 
@@ -844,11 +980,13 @@ function buildSceneSummaryCard(args: {
       previewLines: [
         `${town.vendors.length} vendors`,
         `${town.jobPostings.filter((entry) => entry.status === "open").length} open jobs`,
-        `${town.factionsPresent.length} faction signals`,
+        `${town.npcs.length} locals active`,
       ],
       detailLines: [
         ...town.vendors.slice(0, 6).map((entry) => `Vendor: ${entry.name}`),
+        ...town.npcs.slice(0, 6).map((entry) => `Local: ${entry.name} · rel ${entry.relationship} · grudge ${entry.grudge}`),
         ...town.rumors.slice(0, 4).map((entry) => `Rumor: ${entry}`),
+        ...town.activityLog.slice(-4).map((entry) => `Activity: ${entry}`),
       ],
     });
   }
@@ -1018,19 +1156,73 @@ function buildTownScene(args: {
     },
   });
 
+  data.npcs.slice(0, 10).forEach((npc) => {
+    hotspots.push({
+      id: `town-npc-${npc.id}`,
+      kind: "hotspot",
+      title: npc.name,
+      subtitle: `${npc.role} · ${npc.faction} · ${npc.mood}`,
+      description: `Relationship ${npc.relationship} · Grudge ${npc.grudge}`,
+      rect: {
+        x: npc.locationTile.x,
+        y: npc.locationTile.y,
+        w: 1,
+        h: 1,
+      },
+      actions: buildTownNpcActions({
+        npcId: npc.id,
+        npcName: npc.name,
+        role: npc.role,
+        faction: npc.faction,
+        mood: npc.mood,
+        relationship: npc.relationship,
+        grudge: npc.grudge,
+      }),
+      meta: {
+        npc_id: npc.id,
+        npc_role: npc.role,
+        npc_faction: npc.faction,
+        npc_mood: npc.mood,
+        relationship: npc.relationship,
+        grudge: npc.grudge,
+        schedule_state: npc.scheduleState,
+      },
+      visual: {
+        tier: npc.grudge >= 35 ? "primary" : npc.relationship >= 30 ? "secondary" : "tertiary",
+        icon: npc.grudge >= 35 ? "!" : "N",
+        emphasis: npc.grudge >= 35 ? "pulse" : "normal",
+      },
+    });
+  });
+
   const openJobs = data.jobPostings.filter((entry) => entry.status === "open").length;
   const metrics: NarrativeSceneMetric[] = [
     { id: "vendors", label: "Vendors", value: String(data.vendors.length) },
     { id: "jobs", label: "Open Jobs", value: String(openJobs), tone: openJobs > 0 ? "good" : "neutral" },
     { id: "factions", label: "Factions", value: String(data.factionsPresent.length) },
     { id: "rumors", label: "Rumors", value: String(data.rumors.length) },
+    { id: "locals", label: "Locals", value: String(data.npcs.length) },
+    {
+      id: "pressure",
+      label: "Grudge",
+      value: String(data.grudgePressure),
+      tone: data.grudgePressure >= 100 ? "warn" : "neutral",
+    },
   ];
   const legend: NarrativeSceneLegendItem[] = [
     { id: "legend-town-vendor", label: "V Vendor", detail: "trade and intel", tone: "good" },
     { id: "legend-town-board", label: "N Notice", detail: "contracts and jobs", tone: "neutral" },
     { id: "legend-town-gate", label: "G Gate", detail: "travel transition", tone: "warn" },
+    { id: "legend-town-npc", label: "N Local", detail: "relationships and grudges", tone: "neutral" },
   ];
-  const feed = buildAmbientFeed({ mode: "town", warnings: args.warnings, metrics });
+  const feed = [
+    ...data.activityLog.slice(-3).reverse().map((line, index) => ({
+      id: `town-activity-${index + 1}`,
+      label: line,
+      tone: "neutral" as const,
+    })),
+    ...buildAmbientFeed({ mode: "town", warnings: args.warnings, metrics }),
+  ].slice(0, 8);
   const cards: NarrativeDockCardModel[] = [
     buildSceneSummaryCard({ mode: "town", details: data, metrics }),
     buildFeedCard(feed),

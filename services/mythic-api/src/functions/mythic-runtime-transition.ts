@@ -56,6 +56,11 @@ interface ContinuityState {
   companion_checkins: unknown[];
   job_postings: unknown[];
   room_state: Record<string, unknown>;
+  town_npcs: unknown[];
+  town_relationships: Record<string, unknown>;
+  town_grudges: Record<string, unknown>;
+  town_activity_log: unknown[];
+  town_clock: Record<string, unknown>;
 }
 
 interface CompanionState {
@@ -137,6 +142,33 @@ const templateServices: Record<TemplateKey, string[]> = {
   dark_mythic_horror: ["grave_chapel", "hex_alchemist", "omens_board"],
   post_apocalypse: ["salvage_shop", "clinic", "job_board"],
 };
+
+const townNpcGivenNames = [
+  "Mirth",
+  "Bracken",
+  "Oona",
+  "Thistle",
+  "Rook",
+  "Pip",
+  "Bram",
+  "Lyra",
+  "Kettle",
+  "Vesper",
+  "Nettle",
+  "Quill",
+];
+const townNpcTitles = [
+  "Lanternwright",
+  "Rumorkeeper",
+  "Gate Marshal",
+  "Cartographer",
+  "Hex Broker",
+  "Bellwarden",
+  "Route Scribe",
+  "Dusk Herbalist",
+];
+const townNpcMoods = ["steady", "wary", "eager", "tired", "suspicious", "hopeful"];
+const townNpcScheduleStates = ["market", "square", "gate", "alley", "notice_board", "chapel"];
 
 function nowIso() {
   return new Date().toISOString();
@@ -498,6 +530,11 @@ function readContinuity(activeState: Record<string, unknown> | null): Continuity
     companion_checkins: asArray(state.companion_checkins),
     job_postings: asArray(state.job_postings),
     room_state: asRecord(state.room_state),
+    town_npcs: asArray(state.town_npcs),
+    town_relationships: asRecord(state.town_relationships),
+    town_grudges: asRecord(state.town_grudges),
+    town_activity_log: asArray(state.town_activity_log),
+    town_clock: asRecord(state.town_clock),
   };
 }
 
@@ -529,6 +566,189 @@ function resolveTravelGoal(payload: Record<string, unknown>, continuity: Continu
     return continuity.travel_goal.trim().toLowerCase();
   }
   return fallback;
+}
+
+function clampScore(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function normalizeTownNpc(entry: unknown, fallbackId: string): Record<string, unknown> | null {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const row = entry as Record<string, unknown>;
+  const id = typeof row.id === "string" && row.id.trim().length > 0 ? row.id.trim() : fallbackId;
+  const name = typeof row.name === "string" && row.name.trim().length > 0 ? row.name.trim() : null;
+  if (!name) return null;
+  const role = typeof row.role === "string" && row.role.trim().length > 0 ? row.role.trim() : "local";
+  const faction = typeof row.faction === "string" && row.faction.trim().length > 0 ? row.faction.trim() : "independent";
+  const mood = typeof row.mood === "string" && row.mood.trim().length > 0 ? row.mood.trim().toLowerCase() : "steady";
+  const relationship = clampScore(Number(row.relationship ?? 0), -100, 100);
+  const grudge = clampScore(Number(row.grudge ?? 0), 0, 100);
+  const scheduleState = typeof row.schedule_state === "string" && row.schedule_state.trim().length > 0
+    ? row.schedule_state.trim().toLowerCase()
+    : "square";
+  const locationTileRaw = asRecord(row.location_tile);
+  const tileX = clampInt(Number(locationTileRaw.x ?? 0), 0, 11);
+  const tileY = clampInt(Number(locationTileRaw.y ?? 0), 0, 7);
+  return {
+    ...row,
+    id,
+    name,
+    role,
+    faction,
+    mood,
+    relationship,
+    grudge,
+    schedule_state: scheduleState,
+    location_tile: { x: tileX, y: tileY },
+    updated_at: nowIso(),
+  };
+}
+
+function buildDefaultTownNpcs(args: {
+  seed: number;
+  factionNames: string[];
+  count: number;
+}): Record<string, unknown>[] {
+  const count = Math.max(4, Math.min(9, Math.floor(args.count)));
+  return Array.from({ length: count }).map((_, index) => {
+    const id = `npc_${index + 1}`;
+    const given = rngPick(args.seed, `town:npc:given:${index}`, townNpcGivenNames);
+    const title = rngPick(args.seed, `town:npc:title:${index}`, townNpcTitles);
+    const faction = args.factionNames[index % Math.max(1, args.factionNames.length)] ?? "independent";
+    return {
+      id,
+      name: `${given} ${title}`,
+      role: title.toLowerCase(),
+      faction,
+      mood: rngPick(args.seed, `town:npc:mood:${index}`, townNpcMoods),
+      relationship: rngInt(args.seed, `town:npc:rel:${index}`, -12, 20),
+      grudge: rngInt(args.seed, `town:npc:grudge:${index}`, 0, 18),
+      schedule_state: rngPick(args.seed, `town:npc:schedule:${index}`, townNpcScheduleStates),
+      location_tile: {
+        x: rngInt(args.seed, `town:npc:x:${index}`, 0, 11),
+        y: rngInt(args.seed, `town:npc:y:${index}`, 4, 7),
+      },
+      updated_at: nowIso(),
+    };
+  });
+}
+
+function buildTownLiveness(args: {
+  seed: number;
+  continuity: ContinuityState;
+  factionNames: string[];
+  payload: Record<string, unknown>;
+}): {
+  town_npcs: Record<string, unknown>[];
+  town_relationships: Record<string, unknown>;
+  town_grudges: Record<string, unknown>;
+  town_activity_log: Record<string, unknown>[];
+  town_clock: Record<string, unknown>;
+} {
+  const baseClockTick = clampInt(Number(args.continuity.town_clock.tick ?? 0), 0, 999999);
+  const tick = baseClockTick + 1;
+  const interaction = asRecord(args.payload.npc_interaction);
+  const interactionNpcId = typeof interaction?.npc_id === "string" ? interaction.npc_id.trim() : "";
+  const interactionAction = typeof interaction?.action === "string" ? interaction.action.trim().toLowerCase() : "talk";
+  const interactionTone = typeof interaction?.tone === "string" ? interaction.tone.trim().toLowerCase() : "neutral";
+
+  const continuityNpcs = args.continuity.town_npcs
+    .map((entry, index) => normalizeTownNpc(entry, `npc_prev_${index + 1}`))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  const baselineNpcs = continuityNpcs.length > 0
+    ? continuityNpcs
+    : buildDefaultTownNpcs({
+        seed: args.seed,
+        factionNames: args.factionNames,
+        count: rngInt(args.seed, "town:npc:count", 5, 8),
+      });
+
+  const relationshipMap: Record<string, unknown> = {
+    ...args.continuity.town_relationships,
+  };
+  const grudgeMap: Record<string, unknown> = {
+    ...args.continuity.town_grudges,
+  };
+  const activityLog = args.continuity.town_activity_log
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+    .slice(-20);
+
+  const updatedNpcs = baselineNpcs.map((entry, index) => {
+    const id = typeof entry.id === "string" ? entry.id : `npc_${index + 1}`;
+    const relationshipBase = clampScore(Number(relationshipMap[id] ?? entry.relationship ?? 0), -100, 100);
+    const grudgeBase = clampScore(Number(grudgeMap[id] ?? entry.grudge ?? 0), 0, 100);
+    const stanceDelta = rngInt(args.seed, `town:npc:drift:${tick}:${id}`, -2, 2);
+    const mood = rngPick(args.seed, `town:npc:mood:${tick}:${id}`, townNpcMoods);
+    const scheduleState = rngPick(args.seed, `town:npc:schedule:${tick}:${id}`, townNpcScheduleStates);
+    const tileX = rngInt(args.seed, `town:npc:x:${tick}:${id}`, 0, 11);
+    const tileY = rngInt(args.seed, `town:npc:y:${tick}:${id}`, 4, 7);
+    let relationship = clampScore(relationshipBase + stanceDelta, -100, 100);
+    let grudge = clampScore(grudgeBase + (stanceDelta < 0 ? 1 : 0), 0, 100);
+
+    if (interactionNpcId && interactionNpcId === id) {
+      const relationshipDelta = interactionTone === "helpful"
+        ? 8
+        : interactionTone === "hostile"
+          ? -12
+          : interactionTone === "tense"
+            ? -6
+            : 3;
+      const grudgeDelta = interactionTone === "hostile"
+        ? 12
+        : interactionTone === "tense"
+          ? 6
+          : interactionTone === "helpful"
+            ? -4
+            : -1;
+      relationship = clampScore(relationship + relationshipDelta, -100, 100);
+      grudge = clampScore(grudge + grudgeDelta, 0, 100);
+      activityLog.push({
+        tick,
+        npc_id: id,
+        npc_name: entry.name,
+        action: interactionAction || "talk",
+        detail: `${entry.name} reacts ${interactionTone}.`,
+        relationship,
+        grudge,
+        happened_at: nowIso(),
+      });
+    } else {
+      activityLog.push({
+        tick,
+        npc_id: id,
+        npc_name: entry.name,
+        action: "patrol",
+        detail: `${entry.name} rotates through ${scheduleState}.`,
+        relationship,
+        grudge,
+        happened_at: nowIso(),
+      });
+    }
+
+    relationshipMap[id] = relationship;
+    grudgeMap[id] = grudge;
+    return {
+      ...entry,
+      mood,
+      relationship,
+      grudge,
+      schedule_state: scheduleState,
+      location_tile: { x: tileX, y: tileY },
+      updated_at: nowIso(),
+    };
+  });
+
+  return {
+    town_npcs: updatedNpcs.slice(0, 12),
+    town_relationships: relationshipMap,
+    town_grudges: grudgeMap,
+    town_activity_log: activityLog.slice(-24),
+    town_clock: {
+      tick,
+      updated_at: nowIso(),
+    },
+  };
 }
 
 function buildTownState(args: {
@@ -571,6 +791,12 @@ function buildTownState(args: {
   const jobDiscovery = (jobAction && jobPostingId)
     ? [{ kind: "job_posting", detail: `${jobAction}:${jobPostingId}` }]
     : [];
+  const townLiveness = buildTownLiveness({
+    seed,
+    continuity,
+    factionNames,
+    payload,
+  });
 
   return {
     seed,
@@ -611,6 +837,7 @@ function buildTownState(args: {
     discovery_log: mergeDiscoveryLog(continuity.discovery_log, [...jobDiscovery, ...asArray(payload.discovery_log)], 40),
     job_postings: jobPostings,
     room_state: continuity.room_state,
+    ...townLiveness,
     companion_presence: buildCompanionPresence(companions),
     companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
   };
@@ -737,6 +964,11 @@ function buildTravelState(args: {
     transition_reason_code: reasonCode,
     job_postings: continuity.job_postings,
     room_state: continuity.room_state,
+    town_npcs: continuity.town_npcs,
+    town_relationships: continuity.town_relationships,
+    town_grudges: continuity.town_grudges,
+    town_activity_log: continuity.town_activity_log,
+    town_clock: continuity.town_clock,
     companion_presence: buildCompanionPresence(companions),
     companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
   };
@@ -833,6 +1065,11 @@ function buildDungeonState(args: {
     search_target: resolveSearchTarget(payload, continuity) ?? "dungeon",
     job_postings: continuity.job_postings,
     room_state: roomState,
+    town_npcs: continuity.town_npcs,
+    town_relationships: continuity.town_relationships,
+    town_grudges: continuity.town_grudges,
+    town_activity_log: continuity.town_activity_log,
+    town_clock: continuity.town_clock,
     companion_presence: buildCompanionPresence(companions),
     companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
   };
@@ -1137,6 +1374,11 @@ export const mythicRuntimeTransition: FunctionHandler = {
           seed,
           template_key: world.template_key,
           world_seed: { title: world.seed_title, description: world.seed_description },
+          town_npcs: continuity.town_npcs,
+          town_relationships: continuity.town_relationships,
+          town_grudges: continuity.town_grudges,
+          town_activity_log: continuity.town_activity_log,
+          town_clock: continuity.town_clock,
           companion_presence: buildCompanionPresence(companions),
           companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
         };
@@ -1261,6 +1503,74 @@ export const mythicRuntimeTransition: FunctionHandler = {
         });
       } catch (error) {
         warnings.push(`dm_memory_events:${sanitizeError(error).message}`);
+      }
+
+      const npcInteraction = asRecord(payload.npc_interaction);
+      if (toMode === "town" && npcInteraction) {
+        const npcId = typeof npcInteraction.npc_id === "string" ? npcInteraction.npc_id.trim() : "";
+        const interactionTone = typeof npcInteraction.tone === "string" ? npcInteraction.tone.trim().toLowerCase() : "neutral";
+        const townNpcs = asArray(nextState.town_npcs)
+          .map((entry) => asRecord(entry))
+          .filter((entry): entry is Record<string, unknown> => Boolean(entry));
+        const hitNpc = townNpcs.find((entry) => String(entry.id ?? "") === npcId) ?? null;
+        if (npcId && hitNpc) {
+          const relationship = clampInt(Number(hitNpc.relationship ?? 0), -100, 100);
+          const grudge = clampInt(Number(hitNpc.grudge ?? 0), 0, 100);
+          try {
+            await appendMemoryEvent({
+              svc,
+              campaignId,
+              playerId: user.userId,
+              category: "town_relationship",
+              severity: grudge >= 40 ? 3 : relationship >= 35 ? 1 : 2,
+              payload: {
+                npc_id: npcId,
+                npc_name: hitNpc.name ?? npcId,
+                action: typeof npcInteraction.action === "string" ? npcInteraction.action : "talk",
+                tone: interactionTone,
+                relationship,
+                grudge,
+                faction: hitNpc.faction ?? null,
+                to_mode: toMode,
+              },
+            });
+          } catch (error) {
+            warnings.push(`town_memory:${sanitizeError(error).message}`);
+          }
+
+          const factionName = typeof hitNpc.faction === "string" ? hitNpc.faction.toLowerCase() : "";
+          const factionFromNpc = factions.find((entry) => entry.name.toLowerCase() === factionName)
+            ?? factions.find((entry) => factionName.length > 0 && entry.name.toLowerCase().includes(factionName))
+            ?? null;
+          if (factionFromNpc) {
+            let delta = 0;
+            if (interactionTone === "helpful") delta = 3;
+            else if (interactionTone === "hostile") delta = -6;
+            else if (interactionTone === "tense") delta = -3;
+            else if (interactionTone === "neutral" || interactionTone === "probe") delta = 1;
+            if (delta !== 0) {
+              try {
+                await applyReputationDelta({
+                  svc,
+                  campaignId,
+                  playerId: user.userId,
+                  factionId: factionFromNpc.id,
+                  delta,
+                  severity: Math.abs(delta) >= 5 ? 3 : 2,
+                  evidence: {
+                    reason,
+                    reason_code: reasonCode,
+                    npc_id: npcId,
+                    npc_name: hitNpc.name ?? npcId,
+                    interaction_tone: interactionTone,
+                  },
+                });
+              } catch (error) {
+                warnings.push(`town_reputation:${sanitizeError(error).message}`);
+              }
+            }
+          }
+        }
       }
 
       const factionTarget = chooseFactionForOutcome(factions, `${rawReason} ${reasonCode} ${reason}`);

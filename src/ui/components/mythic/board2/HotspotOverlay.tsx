@@ -43,7 +43,9 @@ function readClickPoint(event: MouseEvent<HTMLElement>, cols: number, rows: numb
 export function HotspotOverlay(props: HotspotOverlayProps) {
   return (
     <>
-      {props.hotspots.map((hotspot) => {
+      {props.hotspots
+        .filter((hotspot) => !(props.accent === "town" && hotspot.id.startsWith("town-npc-")))
+        .map((hotspot) => {
         const tier = hotspot.visual?.tier ?? "secondary";
         const emphasis = hotspot.visual?.emphasis ?? "normal";
         const emphasisClass = emphasis === "pulse"

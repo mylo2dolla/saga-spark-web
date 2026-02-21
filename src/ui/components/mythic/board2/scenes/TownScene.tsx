@@ -1,6 +1,7 @@
 import { BoardGridLayer } from "@/ui/components/mythic/board2/BoardGridLayer";
 import { HotspotOverlay } from "@/ui/components/mythic/board2/HotspotOverlay";
-import type { NarrativeBoardSceneModel, NarrativeHotspot } from "@/ui/components/mythic/board2/types";
+import { readGridPointFromEvent } from "@/ui/components/mythic/board2/BoardGridLayer";
+import type { NarrativeBoardSceneModel, NarrativeHotspot, TownSceneData } from "@/ui/components/mythic/board2/types";
 
 interface TownSceneProps {
   scene: NarrativeBoardSceneModel;
@@ -11,12 +12,11 @@ interface TownSceneProps {
 export function TownScene(props: TownSceneProps) {
   const cols = props.scene.grid.cols;
   const rows = props.scene.grid.rows;
+  const details = props.scene.details as TownSceneData;
   const landmarks = props.scene.hotspots
     .filter((hotspot) => hotspot.kind === "vendor" || hotspot.kind === "notice_board" || hotspot.kind === "gate")
     .map((hotspot) => ({
       id: hotspot.id,
-      title: hotspot.title,
-      subtitle: hotspot.subtitle,
       rect: hotspot.rect,
       tone: hotspot.kind === "vendor"
         ? "border-amber-100/40 bg-amber-300/12 text-amber-50"
@@ -40,18 +40,44 @@ export function TownScene(props: TownSceneProps) {
       {landmarks.map((landmark) => (
         <div
           key={`town-landmark-${landmark.id}`}
-          className={`pointer-events-none absolute rounded-md border px-1.5 py-1 text-[10px] ${landmark.tone}`}
+          className={`pointer-events-none absolute rounded-md border ${landmark.tone}`}
           style={{
             left: `${(landmark.rect.x / cols) * 100}%`,
             top: `${(landmark.rect.y / rows) * 100}%`,
             width: `${(landmark.rect.w / cols) * 100}%`,
             minHeight: "34px",
           }}
-        >
-          <div className="truncate font-semibold">{landmark.title}</div>
-          {landmark.subtitle ? <div className="truncate text-[9px] opacity-85">{landmark.subtitle}</div> : null}
-        </div>
+        />
       ))}
+      {details.npcs.map((npc) => {
+        const hotspot = props.scene.hotspots.find((entry) => entry.id === `town-npc-${npc.id}`) ?? null;
+        const danger = npc.grudge >= 35;
+        return (
+          <button
+            key={`town-npc-token-${npc.id}`}
+            type="button"
+            data-testid={`town-npc-token-${npc.id}`}
+            className={`absolute z-[3] rounded-md border px-1 py-0.5 text-[9px] text-left shadow-[0_0_0_1px_rgba(0,0,0,0.3)] ${
+              danger
+                ? "border-rose-200/75 bg-rose-400/25 text-rose-50"
+                : "border-sky-200/70 bg-sky-300/20 text-sky-50"
+            }`}
+            style={{
+              left: `${((npc.locationTile.x + 0.05) / cols) * 100}%`,
+              top: `${((npc.locationTile.y + 0.12) / rows) * 100}%`,
+              minWidth: "44px",
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!hotspot) return;
+              props.onSelectHotspot(hotspot, readGridPointFromEvent(event, cols, rows));
+            }}
+          >
+            <div className="truncate font-semibold leading-tight">{npc.name}</div>
+            <div className="truncate text-[8px] opacity-85">{npc.mood}</div>
+          </button>
+        );
+      })}
       <HotspotOverlay
         hotspots={props.scene.hotspots}
         cols={cols}

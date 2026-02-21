@@ -434,7 +434,8 @@ export const mythicCombatTick: FunctionHandler = {
         if (actorErr) throw actorErr;
         if (!actor) throw new Error("Turn actor not found");
 
-        if (!isAlive(actor)) {
+        const actorAlive = Boolean(actor.is_alive) && Number(actor.hp ?? 0) > 0;
+        if (!actorAlive) {
           if (Number(actor.hp ?? 0) <= 0 && actor.is_alive) {
             await svc
               .schema("mythic")
@@ -485,9 +486,13 @@ export const mythicCombatTick: FunctionHandler = {
           .eq("combat_session_id", combatSessionId)
           .maybeSingle<Combatant>();
         if (actorAfterTickErr) throw actorAfterTickErr;
+        if (!actorAfterTickRow) {
+          continue;
+        }
         let actorAfterTick = actorAfterTickRow;
-        if (!isAlive(actorAfterTick)) {
-          if (actorAfterTick && Number(actorAfterTick.hp ?? 0) <= 0 && actorAfterTick.is_alive) {
+        const actorAfterTickAlive = Boolean(actorAfterTick.is_alive) && Number(actorAfterTick.hp ?? 0) > 0;
+        if (!actorAfterTickAlive) {
+          if (Number(actorAfterTick.hp ?? 0) <= 0 && actorAfterTick.is_alive) {
             await svc
               .schema("mythic")
               .from("combatants")

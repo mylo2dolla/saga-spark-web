@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BoardGridLayer, readGridPointFromEvent } from "@/ui/components/mythic/board2/BoardGridLayer";
 import type { CombatSceneData, NarrativeBoardSceneModel, NarrativeHotspot } from "@/ui/components/mythic/board2/types";
 
@@ -60,15 +60,29 @@ function stackOffset(index: number): { x: number; y: number } {
   return presets[Math.max(0, Math.min(presets.length - 1, index))] ?? { x: 0, y: 0 };
 }
 
+function auraClassForFamily(family: string): string {
+  if (family === "bleed") return "shadow-[0_0_0_2px_rgba(248,113,113,0.75)]";
+  if (family === "poison") return "shadow-[0_0_0_2px_rgba(74,222,128,0.75)]";
+  if (family === "burn") return "shadow-[0_0_0_2px_rgba(251,146,60,0.75)]";
+  if (family === "guard") return "shadow-[0_0_0_2px_rgba(56,189,248,0.75)]";
+  if (family === "barrier") return "shadow-[0_0_0_2px_rgba(125,211,252,0.8)]";
+  if (family === "vulnerable") return "shadow-[0_0_0_2px_rgba(251,191,36,0.8)]";
+  if (family === "stunned") return "shadow-[0_0_0_2px_rgba(196,181,253,0.82)]";
+  return "";
+}
+
 function deltaTone(eventType: CombatSceneData["recentDeltas"][number]["eventType"]): string {
-  if (eventType === "damage" || eventType === "power_drain") return "text-rose-100";
+  if (eventType === "damage" || eventType === "power_drain" || eventType === "status_tick" || eventType === "armor_shred") return "text-rose-100";
   if (eventType === "healed" || eventType === "power_gain") return "text-emerald-100";
   if (eventType === "moved") return "text-sky-100";
+  if (eventType === "status_expired") return "text-slate-100";
+  if (eventType === "death") return "text-amber-100";
   return "text-amber-100";
 }
 
 function deltaDuration(eventType: CombatSceneData["recentDeltas"][number]["eventType"]): number {
-  if (eventType === "status_applied") return DELTA_DURATION_MAX_MS;
+  if (eventType === "status_applied" || eventType === "status_tick") return DELTA_DURATION_MAX_MS;
+  if (eventType === "death") return DELTA_DURATION_MAX_MS;
   if (eventType === "moved") return DELTA_DURATION_MIN_MS;
   return 780;
 }
@@ -79,6 +93,17 @@ export function CombatScene(props: CombatSceneProps) {
   const rows = props.scene.grid.rows;
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [reducedMotion, setReducedMotion] = useState(false);
+  const previousPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const [syntheticTrails, setSyntheticTrails] = useState<Array<{
+    id: string;
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+    length: number;
+    angle: number;
+    createdAtMs: number;
+  }>>([]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 200);
@@ -99,6 +124,57 @@ export function CombatScene(props: CombatSceneProps) {
       media.onchange = null;
     };
   }, []);
+
+  useEffect(() => {
+    const prev = previousPositionsRef.current;
+    const now = Date.now();
+    const activeMovedIds = new Set(
+      details.recentDeltas
+        .filter((delta) => delta.eventType === "moved" && delta.targetCombatantId)
+        .map((delta) => delta.targetCombatantId as string),
+    );
+    const generated: Array<{
+      id: string;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      length: number;
+      angle: number;
+      createdAtMs: number;
+    }> = [];
+
+    details.combatants.forEach((combatant) => {
+      const current = { x: Math.floor(combatant.x), y: Math.floor(combatant.y) };
+      const previous = prev.get(combatant.id);
+      prev.set(combatant.id, current);
+      if (!previous || reducedMotion) return;
+      if (activeMovedIds.has(combatant.id)) return;
+      if (previous.x === current.x && previous.y === current.y) return;
+      const x1 = cellCenterPercent(previous.x, cols);
+      const y1 = cellCenterPercent(previous.y, rows);
+      const x2 = cellCenterPercent(current.x, cols);
+      const y2 = cellCenterPercent(current.y, rows);
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const length = Math.max(0.6, Math.sqrt((dx * dx) + (dy * dy)));
+      const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+      generated.push({
+        id: `snapshot-${combatant.id}-${now}`,
+        x1,
+        y1,
+        x2,
+        y2,
+        length,
+        angle,
+        createdAtMs: now,
+      });
+    });
+
+    if (generated.length > 0) {
+      setSyntheticTrails((prevTrails) => [...prevTrails, ...generated].slice(-MAX_MOVEMENT_TRAILS * 2));
+    }
+  }, [cols, details.combatants, details.recentDeltas, reducedMotion, rows]);
 
   const liveDeltaByCombatant = useMemo(() => {
     const out = new Map<string, Array<{ id: string; label: string; tone: string; opacity: number; liftPx: number }>>();
@@ -156,7 +232,7 @@ export function CombatScene(props: CombatSceneProps) {
 
   const movementTrails = useMemo(() => {
     if (reducedMotion) return [];
-    return details.recentDeltas
+    const eventTrails = details.recentDeltas
       .filter((delta) => delta.eventType === "moved" && delta.from && delta.to)
       .map((delta) => {
         const createdAtMs = parseIsoMs(delta.createdAt);
@@ -184,9 +260,25 @@ export function CombatScene(props: CombatSceneProps) {
           opacity,
         };
       })
-      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-      .slice(-MAX_MOVEMENT_TRAILS);
-  }, [cols, details.recentDeltas, nowMs, reducedMotion, rows]);
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+    const snapshotTrails = syntheticTrails
+      .map((trail) => {
+        const age = nowMs - trail.createdAtMs;
+        if (age < 0 || age > MOVE_TRAIL_DURATION_MS) return null;
+        const opacity = Math.max(0, Math.min(1, 1 - (age / MOVE_TRAIL_DURATION_MS)));
+        return {
+          ...trail,
+          opacity,
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+    return [...eventTrails, ...snapshotTrails].slice(-MAX_MOVEMENT_TRAILS);
+  }, [cols, details.recentDeltas, nowMs, reducedMotion, rows, syntheticTrails]);
+
+  useEffect(() => {
+    if (syntheticTrails.length === 0) return;
+    setSyntheticTrails((prev) => prev.filter((entry) => nowMs - entry.createdAtMs <= MOVE_TRAIL_DURATION_MS));
+  }, [nowMs, syntheticTrails.length]);
 
   const tileStackIndexByCombatant = useMemo(() => {
     const grouped = new Map<string, string[]>();
@@ -357,6 +449,9 @@ export function CombatScene(props: CombatSceneProps) {
         const movedRecently = movedRecentlyByCombatant.has(combatant.id);
         const stackIndex = tileStackIndexByCombatant.get(combatant.id) ?? 0;
         const offset = stackOffset(stackIndex);
+        const statusFamilies = details.statusFamiliesByCombatant[combatant.id] ?? [];
+        const statusAuraClass = statusFamilies.map((entry) => auraClassForFamily(entry)).filter((entry) => entry.length > 0).join(" ");
+        const recentDamage = liveDeltas.some((delta) => /-\d+/.test(delta.label) || /status/i.test(delta.label));
         const focusRing = focused ? "ring-2 ring-amber-300/95" : "";
         const activeRing = active ? "shadow-[0_0_0_2px_rgba(125,211,252,0.82)]" : "";
         const movedRing = movedRecently ? "shadow-[0_0_0_2px_rgba(125,211,252,0.55)]" : "";
@@ -373,6 +468,7 @@ export function CombatScene(props: CombatSceneProps) {
               focusRing,
               activeRing,
               movedRing,
+              statusAuraClass,
             ].join(" ")}
             style={{
               left: toPercent(x, cols),
@@ -403,6 +499,11 @@ export function CombatScene(props: CombatSceneProps) {
                 ))}
               </div>
             ) : null}
+            {recentDamage ? (
+              <div className="pointer-events-none absolute inset-0 overflow-hidden rounded-md">
+                <div className="absolute left-[-10%] top-1/2 h-[2px] w-[120%] -translate-y-1/2 rotate-[-18deg] bg-rose-200/70 shadow-[0_0_10px_rgba(251,113,133,0.7)] motion-safe:animate-pulse" />
+              </div>
+            ) : null}
             <div className="truncate font-semibold leading-tight">{details.displayNames[combatant.id]?.displayLabel ?? compactName(combatant.name)}</div>
             <div className="mt-0.5 h-1 w-full rounded bg-black/35">
               <div className="h-full rounded bg-emerald-300" style={{ width: `${hp}%` }} />
@@ -414,6 +515,11 @@ export function CombatScene(props: CombatSceneProps) {
               <span>{Math.max(0, Math.round(combatant.hp))}</span>
               <span>{Math.max(0, Math.round(combatant.power))}MP</span>
             </div>
+            {statusFamilies.length > 0 ? (
+              <div className="mt-0.5 truncate text-[7px] uppercase tracking-wide text-white/80">
+                {statusFamilies.slice(0, 2).join(" · ")}
+              </div>
+            ) : null}
           </button>
         );
       })}

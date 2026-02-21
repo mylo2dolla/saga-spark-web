@@ -52,15 +52,15 @@ function uniqueName(base: string, seen: Set<string>): string {
 function enemyNamePool(themeHint: string): string[] {
   const lower = themeHint.toLowerCase();
   if (/(crypt|grave|horror|dark|gothic|night)/.test(lower)) {
-    return ["Ink Ghoul", "Grave Stalker", "Pale Reaver", "Cinder Wraith", "Bone Lantern"];
+    return ["Dusk Revenant", "Grave Howler", "Hollow Warden", "Umbral Raptor", "Crypt Veil"];
   }
   if (/(ruin|sci|tech|machine|arc|metal)/.test(lower)) {
-    return ["Ruin Drone", "Shard Hunter", "Ion Ravager", "Rust Strider", "Signal Maw"];
+    return ["Arc Bastion", "Rune Talon", "Shatter Engine", "Iron Specter", "Signal Reaver"];
   }
   if (/(forest|wild|road|travel|frontier)/.test(lower)) {
-    return ["Ridge Stalker", "Mire Howler", "Thorn Marauder", "Dust Skirmisher", "Night Pike"];
+    return ["Thornbound Stalker", "Mirefang", "Briar Duelist", "Dustrun Marauder", "Nightcoil"];
   }
-  return ["Ink Ghoul", "Ash Brigand", "Gloom Raider", "Rift Hound", "Gallows Stalker"];
+  return ["Cinder Marauder", "Moonshade Reaver", "Riftfang", "Gallows Knight", "Ashbound Harrier"];
 }
 
 function pickEnemyName(seed: number, combatId: string, index: number, themeHint: string, seen: Set<string>): string {

@@ -605,7 +605,11 @@ export const mythicCombatUseSkill: FunctionHandler = {
         .eq("combat_session_id", combatSessionId)
         .maybeSingle<CombatantRow>();
       if (actorError) throw actorError;
-      if (!isCombatantAlive(actor)) {
+      if (!actor) {
+        return new Response(JSON.stringify({ error: "Actor not found" }), { status: 404, headers: baseHeaders });
+      }
+      const actorAlive = Boolean(actor.is_alive) && Number(actor.hp ?? 0) > 0;
+      if (!actorAlive) {
         if (actor && Number(actor.hp ?? 0) <= 0 && actor.is_alive) {
           await svc
             .schema("mythic")

@@ -147,6 +147,20 @@ export interface TownSceneData {
   jobPostings: Array<{ id: string; title: string; summary: string | null; status: string }>;
   rumors: string[];
   factionsPresent: string[];
+  npcs: Array<{
+    id: string;
+    name: string;
+    role: string;
+    faction: string;
+    mood: string;
+    relationship: number;
+    grudge: number;
+    locationTile: { x: number; y: number };
+    scheduleState: string;
+  }>;
+  relationshipPressure: number;
+  grudgePressure: number;
+  activityLog: string[];
 }
 
 export interface TravelSceneData {
@@ -201,7 +215,18 @@ export interface NarrativeCombatHudEntity {
 
 export interface NarrativeCombatDelta {
   id: string;
-  eventType: "damage" | "miss" | "healed" | "power_gain" | "power_drain" | "status_applied" | "moved";
+  eventType:
+    | "damage"
+    | "miss"
+    | "healed"
+    | "power_gain"
+    | "power_drain"
+    | "status_applied"
+    | "status_tick"
+    | "status_expired"
+    | "armor_shred"
+    | "death"
+    | "moved";
   targetCombatantId: string | null;
   amount: number | null;
   turnIndex: number;
@@ -253,6 +278,7 @@ export interface CombatSceneData {
   enemies: MythicCombatantRow[];
   recentEvents: MythicActionEventRow[];
   recentDeltas: NarrativeCombatDelta[];
+  statusFamiliesByCombatant: Record<string, string[]>;
   activeTurnCombatantId: string | null;
   playerCombatantId: string | null;
   focusedCombatantId: string | null;

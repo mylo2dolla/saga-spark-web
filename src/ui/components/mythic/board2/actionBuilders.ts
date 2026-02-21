@@ -375,6 +375,75 @@ export function buildTownNoticeBoardActions(jobPostings: Array<{ id: string; tit
   ];
 }
 
+export function buildTownNpcActions(args: {
+  npcId: string;
+  npcName: string;
+  role: string;
+  faction: string;
+  mood: string;
+  relationship: number;
+  grudge: number;
+}): MythicUiAction[] {
+  const relationshipTone = args.relationship >= 35
+    ? "ally"
+    : args.relationship <= -20
+      ? "hostile"
+      : "uncertain";
+  const tensionTone = args.grudge >= 35
+    ? "high grudge"
+    : args.grudge >= 20
+      ? "resentful"
+      : "steady";
+  return [
+    {
+      id: `town-npc-talk-${slugToken(args.npcId)}`,
+      label: `Talk to ${args.npcName}`,
+      intent: "dm_prompt",
+      prompt: `I talk to ${args.npcName} (${args.role}) and push for a concrete lead tied to ${args.faction}.`,
+      payload: {
+        board_feature: "town_npc",
+        npc_interaction: {
+          npc_id: args.npcId,
+          action: "talk",
+          tone: "neutral",
+        },
+      },
+    },
+    {
+      id: `town-npc-favor-${slugToken(args.npcId)}`,
+      label: `Ask ${args.npcName} for favor`,
+      intent: "dm_prompt",
+      prompt: `I ask ${args.npcName} for a favor. Resolve immediate price, faction consequence, and next objective.`,
+      payload: {
+        board_feature: "town_npc",
+        npc_interaction: {
+          npc_id: args.npcId,
+          action: "favor",
+          tone: args.relationship >= 0 ? "helpful" : "tense",
+          context: {
+            relationship: relationshipTone,
+            grudge: tensionTone,
+          },
+        },
+      },
+    },
+    {
+      id: `town-npc-read-${slugToken(args.npcId)}`,
+      label: `Read ${args.npcName}`,
+      intent: "dm_prompt",
+      prompt: `I read ${args.npcName}'s intent and faction pressure before we commit to the next move.`,
+      payload: {
+        board_feature: "town_npc",
+        npc_interaction: {
+          npc_id: args.npcId,
+          action: "read",
+          tone: "probe",
+        },
+      },
+    },
+  ];
+}
+
 export function buildTownGateActions(): MythicUiAction[] {
   return [
     {
@@ -707,7 +776,19 @@ export function buildCombatCoreActions(args: {
 
 export function buildTownFallbackActions(data: TownSceneData): MythicUiAction[] {
   const vendor = data.vendors[0] ?? null;
+  const npc = data.npcs[0] ?? null;
   return dedupeBoardActions([
+    ...(npc
+      ? buildTownNpcActions({
+          npcId: npc.id,
+          npcName: npc.name,
+          role: npc.role,
+          faction: npc.faction,
+          mood: npc.mood,
+          relationship: npc.relationship,
+          grudge: npc.grudge,
+        })
+      : []),
     ...(vendor ? buildTownVendorActions(vendor) : []),
     ...buildTownNoticeBoardActions(data.jobPostings),
     ...buildTownGateActions(),
