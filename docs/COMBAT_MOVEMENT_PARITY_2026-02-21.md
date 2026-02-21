@@ -41,12 +41,23 @@
 - `npm run smoke:board`: pass
 - `npm run smoke:prod`: pass
 
+## Production Deployment Lock
+- Frontend (Vercel prod):
+  - URL: `https://mythweaver.online`
+  - Deployment URL: `https://saga-spark-ijbis8bid-mylo2dollas-projects.vercel.app`
+  - Deployment ID: `dpl_G6QZWx1KtQC6JzPY9D4rF354eqYy`
+  - Created (local CLI output): `Fri Feb 20 2026 21:09:25 GMT-0700`
+- VM runtime:
+  - Host: `api.mythweaver.online`
+  - Deploy method: `docker compose up -d --build --force-recreate`
+  - Post-restart health: `GET /healthz` success
+
 ## Smoke Request IDs (Board Auth Smoke)
-- `mythic-create-campaign`: `d8aa483f-6620-4cb1-be15-9d3bbfd4cd80`
-- `mythic-create-character`: `6493b98f-5b57-4dbf-8552-9be515453dc0`
-- `mythic-dm-context`: `17faa624-0ff6-4df3-a649-3c607e2789f9`
-- `mythic-dungeon-master`: `e118340a-24f1-49dd-92f9-02d1ce286fbe`
-- `mythic-runtime-transition:travel`: `8087660d-908b-4059-b861-ff542c59a264`
-- `mythic-runtime-transition:dungeon`: `0812dc6f-f755-4c28-b570-4121144ee200`
-- `mythic-runtime-transition:town`: `652658a7-6b41-426a-8362-cb0da7d247d8`
-- `mythic-combat-start`: `0b88603e-500d-4788-aabe-57fc1ad85422`
+- `mythic-create-campaign`: `133973e6-2be2-4e46-ae25-c8552ca8e638`
+- `mythic-create-character`: `ee8ef1f9-721c-4b05-9c8d-dbba05f3138f`
+- `mythic-dm-context`: `66aac35b-34bf-40da-9daa-b864ccaba48f`
+- `mythic-dungeon-master`: `97633756-9dbc-4339-b409-df6693258c6e`
+- `mythic-runtime-transition:travel`: `45354dff-0f05-4c9e-962e-065a1f124d12`
+- `mythic-runtime-transition:dungeon`: `b94551ba-6f30-42dc-b4c3-2d26268d8804`
+- `mythic-runtime-transition:town`: `47188cc8-3ea3-4137-9d50-6a263aab513f`
+- `mythic-combat-start`: `0f0f2735-abde-46d1-a5ef-aa78c893c934`
