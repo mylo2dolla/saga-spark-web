@@ -51,6 +51,15 @@ function asBoolean(value: unknown): boolean {
   return value === true;
 }
 
+function parseGridPoint(value: unknown): { x: number; y: number } | null {
+  const row = asRecord(value);
+  if (!row) return null;
+  const x = Math.floor(asNumber(row.x, Number.NaN));
+  const y = Math.floor(asNumber(row.y, Number.NaN));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
 function buildLayoutSeed(mode: string, tokens: Array<string | number | null | undefined>): string {
   const compact = tokens
     .map((entry) => {
@@ -327,6 +336,22 @@ function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][
       label: statusId.replace(/_/g, " "),
     };
   }
+  if (event.event_type === "moved") {
+    const from = parseGridPoint(payload.from);
+    const to = parseGridPoint(payload.to);
+    const tilesUsed = Math.max(0, Math.floor(asNumber(payload.tiles_used, 0)));
+    return {
+      id: event.id,
+      eventType: "moved" as const,
+      targetCombatantId: targetCombatantId ?? event.actor_combatant_id ?? null,
+      amount: tilesUsed > 0 ? tilesUsed : null,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: tilesUsed > 0 ? `Move ${tilesUsed}` : "Reposition",
+      from,
+      to,
+    };
+  }
   return null;
 }
 
@@ -351,13 +376,25 @@ function parseCombatData(args: {
     && playerCombatant.id === args.combatInput.activeTurnCombatantId,
   );
   const hasLiveEnemy = enemies.some((entry) => entry.is_alive);
+  const currentTurnIndex = Math.max(0, Math.floor(Number(args.combatInput.session?.current_turn_index ?? 0)));
+  const sessionId = typeof args.combatInput.session?.id === "string" ? args.combatInput.session.id : "";
+  const moveTurnMarker = `${sessionId}:${currentTurnIndex}`;
+  const playerStatuses = Array.isArray(playerCombatant?.statuses) ? playerCombatant.statuses : [];
+  const moveAlreadySpent = playerStatuses.some((entry) => {
+    const row = asRecord(entry);
+    if (!row) return false;
+    if (asString(row.id) !== "move_spent") return false;
+    const data = asRecord(row.data);
+    return asString(data?.turn_marker) === moveTurnMarker;
+  });
   const coreReason = !playerCombatant
     ? "No player combatant."
     : !playerCombatant.is_alive
       ? "You are down."
-      : !isPlayersTurn
+    : !isPlayersTurn
         ? "Not your turn."
         : null;
+  const moveReason = coreReason ?? (moveAlreadySpent ? "Move already used this turn." : null);
   const status = asString(args.combatInput.session?.status, "idle");
   return {
     session: args.combatInput.session,
@@ -390,6 +427,13 @@ function parseCombatData(args: {
         })
       : null,
     coreActions: [
+      {
+        id: "basic_move",
+        label: "Move",
+        targeting: "tile",
+        usableNow: moveReason === null,
+        reason: moveReason,
+      },
       {
         id: "basic_attack",
         label: "Attack",

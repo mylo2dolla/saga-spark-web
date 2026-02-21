@@ -52,13 +52,46 @@ export function CombatScene(props: CombatSceneProps) {
         ? "text-rose-100"
         : delta.eventType === "healed" || delta.eventType === "power_gain"
           ? "text-emerald-100"
+          : delta.eventType === "moved"
+            ? "text-sky-100"
           : "text-amber-100";
       const next = out.get(delta.targetCombatantId) ?? [];
       next.push({ id: delta.id, label: delta.label, tone });
-      out.set(delta.targetCombatantId, next.slice(-1));
+      out.set(delta.targetCombatantId, next.slice(-2));
     });
     return out;
   }, [details.recentDeltas, nowMs]);
+
+  const movedRecentlyByCombatant = useMemo(() => {
+    const out = new Set<string>();
+    details.recentDeltas.forEach((delta) => {
+      if (delta.eventType !== "moved" || !delta.targetCombatantId) return;
+      const createdAtMs = Number(new Date(delta.createdAt));
+      if (!Number.isFinite(createdAtMs)) return;
+      if (nowMs - createdAtMs > 3_000) return;
+      out.add(delta.targetCombatantId);
+    });
+    return out;
+  }, [details.recentDeltas, nowMs]);
+
+  const compactNameById = useMemo(() => {
+    const baseCounts = new Map<string, number>();
+    details.combatants.forEach((combatant) => {
+      const base = compactName(combatant.name, 8);
+      baseCounts.set(base, (baseCounts.get(base) ?? 0) + 1);
+    });
+    const out = new Map<string, string>();
+    details.combatants.forEach((combatant) => {
+      const base = compactName(combatant.name, 8);
+      if ((baseCounts.get(base) ?? 0) <= 1) {
+        out.set(combatant.id, base);
+        return;
+      }
+      const suffix = combatant.id.replace(/[^a-z0-9]/gi, "").slice(-2).toUpperCase();
+      out.set(combatant.id, `${compactName(combatant.name, 6)} ${suffix || "X"}`);
+    });
+    return out;
+  }, [details.combatants]);
 
   return (
     <BoardGridLayer
@@ -90,6 +123,7 @@ export function CombatScene(props: CombatSceneProps) {
         const tone = isAlly ? "bg-emerald-300/45 border-emerald-200/70" : "bg-red-300/45 border-red-200/70";
         const hotspot = props.scene.hotspots.find((entry) => entry.id === `combatant-${combatant.id}`);
         const liveDeltas = liveDeltaByCombatant.get(combatant.id) ?? [];
+        const movedRecently = movedRecentlyByCombatant.has(combatant.id);
 
         return (
           <button
@@ -100,6 +134,7 @@ export function CombatScene(props: CombatSceneProps) {
               tone,
               focused ? "ring-2 ring-amber-300" : "",
               active ? "ring-2 ring-white/80 animate-pulse" : "",
+              movedRecently ? "ring-2 ring-sky-200/80" : "",
             ].join(" ")}
             style={{
               left: toPercent(x, cols),
@@ -122,7 +157,7 @@ export function CombatScene(props: CombatSceneProps) {
                 ))}
               </div>
             ) : null}
-            <div className="truncate font-semibold leading-tight">{compactName(combatant.name)}</div>
+            <div className="truncate font-semibold leading-tight">{compactNameById.get(combatant.id) ?? compactName(combatant.name)}</div>
             <div className="mt-0.5 h-1 w-full rounded bg-black/35">
               <div className="h-full rounded bg-emerald-300" style={{ width: `${hp}%` }} />
             </div>

@@ -17,7 +17,6 @@ export type MythicUiIntent =
   | "combat_start"
   | "combat_action"
   | "shop_action"
-  | "loadout_action"
   | "companion_action"
   | "shop"
   | "focus_target"
@@ -32,7 +31,7 @@ export interface MythicUiAction {
   prompt?: string;
   hint_key?: string;
   boardTarget?: "town" | "travel" | "dungeon" | "combat";
-  panel?: "status" | "character" | "loadout" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
+  panel?: "status" | "character" | "loadout" | "loadouts" | "gear" | "equipment" | "skills" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
   payload?: Record<string, unknown>;
 }
 
@@ -146,7 +145,6 @@ function defaultLabelForIntent(intent: MythicUiIntent): string {
   if (intent === "combat_start") return "Start Combat";
   if (intent === "combat_action") return "Combat Action";
   if (intent === "shop_action") return "Open Shop";
-  if (intent === "loadout_action") return "Open Panel";
   if (intent === "companion_action") return "Companion Follow-Up";
   if (intent === "open_panel") return "Open Panel";
   if (intent === "dm_prompt") return "Press The Scene";
@@ -231,7 +229,7 @@ function normalizeIntent(raw: string): MythicUiIntent | null {
   if (key === "combat_action" || key === "combat" || key === "attack" || key === "use_skill" || key === "focus_target") return "combat_action";
   if (key === "shop_action" || key === "shop" || key === "vendor") return "shop_action";
   if (key === "open_panel" || key === "panel" || key === "open_menu") return "open_panel";
-  if (key === "loadout_action" || key === "gear" || key === "loadout") return "loadout_action";
+  if (key === "loadout_action" || key === "gear" || key === "loadout") return "open_panel";
   if (key === "companion_action" || key === "companion") return "companion_action";
   if (key === "dm_prompt" || key === "prompt" || key === "narrate") return "dm_prompt";
   if (key === "refresh") return "refresh";
@@ -247,7 +245,7 @@ function normalizeUiAction(entry: unknown, index: number): MythicUiAction | null
   if (!intent) return null;
   const prompt = typeof raw.prompt === "string" && raw.prompt.trim() ? raw.prompt.trim() : undefined;
   const panelRaw = String(raw.panel ?? "").toLowerCase();
-  const panel = panelRaw === "status" || panelRaw === "character" || panelRaw === "loadout" || panelRaw === "gear" || panelRaw === "skills" || panelRaw === "loadouts" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "combat" || panelRaw === "companions" || panelRaw === "shop" || panelRaw === "commands" || panelRaw === "settings"
+  const panel = panelRaw === "status" || panelRaw === "character" || panelRaw === "loadout" || panelRaw === "loadouts" || panelRaw === "gear" || panelRaw === "equipment" || panelRaw === "skills" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "combat" || panelRaw === "companions" || panelRaw === "shop" || panelRaw === "commands" || panelRaw === "settings"
     ? panelRaw
     : undefined;
   const boardTargetRaw = String(raw.boardTarget ?? raw.board_target ?? "").toLowerCase();
@@ -283,7 +281,7 @@ function fallbackActionFromLine(line: string, index: number): MythicUiAction | n
       /character|profile|sheet/.test(lower)
         ? "character"
         : /gear|equipment|inventory/.test(lower)
-          ? "skills"
+          ? "equipment"
           : /loadout/.test(lower)
             ? "skills"
             : /skill/.test(lower)

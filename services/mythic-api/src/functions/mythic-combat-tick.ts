@@ -48,6 +48,124 @@ type Combatant = {
 };
 
 type TurnRow = { turn_index: number; combatant_id: string };
+type CompanionCommand = {
+  stance: "aggressive" | "balanced" | "defensive";
+  directive: "focus" | "protect" | "harry" | "hold";
+  targetHint: string | null;
+};
+type Position = { x: number; y: number };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function toBlockedSet(blockedTiles: Array<{ x: number; y: number }>): Set<string> {
+  return new Set(blockedTiles.map((tile) => `${Math.floor(tile.x)},${Math.floor(tile.y)}`));
+}
+
+function occupiedSet(combatants: Combatant[], excludeId: string | null = null): Set<string> {
+  const out = new Set<string>();
+  for (const combatant of combatants) {
+    if (!combatant.is_alive) continue;
+    if (excludeId && combatant.id === excludeId) continue;
+    out.add(`${Math.floor(combatant.x)},${Math.floor(combatant.y)}`);
+  }
+  return out;
+}
+
+function inBounds(point: Position, cols = 14, rows = 10): boolean {
+  return point.x >= 0 && point.y >= 0 && point.x < cols && point.y < rows;
+}
+
+function canStand(point: Position, blocked: Set<string>, occupied: Set<string>): boolean {
+  return !blocked.has(`${point.x},${point.y}`) && !occupied.has(`${point.x},${point.y}`);
+}
+
+function chooseStep(current: Position, target: Position, blocked: Set<string>, occupied: Set<string>): Position | null {
+  const dx = target.x - current.x;
+  const dy = target.y - current.y;
+  if (dx === 0 && dy === 0) return null;
+  const stepX = dx === 0 ? 0 : dx / Math.abs(dx);
+  const stepY = dy === 0 ? 0 : dy / Math.abs(dy);
+  const candidates = Math.abs(dx) >= Math.abs(dy)
+    ? [{ x: current.x + stepX, y: current.y }, { x: current.x, y: current.y + stepY }]
+    : [{ x: current.x, y: current.y + stepY }, { x: current.x + stepX, y: current.y }];
+  for (const candidate of candidates) {
+    if (!inBounds(candidate)) continue;
+    if (!canStand(candidate, blocked, occupied)) continue;
+    return candidate;
+  }
+  return null;
+}
+
+function moveToward(args: {
+  start: Position;
+  target: Position;
+  maxSteps: number;
+  blocked: Set<string>;
+  occupied: Set<string>;
+}): { to: Position; steps: number } {
+  let current = { ...args.start };
+  let steps = 0;
+  const max = Math.max(0, Math.floor(args.maxSteps));
+  for (let i = 0; i < max; i += 1) {
+    const next = chooseStep(current, args.target, args.blocked, args.occupied);
+    if (!next) break;
+    current = next;
+    steps += 1;
+  }
+  return { to: current, steps };
+}
+
+function moveBudget(mobility: number): number {
+  return Math.max(2, Math.min(6, Math.floor(Number(mobility) / 20) + 2));
+}
+
+function attackRangeFor(combatant: Combatant, skillKey: string): number {
+  if (skillKey === "basic_attack") return moveBudget(combatant.mobility);
+  if (skillKey === "npc_swipe" || skillKey.startsWith("boss_")) return 2;
+  return 1;
+}
+
+function parseCompanionCommandMap(stateJson: Record<string, unknown>): Map<string, CompanionCommand> {
+  const raw = asRecord(stateJson.companion_commands);
+  const out = new Map<string, CompanionCommand>();
+  if (!raw) return out;
+  for (const [companionId, value] of Object.entries(raw)) {
+    const row = asRecord(value);
+    if (!row) continue;
+    const stanceRaw = typeof row.stance === "string" ? row.stance.trim().toLowerCase() : "balanced";
+    const directiveRaw = typeof row.directive === "string" ? row.directive.trim().toLowerCase() : "hold";
+    const stance = stanceRaw === "aggressive" || stanceRaw === "defensive" ? stanceRaw : "balanced";
+    const directive = directiveRaw === "focus" || directiveRaw === "protect" || directiveRaw === "harry" ? directiveRaw : "hold";
+    const targetHint = typeof row.target_hint === "string" && row.target_hint.trim().length > 0
+      ? row.target_hint.trim()
+      : null;
+    out.set(companionId, { stance, directive, targetHint });
+  }
+  return out;
+}
+
+function companionIdFromStatuses(statuses: unknown): string | null {
+  const list = Array.isArray(statuses) ? statuses : [];
+  for (const entry of list) {
+    const row = asRecord(entry);
+    if (!row) continue;
+    if (String(row.id ?? "") !== "ally_companion") continue;
+    const data = asRecord(row.data);
+    const companionId = typeof data?.companion_id === "string" ? data.companion_id.trim() : "";
+    if (companionId) return companionId;
+  }
+  return null;
+}
+
+function matchTargetHint(opponents: Combatant[], hint: string | null): Combatant | null {
+  if (!hint) return null;
+  const clean = hint.trim().toLowerCase();
+  if (!clean) return null;
+  return opponents.find((entry) => entry.name.trim().toLowerCase().includes(clean)) ?? null;
+}
 
 async function appendEvent(
   svc: ReturnType<typeof createServiceClient>,
@@ -130,13 +248,28 @@ function companionSkillPlan(args: {
   actor: Combatant;
   primaryTarget: Combatant;
   opponents: Combatant[];
+  command: CompanionCommand | null;
 }): { skillKey: string; skillName: string; targets: Combatant[] } {
   const hpPct = hpPercentOf(args.actor);
   const mpPct = Number(args.actor.power_max) > 0
     ? Math.max(0, Math.min(1, Number(args.actor.power) / Number(args.actor.power_max)))
     : 1;
 
-  if (hpPct <= 0.35) {
+  const command = args.command;
+  const stance = command?.stance ?? "balanced";
+  const directive = command?.directive ?? "hold";
+  const hintedTarget = matchTargetHint(args.opponents, command?.targetHint ?? null);
+  const protectTarget = [...args.opponents].sort((left, right) => tileDistance(args.actor, left) - tileDistance(args.actor, right))[0] ?? null;
+  const target = directive === "focus" && hintedTarget
+    ? hintedTarget
+    : directive === "protect" && protectTarget
+      ? protectTarget
+      : args.primaryTarget;
+
+  const defendThreshold = stance === "defensive" ? 0.58 : stance === "balanced" ? 0.4 : 0.3;
+  const recoverThreshold = stance === "defensive" ? 0.6 : stance === "balanced" ? 0.42 : 0.28;
+
+  if (hpPct <= defendThreshold || directive === "hold" && hpPct <= 0.8 && tileDistance(args.actor, target) > attackRangeFor(args.actor, "basic_attack")) {
     return {
       skillKey: "basic_defend",
       skillName: "Defend",
@@ -144,7 +277,7 @@ function companionSkillPlan(args: {
     };
   }
 
-  if (mpPct <= 0.3 && Number(args.actor.power_max) > 0) {
+  if (mpPct <= recoverThreshold && Number(args.actor.power_max) > 0) {
     return {
       skillKey: "basic_recover_mp",
       skillName: "Recover MP",
@@ -155,7 +288,7 @@ function companionSkillPlan(args: {
   return {
     skillKey: "basic_attack",
     skillName: "Attack",
-    targets: [args.primaryTarget],
+    targets: [target],
   };
 }
 
@@ -201,6 +334,26 @@ export const mythicCombatTick: FunctionHandler = {
       }
 
       await assertCampaignAccess(svc, campaignId, user.userId);
+
+      const { data: runtimeRow } = await svc
+        .schema("mythic")
+        .from("campaign_runtime")
+        .select("state_json")
+        .eq("campaign_id", campaignId)
+        .eq("status", "active")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const runtimeState = asRecord((runtimeRow as { state_json?: unknown } | null)?.state_json) ?? {};
+      const blockedTiles = Array.isArray(runtimeState.blocked_tiles)
+        ? runtimeState.blocked_tiles
+          .map((entry) => asRecord(entry))
+          .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+          .map((entry) => ({ x: Math.floor(Number(entry.x ?? -1)), y: Math.floor(Number(entry.y ?? -1)) }))
+          .filter((entry) => Number.isFinite(entry.x) && Number.isFinite(entry.y) && entry.x >= 0 && entry.y >= 0)
+        : [];
+      const blockedSet = toBlockedSet(blockedTiles);
+      const companionCommandMap = parseCompanionCommandMap(runtimeState);
 
       let ticks = 0;
       let ended = false;
@@ -260,7 +413,7 @@ export const mythicCombatTick: FunctionHandler = {
           phase: "start",
         });
 
-        const { data: actorAfterTick, error: actorAfterTickErr } = await svc
+        const { data: actorAfterTickRow, error: actorAfterTickErr } = await svc
           .schema("mythic")
           .from("combatants")
           .select("*")
@@ -268,6 +421,7 @@ export const mythicCombatTick: FunctionHandler = {
           .eq("combat_session_id", combatSessionId)
           .maybeSingle<Combatant>();
         if (actorAfterTickErr) throw actorAfterTickErr;
+        let actorAfterTick = actorAfterTickRow;
         if (!actorAfterTick || !(actorAfterTick as any).is_alive) {
           const { data: aliveRows, error: aliveErr } = await svc
             .schema("mythic")
@@ -294,14 +448,14 @@ export const mythicCombatTick: FunctionHandler = {
           .eq("is_alive", true);
         if (livingErr) throw livingErr;
         const living = (livingRows ?? []) as Combatant[];
-        const opponents = living.filter((entry) => !sameTeam(actorAfterTick, entry));
+        const opponents = living.filter((entry) => !sameTeam(actorAfterTick as Combatant, entry));
         if (!opponents.length) {
           ended = true;
           break;
         }
 
         const primaryTarget = pickPrimaryTarget({
-          actor: actorAfterTick,
+          actor: actorAfterTick as Combatant,
           opponents,
           seed,
           label: `tick:${turnIndex}`,
@@ -313,11 +467,14 @@ export const mythicCombatTick: FunctionHandler = {
         let targets: Combatant[] = [primaryTarget];
 
         const isCompanionTurn = (actorAfterTick as any).entity_type === "summon" && isAllyTeamMember(actorAfterTick);
+        const companionId = isCompanionTurn ? companionIdFromStatuses((actorAfterTick as any).statuses) : null;
+        const companionCommand = companionId ? companionCommandMap.get(companionId) ?? null : null;
         if (isCompanionTurn) {
           const plan = companionSkillPlan({
             actor: actorAfterTick,
             primaryTarget,
             opponents,
+            command: companionCommand,
           });
           skillKey = plan.skillKey;
           skillName = plan.skillName;
@@ -363,6 +520,76 @@ export const mythicCombatTick: FunctionHandler = {
 
             if (skillKey === "boss_cleave") {
               targets = opponents;
+            }
+          }
+        }
+
+        const movementTarget = targets[0] ?? primaryTarget;
+        if (
+          movementTarget
+          && skillKey !== "basic_defend"
+          && skillKey !== "basic_recover_mp"
+        ) {
+          const rangeTiles = attackRangeFor(actorAfterTick as Combatant, skillKey);
+          const currentDistance = tileDistance(actorAfterTick as Combatant, movementTarget);
+          if (currentDistance > rangeTiles) {
+            const budget = moveBudget((actorAfterTick as any).mobility);
+            const moved = moveToward({
+              start: { x: Math.floor((actorAfterTick as any).x), y: Math.floor((actorAfterTick as any).y) },
+              target: { x: Math.floor((movementTarget as any).x), y: Math.floor((movementTarget as any).y) },
+              maxSteps: budget,
+              blocked: blockedSet,
+              occupied: occupiedSet(living, (actorAfterTick as any).id),
+            });
+            if (moved.steps > 0) {
+              const from = { x: Math.floor((actorAfterTick as any).x), y: Math.floor((actorAfterTick as any).y) };
+              const { error: moveUpdateErr } = await svc
+                .schema("mythic")
+                .from("combatants")
+                .update({
+                  x: moved.to.x,
+                  y: moved.to.y,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", (actorAfterTick as any).id)
+                .eq("combat_session_id", combatSessionId);
+              if (moveUpdateErr) throw moveUpdateErr;
+              actorAfterTick = {
+                ...(actorAfterTick as any),
+                x: moved.to.x,
+                y: moved.to.y,
+              };
+              await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "moved", {
+                from,
+                to: moved.to,
+                dash_tiles: budget,
+                tiles_used: moved.steps,
+                ai_move: true,
+              });
+            }
+          }
+          const afterMoveDistance = tileDistance(actorAfterTick as Combatant, movementTarget);
+          if (afterMoveDistance > rangeTiles) {
+            if (isCompanionTurn) {
+              const fallback = companionSkillPlan({
+                actor: actorAfterTick as Combatant,
+                primaryTarget,
+                opponents,
+                command: companionCommand,
+              });
+              if (fallback.skillKey === "basic_attack") {
+                skillKey = "basic_defend";
+                skillName = "Defend";
+                targets = [actorAfterTick as Combatant];
+              } else {
+                skillKey = fallback.skillKey;
+                skillName = fallback.skillName;
+                targets = fallback.targets;
+              }
+            } else {
+              skillKey = "basic_defend";
+              skillName = "Defend";
+              targets = [actorAfterTick as Combatant];
             }
           }
         }

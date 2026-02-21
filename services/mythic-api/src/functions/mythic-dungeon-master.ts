@@ -87,7 +87,7 @@ OUTPUT CONTRACT (STRICT)
 - "ui_actions" must contain 2-4 concrete intent suggestions for the current board state.
   Each action item must be an object with:
   - id (string), label (string), intent (enum), optional hint_key (string), optional prompt (string), optional payload (object).
-  - intent must be one of: quest_action, combat_start, combat_action, shop_action, loadout_action, companion_action, dm_prompt, refresh.
+  - intent must be one of: quest_action, combat_start, combat_action, shop_action, open_panel, companion_action, dm_prompt, refresh.
   When suggesting a shop/vendor in town:
   - intent MUST be "shop_action"
   - payload MUST include {"vendorId": "<id from board.state_summary.vendors>"}.
@@ -180,13 +180,25 @@ function titleCaseWords(input: string): string {
     .replace(/\b\w/g, (ch) => ch.toUpperCase());
 }
 
-function remapLegacyLoadoutPanel(panelRaw: unknown): Exclude<NarratorUiAction["panel"], undefined> {
+function remapLegacyPanel(panelRaw: unknown): Exclude<NarratorUiAction["panel"], undefined> {
   const panel = typeof panelRaw === "string" ? panelRaw.trim().toLowerCase() : "";
   if (!panel) return "skills";
   if (panel === "character") return "character";
-  if (panel === "loadout" || panel === "loadouts" || panel === "gear") return "skills";
-  if (panel === "skills" || panel === "progression" || panel === "quests" || panel === "commands" || panel === "settings") {
-    return panel;
+  if (panel === "loadout" || panel === "loadouts") return "skills";
+  if (panel === "gear") return "equipment";
+  if (
+    panel === "status"
+    || panel === "skills"
+    || panel === "equipment"
+    || panel === "progression"
+    || panel === "quests"
+    || panel === "combat"
+    || panel === "companions"
+    || panel === "shop"
+    || panel === "commands"
+    || panel === "settings"
+  ) {
+    return panel as Exclude<NarratorUiAction["panel"], undefined>;
   }
   return "skills";
 }
@@ -208,7 +220,7 @@ function canonicalIntent(value: string): NarratorUiAction["intent"] {
     key === "combat_start" ||
     key === "combat_action" ||
     key === "shop_action" ||
-    key === "loadout_action" ||
+    key === "open_panel" ||
     key === "companion_action" ||
     key === "dm_prompt" ||
     key === "refresh"
@@ -217,7 +229,7 @@ function canonicalIntent(value: string): NarratorUiAction["intent"] {
   }
   if (key === "combat" || key === "fight" || key === "battle" || key === "engage" || key === "combat_begin") return "combat_start";
   if (key === "focus_target" || key === "attack" || key === "use_skill") return "combat_action";
-  if (key === "panel" || key === "open_menu" || key === "open_panel" || key === "loadout" || key === "gear") return "loadout_action";
+  if (key === "panel" || key === "open_menu" || key === "open_panel" || key === "loadout" || key === "loadout_action" || key === "gear") return "open_panel";
   if (key === "shop" || key === "vendor") return "shop_action";
   if (key === "companion") return "companion_action";
   if (key === "prompt" || key === "narrate") return "dm_prompt";
@@ -281,8 +293,8 @@ function repairActionLabel(args: {
     return vendorName ? `Check ${vendorName}` : "Check Vendor Stock";
   }
 
-  if (args.intent === "loadout_action") {
-    const panel = remapLegacyLoadoutPanel(args.action.panel);
+  if (args.intent === "open_panel") {
+    const panel = remapLegacyPanel(args.action.panel);
     return `Open ${titleCaseWords(panel)}`;
   }
   if (args.intent === "combat_action") {
@@ -341,7 +353,7 @@ function stableHintKey(args: {
 
 function synthesizeActionPrompt(action: NarratorUiAction, boardType: string): string {
   if (action.prompt && action.prompt.trim().length > 0) return action.prompt.trim();
-  if (action.intent === "loadout_action") return `I open the ${remapLegacyLoadoutPanel(action.panel)} panel and review the live state.`;
+  if (action.intent === "open_panel") return `I open the ${remapLegacyPanel(action.panel)} panel and review the live state.`;
   if (action.intent === "shop_action") return "I check current vendor stock and prices before buying.";
   if (action.intent === "combat_start") return "I engage hostiles and begin combat now.";
   if (action.intent === "quest_action") {
@@ -380,7 +392,7 @@ function sanitizeUiActions(args: {
         index,
       });
       const boardTarget = action.boardTarget ?? boardTargetAlias ?? boardTargetForIntent(intent);
-      const panel = intent === "loadout_action" ? remapLegacyLoadoutPanel(action.panel) : action.panel;
+      const panel = intent === "open_panel" ? remapLegacyPanel(action.panel) : action.panel;
       const prompt = synthesizeActionPrompt({ ...action, intent, boardTarget, panel, label }, boardType);
       const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : undefined;
       return {

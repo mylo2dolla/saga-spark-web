@@ -36,6 +36,39 @@ function scaleCompanionStat(base: number, seed: number, label: string, floor = 2
   return clampInt(scaled, floor, 100);
 }
 
+function uniqueName(base: string, seen: Set<string>): string {
+  const clean = base.trim().replace(/\s+/g, " ");
+  const fallback = clean.length > 0 ? clean : "Unit";
+  let candidate = fallback;
+  let suffix = 2;
+  while (seen.has(candidate.toLowerCase())) {
+    candidate = `${fallback} ${suffix}`;
+    suffix += 1;
+  }
+  seen.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function enemyNamePool(themeHint: string): string[] {
+  const lower = themeHint.toLowerCase();
+  if (/(crypt|grave|horror|dark|gothic|night)/.test(lower)) {
+    return ["Ink Ghoul", "Grave Stalker", "Pale Reaver", "Cinder Wraith", "Bone Lantern"];
+  }
+  if (/(ruin|sci|tech|machine|arc|metal)/.test(lower)) {
+    return ["Ruin Drone", "Shard Hunter", "Ion Ravager", "Rust Strider", "Signal Maw"];
+  }
+  if (/(forest|wild|road|travel|frontier)/.test(lower)) {
+    return ["Ridge Stalker", "Mire Howler", "Thorn Marauder", "Dust Skirmisher", "Night Pike"];
+  }
+  return ["Ink Ghoul", "Ash Brigand", "Gloom Raider", "Rift Hound", "Gallows Stalker"];
+}
+
+function pickEnemyName(seed: number, combatId: string, index: number, themeHint: string, seen: Set<string>): string {
+  const pool = enemyNamePool(themeHint);
+  const base = pool[rngInt(seed, `enemy_name:${combatId}:${index}`, 0, pool.length - 1)] ?? pool[0]!;
+  return uniqueName(base, seen);
+}
+
 function toErrorMessage(error: unknown, context: string): string {
   if (!error) return `${context} failed`;
   if (error instanceof Error) return `${context}: ${error.message}`;
@@ -237,12 +270,13 @@ export const mythicCombatStart: FunctionHandler = {
       const hpMaxFinal = Math.max(1, Math.floor(((hpMaxRes.data as number | null) ?? 100) + hpBonus));
       const powerMaxFinal = Math.max(0, Math.floor(((powerMaxRes.data as number | null) ?? 50) + powerBonus));
 
+      const usedNames = new Set<string>();
       const playerCombatant = {
         combat_session_id: combatId,
         entity_type: "player",
         player_id: user.userId,
         character_id: character.id,
-        name: character.name,
+        name: uniqueName(character.name, usedNames),
         x: 1,
         y: 1,
         lvl,
@@ -296,9 +330,12 @@ export const mythicCombatStart: FunctionHandler = {
           entity_type: "summon",
           player_id: user.userId,
           character_id: null,
-          name: typeof row.name === "string" && row.name.trim().length > 0
-            ? row.name.trim()
-            : `Companion ${index + 1}`,
+          name: uniqueName(
+            typeof row.name === "string" && row.name.trim().length > 0
+              ? row.name.trim()
+              : `Companion ${index + 1}`,
+            usedNames,
+          ),
           x: 1 + (index % 2),
           y: 2 + Math.floor(index / 2),
           lvl: companionLevel,
@@ -333,6 +370,14 @@ export const mythicCombatStart: FunctionHandler = {
       });
 
       const enemyCount = rngInt(seed, `enemy_count:${combatId}`, 2, 4);
+      const themeHint = [
+        reason,
+        typeof (activeRuntime as { mode?: unknown } | null)?.mode === "string"
+          ? String((activeRuntime as { mode: string }).mode)
+          : "",
+      ]
+        .filter((entry) => entry.length > 0)
+        .join(" ");
       const enemies = Array.from({ length: enemyCount }, (_, i) => {
         const base = 35 + rngInt(seed, `enemy:base:${i}`, 0, 25);
         const mobility = clampInt(base + rngInt(seed, `enemy:mob:${i}`, -5, 10), 0, 100);
@@ -351,7 +396,7 @@ export const mythicCombatStart: FunctionHandler = {
           entity_type: "npc",
           player_id: null,
           character_id: null,
-          name: `Ink Ghoul ${i + 1}`,
+          name: pickEnemyName(seed, combatId, i, themeHint, usedNames),
           x,
           y,
           lvl,

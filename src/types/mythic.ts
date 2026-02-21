@@ -17,7 +17,6 @@ export type MythicUiIntent =
   | "combat_start"
   | "combat_action"
   | "shop_action"
-  | "loadout_action"
   | "companion_action"
   | "shop"
   | "focus_target"
@@ -32,7 +31,7 @@ export interface MythicActionChip {
   hint_key?: string;
   prompt?: string;
   boardTarget?: "town" | "travel" | "dungeon" | "combat";
-  panel?: "status" | "character" | "loadout" | "gear" | "skills" | "loadouts" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
+  panel?: "status" | "character" | "loadout" | "loadouts" | "gear" | "equipment" | "skills" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
   payload?: Record<string, unknown>;
   companion_id?: string;
   turn_index?: number;

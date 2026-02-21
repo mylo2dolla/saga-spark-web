@@ -3,7 +3,6 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { PromptAssistField } from "@/components/PromptAssistField";
 import {
   Sheet,
   SheetContent,
@@ -23,7 +22,6 @@ import {
 import { useMythicDmVoice } from "@/hooks/useMythicDmVoice";
 import { useMythicCombat } from "@/hooks/useMythicCombat";
 import { useMythicCombatState } from "@/hooks/useMythicCombatState";
-import { MythicInventoryPanel } from "@/components/mythic/MythicInventoryPanel";
 import { callEdgeFunction } from "@/lib/edge";
 import { sumStatMods, splitInventory, type MythicInventoryRow } from "@/lib/mythicEquipment";
 import { parsePlayerCommand, type PlayerCommandPanel } from "@/lib/mythic/playerCommandParser";
@@ -48,7 +46,7 @@ import type {
   CharacterSheetSection,
 } from "@/ui/components/mythic/character2/types";
 
-type MythicPanelTab = "status" | "loadout" | "skills" | "combat" | "quests" | "companions" | "shop";
+type MythicPanelTab = "status" | "skills" | "combat" | "quests" | "companions" | "shop";
 type MythicUtilityTab = "panels" | "settings" | "logs" | "diagnostics";
 const MYTHIC_SETTINGS_STORAGE_KEY = "mythic:settings:v1";
 const DEFAULT_MYTHIC_SETTINGS: MythicRuntimeSettings = {
@@ -143,7 +141,7 @@ function mapCharacterSheetSection(panel: string | undefined): CharacterSheetSect
   if (panel === "combat") return "combat";
   if (panel === "quests") return "quests";
   if (panel === "companions") return "party";
-  if (panel === "gear") return "equipment";
+  if (panel === "gear" || panel === "equipment") return "equipment";
   if (panel === "skills" || panel === "loadout" || panel === "loadouts") return "skills";
   return "overview";
 }
@@ -206,7 +204,6 @@ function isUiIntent(value: string): value is MythicUiAction["intent"] {
   return value === "quest_action"
     || value === "combat_action"
     || value === "shop_action"
-    || value === "loadout_action"
     || value === "companion_action"
     || value === "town"
     || value === "travel"
@@ -230,7 +227,7 @@ function resolvedModeFromAction(action: MythicUiAction, fallbackMode: "town" | "
   return fallbackMode;
 }
 
-function resolveActionIntent(action: MythicUiAction, currentMode: "town" | "travel" | "dungeon" | "combat"): Exclude<MythicUiAction["intent"], "quest_action" | "combat_action" | "shop_action" | "loadout_action" | "companion_action"> {
+function resolveActionIntent(action: MythicUiAction, currentMode: "town" | "travel" | "dungeon" | "combat"): Exclude<MythicUiAction["intent"], "quest_action" | "combat_action" | "shop_action" | "companion_action"> {
   if (action.intent === "quest_action") {
     const targetMode = resolvedModeFromAction(action, currentMode);
     if (targetMode === "town" || targetMode === "travel" || targetMode === "dungeon") return targetMode;
@@ -241,7 +238,6 @@ function resolveActionIntent(action: MythicUiAction, currentMode: "town" | "trav
     return hasTarget ? "focus_target" : "dm_prompt";
   }
   if (action.intent === "shop_action") return "shop";
-  if (action.intent === "loadout_action") return "open_panel";
   if (action.intent === "companion_action") return "dm_prompt";
   return action.intent;
 }
@@ -250,14 +246,17 @@ function normalizeUiActionFromUnknown(entry: unknown, fallbackId: string): Mythi
   const raw = asRecord(entry);
   if (!raw) return null;
   const rawIntent = String(raw.intent ?? "").trim().toLowerCase();
-  if (!isUiIntent(rawIntent)) return null;
+  const normalizedIntent = rawIntent === "loadout_action" || rawIntent === "loadout" || rawIntent === "gear"
+    ? "open_panel"
+    : rawIntent;
+  if (!isUiIntent(normalizedIntent)) return null;
   const label = typeof raw.label === "string" && raw.label.trim().length > 0 ? raw.label.trim() : fallbackId;
   const boardTargetRaw = String(raw.boardTarget ?? raw.board_target ?? "").trim().toLowerCase();
   const boardTarget = boardTargetRaw === "town" || boardTargetRaw === "travel" || boardTargetRaw === "dungeon" || boardTargetRaw === "combat"
     ? boardTargetRaw
     : undefined;
   const panelRaw = String(raw.panel ?? "").trim().toLowerCase();
-  const panel = panelRaw === "status" || panelRaw === "character" || panelRaw === "loadout" || panelRaw === "gear" || panelRaw === "skills" || panelRaw === "loadouts" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "combat" || panelRaw === "companions" || panelRaw === "shop" || panelRaw === "commands" || panelRaw === "settings"
+  const panel = panelRaw === "status" || panelRaw === "character" || panelRaw === "loadout" || panelRaw === "loadouts" || panelRaw === "gear" || panelRaw === "equipment" || panelRaw === "skills" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "combat" || panelRaw === "companions" || panelRaw === "shop" || panelRaw === "commands" || panelRaw === "settings"
     ? panelRaw
     : undefined;
   const prompt = typeof raw.prompt === "string" && raw.prompt.trim().length > 0 ? raw.prompt.trim() : undefined;
@@ -265,7 +264,7 @@ function normalizeUiActionFromUnknown(entry: unknown, fallbackId: string): Mythi
   return {
     id: typeof raw.id === "string" && raw.id.trim().length > 0 ? raw.id.trim() : fallbackId,
     label,
-    intent: rawIntent,
+    intent: normalizedIntent,
     boardTarget,
     panel,
     prompt,
@@ -353,7 +352,7 @@ function synthesizePromptFromAction(action: MythicUiAction, args: {
   if (action.intent === "combat_start") {
     return "I commit to combat now and want the exact mechanical outcome narrated.";
   }
-  if (action.intent === "open_panel" || action.intent === "loadout_action") {
+  if (action.intent === "open_panel") {
     const panel = action.panel ?? "skills";
     if (panel === "character" || panel === "status" || panel === "progression") {
       return "I open the full character sheet and cross-check identity, resources, and quest pressure with current narrative state.";
@@ -444,10 +443,8 @@ export default function MythicGameScreen() {
     character,
     skills,
     items,
-    loadouts,
     progressionEvents,
     questThreads,
-    loadoutSlotCap,
     isInitialLoading: charInitialLoading,
     isRefreshing: charRefreshing,
     error: charError,
@@ -550,29 +547,10 @@ export default function MythicGameScreen() {
     mobility: Math.min(100, Math.max(0, Math.floor((character?.mobility ?? 0) + (equipBonuses.mobility ?? 0)))),
     utility: Math.min(100, Math.max(0, Math.floor((character?.utility ?? 0) + (equipBonuses.utility ?? 0)))),
   };
-  const activeSkillPool = useMemo(
-    () => skills.filter((s) => s.kind === "active" || s.kind === "ultimate"),
-    [skills],
-  );
-  const activeLoadout = useMemo(
-    () => loadouts.find((l) => l.is_active) ?? loadouts[0] ?? null,
-    [loadouts],
-  );
-  const equippedSkillIds = useMemo(
-    () => new Set((activeLoadout?.slots_json ?? []).filter((id): id is string => typeof id === "string" && id.length > 0)),
-    [activeLoadout],
-  );
-  const equippedActiveSkills = useMemo(
-    () => activeSkillPool.filter((skill) => equippedSkillIds.has(skill.id ?? "")),
-    [activeSkillPool, equippedSkillIds],
-  );
   const passiveSkills = useMemo(
     () => skills.filter((skill) => skill.kind === "passive"),
     [skills],
   );
-  const [loadoutName, setLoadoutName] = useState("Default");
-  const [selectedLoadoutSkillIds, setSelectedLoadoutSkillIds] = useState<string[]>([]);
-  const [isSavingLoadout, setIsSavingLoadout] = useState(false);
   const [isEquipmentBusy, setIsEquipmentBusy] = useState(false);
   const [equipmentActionError, setEquipmentActionError] = useState<string | null>(null);
   const [isPartyCommandBusy, setIsPartyCommandBusy] = useState(false);
@@ -669,36 +647,6 @@ export default function MythicGameScreen() {
     }, 620);
     return () => window.clearTimeout(timer);
   }, [character, profileDraft, profileSaveState.isDirty, updateCharacterProfile]);
-
-  useEffect(() => {
-    const currentCap = Math.max(1, loadoutSlotCap);
-    if (!activeLoadout) {
-      const fallback = activeSkillPool
-        .slice(0, currentCap)
-        .map((s) => s.id ?? "")
-        .filter(Boolean);
-      setSelectedLoadoutSkillIds((prev) => {
-        if (prev.length === fallback.length && prev.every((id, idx) => id === fallback[idx])) {
-          return prev;
-        }
-        return fallback;
-      });
-      setLoadoutName((prev) => (prev === "Default" ? prev : "Default"));
-      return;
-    }
-    const next = Array.isArray(activeLoadout.slots_json) ? activeLoadout.slots_json : [];
-    const normalizedNext = next.slice(0, currentCap);
-    setSelectedLoadoutSkillIds((prev) => {
-      if (prev.length === normalizedNext.length && prev.every((id, idx) => id === normalizedNext[idx])) {
-        return prev;
-      }
-      return normalizedNext;
-    });
-    setLoadoutName((prev) => {
-      const targetName = activeLoadout.name ?? "Default";
-      return prev === targetName ? prev : targetName;
-    });
-  }, [activeLoadout, activeSkillPool, loadoutSlotCap]);
 
   const boardStateRecord = useMemo(
     () => (board?.state_json && typeof board.state_json === "object" ? board.state_json as Record<string, unknown> : {}),
@@ -864,69 +812,6 @@ export default function MythicGameScreen() {
       setIsPartyCommandBusy(false);
     }
   }, [board, refetch, refetchCharacter, transitionRuntime]);
-
-  const saveLoadout = async () => {
-    if (!campaignId || !character) return;
-    const normalized = Array.from(new Set(selectedLoadoutSkillIds)).slice(0, Math.max(1, loadoutSlotCap));
-    setIsSavingLoadout(true);
-    try {
-      const { data, error } = await callEdgeFunction<{
-        ok: boolean;
-        slot_cap: number;
-        truncated?: boolean;
-      }>("mythic-set-loadout", {
-        requireAuth: true,
-        body: {
-          campaignId,
-          characterId: character.id,
-          name: (loadoutName || "Default").trim().slice(0, 60),
-          skillIds: normalized,
-          activate: true,
-        },
-      });
-      if (error) throw error;
-      if (!data?.ok) throw new Error("Failed to save loadout");
-      if (data.truncated) {
-        toast("Loadout trimmed to slot cap.");
-      } else {
-        toast.success("Loadout saved.");
-      }
-      await refetchCharacter();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save loadout");
-    } finally {
-      setIsSavingLoadout(false);
-    }
-  };
-
-  const activateLoadout = async (loadoutId: string) => {
-    if (!campaignId || !character) return;
-    const selected = loadouts.find((l) => l.id === loadoutId);
-    if (!selected) return;
-    setIsSavingLoadout(true);
-    try {
-      const { data, error } = await callEdgeFunction<{ ok: boolean }>("mythic-set-loadout", {
-        requireAuth: true,
-        body: {
-          campaignId,
-          characterId: character.id,
-          name: selected.name,
-          skillIds: selected.slots_json,
-          activate: true,
-        },
-      });
-      if (error) throw error;
-      if (!data?.ok) throw new Error("Failed to activate loadout");
-      setLoadoutName(selected.name);
-      setSelectedLoadoutSkillIds(selected.slots_json.slice(0, Math.max(1, loadoutSlotCap)));
-      await refetchCharacter();
-      toast.success(`Activated ${selected.name}`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to activate loadout");
-    } finally {
-      setIsSavingLoadout(false);
-    }
-  };
 
   const activeTurnCombatant = useMemo(
     () => combatState.combatants.find((c) => c.id === combatState.activeTurnCombatantId) ?? null,
@@ -1579,9 +1464,7 @@ export default function MythicGameScreen() {
         if (resolvedIntent === "open_panel") {
           const panelRaw = typeof action.panel === "string"
             ? action.panel
-            : action.intent === "loadout_action"
-              ? "loadout"
-              : "status";
+            : "status";
           if (
             panelRaw === "character"
             || panelRaw === "status"
@@ -1593,6 +1476,7 @@ export default function MythicGameScreen() {
             || panelRaw === "loadout"
             || panelRaw === "loadouts"
             || panelRaw === "gear"
+            || panelRaw === "equipment"
           ) {
             const section = mapCharacterSheetSection(panelRaw);
             openCharacterSheet(section);
@@ -1727,6 +1611,14 @@ export default function MythicGameScreen() {
             }
             const targeting = typeof payload.quick_cast_targeting === "string" ? payload.quick_cast_targeting : "single";
             const payloadTargetCombatantId = typeof payload.target_combatant_id === "string" ? payload.target_combatant_id : null;
+            const payloadTargetTile = payload.quick_cast_target_tile && typeof payload.quick_cast_target_tile === "object"
+              ? payload.quick_cast_target_tile as Record<string, unknown>
+              : null;
+            const explicitTileTarget = payloadTargetTile
+              && Number.isFinite(Number(payloadTargetTile.x))
+              && Number.isFinite(Number(payloadTargetTile.y))
+              ? { kind: "tile" as const, x: Math.floor(Number(payloadTargetTile.x)), y: Math.floor(Number(payloadTargetTile.y)) }
+              : null;
             const payloadTarget = payloadTargetCombatantId
               ? combatState.combatants.find((entry) => entry.id === payloadTargetCombatantId && entry.is_alive) ?? null
               : null;
@@ -1744,9 +1636,10 @@ export default function MythicGameScreen() {
                 ? selected
                   ? { kind: "combatant", combatant_id: selected.id } as const
                   : null
-                : selected
-                  ? { kind: "tile", x: selected.x, y: selected.y } as const
-                  : null;
+                : explicitTileTarget
+                  ?? (selected
+                    ? { kind: "tile", x: selected.x, y: selected.y } as const
+                    : null);
             if (!target) {
               return {
                 stateChanges: [],
@@ -1774,13 +1667,14 @@ export default function MythicGameScreen() {
                 error: skillResult.error || "Quick-cast failed.",
               };
             }
+            await Promise.all([refetchCombatState(), refetch()]);
             return {
               stateChanges: [`Quick-cast ${skillName} resolved.`],
               context: {
                 quick_cast_skill_id: quickCastSkillId,
                 target,
-                combat_ended: skillResult.ended,
-                authoritative_mutation_applied: true,
+                  combat_ended: skillResult.ended,
+                  authoritative_mutation_applied: true,
               },
             };
           }
@@ -1916,6 +1810,8 @@ export default function MythicGameScreen() {
     openUtility,
     openShop,
     playerCombatantId,
+    refetch,
+    refetchCombatState,
     resolveActionIntent,
     runNarratedAction,
     skills,
@@ -1959,6 +1855,7 @@ export default function MythicGameScreen() {
               error: tickResult.error || "Enemy turn failed to resolve.",
             };
           }
+          await Promise.all([refetchCombatState(), refetch()]);
           return {
             stateChanges: ["Enemy turn resolved from authoritative combat tick."],
             context: {
@@ -1977,6 +1874,8 @@ export default function MythicGameScreen() {
     canAdvanceNpcTurn,
     combatSessionId,
     combatState.session?.current_turn_index,
+    refetch,
+    refetchCombatState,
     runNarratedAction,
     tickCombat,
   ]);
@@ -2033,6 +1932,7 @@ export default function MythicGameScreen() {
             error: result.error || "Skill execution failed.",
           };
         }
+        await Promise.all([refetchCombatState(), refetch()]);
         return {
           stateChanges: [`Used ${skillName} on ${targetLabel}.`],
           context: {
@@ -2043,7 +1943,7 @@ export default function MythicGameScreen() {
         };
       },
     });
-  }, [campaignId, combat, combatSessionId, combatState.session?.current_turn_index, describeCombatTarget, runNarratedAction, skills]);
+  }, [campaignId, combat, combatSessionId, combatState.session?.current_turn_index, describeCombatTarget, refetch, refetchCombatState, runNarratedAction, skills]);
 
   const quickCastAvailability = useMemo(
     () => commandSkillAvailability.filter((entry) => entry.kind === "active" || entry.kind === "ultimate").slice(0, 8),
@@ -2329,91 +2229,6 @@ export default function MythicGameScreen() {
                 ))}
               </div>
             )}
-          </div>
-        </div>
-      ) : null}
-
-      {activePanel === "loadout" ? (
-        <div className="space-y-3">
-          <MythicInventoryPanel
-            campaignId={campaignId}
-            characterId={character.id}
-            rows={invRowsSafe}
-            onChanged={async () => {
-              await recomputeCharacter();
-              await refetch();
-            }}
-          />
-
-          <div className="rounded-lg border border-border bg-background/30 p-3">
-            <div className="mb-2 text-sm font-semibold">Skill Loadouts</div>
-            <div className="mb-2 text-xs text-muted-foreground">
-              Slots unlocked: {Math.max(1, loadoutSlotCap)} · Selected: {selectedLoadoutSkillIds.length}
-            </div>
-            <PromptAssistField
-              value={loadoutName}
-              onChange={setLoadoutName}
-              fieldType="generic"
-              campaignId={campaignId}
-              context={{
-                kind: "loadout_name",
-                character_name: character.name,
-                class_name: String((character.class_json as any)?.class_name ?? ""),
-                selected_skill_names: activeSkillPool
-                  .filter((skill) => selectedLoadoutSkillIds.includes(skill.id ?? ""))
-                  .map((skill) => skill.name),
-              }}
-              placeholder="Loadout name"
-              maxLength={60}
-              className="mb-2"
-              disabled={isSavingLoadout}
-            />
-            <div className="mb-3 flex flex-wrap gap-2">
-              {activeSkillPool.map((skill) => {
-                const id = skill.id ?? "";
-                const isSelected = selectedLoadoutSkillIds.includes(id);
-                return (
-                  <Button
-                    key={id}
-                    size="sm"
-                    variant={isSelected ? "default" : "secondary"}
-                    onClick={() => {
-                      setSelectedLoadoutSkillIds((prev) => {
-                        if (prev.includes(id)) return prev.filter((x) => x !== id);
-                        if (prev.length >= Math.max(1, loadoutSlotCap)) return prev;
-                        return [...prev, id];
-                      });
-                    }}
-                  >
-                    {skill.name}
-                  </Button>
-                );
-              })}
-            </div>
-            <div className="mb-3 flex flex-wrap gap-2">
-              <Button size="sm" onClick={() => void saveLoadout()} disabled={isSavingLoadout}>
-                {isSavingLoadout ? "Saving..." : "Save + Activate"}
-              </Button>
-            </div>
-            <div className="space-y-1">
-              {loadouts.length === 0 ? (
-                <div className="text-xs text-muted-foreground">No saved loadouts.</div>
-              ) : (
-                loadouts.map((loadout) => (
-                  <div key={loadout.id} className="flex items-center justify-between rounded border border-border bg-background/20 px-2 py-1">
-                    <div className="text-xs">
-                      <span className="font-medium">{loadout.name}</span>
-                      {loadout.is_active ? <span className="ml-2 text-primary">(active)</span> : null}
-                    </div>
-                    {!loadout.is_active ? (
-                      <Button size="sm" variant="outline" onClick={() => void activateLoadout(loadout.id)} disabled={isSavingLoadout}>
-                        Activate
-                      </Button>
-                    ) : null}
-                  </div>
-                ))
-              )}
-            </div>
           </div>
         </div>
       ) : null}

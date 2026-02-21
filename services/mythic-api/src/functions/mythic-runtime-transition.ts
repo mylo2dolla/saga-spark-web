@@ -329,16 +329,17 @@ function applyCompanionCommand(args: {
   companions: CompanionState[];
   command: CompanionCommandPayload | null;
 }): Record<string, unknown> {
-  if (!args.command) return args.state;
+  const command = args.command;
+  if (!command) return args.state;
   const now = nowIso();
   const companionCommands = asRecord(args.state.companion_commands);
   const nextCommands = {
     ...companionCommands,
-    [args.command.companion_id]: {
-      companion_id: args.command.companion_id,
-      stance: args.command.stance,
-      directive: args.command.directive,
-      target_hint: args.command.target_hint ?? null,
+    [command.companion_id]: {
+      companion_id: command.companion_id,
+      stance: command.stance,
+      directive: command.directive,
+      target_hint: command.target_hint ?? null,
       updated_at: now,
     },
   };
@@ -354,29 +355,29 @@ function applyCompanionCommand(args: {
       nextPresence.push(entry);
       continue;
     }
-    if (companionId !== args.command.companion_id) {
+    if (companionId !== command.companion_id) {
       nextPresence.push(entry);
       continue;
     }
     nextPresence.push({
       ...entry,
-      stance: args.command.stance,
-      directive: args.command.directive,
-      target_hint: args.command.target_hint ?? null,
+      stance: command.stance,
+      directive: command.directive,
+      target_hint: command.target_hint ?? null,
       command_updated_at: now,
     });
     updated = true;
   }
   if (!updated) {
-    const known = args.companions.find((entry) => entry.companion_id === args.command.companion_id) ?? null;
+    const known = args.companions.find((entry) => entry.companion_id === command.companion_id) ?? null;
     nextPresence.push({
-      companion_id: args.command.companion_id,
-      name: known?.name ?? args.command.companion_id,
+      companion_id: command.companion_id,
+      name: known?.name ?? command.companion_id,
       archetype: known?.archetype ?? "ally",
       mood: known?.mood ?? "steady",
-      stance: args.command.stance,
-      directive: args.command.directive,
-      target_hint: args.command.target_hint ?? null,
+      stance: command.stance,
+      directive: command.directive,
+      target_hint: command.target_hint ?? null,
       command_updated_at: now,
     });
   }

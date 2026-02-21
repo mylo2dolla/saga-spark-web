@@ -28,11 +28,21 @@ function compactLabel(value: string, maxLength = 46): string {
 
 export function actionSignature(action: MythicUiAction): string {
   const payload = action.payload ?? {};
+  const quickCastSkillId = typeof payload.quick_cast_skill_id === "string" ? payload.quick_cast_skill_id : null;
+  const quickCastTargetId = typeof payload.target_combatant_id === "string" ? payload.target_combatant_id : null;
+  const quickCastTargetTile = payload.quick_cast_target_tile && typeof payload.quick_cast_target_tile === "object"
+    ? payload.quick_cast_target_tile as Record<string, unknown>
+    : null;
+  const quickCastTargetTileKey = quickCastTargetTile
+    && Number.isFinite(Number(quickCastTargetTile.x))
+    && Number.isFinite(Number(quickCastTargetTile.y))
+    ? `${Math.floor(Number(quickCastTargetTile.x))},${Math.floor(Number(quickCastTargetTile.y))}`
+    : null;
   const target = typeof payload.target_combatant_id === "string"
     ? payload.target_combatant_id
-    : typeof payload.quick_cast_skill_id === "string"
-      ? payload.quick_cast_skill_id
-    : typeof payload.vendorId === "string"
+    : quickCastSkillId
+      ? `${quickCastSkillId}:${quickCastTargetId ?? quickCastTargetTileKey ?? String(payload.quick_cast_targeting ?? "auto")}`
+      : typeof payload.vendorId === "string"
       ? payload.vendorId
       : typeof payload.room_id === "string"
         ? payload.room_id
@@ -224,6 +234,18 @@ export function buildMissClickInspectTarget(args: {
     ?? null;
   const actions: MythicUiAction[] = [
     {
+      id: `combat-move-${x}-${y}`,
+      label: `Move Here (${x}, ${y})`,
+      intent: "dm_prompt",
+      prompt: `I reposition to (${x}, ${y}) before taking the next attack window.`,
+      payload: {
+        quick_cast_skill_id: "basic_move",
+        quick_cast_targeting: "tile",
+        quick_cast_target_tile: { x, y },
+        board_feature: "core_action",
+      },
+    },
+    {
       id: `combat-read-${x}-${y}`,
       label: "Request tactical read",
       intent: "dm_prompt",
@@ -235,6 +257,18 @@ export function buildMissClickInspectTarget(args: {
     },
     ...(activeEnemy
       ? [
+          {
+            id: `combat-advance-${activeEnemy.id}`,
+            label: `Advance on ${activeEnemy.name}`,
+            intent: "dm_prompt" as const,
+            payload: {
+              quick_cast_skill_id: "basic_move",
+              quick_cast_targeting: "tile",
+              target_combatant_id: activeEnemy.id,
+              board_feature: "core_action",
+            },
+            prompt: `I advance on ${activeEnemy.name} to close distance this turn.`,
+          },
           {
             id: `combat-focus-${activeEnemy.id}`,
             label: `Focus ${activeEnemy.name}`,
@@ -535,6 +569,18 @@ export function buildCombatantActions(args: {
     ...(args.isEnemy
       ? [
           {
+            id: `combat-advance-${slugToken(args.combatantId)}`,
+            label: `Advance on ${args.combatantName}`,
+            intent: "dm_prompt" as const,
+            payload: {
+              quick_cast_skill_id: "basic_move",
+              quick_cast_targeting: "tile",
+              target_combatant_id: args.combatantId,
+              board_feature: "core_action",
+            },
+            prompt: `I close distance on ${args.combatantName} and lock engagement range.`,
+          },
+          {
             id: `combat-basic-attack-${slugToken(args.combatantId)}`,
             label: `Attack ${args.combatantName}`,
             intent: "dm_prompt" as const,
@@ -575,6 +621,20 @@ export function buildCombatCoreActions(args: {
   targetCombatantName?: string | null;
 }): MythicUiAction[] {
   return [
+    {
+      id: `combat-core-move-${slugToken(args.targetCombatantId ?? "advance")}`,
+      label: args.targetCombatantName ? `Advance on ${args.targetCombatantName}` : "Advance",
+      intent: "dm_prompt",
+      prompt: args.targetCombatantName
+        ? `I move to close distance on ${args.targetCombatantName} and set up the next strike.`
+        : "I reposition toward the highest-pressure hostile before the next strike.",
+      payload: {
+        quick_cast_skill_id: "basic_move",
+        quick_cast_targeting: "tile",
+        ...(args.targetCombatantId ? { target_combatant_id: args.targetCombatantId } : {}),
+        board_feature: "core_action",
+      },
+    },
     {
       id: `combat-core-attack-${slugToken(args.targetCombatantId ?? "auto")}`,
       label: args.targetCombatantName ? `Attack ${args.targetCombatantName}` : "Attack",

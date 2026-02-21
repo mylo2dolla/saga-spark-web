@@ -10,7 +10,7 @@ export const UiActionIntentSchema = z.enum([
   "combat_start",
   "combat_action",
   "shop_action",
-  "loadout_action",
+  "open_panel",
   "companion_action",
   "dm_prompt",
   "refresh",
@@ -28,7 +28,7 @@ function normalizeUiIntent(value: unknown): UiActionIntent | null {
     key === "combat_start" ||
     key === "combat_action" ||
     key === "shop_action" ||
-    key === "loadout_action" ||
+    key === "open_panel" ||
     key === "companion_action" ||
     key === "dm_prompt" ||
     key === "refresh"
@@ -59,8 +59,8 @@ function normalizeUiIntent(value: unknown): UiActionIntent | null {
     return "quest_action";
   }
 
-  if (key === "panel" || key === "open_menu" || key === "open_panel" || key === "loadout" || key === "gear") {
-    return "loadout_action";
+  if (key === "panel" || key === "open_menu" || key === "open_panel" || key === "loadout" || key === "gear" || key === "loadout_action") {
+    return "open_panel";
   }
 
   if (key === "shop" || key === "vendor" || key === "merchant") {
@@ -92,7 +92,22 @@ export const UiActionSchema = z
     payload: z.record(z.unknown()).optional(),
     boardTarget: z.enum(["town", "travel", "dungeon", "combat"]).optional(),
     board_target: z.enum(["town", "travel", "dungeon", "combat"]).optional(),
-    panel: z.enum(["character", "gear", "skills", "loadouts", "progression", "quests", "commands", "settings"]).optional(),
+    panel: z.enum([
+      "status",
+      "character",
+      "gear",
+      "equipment",
+      "skills",
+      "loadout",
+      "loadouts",
+      "progression",
+      "quests",
+      "combat",
+      "companions",
+      "shop",
+      "commands",
+      "settings",
+    ]).optional(),
   })
   .strict();
 

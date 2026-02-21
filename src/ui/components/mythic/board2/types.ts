@@ -168,9 +168,9 @@ export interface NarrativeCombatQuickCast {
 }
 
 export interface NarrativeCombatCoreAction {
-  id: "basic_attack" | "basic_defend" | "basic_recover_mp";
+  id: "basic_attack" | "basic_defend" | "basic_recover_mp" | "basic_move";
   label: string;
-  targeting: "single" | "self";
+  targeting: "single" | "self" | "tile";
   usableNow: boolean;
   reason: string | null;
 }
@@ -191,12 +191,14 @@ export interface NarrativeCombatHudEntity {
 
 export interface NarrativeCombatDelta {
   id: string;
-  eventType: "damage" | "healed" | "power_gain" | "power_drain" | "status_applied";
+  eventType: "damage" | "healed" | "power_gain" | "power_drain" | "status_applied" | "moved";
   targetCombatantId: string | null;
   amount: number | null;
   turnIndex: number;
   createdAt: string;
   label: string;
+  from?: { x: number; y: number } | null;
+  to?: { x: number; y: number } | null;
 }
 
 export interface CombatSceneData {

@@ -22,7 +22,7 @@ const TargetSchema = z.union([
   z.object({ kind: z.literal("tile"), x: z.number().int(), y: z.number().int() }),
 ]);
 
-const BuiltInSkillSchema = z.enum(["basic_attack", "basic_defend", "basic_recover_mp"]);
+const BuiltInSkillSchema = z.enum(["basic_attack", "basic_defend", "basic_recover_mp", "basic_move"]);
 
 const RequestSchema = z.object({
   campaignId: z.string().uuid(),
@@ -75,6 +75,9 @@ type SkillRow = {
 type BuiltInSkillId = z.infer<typeof BuiltInSkillSchema>;
 
 type TurnOrderRow = { combatant_id: string };
+type Position = { x: number; y: number };
+
+const MOVE_SPENT_STATUS_ID = "move_spent";
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
@@ -151,6 +154,28 @@ function advanceAlongLine(
   return { x: last.x, y: last.y };
 }
 
+function advanceAlongLineAvoidingOccupied(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  steps: number,
+  blocked: Set<string>,
+  occupied: Set<string>,
+): { x: number; y: number } {
+  const line = bresenhamLine(startX, startY, endX, endY);
+  if (line.length <= 1) return { x: startX, y: startY };
+  const maxIdx = Math.min(line.length - 1, Math.max(0, Math.floor(steps)));
+  let last = line[0]!;
+  for (let i = 1; i <= maxIdx; i += 1) {
+    const p = line[i]!;
+    const key = `${p.x},${p.y}`;
+    if (blocked.has(key) || occupied.has(key)) break;
+    last = p;
+  }
+  return { x: last.x, y: last.y };
+}
+
 function stepAway(
   fromX: number,
   fromY: number,
@@ -166,6 +191,81 @@ function stepAway(
   const endX = targetX + stepX * Math.max(0, Math.floor(steps));
   const endY = targetY + stepY * Math.max(0, Math.floor(steps));
   return advanceAlongLine(targetX, targetY, endX, endY, steps, blocked);
+}
+
+function removeStatusId(statuses: StatusEntry[], id: string): StatusEntry[] {
+  return statuses.filter((entry) => entry.id !== id);
+}
+
+function statusDataText(status: StatusEntry, key: string): string | null {
+  const value = status.data?.[key];
+  if (typeof value !== "string") return null;
+  const clean = value.trim();
+  return clean.length > 0 ? clean : null;
+}
+
+function moveTurnMarker(combatSessionId: string, turnIndex: number): string {
+  return `${combatSessionId}:${turnIndex}`;
+}
+
+function hasMoveSpentThisTurn(statuses: StatusEntry[], marker: string): boolean {
+  return statuses.some((entry) => (
+    entry.id === MOVE_SPENT_STATUS_ID
+    && statusDataText(entry, "turn_marker") === marker
+  ));
+}
+
+function occupiedPositionSet(combatants: CombatantRow[], excludeCombatantId: string | null = null): Set<string> {
+  const set = new Set<string>();
+  for (const entry of combatants) {
+    if (!entry.is_alive) continue;
+    if (excludeCombatantId && entry.id === excludeCombatantId) continue;
+    set.add(`${Math.floor(entry.x)},${Math.floor(entry.y)}`);
+  }
+  return set;
+}
+
+function inBounds(point: Position, cols = 14, rows = 10): boolean {
+  return point.x >= 0 && point.y >= 0 && point.x < cols && point.y < rows;
+}
+
+function canStandAt(point: Position, blocked: Set<string>, occupied: Set<string>): boolean {
+  return !blocked.has(`${point.x},${point.y}`) && !occupied.has(`${point.x},${point.y}`);
+}
+
+function chooseMoveStep(current: Position, target: Position, blocked: Set<string>, occupied: Set<string>): Position | null {
+  const dx = target.x - current.x;
+  const dy = target.y - current.y;
+  if (dx === 0 && dy === 0) return null;
+  const stepX = dx === 0 ? 0 : dx / Math.abs(dx);
+  const stepY = dy === 0 ? 0 : dy / Math.abs(dy);
+  const prioritized = Math.abs(dx) >= Math.abs(dy)
+    ? [{ x: current.x + stepX, y: current.y }, { x: current.x, y: current.y + stepY }]
+    : [{ x: current.x, y: current.y + stepY }, { x: current.x + stepX, y: current.y }];
+  for (const candidate of prioritized) {
+    if (!inBounds(candidate)) continue;
+    if (canStandAt(candidate, blocked, occupied)) return candidate;
+  }
+  return null;
+}
+
+function moveToward(args: {
+  start: Position;
+  target: Position;
+  maxSteps: number;
+  blocked: Set<string>;
+  occupied: Set<string>;
+}): { to: Position; steps: number } {
+  let current: Position = { x: args.start.x, y: args.start.y };
+  let steps = 0;
+  const max = Math.max(0, Math.floor(args.maxSteps));
+  for (let i = 0; i < max; i += 1) {
+    const next = chooseMoveStep(current, args.target, args.blocked, args.occupied);
+    if (!next) break;
+    current = next;
+    steps += 1;
+  }
+  return { to: current, steps };
 }
 
 function getTargetsForShape(args: {
@@ -244,7 +344,7 @@ function setCooldown(statuses: StatusEntry[], skillId: string, expiresTurn: numb
   return next;
 }
 
-function setSimpleStatus(statuses: StatusEntry[], id: string, expiresTurn: number, data: Record<string, unknown>): StatusEntry[] {
+function setSimpleStatus(statuses: StatusEntry[], id: string, expiresTurn: number | null, data: Record<string, unknown>): StatusEntry[] {
   const next = statuses.filter((s) => s.id !== id);
   next.push({ id, expires_turn: expiresTurn, stacks: 1, data });
   return next;
@@ -284,7 +384,7 @@ function areAllies(a: CombatantRow, b: CombatantRow): boolean {
 }
 
 function asBuiltInSkillId(value: string): BuiltInSkillId | null {
-  return value === "basic_attack" || value === "basic_defend" || value === "basic_recover_mp"
+  return value === "basic_attack" || value === "basic_defend" || value === "basic_recover_mp" || value === "basic_move"
     ? value
     : null;
 }
@@ -293,6 +393,30 @@ function buildBuiltInSkill(args: {
   id: BuiltInSkillId;
   actor: CombatantRow;
 }): SkillRow {
+  if (args.id === "basic_move") {
+    const moveTiles = Math.max(2, Math.min(6, Math.floor(args.actor.mobility / 20) + 2));
+    return {
+      id: args.id,
+      character_id: args.actor.character_id ?? "builtin",
+      kind: "active",
+      targeting: "tile",
+      targeting_json: {
+        shape: "tile",
+        metric: "manhattan",
+        requires_los: false,
+        blocks_on_walls: true,
+        friendly_fire: true,
+      },
+      name: "Move",
+      description: "Reposition up to your mobility budget without ending your turn.",
+      range_tiles: 14,
+      cooldown_turns: 0,
+      cost_json: { amount: 0, resource_id: "mp" },
+      effects_json: {
+        move: { dash_tiles: moveTiles },
+      },
+    };
+  }
   if (args.id === "basic_attack") {
     const rangeTiles = Math.max(1, Math.min(6, Math.floor(args.actor.mobility / 20) + 2));
     return {
@@ -479,6 +603,10 @@ export const mythicCombatUseSkill: FunctionHandler = {
       ]);
 
       const statuses = nowStatuses((actor as any).statuses);
+      const turnMarker = moveTurnMarker(combatSessionId, turnIndex);
+      if (builtInSkillId === "basic_move" && hasMoveSpentThisTurn(statuses, turnMarker)) {
+        return new Response(JSON.stringify({ error: "Move already used this turn" }), { status: 409, headers: baseHeaders });
+      }
       const cd = hasCooldown(statuses, (skill as any).id, turnIndex);
       if (!cd.ok) {
         return new Response(JSON.stringify({ error: `Skill is on cooldown (${cd.remaining} turns remaining)` }), { status: 409, headers: baseHeaders });
@@ -581,6 +709,9 @@ export const mythicCombatUseSkill: FunctionHandler = {
       const nextPower = Math.max(0, Math.floor(Number((actor as any).power) - cost.amount));
       const updates: Partial<CombatantRow> = { power: nextPower as any };
       let nextStatuses = statuses;
+      if (builtInSkillId !== "basic_move") {
+        nextStatuses = removeStatusId(nextStatuses, MOVE_SPENT_STATUS_ID);
+      }
       if (Number((skill as any).cooldown_turns ?? 0) > 0) {
         nextStatuses = setCooldown(nextStatuses, (skill as any).id, turnIndex + Number((skill as any).cooldown_turns));
       }
@@ -607,28 +738,53 @@ export const mythicCombatUseSkill: FunctionHandler = {
       const move = asObject((effects as any).move);
       if (Object.keys(move).length > 0 && typeof (move as any).dash_tiles === "number") {
         const dash = Math.max(0, Math.floor((move as any).dash_tiles));
-        const dx = resolved.tx - (actor as any).x;
-        const dy = resolved.ty - (actor as any).y;
-        const stepX = dx === 0 ? 0 : dx / Math.abs(dx);
-        const stepY = dy === 0 ? 0 : dy / Math.abs(dy);
-        const steps = Math.min(dash, Math.ceil(dist));
-        const nx = (actor as any).x + stepX * steps;
-        const ny = (actor as any).y + stepY * steps;
-        (updates as any).x = nx;
-        (updates as any).y = ny;
-        events.push({
-          event_type: "moved",
-          payload: { from: { x: (actor as any).x, y: (actor as any).y }, to: { x: nx, y: ny }, dash_tiles: dash, onomatopoeia: (effects as any).onomatopoeia ?? null },
-          actor_id: (actor as any).id,
-          turn_index: turnIndex,
+        const occupied = occupiedPositionSet((allCombatants ?? []) as CombatantRow[], (actor as any).id);
+        const targetPoint = resolved.kind === "combatant" && resolved.combatant && (resolved.combatant as any).id !== (actor as any).id
+          ? { x: Math.floor((resolved.combatant as any).x), y: Math.floor((resolved.combatant as any).y) }
+          : { x: Math.floor(resolved.tx), y: Math.floor(resolved.ty) };
+        const startPoint = { x: Math.floor((actor as any).x), y: Math.floor((actor as any).y) };
+        const moved = moveToward({
+          start: startPoint,
+          target: targetPoint,
+          maxSteps: dash,
+          blocked: blockedSet,
+          occupied,
         });
+        if (builtInSkillId === "basic_move" && moved.steps <= 0) {
+          return new Response(JSON.stringify({ error: "Cannot move to selected tile" }), { status: 409, headers: baseHeaders });
+        }
+        if (moved.steps > 0) {
+          (updates as any).x = moved.to.x;
+          (updates as any).y = moved.to.y;
+          events.push({
+            event_type: "moved",
+            payload: {
+              from: startPoint,
+              to: moved.to,
+              dash_tiles: dash,
+              tiles_used: moved.steps,
+              onomatopoeia: (effects as any).onomatopoeia ?? null,
+            },
+            actor_id: (actor as any).id,
+            turn_index: turnIndex,
+          });
+        }
+        if (builtInSkillId === "basic_move") {
+          nextStatuses = setSimpleStatus(
+            removeStatusId(nextStatuses, MOVE_SPENT_STATUS_ID),
+            MOVE_SPENT_STATUS_ID,
+            null,
+            { turn_marker: turnMarker, budget: dash, tiles_used: moved.steps },
+          );
+        }
       }
 
       const teleport = asObject((effects as any).teleport);
       if (Object.keys(teleport).length > 0) {
         const tx = resolved.tx;
         const ty = resolved.ty;
-        if (!blockedSet.has(`${tx},${ty}`)) {
+        const occupied = occupiedPositionSet((allCombatants ?? []) as CombatantRow[], (actor as any).id);
+        if (!blockedSet.has(`${tx},${ty}`) && !occupied.has(`${tx},${ty}`)) {
           (updates as any).x = tx;
           (updates as any).y = ty;
           events.push({
@@ -645,7 +801,16 @@ export const mythicCombatUseSkill: FunctionHandler = {
         const tiles = Math.max(0, Math.floor(Number((pull as any).tiles)));
         const targets = filteredTargets.filter((t) => (t as any).id !== (actor as any).id);
         for (const target of targets) {
-          const next = advanceAlongLine((target as any).x, (target as any).y, (actor as any).x, (actor as any).y, tiles, blockedSet);
+          const occupied = occupiedPositionSet((allCombatants ?? []) as CombatantRow[], (target as any).id);
+          const next = advanceAlongLineAvoidingOccupied(
+            (target as any).x,
+            (target as any).y,
+            (actor as any).x,
+            (actor as any).y,
+            tiles,
+            blockedSet,
+            occupied,
+          );
           if (next.x === (target as any).x && next.y === (target as any).y) continue;
           const { error: moveErr } = await svc
             .schema("mythic")
@@ -668,7 +833,17 @@ export const mythicCombatUseSkill: FunctionHandler = {
         const tiles = Math.max(0, Math.floor(Number((push as any).tiles)));
         const targets = filteredTargets.filter((t) => (t as any).id !== (actor as any).id);
         for (const target of targets) {
-          const next = stepAway((actor as any).x, (actor as any).y, (target as any).x, (target as any).y, tiles, blockedSet);
+          const occupied = occupiedPositionSet((allCombatants ?? []) as CombatantRow[], (target as any).id);
+          const pushed = stepAway((actor as any).x, (actor as any).y, (target as any).x, (target as any).y, tiles, blockedSet);
+          const next = advanceAlongLineAvoidingOccupied(
+            (target as any).x,
+            (target as any).y,
+            pushed.x,
+            pushed.y,
+            tiles,
+            blockedSet,
+            occupied,
+          );
           if (next.x === (target as any).x && next.y === (target as any).y) continue;
           const { error: moveErr } = await svc
             .schema("mythic")
@@ -1017,6 +1192,29 @@ export const mythicCombatUseSkill: FunctionHandler = {
           event_type: e.event_type,
           payload: e.payload,
         });
+      }
+
+      if (builtInSkillId === "basic_move") {
+        const response = new Response(JSON.stringify({
+          ok: true,
+          moved: true,
+          next_turn_index: turnIndex,
+          next_actor_combatant_id: (actor as any).id,
+        }), {
+          status: 200,
+          headers: baseHeaders,
+        });
+        if (idempotencyKey) {
+          storeIdempotentResponse(idempotencyKey, response, 10_000);
+        }
+        ctx.log.info("combat_use_skill.move_success", {
+          request_id: requestId,
+          campaign_id: campaignId,
+          combat_session_id: combatSessionId,
+          actor_combatant_id: (actor as any).id,
+          turn_index: turnIndex,
+        });
+        return response;
       }
 
       const { data: turnRows, error: turnRowsErr } = await svc
