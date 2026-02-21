@@ -54,15 +54,28 @@ Supabase remains auth/db only. Gameplay runtime remains VM-hosted via `VITE_MYTH
 - `src/ui/components/mythic/NarrativePage.tsx`
   - Updated phase text to player-readable phrasing.
 
+## Follow-Up Production Deploy (Latency + Voice pass)
+- Commit: `4723439`
+- Frontend (Vercel):
+  - URL: `https://saga-spark-keoovvgxt-mylo2dollas-projects.vercel.app`
+  - Alias: `https://mythweaver.online`
+  - Deployment ID: `dpl_CjRqGYCaNm8J1E5eWSUPxz5H8VBg`
+  - Created: `Fri Feb 20 2026 21:23:40 GMT-0700 (MST)`
+- VM runtime:
+  - Host: `api.mythweaver.online`
+  - Path: `/opt/mythic-api`
+  - Deploy method: `docker compose up -d --build --force-recreate`
+  - Health check: `GET /healthz` success
+
 ## Follow-Up Smoke Request IDs
-- `mythic-create-campaign`: `f2dc586a-92fb-4d52-8751-cb6038142f41`
-- `mythic-create-character`: `4149fe68-e9bb-4caf-9904-6450772863d6`
-- `mythic-dm-context`: `a1ac99fe-ec6d-4d08-9930-adea5735737d`
-- `mythic-dungeon-master`: `6757d23c-922d-4c16-9dd7-164e0e700ebc`
-- `mythic-runtime-transition:travel`: `bb1b6a32-7afa-414a-b610-2cc1f767fa93`
-- `mythic-runtime-transition:dungeon`: `900af5ae-80d5-4f19-99cc-c99f692b1da8`
-- `mythic-runtime-transition:town`: `1dcd0d0d-72b9-4cf0-88d1-7dea649bd619`
-- `mythic-combat-start`: `420ac293-eac0-430c-ac33-56aecbd09ae6`
+- `mythic-create-campaign`: `f1b63ddd-6267-4131-9efa-79e4faa0307d`
+- `mythic-create-character`: `ebc73000-bd95-4eb6-b77e-3f8e826a4501`
+- `mythic-dm-context`: `7211068b-1d3b-46c4-b4ea-dce80347e31f`
+- `mythic-dungeon-master`: `52ce4a33-f415-4ec4-96bb-d4b192bbcd3e`
+- `mythic-runtime-transition:travel`: `90f07ba7-d389-4516-929d-86ca9038f552`
+- `mythic-runtime-transition:dungeon`: `00fe4546-0f23-4f42-bb43-927d361a9d4a`
+- `mythic-runtime-transition:town`: `16bc56ff-d823-49b0-8688-81593d219c40`
+- `mythic-combat-start`: `506d226a-600c-4027-a955-428104a7957e`
 
 ## Validation Matrix
 - `npm run typecheck`: PASS
