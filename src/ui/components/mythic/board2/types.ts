@@ -70,18 +70,54 @@ export interface NarrativeInspectTarget {
   interaction: NarrativeInspectInteraction;
 }
 
+export type NarrativeTone = "neutral" | "good" | "warn" | "danger";
+
 export interface NarrativeSceneMetric {
   id: string;
   label: string;
   value: string;
-  tone?: "neutral" | "good" | "warn" | "danger";
+  tone?: NarrativeTone;
 }
 
 export interface NarrativeSceneLegendItem {
   id: string;
   label: string;
   detail?: string;
-  tone?: "neutral" | "good" | "warn" | "danger";
+  tone?: NarrativeTone;
+}
+
+export interface NarrativeHeroChip {
+  id: string;
+  label: string;
+  value: string;
+  tone?: NarrativeTone;
+}
+
+export interface NarrativeHeroModel {
+  modeLabel: string;
+  statusLabel: string;
+  objective: string;
+  syncLabel: string;
+  contextSourceLabel: string;
+  chips: NarrativeHeroChip[];
+}
+
+export interface NarrativeFeedItem {
+  id: string;
+  label: string;
+  detail?: string;
+  tone?: NarrativeTone;
+  createdAt?: string | null;
+  turnIndex?: number | null;
+}
+
+export interface NarrativeDockCardModel {
+  id: string;
+  title: string;
+  badge?: string;
+  tone?: NarrativeTone;
+  previewLines: string[];
+  detailLines?: string[];
 }
 
 export interface TownSceneData {
@@ -178,6 +214,9 @@ export interface NarrativeBoardSceneModel {
   warnings: string[];
   metrics: NarrativeSceneMetric[];
   legend: NarrativeSceneLegendItem[];
+  hero: NarrativeHeroModel;
+  cards: NarrativeDockCardModel[];
+  feed: NarrativeFeedItem[];
   hotspots: NarrativeHotspot[];
   fallbackActions: MythicUiAction[];
   layout: {

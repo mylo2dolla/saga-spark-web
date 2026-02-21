@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { MythicUiAction } from "@/hooks/useMythicDungeonMaster";
 import {
@@ -9,13 +8,17 @@ import {
   dedupeBoardActions,
 } from "@/ui/components/mythic/board2/actionBuilders";
 import { BoardActionStrip, type BoardActionSource } from "@/ui/components/mythic/board2/BoardActionStrip";
+import { BoardCardDock } from "@/ui/components/mythic/board2/BoardCardDock";
 import { BoardInspectCard } from "@/ui/components/mythic/board2/BoardInspectCard";
 import { NarrativeBoardViewport } from "@/ui/components/mythic/board2/NarrativeBoardViewport";
+import { RightPanelHero, type RightPanelHeroCharacter, type RightPanelHeroWarning } from "@/ui/components/mythic/board2/RightPanelHero";
 import type {
   CombatSceneData,
   DungeonSceneData,
   NarrativeBoardSceneModel,
+  NarrativeDockCardModel,
   NarrativeInspectTarget,
+  NarrativeTone,
   TravelSceneData,
 } from "@/ui/components/mythic/board2/types";
 
@@ -24,26 +27,116 @@ interface NarrativeBoardPageProps {
   baseActions: MythicUiAction[];
   baseActionSourceBySignature?: Record<string, "assistant" | "runtime" | "companion" | "fallback">;
   isBusy: boolean;
+  isStateRefreshing: boolean;
   transitionError: string | null;
   combatStartError: { message: string; code: string | null; requestId: string | null } | null;
   dmContextError: string | null;
+  characterHero: RightPanelHeroCharacter | null;
+  onOpenCharacterSheet: () => void;
   onRetryCombatStart: () => void;
   onQuickCast: (skillId: string, targeting: string) => void;
   onAction: (action: MythicUiAction, source: "board_hotspot" | "console_action") => void;
 }
 
-function toneClass(tone: "neutral" | "good" | "warn" | "danger" | undefined): string {
-  if (tone === "good") return "border-emerald-200/40 bg-emerald-300/15 text-emerald-100";
-  if (tone === "warn") return "border-amber-200/40 bg-amber-300/15 text-amber-100";
-  if (tone === "danger") return "border-red-200/40 bg-red-300/15 text-red-100";
-  return "border-amber-200/25 bg-amber-100/10 text-amber-100/85";
+function warningFromState(args: {
+  transitionError: string | null;
+  combatStartError: { message: string; code: string | null; requestId: string | null } | null;
+  dmContextError: string | null;
+  sceneWarnings: string[];
+}): RightPanelHeroWarning | null {
+  if (args.transitionError) {
+    return {
+      tone: "danger",
+      title: "Runtime transition failed",
+      detail: args.transitionError,
+    };
+  }
+  if (args.combatStartError) {
+    const bits = [
+      args.combatStartError.message,
+      args.combatStartError.code ? `code: ${args.combatStartError.code}` : null,
+      args.combatStartError.requestId ? `requestId: ${args.combatStartError.requestId}` : null,
+    ].filter((entry): entry is string => Boolean(entry));
+    return {
+      tone: "danger",
+      title: "Combat start failed",
+      detail: bits.join(" · "),
+    };
+  }
+  if (args.dmContextError) {
+    return {
+      tone: "warn",
+      title: "DM context unavailable",
+      detail: "Rendering from runtime state only.",
+    };
+  }
+  if (args.sceneWarnings.length > 0) {
+    return {
+      tone: "warn",
+      title: "Runtime warning",
+      detail: args.sceneWarnings[0] ?? "Runtime warning",
+    };
+  }
+  return null;
+}
+
+function toneTextClass(tone: NarrativeTone | undefined): string {
+  if (tone === "good") return "text-emerald-200";
+  if (tone === "warn") return "text-amber-200";
+  if (tone === "danger") return "text-red-200";
+  return "text-amber-100/85";
+}
+
+function inspectCardModel(args: {
+  inspectTarget: NarrativeInspectTarget | null;
+  inspectTitle: string;
+}): NarrativeDockCardModel {
+  if (!args.inspectTarget) {
+    return {
+      id: "inspect",
+      title: args.inspectTitle,
+      tone: "neutral",
+      previewLines: ["No inspect target selected.", "Tap hotspot or board tile."],
+      detailLines: ["Inspect-first is active. Select a hotspot or miss-click tile, then confirm an action."],
+    };
+  }
+  return {
+    id: "inspect",
+    title: args.inspectTitle,
+    tone: "good",
+    badge: args.inspectTarget.interaction.source === "hotspot" ? "hotspot" : "probe",
+    previewLines: [
+      args.inspectTarget.title,
+      args.inspectTarget.subtitle ?? `grid (${args.inspectTarget.interaction.x}, ${args.inspectTarget.interaction.y})`,
+      `${args.inspectTarget.actions.length} actions`,
+    ],
+    detailLines: [],
+  };
+}
+
+function actionsCardModel(args: {
+  actions: MythicUiAction[];
+  actionsTitle: string;
+}): NarrativeDockCardModel {
+  return {
+    id: "actions",
+    title: args.actionsTitle,
+    tone: args.actions.length > 0 ? "neutral" : "warn",
+    badge: args.actions.length > 0 ? `${args.actions.length}` : "idle",
+    previewLines: args.actions.length === 0
+      ? ["No contextual actions available."]
+      : args.actions.slice(0, 3).map((action) => action.label),
+    detailLines: args.actions.slice(0, 8).map((action) => action.label),
+  };
 }
 
 export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
   const [inspectTarget, setInspectTarget] = useState<NarrativeInspectTarget | null>(null);
+  const [openCardId, setOpenCardId] = useState<string | null>(null);
 
   useEffect(() => {
     setInspectTarget(null);
+    setOpenCardId(null);
   }, [props.scene.mode]);
 
   useEffect(() => {
@@ -78,6 +171,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
     () => dedupeBoardActions([...inspectActions, ...props.baseActions], 8),
     [inspectActions, props.baseActions],
   );
+
   const stripActionSourceBySignature = useMemo(() => {
     const out: Record<string, BoardActionSource> = {};
     inspectActions.forEach((action) => {
@@ -91,82 +185,160 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
     return out;
   }, [inspectActions, props.baseActionSourceBySignature, props.baseActions]);
 
-  const topBanner = useMemo(() => {
-    if (props.transitionError) {
-      return {
-        tone: "danger" as const,
-        title: "Runtime transition failed",
-        detail: props.transitionError,
-      };
-    }
-    if (props.combatStartError) {
-      const bits = [
-        props.combatStartError.message,
-        props.combatStartError.code ? `code: ${props.combatStartError.code}` : null,
-        props.combatStartError.requestId ? `requestId: ${props.combatStartError.requestId}` : null,
-      ].filter((entry): entry is string => Boolean(entry));
-      return {
-        tone: "danger" as const,
-        title: "Combat start failed",
-        detail: bits.join(" · "),
-      };
-    }
-    if (props.dmContextError) {
-      return {
-        tone: "warn" as const,
-        title: "DM context unavailable",
-        detail: "Rendering from runtime state only. Diagnostics includes details.",
-      };
-    }
-    if (props.scene.warnings.length > 0) {
-      return {
-        tone: "warn" as const,
-        title: "Runtime warning",
-        detail: props.scene.warnings[0]!,
-      };
-    }
-    return null;
-  }, [props.combatStartError, props.dmContextError, props.scene.warnings, props.transitionError]);
+  const warning = useMemo(() => warningFromState({
+    transitionError: props.transitionError,
+    combatStartError: props.combatStartError,
+    dmContextError: props.dmContextError,
+    sceneWarnings: props.scene.warnings,
+  }), [props.combatStartError, props.dmContextError, props.scene.warnings, props.transitionError]);
 
-  const metricsRow = useMemo(() => props.scene.metrics.slice(0, 6), [props.scene.metrics]);
+  const combatCoreActions = useMemo(
+    () => props.scene.mode === "combat" ? (props.scene.details as CombatSceneData).coreActions : [],
+    [props.scene.details, props.scene.mode],
+  );
+
+  const dynamicCards = useMemo(() => {
+    const inspectCard = inspectCardModel({ inspectTarget, inspectTitle: props.scene.dock.inspectTitle });
+    const actionsCard = actionsCardModel({ actions: stripActions, actionsTitle: props.scene.dock.actionsTitle });
+    const sceneCard = props.scene.cards.find((card) => card.id === "scene") ?? {
+      id: "scene",
+      title: "Scene",
+      previewLines: [props.scene.title, props.scene.subtitle],
+      detailLines: [],
+    };
+    const feedCard = props.scene.cards.find((card) => card.id === "feed") ?? {
+      id: "feed",
+      title: "Feed",
+      previewLines: props.scene.feed.slice(0, 3).map((entry) => entry.label),
+      detailLines: props.scene.feed.map((entry) => entry.label),
+    };
+    const moreCard = props.scene.cards.find((card) => card.id === "more") ?? null;
+
+    return [
+      inspectCard,
+      actionsCard,
+      sceneCard,
+      feedCard,
+      ...(moreCard ? [moreCard] : []),
+    ];
+  }, [inspectTarget, props.scene.cards, props.scene.dock.actionsTitle, props.scene.dock.inspectTitle, props.scene.feed, props.scene.subtitle, props.scene.title, stripActions]);
+
+  const renderCardDetail = useCallback((card: NarrativeDockCardModel) => {
+    if (card.id === "inspect") {
+      if (!inspectTarget) {
+        return (
+          <div className="text-xs text-amber-100/75">
+            Select a hotspot or probe an empty tile to inspect before confirming an action.
+          </div>
+        );
+      }
+      return (
+        <BoardInspectCard
+          target={inspectTarget}
+          title={props.scene.dock.inspectTitle}
+          isBusy={props.isBusy}
+          onClose={() => {
+            setInspectTarget(null);
+            setOpenCardId(null);
+          }}
+          onAction={(action) => {
+            props.onAction(action, "board_hotspot");
+            setInspectTarget(null);
+            setOpenCardId(null);
+          }}
+        />
+      );
+    }
+
+    if (card.id === "actions") {
+      return (
+        <BoardActionStrip
+          actions={stripActions}
+          title={props.scene.dock.actionsTitle}
+          sourceBySignature={stripActionSourceBySignature}
+          isBusy={props.isBusy}
+          onAction={(action, source) => {
+            props.onAction(action, source);
+            if (source === "board_hotspot") {
+              setInspectTarget(null);
+            }
+            setOpenCardId(null);
+          }}
+        />
+      );
+    }
+
+    if (card.id === "feed") {
+      if (props.scene.feed.length === 0) {
+        return <div className="text-xs text-amber-100/75">No recent board impact yet.</div>;
+      }
+      return (
+        <div className="space-y-1.5 text-xs">
+          {props.scene.feed.slice(0, 16).map((entry) => (
+            <div key={`feed-detail-${entry.id}`} className="rounded border border-amber-200/20 bg-black/20 px-2 py-1.5">
+              <div className={`font-medium ${toneTextClass(entry.tone)}`}>{entry.label}</div>
+              {entry.detail ? <div className="mt-0.5 text-amber-100/70">{entry.detail}</div> : null}
+              <div className="mt-0.5 text-[10px] text-amber-100/55">
+                {typeof entry.turnIndex === "number" ? `Turn ${entry.turnIndex}` : "Live"}
+                {entry.createdAt ? ` · ${new Date(entry.createdAt).toLocaleTimeString()}` : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-1.5 text-xs text-amber-100/80">
+        {(card.detailLines && card.detailLines.length > 0
+          ? card.detailLines
+          : card.previewLines
+        ).map((line, index) => (
+          <div key={`${card.id}-line-${index + 1}`} className="rounded border border-amber-200/20 bg-black/20 px-2 py-1">
+            {line}
+          </div>
+        ))}
+
+        {card.id === "more" && props.combatStartError ? (
+          <div className="mt-2">
+            <Button size="sm" variant="secondary" onClick={props.onRetryCombatStart}>
+              Retry combat start
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }, [inspectTarget, props.combatStartError, props.isBusy, props.onAction, props.onRetryCombatStart, props.scene.dock.actionsTitle, props.scene.dock.inspectTitle, props.scene.feed, stripActionSourceBySignature, stripActions]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-3">
-      {topBanner ? (
-        <div className={`rounded-md border px-3 py-2 text-xs ${topBanner.tone === "danger" ? "border-destructive/45 bg-destructive/10 text-destructive" : "border-amber-300/45 bg-amber-500/10 text-amber-100"}`}>
-          <div className="font-medium">{topBanner.title}</div>
-          <div className="mt-1">{topBanner.detail}</div>
-          {props.combatStartError ? (
-            <div className="mt-2">
-              <Button size="sm" variant="secondary" onClick={props.onRetryCombatStart}>
-                Retry combat start
-              </Button>
-            </div>
-          ) : null}
+      <RightPanelHero
+        hero={props.scene.hero}
+        warning={warning}
+        isBusy={props.isBusy}
+        isStateRefreshing={props.isStateRefreshing}
+        character={props.characterHero}
+        combatCoreActions={combatCoreActions}
+        onCoreAction={props.onQuickCast}
+        onOpenCharacterSheet={props.onOpenCharacterSheet}
+      />
+
+      {props.combatStartError ? (
+        <div className="rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="mb-1 font-medium">Combat start needs retry</div>
+          <Button size="sm" variant="secondary" onClick={props.onRetryCombatStart}>
+            Retry combat start
+          </Button>
         </div>
       ) : null}
 
-      <div className="flex items-center gap-2 overflow-x-auto rounded-lg border border-amber-200/25 bg-amber-100/5 px-2 py-2">
-        {metricsRow.map((metric) => (
-          <div
-            key={`scene-metric-${metric.id}`}
-            className={`whitespace-nowrap rounded border px-2 py-1 text-[11px] ${toneClass(metric.tone)}`}
-          >
-            <span className="font-semibold">{metric.label}</span>: {metric.value}
-          </div>
-        ))}
-        <div className="ml-auto inline-flex shrink-0 items-center gap-2 rounded border border-amber-200/25 bg-amber-100/10 px-2 py-1 text-[11px] text-amber-100/80">
-          <span>{props.scene.contextSource === "runtime_and_dm_context" ? "Runtime + DM Context" : "Runtime Only"}</span>
-          {props.isBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1 rounded-lg border border-amber-200/20 bg-black/10 p-1">
+      <div className="min-h-[280px] min-w-0 flex-1 rounded-lg border border-amber-200/20 bg-black/10 p-1">
         <NarrativeBoardViewport
           scene={props.scene}
           isActing={props.isBusy}
           onSelectHotspot={(hotspot, point) => {
             setInspectTarget(buildInspectTargetFromHotspot({ hotspot, x: point.x, y: point.y }));
+            setOpenCardId("inspect");
           }}
           onSelectMiss={(point) => {
             setInspectTarget(
@@ -179,44 +351,18 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
                 combat: props.scene.mode === "combat" ? (props.scene.details as CombatSceneData) : undefined,
               }),
             );
+            setOpenCardId("inspect");
           }}
           onQuickCast={props.onQuickCast}
         />
       </div>
 
-      <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.25fr)]">
-        {inspectTarget ? (
-          <BoardInspectCard
-            target={inspectTarget}
-            title={props.scene.dock.inspectTitle}
-            isBusy={props.isBusy}
-            className="h-full"
-            onClose={() => setInspectTarget(null)}
-            onAction={(action) => {
-              props.onAction(action, "board_hotspot");
-              setInspectTarget(null);
-            }}
-          />
-        ) : (
-          <div className="rounded-lg border border-amber-200/25 bg-[linear-gradient(160deg,rgba(21,17,12,0.95),rgba(12,14,20,0.96))] p-3 text-xs text-amber-100/70">
-            <div className="mb-1 uppercase tracking-wide text-amber-100/65">{props.scene.dock.inspectTitle}</div>
-            Click a hotspot or probe an empty tile to inspect before confirming an action.
-          </div>
-        )}
-
-        <BoardActionStrip
-          actions={stripActions}
-          title={props.scene.dock.actionsTitle}
-          sourceBySignature={stripActionSourceBySignature}
-          isBusy={props.isBusy}
-          onAction={(action, source) => {
-            props.onAction(action, source);
-            if (source === "board_hotspot") {
-              setInspectTarget(null);
-            }
-          }}
-        />
-      </div>
+      <BoardCardDock
+        cards={dynamicCards}
+        openCardId={openCardId}
+        onOpenCardIdChange={setOpenCardId}
+        renderDetail={renderCardDetail}
+      />
     </div>
   );
 }

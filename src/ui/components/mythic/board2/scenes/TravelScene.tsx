@@ -1,16 +1,11 @@
 import { BoardGridLayer } from "@/ui/components/mythic/board2/BoardGridLayer";
-import { BoardLegend } from "@/ui/components/mythic/board2/BoardLegend";
 import { HotspotOverlay } from "@/ui/components/mythic/board2/HotspotOverlay";
-import type { NarrativeBoardSceneModel, NarrativeHotspot, TravelSceneData } from "@/ui/components/mythic/board2/types";
+import type { NarrativeBoardSceneModel, NarrativeHotspot } from "@/ui/components/mythic/board2/types";
 
 interface TravelSceneProps {
   scene: NarrativeBoardSceneModel;
   onSelectHotspot: (hotspot: NarrativeHotspot, point: { x: number; y: number }) => void;
   onSelectMiss: (point: { x: number; y: number }) => void;
-}
-
-function formatGoal(value: string): string {
-  return value.replace(/_/g, " ");
 }
 
 function formatPercent(value: number, total: number): string {
@@ -37,22 +32,26 @@ function buildRoutePath(scene: NarrativeBoardSceneModel): string | null {
 }
 
 export function TravelScene(props: TravelSceneProps) {
-  const details = props.scene.details as TravelSceneData;
   const cols = props.scene.grid.cols;
   const rows = props.scene.grid.rows;
   const routePath = buildRoutePath(props.scene);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3 rounded-xl border border-cyan-200/30 bg-[linear-gradient(165deg,rgba(9,44,57,0.9),rgba(8,15,24,0.97))] p-3 text-cyan-50">
-      <div>
-        <div className="font-display text-xl text-cyan-100">{props.scene.title}</div>
-        <div className="text-xs text-cyan-100/80">{props.scene.subtitle}</div>
+    <div className="flex h-full min-h-0 flex-col gap-2 rounded-xl border border-cyan-200/30 bg-[linear-gradient(165deg,rgba(9,44,57,0.9),rgba(8,15,24,0.97))] p-3 text-cyan-50">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-display text-lg text-cyan-100">{props.scene.title}</div>
+          <div className="text-xs text-cyan-100/75">{props.scene.subtitle}</div>
+        </div>
+        <div className="rounded border border-cyan-200/35 bg-cyan-100/10 px-2 py-1 text-[11px] text-cyan-100/80">
+          Route Grid
+        </div>
       </div>
 
       <BoardGridLayer
         cols={cols}
         rows={rows}
-        className="border-cyan-200/35 bg-[radial-gradient(circle_at_70%_15%,rgba(103,232,249,0.22),rgba(4,7,16,0.95))]"
+        className="flex-1 border-cyan-200/35 bg-[radial-gradient(circle_at_70%_15%,rgba(103,232,249,0.22),rgba(4,7,16,0.95))]"
         gridLineColor="rgba(207,250,254,0.10)"
         onSelectMiss={props.onSelectMiss}
       >
@@ -77,29 +76,7 @@ export function TravelScene(props: TravelSceneProps) {
         />
       </BoardGridLayer>
 
-      <BoardLegend items={props.scene.legend} />
-
-      <div className="grid gap-2 text-[11px] text-cyan-100/80 sm:grid-cols-3">
-        <div className="rounded border border-cyan-200/30 bg-cyan-100/5 p-2">
-          <div className="mb-1 font-semibold text-cyan-100">Route Goal</div>
-          <div>{formatGoal(details.travelGoal)}</div>
-          <div className="mt-1 text-cyan-100/70">Search target: {details.searchTarget ?? "none"}</div>
-        </div>
-        <div className="rounded border border-cyan-200/30 bg-cyan-100/5 p-2">
-          <div className="mb-1 font-semibold text-cyan-100">Route Segments</div>
-          <div>{details.routeSegments.length} mapped</div>
-          <div className="mt-1 text-cyan-100/70">
-            Avg danger: {details.routeSegments.length === 0
-              ? "0"
-              : Math.round(details.routeSegments.reduce((sum, row) => sum + row.danger, 0) / details.routeSegments.length)}
-          </div>
-        </div>
-        <div className="rounded border border-cyan-200/30 bg-cyan-100/5 p-2">
-          <div className="mb-1 font-semibold text-cyan-100">Runtime Signals</div>
-          <div>Encounter: {details.encounterTriggered ? "triggered" : "clear"}</div>
-          <div>Dungeon traces: {details.dungeonTracesFound ? "found" : "none"}</div>
-        </div>
-      </div>
+      <div className="text-[11px] text-cyan-100/70">Probe segments or empty tiles to gather context before committing movement.</div>
     </div>
   );
 }

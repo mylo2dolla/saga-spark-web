@@ -38,7 +38,6 @@ import { SettingsPanel, type MythicRuntimeSettings } from "@/ui/components/mythi
 import { actionSignature as boardActionSignature } from "@/ui/components/mythic/board2/actionBuilders";
 import { buildNarrativeBoardScene } from "@/ui/components/mythic/board2/adapters";
 import { NarrativeBoardPage } from "@/ui/components/mythic/board2/NarrativeBoardPage";
-import { CharacterMiniHud } from "@/ui/components/mythic/character2/CharacterMiniHud";
 import { CharacterSheetSurface } from "@/ui/components/mythic/character2/CharacterSheetSurface";
 import { buildCharacterProfilePatch, buildCharacterSheetViewModel } from "@/ui/components/mythic/character2/adapters";
 import type {
@@ -1888,6 +1887,22 @@ export default function MythicGameScreen() {
     skills,
   ]);
 
+  const rightPanelCharacterHero = useMemo(() => {
+    if (!characterSheetModel) return null;
+    return {
+      name: characterSheetModel.name,
+      level: characterSheetModel.level,
+      className: characterSheetModel.className,
+      role: characterSheetModel.role,
+      hpCurrent: characterSheetModel.hpGauge.current,
+      hpMax: characterSheetModel.hpGauge.max,
+      mpCurrent: characterSheetModel.mpGauge.current,
+      mpMax: characterSheetModel.mpGauge.max,
+      armor: characterSheetModel.combat.armor,
+      turnLabel: characterSheetModel.combat.playerTurnLabel,
+    };
+  }, [characterSheetModel]);
+
   const boardScene = useMemo(() => {
     return buildNarrativeBoardScene({
       mode: board?.board_type ?? "town",
@@ -2493,21 +2508,18 @@ export default function MythicGameScreen() {
         )}
         rightPage={(
           <div className="flex h-full min-h-0 flex-col gap-2 p-2">
-            {characterSheetModel ? (
-              <CharacterMiniHud
-                model={characterSheetModel}
-                onOpen={() => openCharacterSheet("overview")}
-              />
-            ) : null}
             <div className="min-h-0 flex-1">
               <NarrativeBoardPage
                 scene={boardScene}
                 baseActions={boardStripBaseActions}
                 baseActionSourceBySignature={boardStripBase.sourceBySignature}
                 isBusy={mythicDm.isLoading || isNarratedActionBusy || combat.isActing || combat.isTicking}
+                isStateRefreshing={isStateRefreshing}
                 transitionError={transitionError}
                 combatStartError={combatStartError}
                 dmContextError={mythicDmContext.error}
+                characterHero={rightPanelCharacterHero}
+                onOpenCharacterSheet={() => openCharacterSheet("overview")}
                 onRetryCombatStart={() => void retryCombatStart()}
                 onQuickCast={(skillId, targeting) => void triggerQuickCast(skillId, targeting)}
                 onAction={(action, source) => triggerConsoleAction(action, source === "board_hotspot" ? "board_hotspot" : "console_action")}

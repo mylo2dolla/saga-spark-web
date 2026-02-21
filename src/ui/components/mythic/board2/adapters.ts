@@ -16,9 +16,13 @@ import type {
   DungeonSceneData,
   NarrativeBoardAdapterInput,
   NarrativeBoardSceneModel,
+  NarrativeDockCardModel,
+  NarrativeFeedItem,
+  NarrativeHeroModel,
   NarrativeHotspot,
   NarrativeSceneLegendItem,
   NarrativeSceneMetric,
+  NarrativeTone,
   TownSceneData,
   TravelSceneData,
 } from "@/ui/components/mythic/board2/types";
@@ -418,6 +422,248 @@ function parseCombatData(args: {
   };
 }
 
+function modeLabel(mode: NarrativeBoardSceneModel["mode"]): string {
+  if (mode === "town") return "Town";
+  if (mode === "travel") return "Travel";
+  if (mode === "dungeon") return "Dungeon";
+  return "Combat";
+}
+
+function heroObjective(mode: NarrativeBoardSceneModel["mode"], data: NarrativeBoardSceneModel["details"]): string {
+  if (mode === "town") {
+    const town = data as TownSceneData;
+    if (town.jobPostings.length > 0) return `Review ${town.jobPostings.length} active town contracts.`;
+    return "Stabilize faction pressure and pick your next route.";
+  }
+  if (mode === "travel") {
+    const travel = data as TravelSceneData;
+    const goal = travel.travelGoal.replace(/_/g, " ");
+    return `Advance travel objective: ${goal}.`;
+  }
+  if (mode === "dungeon") {
+    const dungeon = data as DungeonSceneData;
+    return `Secure ${dungeon.rooms.length} mapped rooms and control hazards.`;
+  }
+  const combat = data as CombatSceneData;
+  const liveEnemies = combat.enemies.filter((entry) => entry.is_alive).length;
+  return liveEnemies > 0 ? `Break enemy pressure (${liveEnemies} hostile active).` : "Combat board stabilized.";
+}
+
+function heroStatus(mode: NarrativeBoardSceneModel["mode"], data: NarrativeBoardSceneModel["details"]): string {
+  if (mode === "combat") {
+    const combat = data as CombatSceneData;
+    return combat.status;
+  }
+  if (mode === "travel") {
+    const travel = data as TravelSceneData;
+    return travel.encounterTriggered ? "encounter pressure" : "route clear";
+  }
+  if (mode === "dungeon") {
+    const dungeon = data as DungeonSceneData;
+    return dungeon.trapSignals > 0 ? "hazards active" : "stable";
+  }
+  const town = data as TownSceneData;
+  return town.factionsPresent.length > 0 ? "faction pressure" : "stable square";
+}
+
+function contextSourceLabel(contextSource: NarrativeBoardSceneModel["contextSource"]): string {
+  return contextSource === "runtime_and_dm_context" ? "Runtime + DM Context" : "Runtime Only";
+}
+
+function buildHero(args: {
+  mode: NarrativeBoardSceneModel["mode"];
+  details: NarrativeBoardSceneModel["details"];
+  metrics: NarrativeSceneMetric[];
+  contextSource: NarrativeBoardSceneModel["contextSource"];
+}): NarrativeHeroModel {
+  return {
+    modeLabel: modeLabel(args.mode),
+    statusLabel: heroStatus(args.mode, args.details),
+    objective: heroObjective(args.mode, args.details),
+    syncLabel: "Board interactive",
+    contextSourceLabel: contextSourceLabel(args.contextSource),
+    chips: args.metrics.slice(0, 4).map((metric) => ({
+      id: metric.id,
+      label: metric.label,
+      value: metric.value,
+      tone: metric.tone,
+    })),
+  };
+}
+
+function cardFromLines(args: {
+  id: string;
+  title: string;
+  previewLines: string[];
+  detailLines?: string[];
+  badge?: string;
+  tone?: NarrativeTone;
+}): NarrativeDockCardModel {
+  return {
+    id: args.id,
+    title: args.title,
+    badge: args.badge,
+    tone: args.tone,
+    previewLines: args.previewLines.filter((line) => line.trim().length > 0).slice(0, 3),
+    detailLines: (args.detailLines ?? []).filter((line) => line.trim().length > 0),
+  };
+}
+
+function toneForCombatDelta(type: CombatSceneData["recentDeltas"][number]["eventType"]): NarrativeTone {
+  if (type === "damage" || type === "power_drain") return "danger";
+  if (type === "healed" || type === "power_gain") return "good";
+  if (type === "status_applied") return "warn";
+  return "neutral";
+}
+
+function buildCombatFeed(data: CombatSceneData): NarrativeFeedItem[] {
+  return data.recentDeltas
+    .slice()
+    .reverse()
+    .slice(0, 12)
+    .map((delta) => ({
+      id: delta.id,
+      label: delta.label,
+      detail: delta.eventType.replace(/_/g, " "),
+      tone: toneForCombatDelta(delta.eventType),
+      createdAt: delta.createdAt,
+      turnIndex: delta.turnIndex,
+    }));
+}
+
+function buildAmbientFeed(args: {
+  mode: NarrativeBoardSceneModel["mode"];
+  warnings: string[];
+  metrics: NarrativeSceneMetric[];
+}): NarrativeFeedItem[] {
+  const warningFeed = args.warnings.slice(0, 3).map((warning, index) => ({
+    id: `warning-${index + 1}`,
+    label: warning,
+    tone: "warn" as const,
+  }));
+  const metricFeed = args.metrics.slice(0, 4).map((metric) => ({
+    id: `metric-${metric.id}`,
+    label: `${metric.label}: ${metric.value}`,
+    tone: metric.tone ?? "neutral",
+  }));
+  const modeLabelText = modeLabel(args.mode);
+  const baseline: NarrativeFeedItem = {
+    id: `mode-${args.mode}`,
+    label: `${modeLabelText} board synchronized.`,
+    tone: "neutral",
+  };
+  return [baseline, ...warningFeed, ...metricFeed].slice(0, 8);
+}
+
+function buildSceneSummaryCard(args: {
+  mode: NarrativeBoardSceneModel["mode"];
+  details: NarrativeBoardSceneModel["details"];
+  metrics: NarrativeSceneMetric[];
+}): NarrativeDockCardModel {
+  if (args.mode === "town") {
+    const town = args.details as TownSceneData;
+    return cardFromLines({
+      id: "scene",
+      title: "Scene",
+      previewLines: [
+        `${town.vendors.length} vendors`,
+        `${town.jobPostings.filter((entry) => entry.status === "open").length} open jobs`,
+        `${town.factionsPresent.length} faction signals`,
+      ],
+      detailLines: [
+        ...town.vendors.slice(0, 6).map((entry) => `Vendor: ${entry.name}`),
+        ...town.rumors.slice(0, 4).map((entry) => `Rumor: ${entry}`),
+      ],
+    });
+  }
+  if (args.mode === "travel") {
+    const travel = args.details as TravelSceneData;
+    return cardFromLines({
+      id: "scene",
+      title: "Scene",
+      previewLines: [
+        `Goal: ${travel.travelGoal.replace(/_/g, " ")}`,
+        `Segments: ${travel.routeSegments.length}`,
+        `Encounter: ${travel.encounterTriggered ? "triggered" : "clear"}`,
+      ],
+      detailLines: travel.routeSegments.slice(0, 8).map((entry) => (
+        `${entry.name} · ${entry.terrain} · danger ${entry.danger}`
+      )),
+    });
+  }
+  if (args.mode === "dungeon") {
+    const dungeon = args.details as DungeonSceneData;
+    return cardFromLines({
+      id: "scene",
+      title: "Scene",
+      previewLines: [
+        `Rooms: ${dungeon.rooms.length}`,
+        `Traps: ${dungeon.trapSignals}`,
+        `Loot: ${dungeon.lootNodes}`,
+      ],
+      detailLines: [
+        ...dungeon.rooms.slice(0, 8).map((entry) => `Room: ${entry.name} (danger ${entry.danger})`),
+        ...dungeon.factionPresence.slice(0, 4).map((entry) => `Faction: ${entry}`),
+      ],
+    });
+  }
+  const combat = args.details as CombatSceneData;
+  return cardFromLines({
+    id: "scene",
+    title: "Scene",
+    previewLines: [
+      `Session: ${combat.status}`,
+      `Allies: ${combat.allies.filter((entry) => entry.is_alive).length}`,
+      `Enemies: ${combat.enemies.filter((entry) => entry.is_alive).length}`,
+    ],
+    detailLines: combat.combatants.slice(0, 10).map((entry) => (
+      `${entry.name} · HP ${Math.floor(entry.hp)}/${Math.floor(entry.hp_max)} · MP ${Math.floor(entry.power)}/${Math.floor(entry.power_max)}`
+    )),
+    badge: combat.activeTurnCombatantId ? "active turn" : undefined,
+  });
+}
+
+function buildFeedCard(feed: NarrativeFeedItem[]): NarrativeDockCardModel {
+  return cardFromLines({
+    id: "feed",
+    title: "Feed",
+    previewLines: feed.slice(0, 3).map((entry) => entry.label),
+    detailLines: feed.slice(0, 12).map((entry) => {
+      const parts = [
+        entry.label,
+        entry.detail,
+        typeof entry.turnIndex === "number" ? `t${entry.turnIndex}` : null,
+      ].filter((piece): piece is string => Boolean(piece));
+      return parts.join(" · ");
+    }),
+    badge: feed.length > 0 ? `${feed.length}` : undefined,
+  });
+}
+
+function buildMoreCard(args: {
+  metrics: NarrativeSceneMetric[];
+  legend: NarrativeSceneLegendItem[];
+  warnings: string[];
+  contextSource: NarrativeBoardSceneModel["contextSource"];
+}): NarrativeDockCardModel {
+  return cardFromLines({
+    id: "more",
+    title: "More",
+    previewLines: [
+      `Context: ${contextSourceLabel(args.contextSource)}`,
+      `${args.legend.length} legend tags`,
+      `${args.warnings.length} warnings`,
+    ],
+    detailLines: [
+      ...args.metrics.map((metric) => `${metric.label}: ${metric.value}`),
+      ...args.legend.map((entry) => `${entry.label}${entry.detail ? ` · ${entry.detail}` : ""}`),
+      ...args.warnings.map((warning) => `Warning: ${warning}`),
+    ],
+    badge: args.warnings.length > 0 ? "warn" : undefined,
+    tone: args.warnings.length > 0 ? "warn" : "neutral",
+  });
+}
+
 function buildTownScene(args: {
   boardState: Record<string, unknown>;
   summary: Record<string, unknown>;
@@ -498,6 +744,17 @@ function buildTownScene(args: {
     { id: "legend-town-board", label: "N Notice", detail: "contracts and jobs", tone: "neutral" },
     { id: "legend-town-gate", label: "G Gate", detail: "travel transition", tone: "warn" },
   ];
+  const feed = buildAmbientFeed({ mode: "town", warnings: args.warnings, metrics });
+  const cards: NarrativeDockCardModel[] = [
+    buildSceneSummaryCard({ mode: "town", details: data, metrics }),
+    buildFeedCard(feed),
+    buildMoreCard({
+      metrics,
+      legend,
+      warnings: args.warnings,
+      contextSource: args.contextSource,
+    }),
+  ];
 
   const fallbackActions = buildModeFallbackActions({ mode: "town", town: data });
   const worldTitle = asString(asRecord(args.boardState.world_seed).title, "Town Square");
@@ -514,6 +771,9 @@ function buildTownScene(args: {
     warnings: args.warnings,
     metrics,
     legend,
+    hero: buildHero({ mode: "town", details: data, metrics, contextSource: args.contextSource }),
+    cards,
+    feed,
     hotspots,
     fallbackActions,
     layout: {
@@ -639,6 +899,17 @@ function buildTravelScene(args: {
     { id: "legend-travel-dungeon", label: "D Entry", detail: "dungeon traces", tone: "warn" },
     { id: "legend-travel-town", label: "T Return", detail: "reset and restock", tone: "good" },
   ];
+  const feed = buildAmbientFeed({ mode: "travel", warnings: args.warnings, metrics });
+  const cards: NarrativeDockCardModel[] = [
+    buildSceneSummaryCard({ mode: "travel", details: data, metrics }),
+    buildFeedCard(feed),
+    buildMoreCard({
+      metrics,
+      legend,
+      warnings: args.warnings,
+      contextSource: args.contextSource,
+    }),
+  ];
 
   const fallbackActions = buildModeFallbackActions({ mode: "travel", travel: data });
   const worldTitle = asString(asRecord(args.boardState.world_seed).title, "Overland Route");
@@ -657,6 +928,9 @@ function buildTravelScene(args: {
     warnings: args.warnings,
     metrics,
     legend,
+    hero: buildHero({ mode: "travel", details: data, metrics, contextSource: args.contextSource }),
+    cards,
+    feed,
     hotspots,
     fallbackActions,
     layout: {
@@ -830,6 +1104,17 @@ function buildDungeonScene(args: {
     { id: "legend-dungeon-trap", label: "TR Trap", detail: "hazard pressure", tone: data.trapSignals > 0 ? "warn" : "good" },
     { id: "legend-dungeon-loot", label: "LT Loot", detail: "resource node", tone: data.lootNodes > 0 ? "good" : "neutral" },
   ];
+  const feed = buildAmbientFeed({ mode: "dungeon", warnings: args.warnings, metrics });
+  const cards: NarrativeDockCardModel[] = [
+    buildSceneSummaryCard({ mode: "dungeon", details: data, metrics }),
+    buildFeedCard(feed),
+    buildMoreCard({
+      metrics,
+      legend,
+      warnings: args.warnings,
+      contextSource: args.contextSource,
+    }),
+  ];
 
   const fallbackActions = buildModeFallbackActions({ mode: "dungeon", dungeon: data });
   const layoutSeed = buildLayoutSeed("dungeon", [
@@ -846,6 +1131,9 @@ function buildDungeonScene(args: {
     warnings: args.warnings,
     metrics,
     legend,
+    hero: buildHero({ mode: "dungeon", details: data, metrics, contextSource: args.contextSource }),
+    cards,
+    feed,
     hotspots,
     fallbackActions,
     layout: {
@@ -926,6 +1214,20 @@ function buildCombatScene(args: {
     { id: "legend-combat-active", label: "ACT Active", detail: "active turn", tone: "neutral" },
     { id: "legend-combat-blocked", label: "BLK Tile", detail: "movement obstacle", tone: "danger" },
   ];
+  const feed = buildCombatFeed(data);
+  const effectiveFeed = feed.length > 0
+    ? feed
+    : buildAmbientFeed({ mode: "combat", warnings: args.warnings, metrics });
+  const cards: NarrativeDockCardModel[] = [
+    buildSceneSummaryCard({ mode: "combat", details: data, metrics }),
+    buildFeedCard(effectiveFeed),
+    buildMoreCard({
+      metrics,
+      legend,
+      warnings: args.warnings,
+      contextSource: args.contextSource,
+    }),
+  ];
 
   const fallbackActions = buildModeFallbackActions({ mode: "combat", combat: data });
   const layoutSeed = buildLayoutSeed("combat", [
@@ -942,6 +1244,9 @@ function buildCombatScene(args: {
     warnings: args.warnings,
     metrics,
     legend,
+    hero: buildHero({ mode: "combat", details: data, metrics, contextSource: args.contextSource }),
+    cards,
+    feed: effectiveFeed,
     hotspots,
     fallbackActions,
     layout: {
