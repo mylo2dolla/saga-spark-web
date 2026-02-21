@@ -164,13 +164,13 @@ async function main() {
       .order("created_at", { ascending: true });
     if (sessionErr) throw sessionErr;
     combatSessionIds = (sessionRows ?? [])
-      .map((row) => String((row as { id?: unknown }).id ?? \"\").trim())
+      .map((row) => String((row as { id?: unknown }).id ?? "").trim())
       .filter((value) => value.length > 0);
   }
 
   const { data: combatants, error: combatantErr } = combatSessionIds
     ? (combatSessionIds.length > 0
-      ? await combatantQuery.in(\"combat_session_id\", combatSessionIds)
+      ? await combatantQuery.in("combat_session_id", combatSessionIds)
       : { data: [], error: null })
     : await combatantQuery;
   if (combatantErr) throw combatantErr;
