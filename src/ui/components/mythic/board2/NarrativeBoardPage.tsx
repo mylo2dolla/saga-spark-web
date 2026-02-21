@@ -28,6 +28,7 @@ interface NarrativeBoardPageProps {
   showDevDetails: boolean;
   onRetryCombatStart: () => void;
   onQuickCast: (skillId: string, targeting: string) => void;
+  onContinueCombatResolution: () => void;
   onAction: (action: MythicUiAction, source: "board_hotspot" | "console_action") => void;
 }
 
@@ -109,6 +110,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
   );
 
   const combatDetails = props.scene.mode === "combat" ? (props.scene.details as CombatSceneData) : null;
+  const resolutionPending = combatDetails?.resolutionPending?.pending ? combatDetails.resolutionPending : null;
   const popupModel = props.scene.popup;
   const syncActive = props.isBusy || props.isStateRefreshing;
   const inspectBottomOffsetClass = combatDetails
@@ -175,6 +177,28 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
           data-testid="board-combat-rail"
           className="absolute inset-x-2 bottom-2 z-20 rounded-lg border border-red-200/30 bg-[linear-gradient(170deg,rgba(44,17,18,0.94),rgba(8,10,16,0.96))] p-2 shadow-xl"
         >
+          {resolutionPending ? (
+            <div className="mb-2 rounded border border-emerald-200/35 bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-100">
+              <div className="font-medium">
+                {resolutionPending.won ? "Combat resolved: Victory" : "Combat resolved"}
+              </div>
+              <div className="mt-0.5">
+                Continue to {resolutionPending.returnMode}
+                {resolutionPending.xpGained > 0 ? ` · +${resolutionPending.xpGained} XP` : ""}
+                {resolutionPending.loot.length > 0 ? ` · Loot: ${resolutionPending.loot.slice(0, 2).join(", ")}` : ""}
+              </div>
+              <div className="mt-2">
+                <Button
+                  data-testid="combat-resolution-continue"
+                  size="sm"
+                  disabled={props.isBusy}
+                  onClick={props.onContinueCombatResolution}
+                >
+                  Continue
+                </Button>
+              </div>
+            </div>
+          ) : null}
           <div className="mb-1.5 flex flex-wrap items-center gap-1 text-[10px] uppercase tracking-wide text-red-100/75">
             <span>Core Actions</span>
             {props.scene.modeStrip.moveStateLabel ? (
@@ -189,7 +213,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
                 key={`combat-core-${action.id}`}
                 size="sm"
                 variant={action.usableNow ? "default" : "secondary"}
-                disabled={!action.usableNow || props.isBusy}
+                disabled={!action.usableNow || props.isBusy || Boolean(resolutionPending)}
                 className="h-7 justify-between text-[12px]"
                 onClick={() => props.onQuickCast(action.id, action.targeting)}
               >
@@ -206,6 +230,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
               size="sm"
               variant="secondary"
               className="h-7 text-[11px]"
+              disabled={Boolean(resolutionPending)}
               onClick={() => setSkillsExpanded((prev) => !prev)}
             >
               {skillsExpanded ? "Hide Skills" : `Skills (${combatDetails.quickCast.length})`}
@@ -221,7 +246,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
                   key={`combat-skill-${entry.skillId}`}
                   size="sm"
                   variant={entry.usableNow ? "secondary" : "ghost"}
-                  disabled={!entry.usableNow || props.isBusy}
+                  disabled={!entry.usableNow || props.isBusy || Boolean(resolutionPending)}
                   className="h-7 justify-between text-[11px]"
                   onClick={() => props.onQuickCast(entry.skillId, entry.targeting)}
                 >

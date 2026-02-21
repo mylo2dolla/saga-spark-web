@@ -365,6 +365,8 @@ export function CombatScene(props: CombatSceneProps) {
           <button
             key={`${combatant.id}:${details.session?.current_turn_index ?? 0}`}
             type="button"
+            data-testid={`combat-token-${combatant.id}`}
+            data-hp={Math.max(0, Math.round(combatant.hp))}
             className={[
               "absolute rounded-md border px-1 py-1 text-left text-[9px] text-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)]",
               tone,

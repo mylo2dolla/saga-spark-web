@@ -1332,9 +1332,14 @@ function synthesizeRecoveryPayload(args: {
   actionContext: Record<string, unknown> | null;
   lastErrors: string[];
 }): DmNarratorOutput {
-  const boardType = args.boardType;
-  const boardLabel = titleCaseWords(boardType || "board");
   const context = args.actionContext ?? null;
+  const combatEventBatch = Array.isArray(context?.combat_event_batch)
+    ? context?.combat_event_batch
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+      .slice(-8)
+    : [];
+  const boardType = (args.boardType === "combat" || combatEventBatch.length > 0) ? "combat" : args.boardType;
+  const boardLabel = titleCaseWords(boardType || "board");
   const actionIntent = typeof context?.intent === "string" ? context.intent : "dm_prompt";
   const actionPrompt = typeof context?.payload === "object" && context?.payload
     && typeof (context.payload as Record<string, unknown>).prompt === "string"
@@ -1346,11 +1351,6 @@ function synthesizeRecoveryPayload(args: {
     ? context?.state_changes.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).slice(0, 3)
     : [];
   const firstStateChange = stateChanges[0] ?? null;
-  const combatEventBatch = Array.isArray(context?.combat_event_batch)
-    ? context?.combat_event_batch
-      .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
-      .slice(-8)
-    : [];
   const combatLines = combatEventBatch
     .map((entry) => {
       const eventType = typeof entry.event_type === "string" ? entry.event_type : "";
@@ -1360,22 +1360,24 @@ function synthesizeRecoveryPayload(args: {
         : typeof payload?.actor_combatant_id === "string" && payload.actor_combatant_id.trim().length > 0
           ? payload.actor_combatant_id
           : typeof payload?.source_combatant_id === "string" && payload.source_combatant_id.trim().length > 0
-            ? payload.source_combatant_id
+          ? payload.source_combatant_id
             : null;
       const targetId = typeof payload?.target_combatant_id === "string" && payload.target_combatant_id.trim().length > 0
         ? payload.target_combatant_id
         : null;
-      const actor = (
-        payload?.source_name
-        ?? payload?.actor_name
-        ?? payload?.actor_display
-        ?? (actorId ? `Unit ${actorId.slice(0, 6)}` : "Unknown combatant")
-      );
-      const target = (
-        payload?.target_name
-        ?? payload?.target_display
-        ?? (targetId ? `Unit ${targetId.slice(0, 6)}` : "an opening")
-      );
+      const actor = (() => {
+        if (typeof payload?.source_name === "string" && payload.source_name.trim().length > 0) return payload.source_name.trim();
+        if (typeof payload?.actor_name === "string" && payload.actor_name.trim().length > 0) return payload.actor_name.trim();
+        if (typeof payload?.actor_display === "string" && payload.actor_display.trim().length > 0) return payload.actor_display.trim();
+        if (actorId) return `Combatant ${actorId.slice(0, 6)}`;
+        return "Combatant";
+      })();
+      const target = (() => {
+        if (typeof payload?.target_name === "string" && payload.target_name.trim().length > 0) return payload.target_name.trim();
+        if (typeof payload?.target_display === "string" && payload.target_display.trim().length > 0) return payload.target_display.trim();
+        if (targetId) return `Combatant ${targetId.slice(0, 6)}`;
+        return "target";
+      })();
       const amount = Number(
         payload?.damage_to_hp
         ?? payload?.amount
@@ -1395,6 +1397,14 @@ function synthesizeRecoveryPayload(args: {
       }
       if (eventType === "damage") {
         return amountText ? `${actor} strikes ${target} for ${amountText}.` : `${actor} lands a hit on ${target}.`;
+      }
+      if (eventType === "miss") {
+        const roll = Number(payload?.roll_d20 ?? Number.NaN);
+        const required = Number(payload?.required_roll ?? Number.NaN);
+        if (Number.isFinite(roll) && Number.isFinite(required)) {
+          return `${actor} misses ${target} (${Math.floor(roll)} vs ${Math.floor(required)}).`;
+        }
+        return `${actor}'s strike misses ${target}.`;
       }
       if (eventType === "healed") {
         return amountText ? `${actor} restores ${amountText} to ${target}.` : `${actor} stabilizes ${target}.`;

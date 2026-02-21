@@ -396,6 +396,21 @@ function reachableMovementTiles(args: {
 function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][number]) {
   const payload = asRecord(event.payload);
   const targetCombatantId = asString(payload.target_combatant_id) || null;
+  if (event.event_type === "miss") {
+    const roll = asNumber(payload.roll_d20, Number.NaN);
+    const required = asNumber(payload.required_roll, Number.NaN);
+    return {
+      id: event.id,
+      eventType: "miss" as const,
+      targetCombatantId,
+      amount: null,
+      turnIndex: Math.floor(event.turn_index),
+      createdAt: event.created_at,
+      label: Number.isFinite(roll) && Number.isFinite(required)
+        ? `Miss ${Math.floor(roll)}/${Math.floor(required)}`
+        : "Miss",
+    };
+  }
   if (event.event_type === "damage") {
     const damageToHp = asNumber(payload.damage_to_hp, Number.NaN);
     const finalDamage = asNumber(payload.final_damage, 0);
@@ -485,18 +500,19 @@ function parseCombatData(args: {
   boardState: Record<string, unknown>;
   combatInput: NarrativeBoardAdapterInput["combat"];
 }): CombatSceneData {
-  const combatants = args.combatInput.combatants;
+  const allCombatants = args.combatInput.combatants;
+  const combatants = allCombatants.filter((entry) => entry.is_alive && Number(entry.hp) > 0);
   const allies = combatants.filter((entry) => isAllyCombatant(entry));
   const enemies = combatants.filter((entry) => !isAllyCombatant(entry));
   const playerCombatant = args.combatInput.playerCombatantId
-    ? combatants.find((entry) => entry.id === args.combatInput.playerCombatantId) ?? null
+    ? allCombatants.find((entry) => entry.id === args.combatInput.playerCombatantId) ?? null
     : null;
   const focusedCombatant = args.combatInput.focusedCombatantId
-    ? combatants.find((entry) => entry.id === args.combatInput.focusedCombatantId) ?? null
+    ? allCombatants.find((entry) => entry.id === args.combatInput.focusedCombatantId) ?? null
     : null;
   const fallbackEnemy = enemies.find((entry) => entry.is_alive) ?? null;
   const focusedHudCombatant = focusedCombatant ?? fallbackEnemy ?? null;
-  const displayNames = buildCombatDisplayNames(combatants);
+  const displayNames = buildCombatDisplayNames(allCombatants);
   const isPlayersTurn = Boolean(
     playerCombatant
     && args.combatInput.activeTurnCombatantId
@@ -521,7 +537,6 @@ function parseCombatData(args: {
         ? "Not your turn."
         : null;
   const moveReason = coreReason ?? (moveAlreadySpent ? "Move already used this turn." : null);
-  const status = asString(args.combatInput.session?.status, "idle");
   const hasLiveEnemy = enemies.some((entry) => entry.is_alive);
   const moveBudget = moveBudgetFromMobility(playerCombatant?.mobility ?? 0);
   const inRangeEnemy = playerCombatant
@@ -555,6 +570,8 @@ function parseCombatData(args: {
   });
   const paceState = args.combatInput.paceState ?? null;
   const rewardSummary = args.combatInput.rewardSummary ?? null;
+  const resolutionPending = args.combatInput.resolutionPending ?? null;
+  const status = resolutionPending?.pending ? "resolved" : asString(args.combatInput.session?.status, "idle");
 
   return {
     session: args.combatInput.session,
@@ -594,6 +611,7 @@ function parseCombatData(args: {
     stepResolutions,
     paceState,
     rewardSummary,
+    resolutionPending,
     moveBudget,
     moveUsedThisTurn: moveAlreadySpent,
     distanceToFocusedTarget,
@@ -768,6 +786,7 @@ function cardFromLines(args: {
 
 function toneForCombatDelta(type: CombatSceneData["recentDeltas"][number]["eventType"]): NarrativeTone {
   if (type === "damage" || type === "power_drain") return "danger";
+  if (type === "miss") return "warn";
   if (type === "healed" || type === "power_gain") return "good";
   if (type === "status_applied") return "warn";
   return "neutral";

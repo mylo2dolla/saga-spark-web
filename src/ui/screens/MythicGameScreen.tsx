@@ -201,10 +201,41 @@ type UnifiedActionSource =
 type CombatAutoPacePhase = "idle" | "step_committed" | "narrating" | "waiting_voice_end" | "next_step_ready";
 
 type BoardBaseActionSource = "assistant" | "runtime" | "companion" | "fallback";
+type CombatResolutionPendingState = {
+  pending: true;
+  combatSessionId: string | null;
+  returnMode: "town" | "travel" | "dungeon";
+  won: boolean;
+  xpGained: number;
+  loot: string[];
+  endedAt: string | null;
+};
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function parseCombatResolutionPending(state: Record<string, unknown>): CombatResolutionPendingState | null {
+  const row = asRecord(state.combat_resolution);
+  if (!row || row.pending !== true) return null;
+  const returnModeRaw = typeof row.return_mode === "string" ? row.return_mode.trim().toLowerCase() : "";
+  const returnMode = returnModeRaw === "travel" || returnModeRaw === "dungeon" || returnModeRaw === "town"
+    ? returnModeRaw
+    : "town";
+  const loot = Array.isArray(row.loot)
+    ? row.loot.map((entry) => (typeof entry === "string" ? entry.trim() : "")).filter((entry) => entry.length > 0).slice(0, 8)
+    : [];
+  const xpGainedRaw = Number(row.xp_gained ?? 0);
+  return {
+    pending: true,
+    combatSessionId: typeof row.combat_session_id === "string" ? row.combat_session_id : null,
+    returnMode,
+    won: row.won === true,
+    xpGained: Number.isFinite(xpGainedRaw) ? Math.max(0, Math.floor(xpGainedRaw)) : 0,
+    loot,
+    endedAt: typeof row.ended_at === "string" ? row.ended_at : null,
+  };
 }
 
 function isUiIntent(value: string): value is MythicUiAction["intent"] {
@@ -612,6 +643,7 @@ export default function MythicGameScreen() {
   }, [board]);
 
   const combatState = useMythicCombatState(campaignId, board?.board_type === "combat" ? combatSessionId : null);
+  const refetchCombatState = combatState.refetch;
   const mythicDmContext = useMythicDmContext(campaignId, {
     boardUpdatedAt: board?.updated_at ?? null,
     refreshSignal: dmContextRefreshSignal,
@@ -755,6 +787,10 @@ export default function MythicGameScreen() {
     () => asRecord(boardStateRecord.discovery_flags) ?? {},
     [boardStateRecord.discovery_flags],
   );
+  const combatResolutionPending = useMemo(
+    () => parseCombatResolutionPending(boardStateRecord),
+    [boardStateRecord],
+  );
   const introPending = discoveryFlags.intro_pending === true;
   const introVersion = Number.isFinite(Number(discoveryFlags.intro_version))
     ? Math.max(1, Number(discoveryFlags.intro_version))
@@ -800,6 +836,32 @@ export default function MythicGameScreen() {
       return { ok: false, data: null };
     }
   }, [campaignId, refetch]);
+
+  const continueAfterCombatResolution = useCallback(async () => {
+    if (!board || board.board_type !== "combat" || !combatResolutionPending) return;
+    const targetMode = combatResolutionPending.returnMode;
+    const result = await transitionRuntime(targetMode, "Combat Continue", {
+      reason_code: "combat_continue",
+      reason_label: "Combat Continue",
+      combat_continue: true,
+      combat_session_id: combatResolutionPending.combatSessionId,
+      combat_resolution: {
+        pending: false,
+      },
+    });
+    if (!result.ok) {
+      toast.error("Failed to continue from resolved combat.");
+      return;
+    }
+    setCombatRewardSummary((prev) => prev ?? {
+      xpGained: combatResolutionPending.xpGained,
+      loot: combatResolutionPending.loot,
+      endedAt: combatResolutionPending.endedAt ?? new Date().toISOString(),
+      victory: combatResolutionPending.won,
+    });
+    await Promise.all([refetchCombatState(), refetchCharacter()]);
+    toast.success(`Combat resolved. Continuing to ${targetMode}.`);
+  }, [board, combatResolutionPending, refetchCharacter, refetchCombatState, transitionRuntime]);
 
   const recomputeCharacter = async () => {
     if (!campaignId || !character) return;
@@ -919,6 +981,7 @@ export default function MythicGameScreen() {
   const canAdvanceNpcTurn = Boolean(
     board?.board_type === "combat" &&
     combatSessionId &&
+    !combatResolutionPending &&
     combatState.session?.status === "active" &&
     activeTurnCombatant &&
     activeTurnCombatant.entity_type !== "player",
@@ -931,7 +994,6 @@ export default function MythicGameScreen() {
     stepIndex: combatAutoStepIndex,
   }), [combat.isTicking, combatAutoPacePhase, combatAutoStepIndex, isAdvancingTurn]);
   const tickCombat = combat.tickCombat;
-  const refetchCombatState = combatState.refetch;
 
   useEffect(() => {
     if (board?.board_type === "combat") return;
@@ -1103,6 +1165,16 @@ export default function MythicGameScreen() {
       `${victory ? "Combat won" : "Combat resolved"}${xpGained > 0 ? ` · +${xpGained} XP` : ""}${loot.length > 0 ? ` · ${loot.join(", ")}` : ""}`,
     );
   }, [characterSheetOpen, combatState.events, refetchCharacter]);
+
+  useEffect(() => {
+    if (!combatResolutionPending) return;
+    setCombatRewardSummary((prev) => prev ?? {
+      xpGained: combatResolutionPending.xpGained,
+      loot: combatResolutionPending.loot,
+      endedAt: combatResolutionPending.endedAt ?? new Date().toISOString(),
+      victory: combatResolutionPending.won,
+    });
+  }, [combatResolutionPending]);
 
   const latestAssistantMessage = useMemo(() => {
     for (let index = mythicDm.messages.length - 1; index >= 0; index -= 1) {
@@ -1917,6 +1989,7 @@ export default function MythicGameScreen() {
             const combatEventBatch = (skillResult.eventBatch ?? [])
               .filter((event) => (
                 event.event_type === "damage"
+                || event.event_type === "miss"
                 || event.event_type === "healed"
                 || event.event_type === "moved"
                 || event.event_type === "status_applied"
@@ -1932,6 +2005,7 @@ export default function MythicGameScreen() {
               stateChanges: combatEventBatch.length > 0
                 ? combatEventBatch.slice(0, 3).map((event) => {
                     if (event.event_type === "damage") return `Quick-cast ${skillName} dealt damage.`;
+                    if (event.event_type === "miss") return `Quick-cast ${skillName} missed.`;
                     if (event.event_type === "healed") return `Quick-cast ${skillName} restored health.`;
                     if (event.event_type === "moved") return `Quick-cast ${skillName} repositioned the actor.`;
                     if (event.event_type === "status_applied") return `Quick-cast ${skillName} applied status pressure.`;
@@ -2147,6 +2221,7 @@ export default function MythicGameScreen() {
           const combatEventBatch = (tickResult.eventBatch ?? [])
             .filter((event) => (
               event.event_type === "damage"
+              || event.event_type === "miss"
               || event.event_type === "healed"
               || event.event_type === "moved"
               || event.event_type === "status_applied"
@@ -2163,6 +2238,7 @@ export default function MythicGameScreen() {
                 const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
                 const amount = Number(payload.damage_to_hp ?? payload.amount ?? 0);
                 if (event.event_type === "damage") return `Damage ${Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0}.`;
+                if (event.event_type === "miss") return "Attack missed.";
                 if (event.event_type === "healed") return `Heal ${Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0}.`;
                 if (event.event_type === "moved") return "Reposition committed.";
                 if (event.event_type === "status_applied") return "Status effect applied.";
@@ -2261,6 +2337,10 @@ export default function MythicGameScreen() {
     target: { kind: "self" } | { kind: "combatant"; combatant_id: string } | { kind: "tile"; x: number; y: number };
   }) => {
     if (!campaignId || !combatSessionId) return;
+    if (combatResolutionPending) {
+      toast.error("Combat has resolved. Continue to leave the battlefield.");
+      return;
+    }
     if (args.actorCombatantId === playerCombatantId && combatState.activeTurnCombatantId !== args.actorCombatantId) {
       toast.error("Not your turn. Wait for the current turn to finish.");
       return;
@@ -2302,6 +2382,7 @@ export default function MythicGameScreen() {
         const combatEventBatch = (result.eventBatch ?? [])
           .filter((event) => (
             event.event_type === "damage"
+            || event.event_type === "miss"
             || event.event_type === "healed"
             || event.event_type === "moved"
             || event.event_type === "status_applied"
@@ -2317,6 +2398,7 @@ export default function MythicGameScreen() {
           stateChanges: combatEventBatch.length > 0
             ? combatEventBatch.slice(0, 3).map((event) => {
                 if (event.event_type === "damage") return `Hit landed on ${targetLabel}.`;
+                if (event.event_type === "miss") return `Attack on ${targetLabel} missed.`;
                 if (event.event_type === "healed") return `Healing resolved for ${targetLabel}.`;
                 if (event.event_type === "moved") return "Movement resolved.";
                 if (event.event_type === "status_applied") return "Status effect applied.";
@@ -2338,7 +2420,20 @@ export default function MythicGameScreen() {
         };
       },
     });
-  }, [campaignId, combat, combatSessionId, combatState.activeTurnCombatantId, combatState.session?.current_turn_index, describeCombatTarget, playerCombatantId, refetch, refetchCombatState, runNarratedAction, skills]);
+  }, [
+    campaignId,
+    combat,
+    combatResolutionPending,
+    combatSessionId,
+    combatState.activeTurnCombatantId,
+    combatState.session?.current_turn_index,
+    describeCombatTarget,
+    playerCombatantId,
+    refetch,
+    refetchCombatState,
+    runNarratedAction,
+    skills,
+  ]);
 
   const quickCastAvailability = useMemo(
     () => commandSkillAvailability.filter((entry) => entry.kind === "active" || entry.kind === "ultimate").slice(0, 8),
@@ -2409,6 +2504,7 @@ export default function MythicGameScreen() {
         quickCastAvailability,
         paceState: combatPaceModel,
         rewardSummary: combatRewardSummary,
+        resolutionPending: combatResolutionPending,
       },
     });
   }, [
@@ -2420,6 +2516,7 @@ export default function MythicGameScreen() {
     combatState.session,
     combatPaceModel,
     combatRewardSummary,
+    combatResolutionPending,
     focusedCombatantId,
     mythicDmContext.context,
     playerCombatantId,
@@ -2450,6 +2547,10 @@ export default function MythicGameScreen() {
 
   const triggerQuickCast = useCallback(async (skillId: string, targeting: string) => {
     if (!playerCombatantId || !combatSessionId) return;
+    if (combatResolutionPending) {
+      toast.error("Combat has resolved. Continue to leave the battlefield.");
+      return;
+    }
     if (combatState.activeTurnCombatantId !== playerCombatantId) {
       toast.error("Not your turn. Wait for the current turn to finish.");
       return;
@@ -2485,7 +2586,16 @@ export default function MythicGameScreen() {
       skillId,
       target,
     });
-  }, [combatSessionId, combatState.activeTurnCombatantId, combatState.combatants, executeCombatSkillNarration, playerCombatantId, selectQuickCastTarget, skills]);
+  }, [
+    combatResolutionPending,
+    combatSessionId,
+    combatState.activeTurnCombatantId,
+    combatState.combatants,
+    executeCombatSkillNarration,
+    playerCombatantId,
+    selectQuickCastTarget,
+    skills,
+  ]);
 
   const retryLastAction = useCallback(() => {
     if (!lastPlayerInputRef.current) return;
@@ -3057,6 +3167,7 @@ export default function MythicGameScreen() {
                 showDevDetails={devSurfaces.enabled}
                 onRetryCombatStart={() => void retryCombatStart()}
                 onQuickCast={(skillId, targeting) => void triggerQuickCast(skillId, targeting)}
+                onContinueCombatResolution={() => void continueAfterCombatResolution()}
                 onAction={(action, source) => triggerConsoleAction(action, source === "board_hotspot" ? "board_hotspot" : "console_action")}
               />
             </div>

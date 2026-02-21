@@ -272,6 +272,8 @@ export async function settleCombat(args: SettlementArgs): Promise<SettlementResu
   const primaryFaction = factionPool[0] ?? null;
   const bossAlive = aliveRows.some((row) => row.entity_type === "npc" && row.is_alive);
   const xpPer = won ? 180 + aliveRows.length * 35 + (bossAlive ? 0 : 220) : 0;
+  let xpAwardedTotal = 0;
+  const lootNames: string[] = [];
 
   if (won) {
     for (const player of alivePlayers) {
@@ -291,6 +293,7 @@ export async function settleCombat(args: SettlementArgs): Promise<SettlementResu
           metadata: { combat_session_id: combatSessionId },
         });
         awardedXp = true;
+        xpAwardedTotal += xpPer;
         if (appendActionEvent) {
           await appendActionEvent("xp_gain", {
             character_id: characterId,
@@ -312,6 +315,9 @@ export async function settleCombat(args: SettlementArgs): Promise<SettlementResu
           rarity,
           source,
         });
+        if (lootItem?.name) {
+          lootNames.push(lootItem.name);
+        }
         if (appendActionEvent) {
           await appendActionEvent("loot_drop", {
             character_id: characterId,
@@ -425,57 +431,33 @@ export async function settleCombat(args: SettlementArgs): Promise<SettlementResu
       : (fallbackMode === "town" || fallbackMode === "travel" || fallbackMode === "dungeon" || fallbackMode === "combat"
         ? fallbackMode
         : "town");
+    const resolvedReturnMode = nextMode === "combat" ? "town" : nextMode;
     const nextState = {
       ...rawState,
       combat_session_id: null,
-      return_mode: null,
+      return_mode: resolvedReturnMode,
+      combat_resolution: {
+        pending: true,
+        combat_session_id: combatSessionId,
+        return_mode: resolvedReturnMode,
+        won,
+        xp_gained: Math.max(0, Math.floor(xpAwardedTotal)),
+        loot: lootNames.slice(0, 8),
+        ended_at: new Date().toISOString(),
+      },
     };
 
     const runtimeUpdate = await svc
       .schema("mythic")
       .from("campaign_runtime")
       .update({
-        mode: nextMode,
+        mode: "combat",
         combat_session_id: null,
         state_json: nextState,
         updated_at: new Date().toISOString(),
       })
       .eq("id", runtimeRow.id);
     if (runtimeUpdate.error) throw runtimeUpdate.error;
-
-    const existingTransition = await svc
-      .schema("mythic")
-      .from("runtime_events")
-      .select("id,payload_json")
-      .eq("campaign_id", campaignId)
-      .eq("runtime_id", runtimeRow.id)
-      .eq("from_mode", "combat")
-      .eq("reason", "combat_end")
-      .order("created_at", { ascending: false })
-      .limit(20);
-    if (existingTransition.error) throw existingTransition.error;
-
-    const hasExistingTransition = (existingTransition.data ?? []).some((row) => {
-      if (!row || typeof row !== "object") return false;
-      const payload = (row as { payload_json?: unknown }).payload_json;
-      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
-      return (payload as { combat_session_id?: unknown }).combat_session_id === combatSessionId;
-    });
-
-    if (!hasExistingTransition) {
-      const { error: transitionError } = await svc.schema("mythic").from("runtime_events").insert({
-        campaign_id: campaignId,
-        runtime_id: runtimeRow.id,
-        from_mode: "combat",
-        to_mode: nextMode,
-        reason: "combat_end",
-        payload_json: {
-          combat_session_id: combatSessionId,
-          outcome: { won, alive_players: alivePlayers.length, alive_npcs: aliveNpcs.length },
-        },
-      });
-      if (transitionError) throw transitionError;
-    }
   }
 
   if (appendActionEvent) {

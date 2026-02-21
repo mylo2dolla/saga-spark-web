@@ -12,6 +12,7 @@ import {
 } from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
 import { settleCombat } from "../lib/combat/settlement.js";
+import { resolveDeterministicHit } from "../lib/combat/hitResolution.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const RequestSchema = z.object({
@@ -67,11 +68,16 @@ function toBlockedSet(blockedTiles: Array<{ x: number; y: number }>): Set<string
 function occupiedSet(combatants: Combatant[], excludeId: string | null = null): Set<string> {
   const out = new Set<string>();
   for (const combatant of combatants) {
-    if (!combatant.is_alive) continue;
+    if (!combatant.is_alive || Number(combatant.hp ?? 0) <= 0) continue;
     if (excludeId && combatant.id === excludeId) continue;
     out.add(`${Math.floor(combatant.x)},${Math.floor(combatant.y)}`);
   }
   return out;
+}
+
+function isAlive(combatant: Combatant | null | undefined): combatant is Combatant {
+  if (!combatant) return false;
+  return Boolean(combatant.is_alive) && Number(combatant.hp ?? 0) > 0;
 }
 
 function inBounds(point: Position, cols = 14, rows = 10): boolean {
@@ -428,6 +434,36 @@ export const mythicCombatTick: FunctionHandler = {
         if (actorErr) throw actorErr;
         if (!actor) throw new Error("Turn actor not found");
 
+        if (!isAlive(actor)) {
+          if (Number(actor.hp ?? 0) <= 0 && actor.is_alive) {
+            await svc
+              .schema("mythic")
+              .from("combatants")
+              .update({ is_alive: false, updated_at: new Date().toISOString() })
+              .eq("id", actor.id)
+              .eq("combat_session_id", combatSessionId);
+          }
+          const { data: aliveRows, error: aliveErr } = await svc
+            .schema("mythic")
+            .from("combatants")
+            .select("id, is_alive, hp")
+            .eq("combat_session_id", combatSessionId);
+          if (aliveErr) throw aliveErr;
+          const aliveSet = new Set(
+            (aliveRows ?? [])
+              .filter((r: any) => r.is_alive && Number(r.hp ?? 0) > 0)
+              .map((r: any) => r.id),
+          );
+          const nextIndex = nextAliveTurnIndex(order, aliveSet, turnIndex);
+          const nextActor = order[nextIndex]?.combatant_id ?? null;
+          finalNextActor = nextActor;
+          await svc.schema("mythic").from("combat_sessions").update({
+            current_turn_index: nextIndex,
+            updated_at: new Date().toISOString(),
+          }).eq("id", combatSessionId);
+          continue;
+        }
+
         if ((actor as any).entity_type === "player" && (actor as any).player_id === user.userId) {
           requiresPlayerAction = true;
           finalNextActor = (actor as any).id;
@@ -450,14 +486,26 @@ export const mythicCombatTick: FunctionHandler = {
           .maybeSingle<Combatant>();
         if (actorAfterTickErr) throw actorAfterTickErr;
         let actorAfterTick = actorAfterTickRow;
-        if (!actorAfterTick || !(actorAfterTick as any).is_alive) {
+        if (!isAlive(actorAfterTick)) {
+          if (actorAfterTick && Number(actorAfterTick.hp ?? 0) <= 0 && actorAfterTick.is_alive) {
+            await svc
+              .schema("mythic")
+              .from("combatants")
+              .update({ is_alive: false, updated_at: new Date().toISOString() })
+              .eq("id", actorAfterTick.id)
+              .eq("combat_session_id", combatSessionId);
+          }
           const { data: aliveRows, error: aliveErr } = await svc
             .schema("mythic")
             .from("combatants")
-            .select("id, is_alive")
+            .select("id, is_alive, hp")
             .eq("combat_session_id", combatSessionId);
           if (aliveErr) throw aliveErr;
-          const aliveSet = new Set((aliveRows ?? []).filter((r: any) => r.is_alive).map((r: any) => r.id));
+          const aliveSet = new Set(
+            (aliveRows ?? [])
+              .filter((r: any) => r.is_alive && Number(r.hp ?? 0) > 0)
+              .map((r: any) => r.id),
+          );
           const nextIndex = nextAliveTurnIndex(order, aliveSet, turnIndex);
           const nextActor = order[nextIndex]?.combatant_id ?? null;
           finalNextActor = nextActor;
@@ -475,7 +523,7 @@ export const mythicCombatTick: FunctionHandler = {
           .eq("combat_session_id", combatSessionId)
           .eq("is_alive", true);
         if (livingErr) throw livingErr;
-        const living = (livingRows ?? []) as Combatant[];
+        const living = ((livingRows ?? []) as Combatant[]).filter((entry) => Number(entry.hp ?? 0) > 0);
         const combatantNames = new Map<string, string>();
         living.forEach((entry) => {
           const id = String(entry.id ?? "").trim();
@@ -595,6 +643,7 @@ export const mythicCombatTick: FunctionHandler = {
                 y: moved.to.y,
               };
               await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "moved", {
+                target_combatant_id: (actorAfterTick as any).id,
                 from,
                 to: moved.to,
                 dash_tiles: budget,
@@ -697,6 +746,37 @@ export const mythicCombatTick: FunctionHandler = {
           }, combatantNames);
         } else {
           for (const t of targets) {
+            const hit = resolveDeterministicHit({
+              seed,
+              label: `tick:${combatSessionId}:turn:${turnIndex}:actor:${(actorAfterTick as any).id}:target:${(t as any).id}:hit`,
+              attacker: {
+                offense: (actorAfterTick as any).offense,
+                defense: (actorAfterTick as any).defense,
+                mobility: (actorAfterTick as any).mobility,
+                utility: (actorAfterTick as any).utility,
+                statuses: (actorAfterTick as any).statuses,
+              },
+              defender: {
+                offense: (t as any).offense,
+                defense: (t as any).defense,
+                mobility: (t as any).mobility,
+                utility: (t as any).utility,
+                statuses: (t as any).statuses,
+              },
+            });
+            if (!hit.hit) {
+              await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "miss", {
+                source_combatant_id: (actorAfterTick as any).id,
+                target_combatant_id: (t as any).id,
+                skill_id: skillKey,
+                roll_d20: hit.rollD20,
+                required_roll: hit.requiredRoll,
+                hit_chance: hit.hitChance,
+                reason: hit.reason,
+              }, combatantNames);
+              continue;
+            }
+
             const { data: dmgJson, error: dmgErr } = await svc.rpc("mythic_compute_damage", {
               seed,
               label: `tick:${combatSessionId}:turn:${turnIndex}:actor:${(actorAfterTick as any).id}:target:${(t as any).id}`,
@@ -718,7 +798,7 @@ export const mythicCombatTick: FunctionHandler = {
             const nextArmor = Math.max(0, shield - absorbed);
             const currentHp = Math.max(0, Math.floor(Number((t as any).hp ?? 0)));
             const nextHp = Math.max(0, currentHp - hpDelta);
-            const died = nextHp <= 0.0001;
+            const died = nextHp <= 0;
 
             const { error: updateTargetErr } = await svc
               .schema("mythic")
@@ -726,7 +806,7 @@ export const mythicCombatTick: FunctionHandler = {
               .update({
                 armor: nextArmor,
                 hp: nextHp,
-                is_alive: died ? false : (t as any).is_alive,
+                is_alive: nextHp > 0,
                 updated_at: new Date().toISOString(),
               })
               .eq("id", (t as any).id)
@@ -790,12 +870,12 @@ export const mythicCombatTick: FunctionHandler = {
         const { data: aliveRows, error: aliveErr } = await svc
           .schema("mythic")
           .from("combatants")
-          .select("id,entity_type,is_alive,character_id,player_id,lvl")
+          .select("id,entity_type,is_alive,hp,character_id,player_id,lvl")
           .eq("combat_session_id", combatSessionId);
         if (aliveErr) throw aliveErr;
 
-        const alivePlayers = (aliveRows ?? []).filter((r: any) => r.is_alive && r.entity_type === "player");
-        const aliveNpcs = (aliveRows ?? []).filter((r: any) => r.is_alive && r.entity_type === "npc");
+        const alivePlayers = (aliveRows ?? []).filter((r: any) => r.is_alive && Number(r.hp ?? 0) > 0 && r.entity_type === "player");
+        const aliveNpcs = (aliveRows ?? []).filter((r: any) => r.is_alive && Number(r.hp ?? 0) > 0 && r.entity_type === "npc");
 
         if (alivePlayers.length === 0 || aliveNpcs.length === 0) {
           ended = true;
@@ -811,7 +891,7 @@ export const mythicCombatTick: FunctionHandler = {
             aliveRows: (aliveRows ?? []).map((row: any) => ({
               id: String(row.id),
               entity_type: row.entity_type === "npc" || row.entity_type === "summon" ? row.entity_type : "player",
-              is_alive: Boolean(row.is_alive),
+              is_alive: Boolean(row.is_alive) && Number(row.hp ?? 0) > 0,
               character_id: typeof row.character_id === "string" ? row.character_id : null,
               player_id: typeof row.player_id === "string" ? row.player_id : null,
               lvl: typeof row.lvl === "number" ? row.lvl : null,
@@ -832,7 +912,11 @@ export const mythicCombatTick: FunctionHandler = {
           break;
         }
 
-        const aliveSet = new Set((aliveRows ?? []).filter((r: any) => r.is_alive).map((r: any) => r.id));
+        const aliveSet = new Set(
+          (aliveRows ?? [])
+            .filter((r: any) => r.is_alive && Number(r.hp ?? 0) > 0)
+            .map((r: any) => r.id),
+        );
         const nextIndex = nextAliveTurnIndex(order, aliveSet, turnIndex);
         const nextActorId = order[nextIndex]?.combatant_id ?? null;
         finalTurnIndex = nextIndex;

@@ -201,7 +201,7 @@ export interface NarrativeCombatHudEntity {
 
 export interface NarrativeCombatDelta {
   id: string;
-  eventType: "damage" | "healed" | "power_gain" | "power_drain" | "status_applied" | "moved";
+  eventType: "damage" | "miss" | "healed" | "power_gain" | "power_drain" | "status_applied" | "moved";
   targetCombatantId: string | null;
   amount: number | null;
   turnIndex: number;
@@ -235,6 +235,16 @@ export interface CombatRewardSummaryModel {
   victory: boolean;
 }
 
+export interface CombatResolutionPendingModel {
+  pending: boolean;
+  combatSessionId: string | null;
+  returnMode: "town" | "travel" | "dungeon";
+  won: boolean;
+  xpGained: number;
+  loot: string[];
+  endedAt: string | null;
+}
+
 export interface CombatSceneData {
   session: MythicCombatSessionRow | null;
   status: string;
@@ -253,6 +263,7 @@ export interface CombatSceneData {
   stepResolutions: CombatStepResolutionModel[];
   paceState: CombatPaceStateModel | null;
   rewardSummary: CombatRewardSummaryModel | null;
+  resolutionPending: CombatResolutionPendingModel | null;
   moveBudget: number;
   moveUsedThisTurn: boolean;
   distanceToFocusedTarget: number | null;
@@ -306,6 +317,7 @@ export interface NarrativeBoardCombatInput {
   quickCastAvailability: SkillAvailabilityEntry[];
   paceState?: CombatPaceStateModel | null;
   rewardSummary?: CombatRewardSummaryModel | null;
+  resolutionPending?: CombatResolutionPendingModel | null;
 }
 
 export interface NarrativeBoardAdapterInput {

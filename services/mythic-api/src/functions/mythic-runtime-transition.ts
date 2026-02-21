@@ -1081,6 +1081,19 @@ export const mythicRuntimeTransition: FunctionHandler = {
       }
       const activeRuntime = activeRuntimeRows[0] ?? null;
       const activeState = activeRuntime ? asRecord(activeRuntime.state_json) : {};
+      const combatResolution = asRecord(activeState.combat_resolution);
+      const combatResolutionPending = combatResolution?.pending === true;
+      const combatResolutionReturnMode = (
+        typeof combatResolution?.return_mode === "string"
+        && (
+          combatResolution.return_mode === "town"
+          || combatResolution.return_mode === "travel"
+          || combatResolution.return_mode === "dungeon"
+          || combatResolution.return_mode === "combat"
+        )
+      )
+        ? combatResolution.return_mode
+        : null;
       const continuity = readContinuity(activeRuntime ? activeState : null);
       const transitionCountQuery = await svc
         .schema("mythic")
@@ -1134,6 +1147,21 @@ export const mythicRuntimeTransition: FunctionHandler = {
         companions,
         command: companionCommand,
       });
+
+      const clearCombatResolution = (
+        combatResolutionPending
+        && typeof activeRuntime?.mode === "string"
+        && activeRuntime.mode === "combat"
+        && toMode !== "combat"
+      );
+      if (clearCombatResolution) {
+        nextState = {
+          ...nextState,
+          combat_session_id: null,
+          return_mode: null,
+          combat_resolution: null,
+        };
+      }
 
       const archivedRuntimeIds = activeRuntimeRows
         .slice(1)
@@ -1192,6 +1220,14 @@ export const mythicRuntimeTransition: FunctionHandler = {
         travel_probe: (payload as any).travel_probe ?? null,
         search_target: (nextState as any).search_target ?? null,
         discovery_flags: asRecord((nextState as any).discovery_flags),
+        combat_resolution_pending_before: combatResolutionPending,
+        combat_resolution_return_mode: combatResolutionReturnMode,
+        combat_resolution_cleared: (
+          combatResolutionPending
+          && typeof activeRuntime?.mode === "string"
+          && activeRuntime.mode === "combat"
+          && toMode !== "combat"
+        ),
       };
 
       const { error: transitionError } = await svc

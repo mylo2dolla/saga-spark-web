@@ -64,6 +64,7 @@ export interface MythicDiscoveryFlags {
 }
 
 export interface MythicBoardState {
+  combat_resolution?: MythicCombatResolutionState | null;
   scene_cache?: Record<string, unknown>;
   companion_checkins?: MythicCompanionCheckin[];
   companion_presence?: Array<Record<string, unknown>>;
@@ -76,6 +77,16 @@ export interface MythicBoardState {
   objectives?: unknown[];
   discovery_log?: unknown[];
   [key: string]: unknown;
+}
+
+export interface MythicCombatResolutionState {
+  pending: boolean;
+  combat_session_id: string;
+  return_mode: MythicBoardType;
+  won: boolean;
+  xp_gained: number;
+  loot: string[];
+  ended_at?: string | null;
 }
 
 export interface MythicStoryRewardSummary {
