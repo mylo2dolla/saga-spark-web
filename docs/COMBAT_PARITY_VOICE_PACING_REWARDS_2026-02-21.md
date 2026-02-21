@@ -88,3 +88,19 @@ VM function auth-smoke sample IDs:
 - Strict step pacing waits for voice completion only when voice is enabled + supported + not blocked.
 - If voice gate deadlocks, auto-turn proceeds after 12 seconds and logs `mythic.combat.voice_gate_timeout`.
 - Combat rewards remain authoritative-first and only surface after confirmed `combat_end`/`xp_gain`/`loot_drop` events.
+
+## Production Deploy Verification (2026-02-21)
+- Frontend commit live: `e3043fb7437650e51bc5370bc383c81d2713507d`
+- Frontend production alias: `https://mythweaver.online`
+- VM API runtime path: `/opt/mythic-api` (synced from local `services/mythic-api` and rebuilt via Docker Compose)
+- VM API health check: `http://127.0.0.1:3001/healthz` returned `200 {"ok":true}`
+
+Post-deploy authenticated board smoke IDs:
+- `mythic-create-campaign`: `2674f941-ea06-43c9-ad0b-dfebe1135eec`
+- `mythic-create-character`: `9c505650-3e59-4584-a5c0-766168561a8b`
+- `mythic-dm-context`: `37f20523-c8ec-4d30-82d1-75a0f5839a68`
+- `mythic-dungeon-master`: `0a237407-b8ed-4d2b-9825-ad19c43a150c`
+- `mythic-runtime-transition:travel`: `c60fb8fe-77ab-4e7c-912a-c4d45b264420`
+- `mythic-runtime-transition:dungeon`: `baa3dfca-e778-4b5e-a597-941bd759c0f8`
+- `mythic-runtime-transition:town`: `95f9f115-0ae5-4f52-a9c7-c95147087589`
+- `mythic-combat-start`: `b58e1b8b-fadb-4e65-997b-79320acadf27`
