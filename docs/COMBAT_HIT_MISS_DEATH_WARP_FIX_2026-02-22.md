@@ -62,3 +62,27 @@
 - `mythic-runtime-transition:dungeon`: `892da0c3-9bba-43bd-8564-8c317891767e`
 - `mythic-runtime-transition:town`: `3a5c6b1b-7222-4429-a802-be5e905f47cb`
 - `mythic-combat-start`: `389615c9-6aa7-4124-9c17-257797e0986a`
+
+## Production Rollout Lock-In (2026-02-21 UTC)
+- Release commit: `a5c95f5`
+- Frontend production deploy (Vercel):
+  - deployment id: `Ey82PmphLRm4ky4vizSdUEvZw2cn`
+  - production url: `https://mythweaver.online`
+  - deployment url: `https://saga-spark-bmgge6hkj-mylo2dollas-projects.vercel.app`
+- Database migration applied remotely:
+  - `20260222093000_mythic_combat_miss_and_death_integrity.sql`
+- VM runtime deployment:
+  - host: `api.mythweaver.online`
+  - path: `/opt/mythic-api` (source-synced + docker recreate)
+  - health: `https://api.mythweaver.online/healthz` => `200 {"ok":true}`
+
+## Post-Deploy Smoke IDs (2026-02-21 UTC)
+- `mythic-dm-context`: `bcc7e2a0-d79f-4c34-957f-31731d12f84e`
+- `mythic-dungeon-master`: `db79465e-19b6-46cd-a1af-68e1aa86f1df`
+- `mythic-runtime-transition:travel`: `9efa811f-9428-4b80-8f30-a4a2c8ddc3ed`
+- `mythic-runtime-transition:dungeon`: `e30d50b8-d222-4c18-92bf-65a25c0cd8fa`
+- `mythic-runtime-transition:town`: `7f61f2e9-4be0-4629-b20f-fb3a6ca572aa`
+- `mythic-combat-start`: `d326a1e8-cc77-4a55-80d1-e439ffe8d381`
+- `smoke-vm-functions` auth gate sample:
+  - `mythic-combat-use-skill`: `7e1f80fd-1988-4eed-ba20-c76db6e00880`
+  - `mythic-dungeon-master`: `c6c85895-b09e-46d6-a9c1-78bec344c0a7`
