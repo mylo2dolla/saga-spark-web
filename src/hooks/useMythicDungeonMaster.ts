@@ -33,6 +33,8 @@ export interface MythicUiAction {
   boardTarget?: "town" | "travel" | "dungeon" | "combat";
   panel?: "status" | "character" | "equipment" | "skills" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
   payload?: Record<string, unknown>;
+  disabled?: boolean;
+  disabledReason?: string | null;
 }
 
 export interface MythicDmParsedPayload {

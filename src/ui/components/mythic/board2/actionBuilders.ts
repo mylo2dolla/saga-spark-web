@@ -232,6 +232,8 @@ export function buildMissClickInspectTarget(args: {
   const activeEnemy = args.combat?.combatants.find((entry) => entry.id === args.combat?.activeTurnCombatantId)
     ?? args.combat?.combatants.find((entry) => entry.entity_type !== "player" && entry.is_alive)
     ?? null;
+  const moveCore = args.combat?.coreActions.find((entry) => entry.id === "basic_move") ?? null;
+  const attackCore = args.combat?.coreActions.find((entry) => entry.id === "basic_attack") ?? null;
   const actions: MythicUiAction[] = [
     {
       id: `combat-move-${x}-${y}`,
@@ -244,16 +246,8 @@ export function buildMissClickInspectTarget(args: {
         quick_cast_target_tile: { x, y },
         board_feature: "core_action",
       },
-    },
-    {
-      id: `combat-read-${x}-${y}`,
-      label: "Request tactical read",
-      intent: "dm_prompt",
-      prompt: `Give me a tactical read at grid (${x}, ${y}) with immediate action economy priorities.`,
-      payload: {
-        board_feature: "combat_probe",
-        probe_point: { x, y },
-      },
+      disabled: moveCore ? !moveCore.usableNow : false,
+      disabledReason: moveCore?.reason ?? null,
     },
     ...(activeEnemy
       ? [
@@ -268,17 +262,45 @@ export function buildMissClickInspectTarget(args: {
               board_feature: "core_action",
             },
             prompt: `I advance on ${activeEnemy.name} to close distance this turn.`,
+            disabled: moveCore ? !moveCore.usableNow : false,
+            disabledReason: moveCore?.reason ?? null,
           },
           {
-            id: `combat-focus-${activeEnemy.id}`,
-            label: `Focus ${activeEnemy.name}`,
-            intent: "combat_action" as const,
+            id: `combat-attack-${activeEnemy.id}`,
+            label: `Attack ${activeEnemy.name}`,
+            intent: "dm_prompt" as const,
             payload: {
+              quick_cast_skill_id: "basic_attack",
+              quick_cast_targeting: "single",
               target_combatant_id: activeEnemy.id,
+              board_feature: "core_action",
             },
-            prompt: `I focus ${activeEnemy.name} and commit pressure on that threat.`,
+            prompt: `I strike ${activeEnemy.name} with a basic attack and narrate only committed combat outcomes.`,
+            disabled: attackCore ? !attackCore.usableNow : false,
+            disabledReason: attackCore?.reason ?? null,
           },
         ]
+      : []),
+    {
+      id: `combat-read-${x}-${y}`,
+      label: "Request tactical read",
+      intent: "dm_prompt",
+      prompt: `Give me a tactical read at grid (${x}, ${y}) with immediate action economy priorities.`,
+      payload: {
+        board_feature: "combat_probe",
+        probe_point: { x, y },
+      },
+    },
+    ...(activeEnemy
+      ? [{
+          id: `combat-focus-${activeEnemy.id}`,
+          label: `Focus ${activeEnemy.name}`,
+          intent: "combat_action" as const,
+          payload: {
+            target_combatant_id: activeEnemy.id,
+          },
+          prompt: `I focus ${activeEnemy.name} and commit pressure on that threat.`,
+        }]
       : []),
   ];
   return {
@@ -564,6 +586,9 @@ export function buildCombatantActions(args: {
   combatantName: string;
   isFocused: boolean;
   isEnemy: boolean;
+  moveDisabledReason?: string | null;
+  attackDisabledReason?: string | null;
+  focusDisabledReason?: string | null;
 }): MythicUiAction[] {
   return [
     ...(args.isEnemy
@@ -579,6 +604,8 @@ export function buildCombatantActions(args: {
               board_feature: "core_action",
             },
             prompt: `I close distance on ${args.combatantName} and lock engagement range.`,
+            disabled: Boolean(args.moveDisabledReason),
+            disabledReason: args.moveDisabledReason ?? null,
           },
           {
             id: `combat-basic-attack-${slugToken(args.combatantId)}`,
@@ -591,6 +618,8 @@ export function buildCombatantActions(args: {
               board_feature: "core_action",
             },
             prompt: `I execute a basic attack on ${args.combatantName} and narrate the committed combat result.`,
+            disabled: Boolean(args.attackDisabledReason),
+            disabledReason: args.attackDisabledReason ?? null,
           },
         ]
       : []),
@@ -602,6 +631,8 @@ export function buildCombatantActions(args: {
         target_combatant_id: args.combatantId,
       },
       prompt: `I focus ${args.combatantName} and align the next strike to that target.`,
+      disabled: Boolean(args.focusDisabledReason),
+      disabledReason: args.focusDisabledReason ?? null,
     },
     {
       id: `combat-prompt-${slugToken(args.combatantId)}`,

@@ -686,6 +686,24 @@ function contextSourceLabel(contextSource: NarrativeBoardSceneModel["contextSour
   return contextSource === "runtime_and_dm_context" ? "Story Sync: Live" : "Story Sync: Runtime";
 }
 
+function activeTurnOwnerLabel(data: CombatSceneData): string {
+  const active = data.combatants.find((entry) => entry.id === data.activeTurnCombatantId) ?? null;
+  if (!active) return "Turn: Waiting";
+  if (active.entity_type === "player") return "Turn: You";
+  const isAlly = isAllyCombatant(active);
+  const display = data.displayNames[active.id]?.displayLabel ?? compactCombatantName(active.name, 8);
+  return isAlly ? `Turn: Ally ${display}` : `Turn: Enemy ${display}`;
+}
+
+function combatPaceStripLabel(data: CombatSceneData): string | null {
+  const pace = data.paceState;
+  if (!pace) return null;
+  if (pace.phase === "waiting_voice_end") return "Pace: waiting on voice";
+  if (pace.phase === "step_committed" || pace.phase === "narrating") return "Pace: narrating";
+  if (pace.phase === "next_step_ready") return "Pace: next step ready";
+  return "Pace: idle";
+}
+
 function buildHero(args: {
   mode: NarrativeBoardSceneModel["mode"];
   details: NarrativeBoardSceneModel["details"];
@@ -704,6 +722,27 @@ function buildHero(args: {
       value: metric.value,
       tone: metric.tone,
     })),
+  };
+}
+
+function buildModeStrip(args: {
+  mode: NarrativeBoardSceneModel["mode"];
+  details: NarrativeBoardSceneModel["details"];
+  contextSource: NarrativeBoardSceneModel["contextSource"];
+}): NarrativeBoardSceneModel["modeStrip"] {
+  if (args.mode !== "combat") {
+    return {
+      modeLabel: modeLabel(args.mode),
+      syncLabel: contextSourceLabel(args.contextSource),
+    };
+  }
+  const combat = args.details as CombatSceneData;
+  return {
+    modeLabel: modeLabel(args.mode),
+    syncLabel: contextSourceLabel(args.contextSource),
+    turnOwnerLabel: activeTurnOwnerLabel(combat),
+    paceLabel: combatPaceStripLabel(combat),
+    moveStateLabel: `Move ${combat.moveUsedThisTurn ? "used" : "ready"} (${combat.moveBudget})`,
   };
 }
 
@@ -738,7 +777,7 @@ function buildCombatFeed(data: CombatSceneData): NarrativeFeedItem[] {
   return data.recentDeltas
     .slice()
     .reverse()
-    .slice(0, 12)
+    .slice(0, 5)
     .map((delta) => ({
       id: delta.id,
       label: delta.label,
@@ -1000,6 +1039,7 @@ function buildTownScene(args: {
     metrics,
     legend,
     hero: buildHero({ mode: "town", details: data, metrics, contextSource: args.contextSource }),
+    modeStrip: buildModeStrip({ mode: "town", details: data, contextSource: args.contextSource }),
     cards,
     feed,
     hotspots,
@@ -1072,8 +1112,8 @@ function buildTravelScene(args: {
         danger: segment.danger,
       },
       visual: {
-        tier: "primary",
-        icon: "R",
+        tier: segment.danger >= 7 ? "primary" : segment.danger >= 4 ? "secondary" : "tertiary",
+        icon: segment.danger >= 7 ? "R!" : "R",
       },
     });
   });
@@ -1167,6 +1207,7 @@ function buildTravelScene(args: {
     metrics,
     legend,
     hero: buildHero({ mode: "travel", details: data, metrics, contextSource: args.contextSource }),
+    modeStrip: buildModeStrip({ mode: "travel", details: data, contextSource: args.contextSource }),
     cards,
     feed,
     hotspots,
@@ -1380,6 +1421,7 @@ function buildDungeonScene(args: {
     metrics,
     legend,
     hero: buildHero({ mode: "dungeon", details: data, metrics, contextSource: args.contextSource }),
+    modeStrip: buildModeStrip({ mode: "dungeon", details: data, contextSource: args.contextSource }),
     cards,
     feed,
     hotspots,
@@ -1423,11 +1465,31 @@ function buildCombatScene(args: {
   const maxY = Math.max(6, ...data.combatants.map((entry) => Math.floor(entry.y) + 1), ...data.blockedTiles.map((tile) => tile.y + 1));
   const gridCols = Math.min(14, Math.max(8, maxX + 1));
   const gridRows = Math.min(10, Math.max(6, maxY + 1));
+  const playerCombatant = data.playerCombatantId
+    ? data.combatants.find((entry) => entry.id === data.playerCombatantId) ?? null
+    : null;
+  const isPlayersTurn = Boolean(
+    playerCombatant
+      && data.activeTurnCombatantId
+      && data.activeTurnCombatantId === playerCombatant.id,
+  );
+  const moveCore = data.coreActions.find((entry) => entry.id === "basic_move") ?? null;
+  const attackCore = data.coreActions.find((entry) => entry.id === "basic_attack") ?? null;
+  const focusReason = !isPlayersTurn ? "Not your turn." : null;
 
   const hotspots: NarrativeHotspot[] = data.combatants.map((combatant) => {
     const x = Math.max(0, Math.min(gridCols - 1, Math.floor(combatant.x)));
     const y = Math.max(0, Math.min(gridRows - 1, Math.floor(combatant.y)));
     const hpPct = combatant.hp_max > 0 ? Math.max(0, Math.min(100, Math.round((combatant.hp / combatant.hp_max) * 100))) : 0;
+    const distanceToPlayer = playerCombatant
+      ? tileDistance({ x: Math.floor(playerCombatant.x), y: Math.floor(playerCombatant.y) }, { x, y })
+      : null;
+    const inRangeForAttack = distanceToPlayer !== null ? distanceToPlayer <= 1 : false;
+    const moveReason = moveCore?.reason ?? (isPlayersTurn ? null : "Not your turn.");
+    const attackReason = attackCore?.reason
+      ?? (isPlayersTurn
+        ? (inRangeForAttack ? null : "Out of range. Move first.")
+        : "Not your turn.");
     return {
       id: `combatant-${combatant.id}`,
       kind: "combatant",
@@ -1440,12 +1502,17 @@ function buildCombatScene(args: {
         combatantName: combatant.name,
         isFocused: data.focusedCombatantId === combatant.id,
         isEnemy: !isAllyCombatant(combatant),
+        moveDisabledReason: !isAllyCombatant(combatant) ? moveReason : null,
+        attackDisabledReason: !isAllyCombatant(combatant) ? attackReason : null,
+        focusDisabledReason: focusReason,
       }),
       meta: {
         combatant_id: combatant.id,
         entity_type: combatant.entity_type,
         hp_pct: hpPct,
         power: Math.floor(combatant.power),
+        distance_to_player: distanceToPlayer,
+        in_range_attack: inRangeForAttack,
         statuses: combatant.statuses,
       },
       visual: {
@@ -1503,6 +1570,7 @@ function buildCombatScene(args: {
     metrics,
     legend,
     hero: buildHero({ mode: "combat", details: data, metrics, contextSource: args.contextSource }),
+    modeStrip: buildModeStrip({ mode: "combat", details: data, contextSource: args.contextSource }),
     cards,
     feed: effectiveFeed,
     hotspots,

@@ -9,6 +9,14 @@ interface CombatSceneProps {
   onSelectMiss: (point: { x: number; y: number }) => void;
 }
 
+const MAX_FLOATING_DELTAS = 8;
+const MAX_DELTA_PER_TOKEN = 2;
+const MAX_MOVEMENT_TRAILS = 6;
+const DELTA_DURATION_MIN_MS = 650;
+const DELTA_DURATION_MAX_MS = 900;
+const MOVE_TRAIL_DURATION_MS = 900;
+const TURN_PULSE_CYCLE_MS = 2200;
+
 function toPercent(value: number, total: number): string {
   if (total <= 0) return "0%";
   return `${Math.max(0, Math.min(100, (value / total) * 100))}%`;
@@ -35,60 +43,125 @@ function cellCenterPercent(cell: number, total: number): number {
   return ((Math.floor(cell) + 0.5) / total) * 100;
 }
 
+function parseIsoMs(value: string): number {
+  const parsed = Number(new Date(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function stackOffset(index: number): { x: number; y: number } {
+  const presets: Array<{ x: number; y: number }> = [
+    { x: 0, y: 0 },
+    { x: 6, y: -6 },
+    { x: -6, y: 6 },
+    { x: 6, y: 6 },
+    { x: -6, y: -6 },
+    { x: 10, y: -2 },
+  ];
+  return presets[Math.max(0, Math.min(presets.length - 1, index))] ?? { x: 0, y: 0 };
+}
+
+function deltaTone(eventType: CombatSceneData["recentDeltas"][number]["eventType"]): string {
+  if (eventType === "damage" || eventType === "power_drain") return "text-rose-100";
+  if (eventType === "healed" || eventType === "power_gain") return "text-emerald-100";
+  if (eventType === "moved") return "text-sky-100";
+  return "text-amber-100";
+}
+
+function deltaDuration(eventType: CombatSceneData["recentDeltas"][number]["eventType"]): number {
+  if (eventType === "status_applied") return DELTA_DURATION_MAX_MS;
+  if (eventType === "moved") return DELTA_DURATION_MIN_MS;
+  return 780;
+}
+
 export function CombatScene(props: CombatSceneProps) {
   const details = props.scene.details as CombatSceneData;
   const cols = props.scene.grid.cols;
   const rows = props.scene.grid.rows;
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [reducedMotion, setReducedMotion] = useState(false);
 
   useEffect(() => {
-    const timer = window.setInterval(() => setNowMs(Date.now()), 350);
+    const timer = window.setInterval(() => setNowMs(Date.now()), 200);
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReducedMotion(media.matches);
+    sync();
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", sync);
+      return () => media.removeEventListener("change", sync);
+    }
+    media.onchange = sync;
+    return () => {
+      media.onchange = null;
+    };
+  }, []);
+
   const liveDeltaByCombatant = useMemo(() => {
-    const out = new Map<string, Array<{ id: string; label: string; tone: string }>>();
-    details.recentDeltas.forEach((delta) => {
-      if (!delta.targetCombatantId) return;
-      const createdAtMs = Number(new Date(delta.createdAt));
-      if (!Number.isFinite(createdAtMs)) return;
-      if (nowMs - createdAtMs > 5_800) return;
-      const tone = delta.eventType === "damage" || delta.eventType === "power_drain"
-        ? "text-rose-100"
-        : delta.eventType === "healed" || delta.eventType === "power_gain"
-          ? "text-emerald-100"
-          : delta.eventType === "moved"
-            ? "text-sky-100"
-          : "text-amber-100";
-      const next = out.get(delta.targetCombatantId) ?? [];
-      next.push({ id: delta.id, label: delta.label, tone });
-      out.set(delta.targetCombatantId, next.slice(-2));
+    const out = new Map<string, Array<{ id: string; label: string; tone: string; opacity: number; liftPx: number }>>();
+    if (reducedMotion) return out;
+
+    const active = details.recentDeltas
+      .map((delta) => {
+        if (!delta.targetCombatantId) return null;
+        const createdAtMs = parseIsoMs(delta.createdAt);
+        if (createdAtMs <= 0) return null;
+        const ageMs = nowMs - createdAtMs;
+        const durationMs = deltaDuration(delta.eventType);
+        if (ageMs < 0 || ageMs > durationMs) return null;
+        const fade = Math.max(0, Math.min(1, 1 - (ageMs / durationMs)));
+        return {
+          id: delta.id,
+          label: delta.label,
+          tone: deltaTone(delta.eventType),
+          targetCombatantId: delta.targetCombatantId,
+          createdAtMs,
+          opacity: fade,
+          liftPx: Math.round((1 - fade) * 10),
+        };
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+      .sort((a, b) => b.createdAtMs - a.createdAtMs)
+      .slice(0, MAX_FLOATING_DELTAS);
+
+    active.forEach((entry) => {
+      const next = out.get(entry.targetCombatantId) ?? [];
+      if (next.length >= MAX_DELTA_PER_TOKEN) return;
+      next.push({
+        id: entry.id,
+        label: entry.label,
+        tone: entry.tone,
+        opacity: entry.opacity,
+        liftPx: entry.liftPx,
+      });
+      out.set(entry.targetCombatantId, next);
     });
     return out;
-  }, [details.recentDeltas, nowMs]);
+  }, [details.recentDeltas, nowMs, reducedMotion]);
 
   const movedRecentlyByCombatant = useMemo(() => {
     const out = new Set<string>();
     details.recentDeltas.forEach((delta) => {
       if (delta.eventType !== "moved" || !delta.targetCombatantId) return;
-      const createdAtMs = Number(new Date(delta.createdAt));
-      if (!Number.isFinite(createdAtMs)) return;
-      if (nowMs - createdAtMs > 3_000) return;
-      out.add(delta.targetCombatantId);
+      const age = nowMs - parseIsoMs(delta.createdAt);
+      if (age >= 0 && age <= MOVE_TRAIL_DURATION_MS) {
+        out.add(delta.targetCombatantId);
+      }
     });
     return out;
   }, [details.recentDeltas, nowMs]);
 
   const movementTrails = useMemo(() => {
+    if (reducedMotion) return [];
     return details.recentDeltas
       .filter((delta) => delta.eventType === "moved" && delta.from && delta.to)
-      .filter((delta) => {
-        const createdAtMs = Number(new Date(delta.createdAt));
-        if (!Number.isFinite(createdAtMs)) return false;
-        return nowMs - createdAtMs <= 2_800;
-      })
-      .slice(-6)
       .map((delta) => {
+        const createdAtMs = parseIsoMs(delta.createdAt);
+        const age = nowMs - createdAtMs;
+        if (createdAtMs <= 0 || age < 0 || age > MOVE_TRAIL_DURATION_MS) return null;
         const from = delta.from!;
         const to = delta.to!;
         const x1 = cellCenterPercent(from.x, cols);
@@ -99,6 +172,7 @@ export function CombatScene(props: CombatSceneProps) {
         const dy = y2 - y1;
         const length = Math.max(0.6, Math.sqrt((dx * dx) + (dy * dy)));
         const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+        const opacity = Math.max(0, Math.min(1, 1 - (age / MOVE_TRAIL_DURATION_MS)));
         return {
           id: delta.id,
           x1,
@@ -107,9 +181,12 @@ export function CombatScene(props: CombatSceneProps) {
           y2,
           length,
           angle,
+          opacity,
         };
-      });
-  }, [cols, details.recentDeltas, nowMs, rows]);
+      })
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+      .slice(-MAX_MOVEMENT_TRAILS);
+  }, [cols, details.recentDeltas, nowMs, reducedMotion, rows]);
 
   const tileStackIndexByCombatant = useMemo(() => {
     const grouped = new Map<string, string[]>();
@@ -132,6 +209,7 @@ export function CombatScene(props: CombatSceneProps) {
       : null),
     [details.activeTurnCombatantId, details.combatants],
   );
+
   const turnCue = useMemo(() => {
     if (!activeTurnCombatant) {
       return {
@@ -158,15 +236,31 @@ export function CombatScene(props: CombatSceneProps) {
       tone: "border-rose-200/40 text-rose-100/90",
     };
   }, [activeTurnCombatant]);
-  const paceLabel = useMemo(() => {
+
+  const paceBadge = useMemo(() => {
     const pace = details.paceState;
     if (!pace) return null;
-    if (pace.phase === "waiting_voice_end") return "Waiting on DM voice";
-    if (pace.phase === "step_committed" || pace.phase === "narrating") return "Narrating step";
-    if (pace.phase === "next_step_ready") return "Next step ready";
-    return null;
+    if (pace.phase === "waiting_voice_end") {
+      return { label: "Pace: waiting on voice", tone: "border-cyan-200/35 text-cyan-100/90" };
+    }
+    if (pace.phase === "step_committed" || pace.phase === "narrating") {
+      return { label: "Pace: narrating", tone: "border-blue-200/35 text-blue-100/90" };
+    }
+    if (pace.phase === "next_step_ready") {
+      return { label: "Pace: next step ready", tone: "border-emerald-200/35 text-emerald-100/90" };
+    }
+    return { label: "Pace: idle", tone: "border-amber-200/35 text-amber-100/90" };
   }, [details.paceState]);
-  const turnPulsePercent = (nowMs % 2200) / 22;
+
+  const moveStateText = details.distanceToFocusedTarget !== null
+    ? `Range ${details.distanceToFocusedTarget} · Move ${details.moveBudget} · ${details.moveUsedThisTurn ? "Move used" : "Move ready"}`
+    : `Move ${details.moveBudget} · ${details.moveUsedThisTurn ? "Move used" : "Move ready"}`;
+
+  const turnPulsePercent = reducedMotion
+    ? 100
+    : ((nowMs % TURN_PULSE_CYCLE_MS) / TURN_PULSE_CYCLE_MS) * 100;
+
+  const compactFeed = details.stepResolutions.slice(-5).reverse();
 
   return (
     <BoardGridLayer
@@ -184,20 +278,24 @@ export function CombatScene(props: CombatSceneProps) {
       <div className={`pointer-events-none absolute right-2 top-2 rounded border bg-black/35 px-2 py-1 text-[10px] uppercase tracking-wide ${turnCue.tone}`}>
         {props.isActing ? "Action Committed" : turnCue.label}
       </div>
-      {paceLabel ? (
-        <div className="pointer-events-none absolute left-2 top-[30px] rounded border border-cyan-200/35 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-100/85">
-          {paceLabel}
+      {paceBadge ? (
+        <div
+          data-testid="combat-pace-badge"
+          className={`pointer-events-none absolute left-2 top-[30px] rounded border bg-black/40 px-2 py-1 text-[10px] uppercase tracking-wide ${paceBadge.tone}`}
+        >
+          {paceBadge.label}
         </div>
       ) : null}
-      {details.distanceToFocusedTarget !== null ? (
-        <div className="pointer-events-none absolute left-2 top-[56px] rounded border border-amber-200/35 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-100/85">
-          Range {details.distanceToFocusedTarget} · Move {details.moveBudget} · {details.moveUsedThisTurn ? "Move used" : "Move ready"}
-        </div>
-      ) : null}
+      <div
+        data-testid="combat-move-state"
+        className="pointer-events-none absolute left-2 top-[56px] rounded border border-amber-200/35 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-100/85"
+      >
+        {moveStateText}
+      </div>
       {activeTurnCombatant ? (
         <div className="pointer-events-none absolute right-2 top-[30px] h-1.5 w-[120px] overflow-hidden rounded-full border border-white/15 bg-black/45">
           <div
-            className="h-full rounded-full bg-[linear-gradient(90deg,rgba(244,114,182,0.8),rgba(56,189,248,0.85))]"
+            className="h-full rounded-full bg-[linear-gradient(90deg,rgba(244,114,182,0.8),rgba(56,189,248,0.85))] motion-reduce:transition-none"
             style={{ width: `${Math.max(8, Math.min(100, turnPulsePercent))}%` }}
           />
         </div>
@@ -217,6 +315,7 @@ export function CombatScene(props: CombatSceneProps) {
               left: `${trail.x1}%`,
               top: `${trail.y1}%`,
               width: `${trail.length}%`,
+              opacity: trail.opacity,
               transform: `translateY(-50%) rotate(${trail.angle}deg)`,
             }}
           />
@@ -225,6 +324,7 @@ export function CombatScene(props: CombatSceneProps) {
             style={{
               left: `${trail.x2}%`,
               top: `${trail.y2}%`,
+              opacity: trail.opacity,
             }}
           />
         </div>
@@ -256,7 +356,10 @@ export function CombatScene(props: CombatSceneProps) {
         const liveDeltas = liveDeltaByCombatant.get(combatant.id) ?? [];
         const movedRecently = movedRecentlyByCombatant.has(combatant.id);
         const stackIndex = tileStackIndexByCombatant.get(combatant.id) ?? 0;
-        const offsetPx = Math.min(3, stackIndex) * 5;
+        const offset = stackOffset(stackIndex);
+        const focusRing = focused ? "ring-2 ring-amber-300/95" : "";
+        const activeRing = active ? "shadow-[0_0_0_2px_rgba(125,211,252,0.82)]" : "";
+        const movedRing = movedRecently ? "shadow-[0_0_0_2px_rgba(125,211,252,0.55)]" : "";
 
         return (
           <button
@@ -265,16 +368,16 @@ export function CombatScene(props: CombatSceneProps) {
             className={[
               "absolute rounded-md border px-1 py-1 text-left text-[9px] text-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)]",
               tone,
-              focused ? "ring-2 ring-amber-300" : "",
-              active ? "ring-2 ring-white/80 animate-pulse" : "",
-              movedRecently ? "ring-2 ring-sky-200/80" : "",
+              focusRing,
+              activeRing,
+              movedRing,
             ].join(" ")}
             style={{
               left: toPercent(x, cols),
               top: toPercent(y, rows),
               width: toPercent(1, cols),
               minHeight: "30px",
-              transform: offsetPx > 0 ? `translate(${offsetPx}px, ${-offsetPx}px)` : undefined,
+              transform: offset.x === 0 && offset.y === 0 ? undefined : `translate(${offset.x}px, ${offset.y}px)`,
             }}
             onClick={(event) => {
               event.stopPropagation();
@@ -285,7 +388,14 @@ export function CombatScene(props: CombatSceneProps) {
             {liveDeltas.length > 0 ? (
               <div className="pointer-events-none absolute -top-2 left-1/2 max-w-[76px] -translate-x-1/2 text-center">
                 {liveDeltas.map((delta) => (
-                  <div key={`${combatant.id}:${delta.id}`} className={`truncate animate-[pulse_0.8s_ease-in-out_1] text-[8px] font-semibold ${delta.tone}`}>
+                  <div
+                    key={`${combatant.id}:${delta.id}`}
+                    className={`truncate text-[8px] font-semibold ${delta.tone}`}
+                    style={{
+                      opacity: delta.opacity,
+                      transform: `translateY(-${delta.liftPx}px)`,
+                    }}
+                  >
                     {delta.label}
                   </div>
                 ))}
@@ -305,9 +415,14 @@ export function CombatScene(props: CombatSceneProps) {
           </button>
         );
       })}
-      {details.stepResolutions.length > 0 ? (
-        <div className="pointer-events-none absolute bottom-2 left-2 max-w-[52%] rounded border border-amber-200/35 bg-black/45 p-1.5 text-[9px] text-amber-100/80">
-          {details.stepResolutions.slice(-2).map((entry) => (
+
+      {compactFeed.length > 0 ? (
+        <div
+          data-testid="combat-impact-feed"
+          className="pointer-events-none absolute bottom-2 left-2 max-w-[58%] rounded border border-amber-200/35 bg-black/45 p-1.5 text-[9px] text-amber-100/80"
+        >
+          <div className="mb-0.5 text-[8px] uppercase tracking-wide text-amber-100/70">Feed</div>
+          {compactFeed.map((entry) => (
             <div key={`step-resolution-${entry.id}`} className="truncate">
               {entry.actor}
               {entry.target ? ` -> ${entry.target}` : ""} · {entry.eventType.replace(/_/g, " ")}

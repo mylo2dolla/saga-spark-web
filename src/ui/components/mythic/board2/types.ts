@@ -102,6 +102,14 @@ export interface NarrativeHeroModel {
   chips: NarrativeHeroChip[];
 }
 
+export interface NarrativeModeStripModel {
+  modeLabel: string;
+  syncLabel: string;
+  turnOwnerLabel?: string;
+  paceLabel?: string | null;
+  moveStateLabel?: string | null;
+}
+
 export interface NarrativeFeedItem {
   id: string;
   label: string;
@@ -264,6 +272,7 @@ export interface NarrativeBoardSceneModel {
   metrics: NarrativeSceneMetric[];
   legend: NarrativeSceneLegendItem[];
   hero: NarrativeHeroModel;
+  modeStrip: NarrativeModeStripModel;
   cards: NarrativeDockCardModel[];
   feed: NarrativeFeedItem[];
   hotspots: NarrativeHotspot[];

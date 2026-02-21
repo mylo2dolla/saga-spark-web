@@ -14,6 +14,7 @@ test.describe("mythic right-panel popup interactions", () => {
     await expect(boardGrid).toBeVisible();
     await boardGrid.click({ position: { x: 24, y: 24 } });
     await expect(page.getByTestId("board-inspect-card")).toBeVisible();
+    await expect(page.getByTestId("board-grid-layer").first()).toBeVisible();
     await page.getByTestId("board-inspect-card").getByRole("button", { name: "Close" }).click();
     await expect(page.getByTestId("board-inspect-card")).toHaveCount(0);
 
@@ -21,9 +22,13 @@ test.describe("mythic right-panel popup interactions", () => {
     if (await hotspot.count()) {
       await hotspot.click();
       await expect(page.getByTestId("board-inspect-card")).toBeVisible();
+      await expect(page.getByTestId("board-grid-layer").first()).toBeVisible();
       await page.getByTestId("board-inspect-card").getByRole("button", { name: "Close" }).click();
       await expect(page.getByTestId("board-inspect-card")).toHaveCount(0);
     }
+
+    const warningCount = await page.getByTestId("board-warning-line").count();
+    expect(warningCount).toBeLessThanOrEqual(1);
   });
 
   test("combat rail stays board-first and exposes core actions", async ({ page }) => {

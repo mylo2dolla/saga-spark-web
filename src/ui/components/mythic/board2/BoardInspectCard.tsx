@@ -18,6 +18,16 @@ function compactText(value: string, max = 120): string {
   return clean.length > max ? `${clean.slice(0, max).trim()}...` : clean;
 }
 
+function actionOrder(action: MythicUiAction): number {
+  const payload = action.payload ?? {};
+  const quickCastSkill = typeof payload.quick_cast_skill_id === "string" ? payload.quick_cast_skill_id : null;
+  if (quickCastSkill === "basic_move" && /move here/i.test(action.label)) return 0;
+  if (quickCastSkill === "basic_move") return 1;
+  if (quickCastSkill && quickCastSkill !== "basic_move") return 2;
+  if (/attack|cast|skill/i.test(action.label)) return 2;
+  return 3;
+}
+
 function formatMeta(value: unknown): string {
   if (value === null || value === undefined) return "-";
   if (typeof value === "string") return value;
@@ -35,6 +45,20 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
   const target = props.target;
   if (!target) return null;
 
+  const orderedActions = target.actions
+    .slice()
+    .sort((a, b) => {
+      const orderDelta = actionOrder(a) - actionOrder(b);
+      if (orderDelta !== 0) return orderDelta;
+      return a.label.localeCompare(b.label);
+    });
+
+  const distanceToPlayer = typeof target.meta?.distance_to_player === "number"
+    ? Math.max(0, Math.floor(target.meta.distance_to_player))
+    : null;
+  const inRangeAttack = typeof target.meta?.in_range_attack === "boolean"
+    ? target.meta.in_range_attack
+    : null;
   const metaRows = Object.entries(target.meta ?? {})
     .filter(([key]) => !key.startsWith("_"))
     .slice(0, 10);
@@ -63,23 +87,32 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
       ) : null}
 
       {target.description ? <div className="mt-2 text-xs text-amber-100/80">{target.description}</div> : null}
+      {distanceToPlayer !== null || inRangeAttack !== null ? (
+        <div className="mt-2 rounded border border-amber-200/25 bg-black/20 px-2 py-1 text-[11px] text-amber-100/80">
+          {distanceToPlayer !== null ? `Distance ${distanceToPlayer}` : "Distance unknown"}
+          {inRangeAttack !== null ? ` · ${inRangeAttack ? "In range" : "Out of range"}` : ""}
+        </div>
+      ) : null}
 
       <div className="mt-3 space-y-2">
         <div className="text-[11px] uppercase tracking-wide text-amber-100/65">Confirm Action</div>
-        {target.actions.length === 0 ? (
+        {orderedActions.length === 0 ? (
           <div className="text-xs text-amber-100/65">No direct actions on this tile.</div>
         ) : (
-          target.actions.map((action) => (
+          orderedActions.map((action) => (
             <Button
               key={`${target.id}:${action.id}`}
               size="sm"
               variant="secondary"
-              disabled={props.isBusy}
+              disabled={props.isBusy || Boolean(action.disabled)}
               className="h-auto w-full justify-start py-2 text-left"
               onClick={() => props.onAction(action)}
             >
               <span className="flex w-full flex-col items-start gap-1">
                 <span>{action.label}</span>
+                {action.disabled && action.disabledReason ? (
+                  <span className="text-[10px] text-rose-100/80">{compactText(action.disabledReason, 90)}</span>
+                ) : null}
                 {action.prompt ? (
                   <span className="text-[10px] text-amber-100/70">{compactText(action.prompt)}</span>
                 ) : null}

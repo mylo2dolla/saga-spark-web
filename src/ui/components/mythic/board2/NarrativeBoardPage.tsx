@@ -110,6 +110,10 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
 
   const combatDetails = props.scene.mode === "combat" ? (props.scene.details as CombatSceneData) : null;
   const popupModel = props.scene.popup;
+  const syncActive = props.isBusy || props.isStateRefreshing;
+  const inspectBottomOffsetClass = combatDetails
+    ? (skillsExpanded ? "bottom-[248px]" : "bottom-[132px]")
+    : "bottom-2";
 
   return (
     <div data-testid="narrative-board-page" className="relative h-full min-h-0 overflow-hidden rounded-lg border border-amber-200/20 bg-black/10">
@@ -133,20 +137,35 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
         }}
       />
 
-      <div className="pointer-events-none absolute left-2 top-2 z-20 flex items-center gap-2">
-        <div className="rounded border border-amber-200/35 bg-black/45 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-100/85">
-          {props.scene.mode}
-        </div>
-        {props.isBusy || props.isStateRefreshing ? (
-          <div className="inline-flex items-center gap-1 rounded border border-amber-200/30 bg-black/45 px-2 py-1 text-[10px] text-amber-100/85">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            <span>sync</span>
-          </div>
+      <div
+        data-testid="board-mode-strip"
+        className="pointer-events-none absolute left-2 right-2 top-2 z-20 flex flex-wrap items-center gap-1 rounded border border-amber-200/35 bg-black/55 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-100/85"
+      >
+        <span className="rounded border border-amber-200/40 bg-black/40 px-1.5 py-0.5">{props.scene.modeStrip.modeLabel}</span>
+        <span className="rounded border border-amber-200/35 bg-black/35 px-1.5 py-0.5">
+          {syncActive ? "Syncing" : props.scene.modeStrip.syncLabel}
+        </span>
+        {syncActive ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+        {props.scene.modeStrip.turnOwnerLabel ? (
+          <span className="rounded border border-amber-200/35 bg-black/35 px-1.5 py-0.5">{props.scene.modeStrip.turnOwnerLabel}</span>
+        ) : null}
+        {props.scene.modeStrip.paceLabel ? (
+          <span className="rounded border border-cyan-200/35 bg-black/35 px-1.5 py-0.5 text-cyan-100/85">
+            {props.scene.modeStrip.paceLabel}
+          </span>
+        ) : null}
+        {props.scene.modeStrip.moveStateLabel ? (
+          <span className="rounded border border-emerald-200/35 bg-black/35 px-1.5 py-0.5 text-emerald-100/85">
+            {props.scene.modeStrip.moveStateLabel}
+          </span>
         ) : null}
       </div>
 
       {warning ? (
-        <div className="pointer-events-none absolute right-2 top-2 z-20 max-w-[70%] rounded border border-amber-200/35 bg-black/55 px-2 py-1 text-[11px] text-amber-100/85">
+        <div
+          data-testid="board-warning-line"
+          className="pointer-events-none absolute left-2 right-2 top-[44px] z-20 truncate rounded border border-amber-200/35 bg-black/55 px-2 py-1 text-[11px] text-amber-100/85"
+        >
           {warning}
         </div>
       ) : null}
@@ -156,7 +175,14 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
           data-testid="board-combat-rail"
           className="absolute inset-x-2 bottom-2 z-20 rounded-lg border border-red-200/30 bg-[linear-gradient(170deg,rgba(44,17,18,0.94),rgba(8,10,16,0.96))] p-2 shadow-xl"
         >
-          <div className="mb-1.5 text-[10px] uppercase tracking-wide text-red-100/75">Core Actions</div>
+          <div className="mb-1.5 flex flex-wrap items-center gap-1 text-[10px] uppercase tracking-wide text-red-100/75">
+            <span>Core Actions</span>
+            {props.scene.modeStrip.moveStateLabel ? (
+              <span className="rounded border border-red-100/30 bg-black/35 px-1.5 py-0.5 text-[9px] text-red-100/80">
+                {props.scene.modeStrip.moveStateLabel}
+              </span>
+            ) : null}
+          </div>
           <div className="grid gap-1 sm:grid-cols-4">
             {combatDetails.coreActions.map((action) => (
               <Button
@@ -211,7 +237,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
       ) : null}
 
       {inspectTarget ? (
-        <div data-testid="board-inspect-popup" className={`absolute inset-x-2 z-30 ${combatDetails ? "bottom-36" : "bottom-2"}`}>
+        <div data-testid="board-inspect-popup" className={`absolute inset-x-2 z-30 ${inspectBottomOffsetClass}`}>
           <BoardInspectCard
             target={inspectTarget}
             title={popupModel.title}
@@ -232,7 +258,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
                     key={`inspect-context-${action.id}`}
                     size="sm"
                     variant="secondary"
-                    disabled={props.isBusy}
+                    disabled={props.isBusy || Boolean(action.disabled)}
                     className="h-7 text-[11px]"
                     onClick={() => {
                       props.onAction(action, "console_action");

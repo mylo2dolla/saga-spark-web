@@ -32,6 +32,12 @@ export function DungeonScene(props: DungeonSceneProps) {
   const cols = props.scene.grid.cols;
   const rows = props.scene.grid.rows;
   const centers = buildRoomCenterMap(props.scene);
+  const featureHotspots = props.scene.hotspots.filter((hotspot) => (
+    hotspot.kind === "trap"
+    || hotspot.kind === "chest"
+    || hotspot.kind === "altar"
+    || hotspot.kind === "puzzle"
+  ));
   const edges = props.scene.hotspots
     .filter((hotspot) => hotspot.kind === "door")
     .map((hotspot) => {
@@ -66,13 +72,43 @@ export function DungeonScene(props: DungeonSceneProps) {
                 y1={toView(from.y, rows)}
                 x2={toView(to.x, cols)}
                 y2={toView(to.y, rows)}
-                stroke="rgba(52,211,153,0.55)"
-                strokeWidth="0.8"
+                stroke="rgba(52,211,153,0.8)"
+                strokeWidth="1.15"
               />
             );
           })}
         </svg>
       ) : null}
+      {featureHotspots.map((hotspot) => {
+        const x = ((hotspot.rect.x + hotspot.rect.w / 2) / cols) * 100;
+        const y = ((hotspot.rect.y + hotspot.rect.h / 2) / rows) * 100;
+        const tone = hotspot.kind === "trap"
+          ? "border-rose-100/50 bg-rose-300/18 text-rose-50"
+          : hotspot.kind === "chest"
+            ? "border-amber-100/50 bg-amber-300/18 text-amber-50"
+            : hotspot.kind === "altar"
+              ? "border-violet-100/50 bg-violet-300/18 text-violet-50"
+              : "border-sky-100/50 bg-sky-300/18 text-sky-50";
+        const icon = hotspot.kind === "trap"
+          ? "TR"
+          : hotspot.kind === "chest"
+            ? "LT"
+            : hotspot.kind === "altar"
+              ? "AL"
+              : "PZ";
+        return (
+          <div
+            key={`dungeon-feature-${hotspot.id}`}
+            className={`pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded border px-1 py-0.5 text-[9px] font-semibold ${tone}`}
+            style={{
+              left: `${x}%`,
+              top: `${y}%`,
+            }}
+          >
+            {icon}
+          </div>
+        );
+      })}
 
       <HotspotOverlay
         hotspots={props.scene.hotspots}
