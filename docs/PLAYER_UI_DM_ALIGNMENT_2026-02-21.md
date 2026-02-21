@@ -50,12 +50,25 @@ Supabase remains auth/db only. Gameplay runtime remains VM-hosted via `VITE_MYTH
 - `npm run smoke:prod`: PASS
 - `npx playwright test tests/right-panel-cards.spec.ts`: SKIPPED (requires `PLAYWRIGHT_MYTHIC_CAMPAIGN_ID`)
 
-## Smoke Request IDs (Board Auth Smoke)
-- `mythic-create-campaign`: `fb13442e-2189-4426-a0b7-52c48fab40c5`
-- `mythic-create-character`: `90fdb9fa-2768-4c56-bd9e-12414fc4f4ef`
-- `mythic-dm-context`: `bec4f0f4-c99e-45f7-8656-509b96789017`
-- `mythic-dungeon-master`: `cc6ffd5a-26c8-4c30-b7bb-f87502323d3c`
-- `mythic-runtime-transition:travel`: `7598ca53-7f0b-4ce0-9f79-e5bde01aa4af`
-- `mythic-runtime-transition:dungeon`: `98920edb-fb8e-4729-ae55-1b2fd9a6d256`
-- `mythic-runtime-transition:town`: `528953e3-2cf6-4537-9b3d-338feadd320f`
-- `mythic-combat-start`: `6c34338b-b948-4f7f-96b6-e063add7027b`
+## Production Deploy
+- Commit: `c5896db`
+- Frontend (Vercel):
+  - URL: `https://saga-spark-bc66oxquf-mylo2dollas-projects.vercel.app`
+  - Alias: `https://mythweaver.online`
+  - Deployment ID: `dpl_EUyynKgB4y6eLynQULDmLxyihDeH`
+  - Deployed UTC: `2026-02-21T01:05:13Z`
+- VM runtime:
+  - Host: `api.mythweaver.online`
+  - Path: `/opt/mythic-api`
+  - Deployed UTC: `2026-02-21T01:06:28Z`
+  - Runtime marker SHA (`mythic-dungeon-master.ts`): `7492dd229b3b7ee028c1558bd4b447020394e2e1ddf13f98de0d75f2071aa7cf`
+
+## Smoke Request IDs (Board Auth Smoke, Post-Deploy)
+- `mythic-create-campaign`: `aca95f7a-25ab-490c-b63a-f665bac3fcae`
+- `mythic-create-character`: `757aacae-afa6-4650-a078-aa61334bc195`
+- `mythic-dm-context`: `153e33a0-79a4-4a20-9f38-680f4824d2ee`
+- `mythic-dungeon-master`: `d64e762d-40c5-47b3-b6e3-27c8216cdb2e`
+- `mythic-runtime-transition:travel`: `7af49449-483a-4bff-ae1e-ea15b6c6c463`
+- `mythic-runtime-transition:dungeon`: `8342d94d-493d-4557-af3a-c2ca497d354f`
+- `mythic-runtime-transition:town`: `59aa0d95-ff0e-4d25-a7f0-cb1d27b52a60`
+- `mythic-combat-start`: `4ea70376-7586-4c31-90a7-36f826562d8d`
