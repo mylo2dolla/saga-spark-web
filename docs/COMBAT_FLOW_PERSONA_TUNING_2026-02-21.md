@@ -39,12 +39,25 @@ Supabase remains auth/db only. Gameplay runtime remains VM-hosted.
 - `npm run smoke:board`: PASS
 - `npm run smoke:prod`: PASS
 
-## Smoke Request IDs
-- `mythic-create-campaign`: `10d2fc5f-0b18-4bcc-b5d6-e813643be4ff`
-- `mythic-create-character`: `21115c86-e19f-40d5-8284-0e3a04e26cd0`
-- `mythic-dm-context`: `a588f02a-1b77-4d53-b617-6f6b16211da5`
-- `mythic-dungeon-master`: `7c851f9c-202c-4cfb-b49a-7d236daa54f1`
-- `mythic-runtime-transition:travel`: `5c29a9fc-eb39-4d72-8d62-4ac466cb7162`
-- `mythic-runtime-transition:dungeon`: `d0f0e660-cf2e-4467-92fc-43f0ef30e698`
-- `mythic-runtime-transition:town`: `abf41aea-a24f-4afb-b808-d442e719fbed`
-- `mythic-combat-start`: `569ba792-32e0-4cc2-a2ef-d86bb02d63b4`
+## Production Deploy
+- Commit: `78a6199`
+- Frontend (Vercel):
+  - URL: `https://saga-spark-7yng5r35d-mylo2dollas-projects.vercel.app`
+  - Alias: `https://mythweaver.online`
+  - Deployment ID: `dpl_6TfSMqEDSAqb5ds8hbn82d58EbQh`
+  - Created: `Sat Feb 21 2026 07:09:28 GMT-0700 (MST)`
+- VM runtime:
+  - Host: `api.mythweaver.online`
+  - Path: `/opt/mythic-api`
+  - Deploy method: `docker compose up -d --build --force-recreate`
+  - Health check: `GET /healthz` success
+
+## Smoke Request IDs (Post-Deploy)
+- `mythic-create-campaign`: `cbeff8dc-0e91-46ea-8ce7-04c97d787ea8`
+- `mythic-create-character`: `0df1fcea-4c98-461b-bd83-dee1fdfc3609`
+- `mythic-dm-context`: `b7600973-90ca-4ca9-876a-45cdb919a6df`
+- `mythic-dungeon-master`: `f82856c7-2fe4-4c6f-bf31-05385fae7f6e`
+- `mythic-runtime-transition:travel`: `8df93c5a-50a6-410f-956f-7a8255e42d08`
+- `mythic-runtime-transition:dungeon`: `6219f0d7-4925-433c-a16a-0eec5a032606`
+- `mythic-runtime-transition:town`: `1257de5e-01cd-483d-957d-f6b1137602b2`
+- `mythic-combat-start`: `b0a5efe8-791a-4913-bc85-dccb0108ca0a`
