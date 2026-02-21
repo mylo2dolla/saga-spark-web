@@ -25,4 +25,18 @@ test.describe("mythic right-panel popup interactions", () => {
       await expect(page.getByTestId("board-inspect-card")).toHaveCount(0);
     }
   });
+
+  test("combat rail stays board-first and exposes core actions", async ({ page }) => {
+    await page.goto(`/mythic/${campaignId}`);
+    await expect(page).toHaveURL(new RegExp(`/mythic/${campaignId}$`));
+    await expect(page.getByTestId("narrative-board-page")).toBeVisible({ timeout: 30_000 });
+
+    const combatRail = page.getByTestId("board-combat-rail");
+    if (await combatRail.count()) {
+      await expect(combatRail).toContainText(/Core Actions/i);
+      await expect(combatRail).toContainText(/Attack/i);
+      await expect(combatRail).toContainText(/Defend/i);
+      await expect(combatRail).toContainText(/Recover MP/i);
+    }
+  });
 });

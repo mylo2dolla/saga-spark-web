@@ -19,6 +19,14 @@ export interface MythicCombatantRow {
   player_id: string | null;
   character_id: string | null;
   name: string;
+  lvl: number;
+  offense: number;
+  defense: number;
+  control: number;
+  support: number;
+  mobility: number;
+  utility: number;
+  weapon_power: number;
   x: number;
   y: number;
   hp: number;
@@ -49,6 +57,14 @@ export interface MythicActionEventRow {
   created_at: string;
 }
 
+export interface MythicCombatStateSnapshot {
+  session: MythicCombatSessionRow | null;
+  combatants: MythicCombatantRow[];
+  turnOrder: MythicTurnOrderRow[];
+  events: MythicActionEventRow[];
+  activeTurnCombatantId: string | null;
+}
+
 export function useMythicCombatState(campaignId: string | undefined, combatSessionId: string | null | undefined) {
   const [session, setSession] = useState<MythicCombatSessionRow | null>(null);
   const [combatants, setCombatants] = useState<MythicCombatantRow[]>([]);
@@ -67,7 +83,7 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
     return row?.combatant_id ?? null;
   }, [session, turnOrder]);
 
-  const fetchState = useCallback(async () => {
+  const fetchState = useCallback(async (): Promise<MythicCombatStateSnapshot | null> => {
     if (!campaignId || !combatSessionId) {
       if (isMountedRef.current) {
         setSession(null);
@@ -79,10 +95,10 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
         setIsRefreshing(false);
       }
       hasLoadedOnceRef.current = false;
-      return;
+      return null;
     }
 
-    if (inFlightRef.current) return;
+    if (inFlightRef.current) return null;
     try {
       inFlightRef.current = true;
       if (isMountedRef.current) {
@@ -130,15 +146,32 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
       if (tErr) throw tErr;
       if (eErr) throw eErr;
 
+      const sessionRow = (s ?? null) as unknown as MythicCombatSessionRow | null;
+      const combatantRows = (c ?? []) as unknown as MythicCombatantRow[];
+      const turnRows = (t ?? []) as unknown as MythicTurnOrderRow[];
+      const eventRows = (e ?? []) as unknown as MythicActionEventRow[];
+      const activeTurnCombatantId = sessionRow
+        ? turnRows.find((row) => row.turn_index === sessionRow.current_turn_index)?.combatant_id ?? null
+        : null;
+
       if (isMountedRef.current) {
-        setSession((s ?? null) as unknown as MythicCombatSessionRow | null);
-        setCombatants((c ?? []) as unknown as MythicCombatantRow[]);
-        setTurnOrder((t ?? []) as unknown as MythicTurnOrderRow[]);
-        setEvents((e ?? []) as unknown as MythicActionEventRow[]);
+        setSession(sessionRow);
+        setCombatants(combatantRows);
+        setTurnOrder(turnRows);
+        setEvents(eventRows);
       }
+
+      return {
+        session: sessionRow,
+        combatants: combatantRows,
+        turnOrder: turnRows,
+        events: eventRows,
+        activeTurnCombatantId,
+      };
     } catch (e) {
       const msg = formatError(e, "Failed to load combat state");
       if (isMountedRef.current) setError(msg);
+      return null;
     } finally {
       inFlightRef.current = false;
       hasLoadedOnceRef.current = true;

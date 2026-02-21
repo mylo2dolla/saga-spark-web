@@ -177,6 +177,8 @@ export interface NarrativeCombatCoreAction {
 
 export interface NarrativeCombatHudEntity {
   id: string;
+  displayLabel: string;
+  fullName: string;
   name: string;
   entityType: MythicCombatantRow["entity_type"];
   hp: number;
@@ -201,6 +203,30 @@ export interface NarrativeCombatDelta {
   to?: { x: number; y: number } | null;
 }
 
+export interface CombatStepResolutionModel {
+  id: string;
+  actor: string;
+  target: string | null;
+  eventType: string;
+  amount: number | null;
+  status: string | null;
+  movedTo: { x: number; y: number } | null;
+}
+
+export interface CombatPaceStateModel {
+  phase: "idle" | "step_committed" | "narrating" | "waiting_voice_end" | "next_step_ready";
+  waitingOnVoice: boolean;
+  waitingOnTick: boolean;
+  stepIndex: number;
+}
+
+export interface CombatRewardSummaryModel {
+  xpGained: number;
+  loot: string[];
+  endedAt: string;
+  victory: boolean;
+}
+
 export interface CombatSceneData {
   session: MythicCombatSessionRow | null;
   status: string;
@@ -215,6 +241,14 @@ export interface CombatSceneData {
   blockedTiles: Array<{ x: number; y: number }>;
   playerHud: NarrativeCombatHudEntity | null;
   focusedHud: NarrativeCombatHudEntity | null;
+  displayNames: Record<string, { displayLabel: string; fullName: string }>;
+  stepResolutions: CombatStepResolutionModel[];
+  paceState: CombatPaceStateModel | null;
+  rewardSummary: CombatRewardSummaryModel | null;
+  moveBudget: number;
+  moveUsedThisTurn: boolean;
+  distanceToFocusedTarget: number | null;
+  movementTiles: Array<{ x: number; y: number }>;
   coreActions: NarrativeCombatCoreAction[];
   quickCast: NarrativeCombatQuickCast[];
 }
@@ -261,6 +295,8 @@ export interface NarrativeBoardCombatInput {
   playerCombatantId: string | null;
   focusedCombatantId: string | null;
   quickCastAvailability: SkillAvailabilityEntry[];
+  paceState?: CombatPaceStateModel | null;
+  rewardSummary?: CombatRewardSummaryModel | null;
 }
 
 export interface NarrativeBoardAdapterInput {

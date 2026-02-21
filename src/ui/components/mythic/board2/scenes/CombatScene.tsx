@@ -158,26 +158,15 @@ export function CombatScene(props: CombatSceneProps) {
       tone: "border-rose-200/40 text-rose-100/90",
     };
   }, [activeTurnCombatant]);
+  const paceLabel = useMemo(() => {
+    const pace = details.paceState;
+    if (!pace) return null;
+    if (pace.phase === "waiting_voice_end") return "Waiting on DM voice";
+    if (pace.phase === "step_committed" || pace.phase === "narrating") return "Narrating step";
+    if (pace.phase === "next_step_ready") return "Next step ready";
+    return null;
+  }, [details.paceState]);
   const turnPulsePercent = (nowMs % 2200) / 22;
-
-  const compactNameById = useMemo(() => {
-    const baseCounts = new Map<string, number>();
-    details.combatants.forEach((combatant) => {
-      const base = compactName(combatant.name, 8);
-      baseCounts.set(base, (baseCounts.get(base) ?? 0) + 1);
-    });
-    const out = new Map<string, string>();
-    details.combatants.forEach((combatant) => {
-      const base = compactName(combatant.name, 8);
-      if ((baseCounts.get(base) ?? 0) <= 1) {
-        out.set(combatant.id, base);
-        return;
-      }
-      const suffix = combatant.id.replace(/[^a-z0-9]/gi, "").slice(-2).toUpperCase();
-      out.set(combatant.id, `${compactName(combatant.name, 6)} ${suffix || "X"}`);
-    });
-    return out;
-  }, [details.combatants]);
 
   return (
     <BoardGridLayer
@@ -195,12 +184,28 @@ export function CombatScene(props: CombatSceneProps) {
       <div className={`pointer-events-none absolute right-2 top-2 rounded border bg-black/35 px-2 py-1 text-[10px] uppercase tracking-wide ${turnCue.tone}`}>
         {props.isActing ? "Action Committed" : turnCue.label}
       </div>
+      {paceLabel ? (
+        <div className="pointer-events-none absolute left-2 top-[30px] rounded border border-cyan-200/35 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-100/85">
+          {paceLabel}
+        </div>
+      ) : null}
+      {details.distanceToFocusedTarget !== null ? (
+        <div className="pointer-events-none absolute left-2 top-[56px] rounded border border-amber-200/35 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-100/85">
+          Range {details.distanceToFocusedTarget} · Move {details.moveBudget} · {details.moveUsedThisTurn ? "Move used" : "Move ready"}
+        </div>
+      ) : null}
       {activeTurnCombatant ? (
         <div className="pointer-events-none absolute right-2 top-[30px] h-1.5 w-[120px] overflow-hidden rounded-full border border-white/15 bg-black/45">
           <div
             className="h-full rounded-full bg-[linear-gradient(90deg,rgba(244,114,182,0.8),rgba(56,189,248,0.85))]"
             style={{ width: `${Math.max(8, Math.min(100, turnPulsePercent))}%` }}
           />
+        </div>
+      ) : null}
+      {details.rewardSummary ? (
+        <div className="pointer-events-none absolute left-2 right-2 top-[84px] rounded border border-emerald-200/35 bg-emerald-500/15 px-2 py-1 text-[10px] text-emerald-100">
+          {details.rewardSummary.victory ? "Victory" : "Setback"} · +{details.rewardSummary.xpGained} XP
+          {details.rewardSummary.loot.length > 0 ? ` · Loot: ${details.rewardSummary.loot.slice(0, 2).join(", ")}` : ""}
         </div>
       ) : null}
 
@@ -225,6 +230,19 @@ export function CombatScene(props: CombatSceneProps) {
         </div>
       ))}
 
+      {details.movementTiles.map((tile) => (
+        <div
+          key={`movement-tile-${tile.x}-${tile.y}`}
+          className="pointer-events-none absolute border border-cyan-200/45 bg-cyan-400/16"
+          style={{
+            left: toPercent(tile.x, cols),
+            top: toPercent(tile.y, rows),
+            width: toPercent(1, cols),
+            height: toPercent(1, rows),
+          }}
+        />
+      ))}
+
       {details.combatants.map((combatant) => {
         const x = Math.max(0, Math.min(cols - 1, Math.floor(combatant.x)));
         const y = Math.max(0, Math.min(rows - 1, Math.floor(combatant.y)));
@@ -242,7 +260,7 @@ export function CombatScene(props: CombatSceneProps) {
 
         return (
           <button
-            key={combatant.id}
+            key={`${combatant.id}:${details.session?.current_turn_index ?? 0}`}
             type="button"
             className={[
               "absolute rounded-md border px-1 py-1 text-left text-[9px] text-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)]",
@@ -273,7 +291,7 @@ export function CombatScene(props: CombatSceneProps) {
                 ))}
               </div>
             ) : null}
-            <div className="truncate font-semibold leading-tight">{compactNameById.get(combatant.id) ?? compactName(combatant.name)}</div>
+            <div className="truncate font-semibold leading-tight">{details.displayNames[combatant.id]?.displayLabel ?? compactName(combatant.name)}</div>
             <div className="mt-0.5 h-1 w-full rounded bg-black/35">
               <div className="h-full rounded bg-emerald-300" style={{ width: `${hp}%` }} />
             </div>
@@ -287,6 +305,17 @@ export function CombatScene(props: CombatSceneProps) {
           </button>
         );
       })}
+      {details.stepResolutions.length > 0 ? (
+        <div className="pointer-events-none absolute bottom-2 left-2 max-w-[52%] rounded border border-amber-200/35 bg-black/45 p-1.5 text-[9px] text-amber-100/80">
+          {details.stepResolutions.slice(-2).map((entry) => (
+            <div key={`step-resolution-${entry.id}`} className="truncate">
+              {entry.actor}
+              {entry.target ? ` -> ${entry.target}` : ""} · {entry.eventType.replace(/_/g, " ")}
+              {entry.amount !== null ? ` ${entry.amount}` : ""}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </BoardGridLayer>
   );
 }

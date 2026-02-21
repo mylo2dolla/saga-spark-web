@@ -150,13 +150,20 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
                 maxLength={48}
               />
             </label>
-            <div className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/80">
-              <div>Level {props.model.level}</div>
-              <div>XP {props.model.xp} / next {props.model.xpToNext}</div>
-              <div>Unspent points {props.model.unspentPoints}</div>
-              <div>Coins {props.model.coins}</div>
+              <div className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/80">
+                <div>Level {props.model.level}</div>
+                <div>XP {props.model.xp} / next {props.model.xpToNext}</div>
+                <div>Unspent points {props.model.unspentPoints}</div>
+                <div>Coins {props.model.coins}</div>
+                {props.model.lastCombatReward ? (
+                  <div className="mt-1 text-[11px] text-amber-100/75">
+                    Last combat: {props.model.lastCombatReward.victory ? "Victory" : "Defeat"} ·
+                    {" "}+{props.model.lastCombatReward.xpGained} XP
+                    {props.model.lastCombatReward.loot.length > 0 ? ` · ${props.model.lastCombatReward.loot.join(", ")}` : ""}
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
 
           <label className="mt-2 block space-y-1 text-xs text-amber-100/80">
             <span>Origin Note</span>
@@ -212,6 +219,20 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
             <div>Focused target {props.model.combat.focusedTargetName ?? "none"}</div>
             <div>Mode {props.model.boardMode}</div>
           </div>
+          {props.model.lastCombatReward ? (
+            <div className="mt-2 rounded border border-red-200/25 bg-black/20 p-2 text-xs text-red-100/85">
+              <div className="font-medium">
+                {props.model.lastCombatReward.victory ? "Last Combat Victory" : "Last Combat Result"}
+              </div>
+              <div className="mt-1">
+                XP +{props.model.lastCombatReward.xpGained}
+                {props.model.lastCombatReward.loot.length > 0 ? ` · Loot: ${props.model.lastCombatReward.loot.join(", ")}` : ""}
+              </div>
+              <div className="mt-1 text-[11px] text-red-100/70">
+                {new Date(props.model.lastCombatReward.endedAt).toLocaleString()}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="rounded-lg border border-amber-200/25 bg-amber-100/5 p-3">

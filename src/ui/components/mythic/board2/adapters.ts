@@ -256,9 +256,13 @@ function toHudEntity(args: {
   combatant: CombatSceneData["combatants"][number];
   focusedId: string | null;
   activeTurnId: string | null;
+  displayLabel: string;
+  fullName: string;
 }): CombatSceneData["playerHud"] {
   return {
     id: args.combatant.id,
+    displayLabel: args.displayLabel,
+    fullName: args.fullName,
     name: args.combatant.name,
     entityType: args.combatant.entity_type,
     hp: Math.max(0, Math.floor(args.combatant.hp)),
@@ -270,6 +274,121 @@ function toHudEntity(args: {
     isFocused: args.focusedId === args.combatant.id,
     isActiveTurn: args.activeTurnId === args.combatant.id,
   };
+}
+
+function moveBudgetFromMobility(mobility: number): number {
+  return Math.max(2, Math.min(6, Math.floor(Number(mobility) / 20) + 2));
+}
+
+function tileDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.abs(Math.floor(a.x) - Math.floor(b.x)) + Math.abs(Math.floor(a.y) - Math.floor(b.y));
+}
+
+function compactCombatantName(name: string, max = 8): string {
+  const clean = name.trim();
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, Math.max(3, max - 1))}…`;
+}
+
+function buildCombatDisplayNames(combatants: CombatSceneData["combatants"]): Record<string, { displayLabel: string; fullName: string }> {
+  const baseCounts = new Map<string, number>();
+  combatants.forEach((combatant) => {
+    const base = compactCombatantName(combatant.name, 8);
+    baseCounts.set(base, (baseCounts.get(base) ?? 0) + 1);
+  });
+  const out: Record<string, { displayLabel: string; fullName: string }> = {};
+  combatants.forEach((combatant) => {
+    const fullName = combatant.name.trim() || "Unit";
+    const base = compactCombatantName(fullName, 8);
+    const displayLabel = (baseCounts.get(base) ?? 0) <= 1
+      ? base
+      : `${compactCombatantName(fullName, 6)} ${combatant.id.replace(/[^a-z0-9]/gi, "").slice(-2).toUpperCase() || "X"}`;
+    out[combatant.id] = { displayLabel, fullName };
+  });
+  return out;
+}
+
+function buildRecentStepResolutions(args: {
+  events: NarrativeBoardAdapterInput["combat"]["events"];
+  displayNames: Record<string, { displayLabel: string; fullName: string }>;
+}): CombatSceneData["stepResolutions"] {
+  return args.events
+    .slice(-18)
+    .map((event) => {
+      const payload = asRecord(event.payload);
+      const actorId = asString(payload.source_combatant_id)
+        || asString(payload.actor_combatant_id)
+        || asString(event.actor_combatant_id)
+        || null;
+      const targetId = asString(payload.target_combatant_id) || null;
+      const actor = actorId ? (args.displayNames[actorId]?.fullName ?? actorId) : "Unknown";
+      const target = targetId ? (args.displayNames[targetId]?.fullName ?? targetId) : null;
+      const amount = Math.max(
+        0,
+        Math.floor(
+          asNumber(payload.damage_to_hp, Number.NaN)
+          || asNumber(payload.final_damage, Number.NaN)
+          || asNumber(payload.amount, Number.NaN)
+          || 0,
+        ),
+      );
+      const statusPayload = asRecord(payload.status);
+      const status = asString(statusPayload.id) || asString(payload.status_id) || null;
+      const movedTo = parseGridPoint(payload.to);
+      return {
+        id: event.id,
+        actor,
+        target,
+        eventType: event.event_type,
+        amount: Number.isFinite(amount) && amount > 0 ? amount : null,
+        status,
+        movedTo,
+      };
+    })
+    .filter((entry) => entry.eventType !== "skill_used" && entry.eventType !== "turn_start" && entry.eventType !== "turn_end")
+    .slice(-8);
+}
+
+function reachableMovementTiles(args: {
+  origin: { x: number; y: number };
+  budget: number;
+  cols: number;
+  rows: number;
+  blockedTiles: Array<{ x: number; y: number }>;
+  occupiedTiles: Array<{ x: number; y: number }>;
+}): Array<{ x: number; y: number }> {
+  const budget = Math.max(0, Math.floor(args.budget));
+  if (budget <= 0) return [];
+
+  const blocked = new Set(args.blockedTiles.map((tile) => `${tile.x},${tile.y}`));
+  const occupied = new Set(args.occupiedTiles.map((tile) => `${tile.x},${tile.y}`));
+  occupied.delete(`${Math.floor(args.origin.x)},${Math.floor(args.origin.y)}`);
+  const seen = new Set<string>();
+  const queue: Array<{ x: number; y: number; depth: number }> = [{ x: args.origin.x, y: args.origin.y, depth: 0 }];
+  const out: Array<{ x: number; y: number }> = [];
+
+  const push = (x: number, y: number, depth: number) => {
+    const key = `${x},${y}`;
+    if (seen.has(key)) return;
+    if (x < 0 || y < 0 || x >= args.cols || y >= args.rows) return;
+    if (blocked.has(key) || occupied.has(key)) return;
+    seen.add(key);
+    queue.push({ x, y, depth });
+    out.push({ x, y });
+  };
+
+  seen.add(`${Math.floor(args.origin.x)},${Math.floor(args.origin.y)}`);
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) break;
+    if (current.depth >= budget) continue;
+    const nextDepth = current.depth + 1;
+    push(current.x + 1, current.y, nextDepth);
+    push(current.x - 1, current.y, nextDepth);
+    push(current.x, current.y + 1, nextDepth);
+    push(current.x, current.y - 1, nextDepth);
+  }
+  return out;
 }
 
 function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][number]) {
@@ -370,12 +489,12 @@ function parseCombatData(args: {
     : null;
   const fallbackEnemy = enemies.find((entry) => entry.is_alive) ?? null;
   const focusedHudCombatant = focusedCombatant ?? fallbackEnemy ?? null;
+  const displayNames = buildCombatDisplayNames(combatants);
   const isPlayersTurn = Boolean(
     playerCombatant
     && args.combatInput.activeTurnCombatantId
     && playerCombatant.id === args.combatInput.activeTurnCombatantId,
   );
-  const hasLiveEnemy = enemies.some((entry) => entry.is_alive);
   const currentTurnIndex = Math.max(0, Math.floor(Number(args.combatInput.session?.current_turn_index ?? 0)));
   const sessionId = typeof args.combatInput.session?.id === "string" ? args.combatInput.session.id : "";
   const moveTurnMarker = `${sessionId}:${currentTurnIndex}`;
@@ -396,6 +515,40 @@ function parseCombatData(args: {
         : null;
   const moveReason = coreReason ?? (moveAlreadySpent ? "Move already used this turn." : null);
   const status = asString(args.combatInput.session?.status, "idle");
+  const hasLiveEnemy = enemies.some((entry) => entry.is_alive);
+  const moveBudget = moveBudgetFromMobility(playerCombatant?.mobility ?? 0);
+  const inRangeEnemy = playerCombatant
+    ? enemies.some((entry) => entry.is_alive && tileDistance(playerCombatant, entry) <= moveBudget)
+    : false;
+  const attackReason = coreReason
+    ?? (!hasLiveEnemy
+      ? "No enemies alive."
+      : !inRangeEnemy
+        ? "Target out of range. Move first."
+        : null);
+  const blockedTiles = parseBlockedTiles(args.boardState);
+  const movementTiles = playerCombatant
+    ? reachableMovementTiles({
+        origin: { x: Math.floor(playerCombatant.x), y: Math.floor(playerCombatant.y) },
+        budget: moveBudget,
+        cols: 14,
+        rows: 10,
+        blockedTiles,
+        occupiedTiles: combatants
+          .filter((entry) => entry.is_alive)
+          .map((entry) => ({ x: Math.floor(entry.x), y: Math.floor(entry.y) })),
+      })
+    : [];
+  const distanceToFocusedTarget = playerCombatant && focusedHudCombatant
+    ? tileDistance(playerCombatant, focusedHudCombatant)
+    : null;
+  const stepResolutions = buildRecentStepResolutions({
+    events: args.combatInput.events,
+    displayNames,
+  });
+  const paceState = args.combatInput.paceState ?? null;
+  const rewardSummary = args.combatInput.rewardSummary ?? null;
+
   return {
     session: args.combatInput.session,
     status,
@@ -411,12 +564,14 @@ function parseCombatData(args: {
     activeTurnCombatantId: args.combatInput.activeTurnCombatantId,
     playerCombatantId: args.combatInput.playerCombatantId,
     focusedCombatantId: args.combatInput.focusedCombatantId,
-    blockedTiles: parseBlockedTiles(args.boardState),
+    blockedTiles,
     playerHud: playerCombatant
       ? toHudEntity({
           combatant: playerCombatant,
           focusedId: args.combatInput.focusedCombatantId,
           activeTurnId: args.combatInput.activeTurnCombatantId,
+          displayLabel: displayNames[playerCombatant.id]?.displayLabel ?? playerCombatant.name,
+          fullName: displayNames[playerCombatant.id]?.fullName ?? playerCombatant.name,
         })
       : null,
     focusedHud: focusedHudCombatant
@@ -424,8 +579,18 @@ function parseCombatData(args: {
           combatant: focusedHudCombatant,
           focusedId: args.combatInput.focusedCombatantId,
           activeTurnId: args.combatInput.activeTurnCombatantId,
+          displayLabel: displayNames[focusedHudCombatant.id]?.displayLabel ?? focusedHudCombatant.name,
+          fullName: displayNames[focusedHudCombatant.id]?.fullName ?? focusedHudCombatant.name,
         })
       : null,
+    displayNames,
+    stepResolutions,
+    paceState,
+    rewardSummary,
+    moveBudget,
+    moveUsedThisTurn: moveAlreadySpent,
+    distanceToFocusedTarget,
+    movementTiles: isPlayersTurn ? movementTiles : [],
     coreActions: [
       {
         id: "basic_move",
@@ -438,8 +603,8 @@ function parseCombatData(args: {
         id: "basic_attack",
         label: "Attack",
         targeting: "single",
-        usableNow: coreReason === null && hasLiveEnemy,
-        reason: coreReason ?? (hasLiveEnemy ? null : "No enemies alive."),
+        usableNow: attackReason === null,
+        reason: attackReason,
       },
       {
         id: "basic_defend",

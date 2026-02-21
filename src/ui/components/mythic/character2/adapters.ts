@@ -10,6 +10,7 @@ import type {
 import type {
   CharacterCompanionSummary,
   CharacterProfileDraft,
+  CharacterCombatRewardSummary,
   CharacterSheetViewModel,
   CharacterSkillSummary,
   CharacterStatLens,
@@ -29,6 +30,7 @@ interface BuildCharacterSheetViewModelArgs {
   activeTurnCombatantId: string | null;
   focusedCombatantId: string | null;
   combatStatus: string | null;
+  rewardSummary?: CharacterCombatRewardSummary | null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -334,6 +336,7 @@ export function buildCharacterSheetViewModel(args: BuildCharacterSheetViewModelA
         .map(([key, value]) => [key, Math.floor(Number(value ?? 0))] as const)
         .filter(([, value]) => Number.isFinite(value) && value !== 0),
     ),
+    lastCombatReward: args.rewardSummary ?? null,
     questThreads: args.questThreads.slice(0, 40),
   };
 }

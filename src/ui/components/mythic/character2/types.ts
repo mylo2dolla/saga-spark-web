@@ -83,6 +83,13 @@ export interface CharacterCombatSummary {
   armor: number;
 }
 
+export interface CharacterCombatRewardSummary {
+  xpGained: number;
+  loot: string[];
+  endedAt: string;
+  victory: boolean;
+}
+
 export interface CharacterSheetViewModel {
   characterId: string;
   boardMode: MythicBoardType;
@@ -104,6 +111,7 @@ export interface CharacterSheetViewModel {
   companionNotes: CharacterCompanionSummary[];
   equipmentSlots: CharacterEquipmentSlotGroup[];
   equipmentTotals: Record<string, number>;
+  lastCombatReward: CharacterCombatRewardSummary | null;
   questThreads: MythicQuestThreadRow[];
 }
 

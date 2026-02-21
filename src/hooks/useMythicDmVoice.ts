@@ -42,8 +42,13 @@ export function useMythicDmVoice(campaignId?: string) {
   const [settings, setSettings] = useState<MythicDmVoiceSettings>(() => loadSettings());
   const [blocked, setBlocked] = useState(false);
   const [hasPreparedAudio, setHasPreparedAudio] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [utteranceId, setUtteranceId] = useState<string | null>(null);
+  const [speechStartedAt, setSpeechStartedAt] = useState<number | null>(null);
+  const [speechEndedAt, setSpeechEndedAt] = useState<number | null>(null);
   const [lastError, setLastError] = useState<{ message: string; code?: string | null; requestId?: string | null } | null>(null);
   const lastSpokenIdRef = useRef<string | null>(null);
+  const activeUtteranceIdRef = useRef<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUrlRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -90,18 +95,40 @@ export function useMythicDmVoice(campaignId?: string) {
     setHasPreparedAudio(false);
   }, []);
 
+  const markSpeechStart = useCallback((nextUtteranceId: string) => {
+    activeUtteranceIdRef.current = nextUtteranceId;
+    setIsSpeaking(true);
+    setUtteranceId(nextUtteranceId);
+    setSpeechStartedAt(Date.now());
+    setSpeechEndedAt(null);
+  }, []);
+
+  const markSpeechEnd = useCallback((endedUtteranceId?: string | null) => {
+    if (
+      endedUtteranceId
+      && activeUtteranceIdRef.current
+      && activeUtteranceIdRef.current !== endedUtteranceId
+    ) {
+      return;
+    }
+    activeUtteranceIdRef.current = null;
+    setIsSpeaking(false);
+    setSpeechEndedAt(Date.now());
+  }, []);
+
   const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
 
     clearPreparedAudio();
+    markSpeechEnd(null);
     setBlocked(false);
     setLastError(null);
 
     if (browserTtsSupported && typeof window !== "undefined") {
       window.speechSynthesis.cancel();
     }
-  }, [browserTtsSupported, clearPreparedAudio]);
+  }, [browserTtsSupported, clearPreparedAudio, markSpeechEnd]);
 
   useEffect(() => {
     return () => {
@@ -143,29 +170,38 @@ export function useMythicDmVoice(campaignId?: string) {
     if (!cleaned) return false;
     if (!settings.enabled && !options?.force) return false;
     if (!options?.force && messageId && messageId === lastSpokenIdRef.current) return false;
+    const effectiveMessageId = messageId ?? crypto.randomUUID();
 
     const utterance = new SpeechSynthesisUtterance(cleaned);
     utterance.rate = settings.rate;
     utterance.pitch = settings.pitch;
     utterance.volume = settings.volume;
-    utterance.onstart = () => setBlocked(false);
+    utterance.onstart = () => {
+      setBlocked(false);
+      markSpeechStart(effectiveMessageId);
+    };
+    utterance.onend = () => {
+      markSpeechEnd(effectiveMessageId);
+    };
     utterance.onerror = (event) => {
       const err = String((event as unknown as { error?: unknown }).error ?? "");
       if (err === "not-allowed" || err === "service-not-allowed" || err === "audio-busy" || err === "synthesis-unavailable") {
         setBlocked(true);
       }
+      markSpeechEnd(effectiveMessageId);
     };
 
     try {
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
-      if (messageId) lastSpokenIdRef.current = messageId;
+      lastSpokenIdRef.current = effectiveMessageId;
       return true;
     } catch {
       setBlocked(true);
+      markSpeechEnd(effectiveMessageId);
       return false;
     }
-  }, [browserTtsSupported, settings.enabled, settings.pitch, settings.rate, settings.volume]);
+  }, [browserTtsSupported, markSpeechEnd, markSpeechStart, settings.enabled, settings.pitch, settings.rate, settings.volume]);
 
   const speak = useCallback((text: string, messageId: string | null, options?: { force?: boolean }) => {
     const cleaned = text.trim();
@@ -232,6 +268,9 @@ export function useMythicDmVoice(campaignId?: string) {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         audio.volume = settings.volume;
+        audio.onplay = () => {
+          markSpeechStart(effectiveMessageId);
+        };
         audio.onended = () => {
           try {
             URL.revokeObjectURL(url);
@@ -241,6 +280,7 @@ export function useMythicDmVoice(campaignId?: string) {
           if (audioUrlRef.current === url) audioUrlRef.current = null;
           if (audioRef.current === audio) audioRef.current = null;
           setHasPreparedAudio(false);
+          markSpeechEnd(effectiveMessageId);
         };
         audio.onerror = () => {
           try {
@@ -253,6 +293,7 @@ export function useMythicDmVoice(campaignId?: string) {
           setHasPreparedAudio(false);
           setLastError({ message: "Audio playback failed.", code: "playback_error", requestId: null });
           setBlocked(false);
+          markSpeechEnd(effectiveMessageId);
         };
         audioRef.current = audio;
         audioUrlRef.current = url;
@@ -267,18 +308,20 @@ export function useMythicDmVoice(campaignId?: string) {
         } catch {
           // Autoplay policy block. Keep prepared audio so "Speak Latest" can resume.
           setBlocked(true);
+          markSpeechEnd(effectiveMessageId);
         }
       } catch (error) {
         if (controller.signal.aborted) return;
         const message = error instanceof Error ? error.message : "TTS request failed";
         setLastError({ message, code: "tts_request_failed", requestId: null });
         setBlocked(false);
+        markSpeechEnd(effectiveMessageId);
       }
     })();
 
-    if (messageId) lastSpokenIdRef.current = messageId;
+    lastSpokenIdRef.current = effectiveMessageId;
     return true;
-  }, [audioSupported, browserTtsSupported, campaignId, clearPreparedAudio, settings.enabled, settings.voice, settings.volume, speakBrowser, supported]);
+  }, [audioSupported, browserTtsSupported, campaignId, clearPreparedAudio, markSpeechEnd, markSpeechStart, settings.enabled, settings.voice, settings.volume, speakBrowser, supported]);
 
   const resumeLatest = useCallback(async (): Promise<boolean> => {
     const audio = audioRef.current;
@@ -310,6 +353,10 @@ export function useMythicDmVoice(campaignId?: string) {
     supported,
     blocked,
     hasPreparedAudio,
+    isSpeaking,
+    utteranceId,
+    speechStartedAt,
+    speechEndedAt,
     lastError,
     speak,
     resumeLatest,

@@ -38,6 +38,7 @@ import { SettingsPanel, type MythicRuntimeSettings } from "@/ui/components/mythi
 import { actionSignature as boardActionSignature } from "@/ui/components/mythic/board2/actionBuilders";
 import { buildNarrativeBoardScene } from "@/ui/components/mythic/board2/adapters";
 import { NarrativeBoardPage } from "@/ui/components/mythic/board2/NarrativeBoardPage";
+import type { CombatPaceStateModel, CombatRewardSummaryModel } from "@/ui/components/mythic/board2/types";
 import { CharacterSheetSurface } from "@/ui/components/mythic/character2/CharacterSheetSurface";
 import { buildCharacterProfilePatch, buildCharacterSheetViewModel } from "@/ui/components/mythic/character2/adapters";
 import type {
@@ -182,7 +183,8 @@ function profileDraftFromCharacter(character: { name: string; class_json: Record
 
 const MAX_CONSOLE_ACTIONS = 6;
 const DM_ACTION_TIMEOUT_MS = 110_000;
-const AUTO_TICK_MAX_STEPS = 3;
+const AUTO_TICK_MAX_STEPS = 1;
+const AUTO_TICK_VOICE_DEADLOCK_MS = 12_000;
 const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative update)$/i;
 const LOW_SIGNAL_NARRATION_PROMPT = /^(continue|proceed|advance|next(\s+(step|move))?|refresh(\s+state)?|narrate|describe)(\b|[\s.,])/i;
 const screenLogger = createLogger("mythic-game-screen");
@@ -194,6 +196,8 @@ type UnifiedActionSource =
   | "combat_skill"
   | "combat_quick_cast"
   | "combat_enemy_tick";
+
+type CombatAutoPacePhase = "idle" | "step_committed" | "narrating" | "waiting_voice_end" | "next_step_ready";
 
 type BoardBaseActionSource = "assistant" | "runtime" | "companion" | "fallback";
 
@@ -565,9 +569,15 @@ export default function MythicGameScreen() {
   const [isPartyCommandBusy, setIsPartyCommandBusy] = useState(false);
   const [partyCommandError, setPartyCommandError] = useState<string | null>(null);
   const [isAdvancingTurn, setIsAdvancingTurn] = useState(false);
+  const [combatAutoPacePhase, setCombatAutoPacePhase] = useState<CombatAutoPacePhase>("idle");
+  const [combatAutoStepIndex, setCombatAutoStepIndex] = useState(0);
+  const [combatRewardSummary, setCombatRewardSummary] = useState<CombatRewardSummaryModel | null>(null);
   const [isNarratedActionBusy, setIsNarratedActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const autoTickKeyRef = useRef<string | null>(null);
+  const voiceGateDeadlineRef = useRef<number | null>(null);
+  const voiceGateBaselineEndedAtRef = useRef<number | null>(null);
+  const lastRewardCombatEndEventIdRef = useRef<string | null>(null);
   const narratedActionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lastPlayerInputRef = useRef<string>("");
   const [activePanel, setActivePanel] = useState<MythicPanelTab>("status");
@@ -833,8 +843,24 @@ export default function MythicGameScreen() {
     activeTurnCombatant &&
     activeTurnCombatant.entity_type !== "player",
   );
+  const shouldGateNpcStepOnVoice = dmVoice.enabled && dmVoice.supported && !dmVoice.blocked;
+  const combatPaceModel = useMemo<CombatPaceStateModel>(() => ({
+    phase: combatAutoPacePhase,
+    waitingOnVoice: combatAutoPacePhase === "waiting_voice_end" || combatAutoPacePhase === "narrating",
+    waitingOnTick: isAdvancingTurn || combat.isTicking,
+    stepIndex: combatAutoStepIndex,
+  }), [combat.isTicking, combatAutoPacePhase, combatAutoStepIndex, isAdvancingTurn]);
   const tickCombat = combat.tickCombat;
   const refetchCombatState = combatState.refetch;
+
+  useEffect(() => {
+    if (board?.board_type === "combat") return;
+    setCombatAutoPacePhase("idle");
+    setCombatAutoStepIndex(0);
+    voiceGateDeadlineRef.current = null;
+    voiceGateBaselineEndedAtRef.current = null;
+    autoTickKeyRef.current = null;
+  }, [board?.board_type]);
 
   const latestAssistantParsed = useMemo(() => {
     for (let index = mythicDm.messages.length - 1; index >= 0; index -= 1) {
@@ -946,6 +972,52 @@ export default function MythicGameScreen() {
       };
     });
   }, [boardStateRecord.companion_checkins, companionCommandById, companionPresenceById]);
+
+  useEffect(() => {
+    if (!Array.isArray(combatState.events) || combatState.events.length === 0) return;
+    const latestCombatEnd = [...combatState.events]
+      .reverse()
+      .find((event) => event.event_type === "combat_end");
+    if (!latestCombatEnd) return;
+    if (lastRewardCombatEndEventIdRef.current === latestCombatEnd.id) return;
+    lastRewardCombatEndEventIdRef.current = latestCombatEnd.id;
+
+    const sameTurnEvents = combatState.events.filter((event) => event.turn_index === latestCombatEnd.turn_index);
+    const xpGained = sameTurnEvents
+      .filter((event) => event.event_type === "xp_gain")
+      .reduce((total, event) => {
+        const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+        const amount = Number(payload.amount ?? 0);
+        return total + (Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0);
+      }, 0);
+    const loot = sameTurnEvents
+      .filter((event) => event.event_type === "loot_drop")
+      .map((event) => {
+        const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+        if (typeof payload.name === "string" && payload.name.trim().length > 0) return payload.name.trim();
+        if (typeof payload.item_id === "string" && payload.item_id.trim().length > 0) return payload.item_id.trim();
+        return "Loot";
+      })
+      .slice(0, 4);
+    const combatEndPayload = latestCombatEnd.payload && typeof latestCombatEnd.payload === "object"
+      ? latestCombatEnd.payload as Record<string, unknown>
+      : {};
+    const victory = combatEndPayload.won === true;
+    const endedAt = latestCombatEnd.created_at || new Date().toISOString();
+    setCombatRewardSummary({
+      xpGained,
+      loot,
+      endedAt,
+      victory,
+    });
+    if (characterSheetOpen) {
+      setCharacterSheetSection("combat");
+    }
+    void refetchCharacter();
+    toast.success(
+      `${victory ? "Combat won" : "Combat resolved"}${xpGained > 0 ? ` · +${xpGained} XP` : ""}${loot.length > 0 ? ` · ${loot.join(", ")}` : ""}`,
+    );
+  }, [characterSheetOpen, combatState.events, refetchCharacter]);
 
   const latestAssistantMessage = useMemo(() => {
     for (let index = mythicDm.messages.length - 1; index >= 0; index -= 1) {
@@ -1161,6 +1233,12 @@ export default function MythicGameScreen() {
       prompt?: string;
       error?: string | null;
     }>;
+    onAfterExecute?: (result: {
+      stateChanges: string[];
+      context: Record<string, unknown>;
+      executionError: string | null;
+    }) => void;
+    onBeforeNarration?: () => void;
   }) => {
     if (!campaignId) return Promise.resolve();
     const normalizedPrompt = args.prompt.trim().toLowerCase().replace(/\s+/g, " ");
@@ -1209,7 +1287,7 @@ export default function MythicGameScreen() {
             state_changes: stateChanges,
             execution_error: executionError,
             authoritative_mutation_applied: context.authoritative_mutation_applied === true,
-            combat_autostart_triggered: context.combat_autostart_triggered === true,
+              combat_autostart_triggered: context.combat_autostart_triggered === true,
           });
         }
       } catch (error) {
@@ -1222,13 +1300,31 @@ export default function MythicGameScreen() {
         });
       }
 
-      const narrationPrompt = prompt.length > 0
-        ? prompt
-        : executionError
-          ? `I attempted ${args.intent}, but it failed: ${executionError}. Narrate the failure against committed state.`
+      try {
+        await Promise.all([refetchCombatState(), refetch()]);
+      } catch (refreshError) {
+        screenLogger.warn("mythic.action.pre_narration_refresh_failed", {
+          action_trace_id: actionTraceId,
+          source: args.source,
+          intent: args.intent,
+          refresh_error: refreshError instanceof Error ? refreshError.message : String(refreshError),
+        });
+      }
+
+      args.onAfterExecute?.({
+        stateChanges,
+        context,
+        executionError,
+      });
+
+      const narrationPrompt = executionError
+        ? `I attempted ${args.intent}, but it failed: ${executionError}. Narrate the failure against committed state only.`
+        : prompt.length > 0
+          ? prompt
           : `I execute ${args.intent}. Narrate outcome from committed Mythic state.`;
 
       try {
+        args.onBeforeNarration?.();
         await mythicDm.sendMessage(narrationPrompt, {
           appendUser: args.appendUser !== false,
           timeoutMs: DM_ACTION_TIMEOUT_MS,
@@ -1295,7 +1391,7 @@ export default function MythicGameScreen() {
         queuedNarrationKeysRef.current.delete(dedupeKey);
       }
     });
-  }, [campaignId, enqueueNarratedAction, mythicDm, refreshAllState]);
+  }, [campaignId, enqueueNarratedAction, mythicDm, refetch, refetchCombatState, refreshAllState]);
 
   const handlePlayerInput = useCallback(async (message: string) => {
     if (!campaignId) return;
@@ -1333,7 +1429,7 @@ export default function MythicGameScreen() {
             useSkill: combat.useSkill,
             combatSessionId,
             refetchBoard: refetch,
-            refetchCombat: refetchCombatState,
+            refetchCombat: async () => { await refetchCombatState(); },
             refetchCharacter,
             openMenu: (panel: PlayerCommandPanel) => {
               if (panel === "commands" || panel === "settings") {
@@ -1678,13 +1774,42 @@ export default function MythicGameScreen() {
               };
             }
             await Promise.all([refetchCombatState(), refetch()]);
+            const combatEventBatch = (skillResult.eventBatch ?? [])
+              .filter((event) => (
+                event.event_type === "damage"
+                || event.event_type === "healed"
+                || event.event_type === "moved"
+                || event.event_type === "status_applied"
+                || event.event_type === "power_gain"
+                || event.event_type === "power_drain"
+                || event.event_type === "death"
+                || event.event_type === "combat_end"
+                || event.event_type === "xp_gain"
+                || event.event_type === "loot_drop"
+              ))
+              .slice(-8);
             return {
-              stateChanges: [`Quick-cast ${skillName} resolved.`],
+              stateChanges: combatEventBatch.length > 0
+                ? combatEventBatch.slice(0, 3).map((event) => {
+                    if (event.event_type === "damage") return `Quick-cast ${skillName} dealt damage.`;
+                    if (event.event_type === "healed") return `Quick-cast ${skillName} restored health.`;
+                    if (event.event_type === "moved") return `Quick-cast ${skillName} repositioned the actor.`;
+                    if (event.event_type === "status_applied") return `Quick-cast ${skillName} applied status pressure.`;
+                    if (event.event_type === "power_gain") return `Quick-cast ${skillName} restored MP.`;
+                    if (event.event_type === "power_drain") return `Quick-cast ${skillName} drained MP.`;
+                    if (event.event_type === "death") return "Quick-cast secured a takedown.";
+                    if (event.event_type === "combat_end") return "Quick-cast ended the fight.";
+                    if (event.event_type === "xp_gain") return "XP awarded.";
+                    if (event.event_type === "loot_drop") return "Loot dropped.";
+                    return `Quick-cast ${skillName} resolved.`;
+                  })
+                : [`Quick-cast ${skillName} resolved.`],
               context: {
                 quick_cast_skill_id: quickCastSkillId,
                 target,
-                  combat_ended: skillResult.ended,
-                  authoritative_mutation_applied: true,
+                combat_ended: skillResult.ended,
+                authoritative_mutation_applied: true,
+                combat_event_batch: combatEventBatch,
               },
             };
           }
@@ -1836,6 +1961,7 @@ export default function MythicGameScreen() {
   const advanceNpcTurn = useCallback(async () => {
     if (!campaignId || !combatSessionId || !canAdvanceNpcTurn) return;
     setIsAdvancingTurn(true);
+    let tickSucceeded = false;
     try {
       const activeName = activeTurnCombatant?.name ?? "enemy";
       const beforeTurnIndex = Number(combatState.session?.current_turn_index ?? 0);
@@ -1848,10 +1974,10 @@ export default function MythicGameScreen() {
           combat_session_id: combatSessionId,
           current_turn_index: beforeTurnIndex,
           active_turn_combatant_id: activeTurnCombatant?.id ?? null,
-          auto_tick_batch: true,
+          auto_tick_batch: false,
           max_steps: AUTO_TICK_MAX_STEPS,
         },
-        prompt: `${activeName} resolves non-player turns from committed combat events. Keep it tight: movement, damage, status shifts, and immediate pressure.`,
+        prompt: `${activeName} resolves one non-player step from committed combat events. Narrate only concrete movement, damage, status shifts, and immediate pressure.`,
         execute: async () => {
           const tickResult = await tickCombat({
             campaignId,
@@ -1868,6 +1994,7 @@ export default function MythicGameScreen() {
               error: tickResult.error || "Enemy turn failed to resolve.",
             };
           }
+          tickSucceeded = true;
           await Promise.all([refetchCombatState(), refetch()]);
           const afterTurnIndex = Number(
             (tickResult.data as { current_turn_index?: unknown } | undefined)?.current_turn_index
@@ -1875,21 +2002,80 @@ export default function MythicGameScreen() {
           );
           const turnAdvance = Math.max(0, afterTurnIndex - beforeTurnIndex);
           const requiresPlayerAction = (tickResult.data as { requires_player_action?: unknown } | undefined)?.requires_player_action === true;
+          const combatEventBatch = (tickResult.eventBatch ?? [])
+            .filter((event) => (
+              event.event_type === "damage"
+              || event.event_type === "healed"
+              || event.event_type === "moved"
+              || event.event_type === "status_applied"
+              || event.event_type === "power_gain"
+              || event.event_type === "power_drain"
+              || event.event_type === "death"
+              || event.event_type === "combat_end"
+              || event.event_type === "xp_gain"
+              || event.event_type === "loot_drop"
+            ))
+            .slice(-8);
+          const stateChanges = combatEventBatch.length > 0
+            ? combatEventBatch.slice(0, 3).map((event) => {
+                const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : {};
+                const amount = Number(payload.damage_to_hp ?? payload.amount ?? 0);
+                if (event.event_type === "damage") return `Damage ${Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0}.`;
+                if (event.event_type === "healed") return `Heal ${Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0}.`;
+                if (event.event_type === "moved") return "Reposition committed.";
+                if (event.event_type === "status_applied") return "Status effect applied.";
+                if (event.event_type === "power_gain") return `MP gained ${Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0}.`;
+                if (event.event_type === "power_drain") return `MP drained ${Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0}.`;
+                if (event.event_type === "death") return "A combatant dropped.";
+                if (event.event_type === "combat_end") return "Combat resolved.";
+                if (event.event_type === "xp_gain") return `XP awarded ${Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : 0}.`;
+                if (event.event_type === "loot_drop") return "Loot awarded.";
+                return "Combat state advanced.";
+              })
+            : [
+                turnAdvance > 0
+                  ? "Combat step committed."
+                  : "Combat state advanced from authoritative tick.",
+              ];
           return {
-            stateChanges: [
-              turnAdvance > 0
-                ? `Resolved ${turnAdvance} non-player turn step${turnAdvance === 1 ? "" : "s"}.`
-                : "Resolved non-player turn step from authoritative combat tick.",
-            ],
+            stateChanges,
             context: {
               combat_tick: tickResult.data ?? null,
-              auto_tick_batch: true,
+              combat_event_batch: combatEventBatch,
+              auto_tick_batch: false,
               turn_advance: turnAdvance,
               requires_player_action: requiresPlayerAction,
             },
           };
         },
+        onAfterExecute: ({ executionError }) => {
+          if (!executionError && tickSucceeded) {
+            setCombatAutoPacePhase("step_committed");
+          }
+        },
+        onBeforeNarration: () => {
+          if (tickSucceeded) {
+            setCombatAutoPacePhase("narrating");
+          }
+        },
       });
+      if (!tickSucceeded) {
+        setCombatAutoPacePhase("idle");
+        autoTickKeyRef.current = null;
+        voiceGateDeadlineRef.current = null;
+        voiceGateBaselineEndedAtRef.current = null;
+        return;
+      }
+      setCombatAutoStepIndex((prev) => prev + 1);
+      if (shouldGateNpcStepOnVoice) {
+        setCombatAutoPacePhase("waiting_voice_end");
+        voiceGateDeadlineRef.current = Date.now() + AUTO_TICK_VOICE_DEADLOCK_MS;
+        voiceGateBaselineEndedAtRef.current = dmVoice.speechEndedAt;
+      } else {
+        setCombatAutoPacePhase("next_step_ready");
+        voiceGateDeadlineRef.current = null;
+        voiceGateBaselineEndedAtRef.current = null;
+      }
     } finally {
       setIsAdvancingTurn(false);
     }
@@ -1900,9 +2086,11 @@ export default function MythicGameScreen() {
     canAdvanceNpcTurn,
     combatSessionId,
     combatState.session?.current_turn_index,
+    dmVoice.speechEndedAt,
     refetch,
     refetchCombatState,
     runNarratedAction,
+    shouldGateNpcStepOnVoice,
     tickCombat,
   ]);
 
@@ -1959,12 +2147,41 @@ export default function MythicGameScreen() {
           };
         }
         await Promise.all([refetchCombatState(), refetch()]);
+        const combatEventBatch = (result.eventBatch ?? [])
+          .filter((event) => (
+            event.event_type === "damage"
+            || event.event_type === "healed"
+            || event.event_type === "moved"
+            || event.event_type === "status_applied"
+            || event.event_type === "power_gain"
+            || event.event_type === "power_drain"
+            || event.event_type === "death"
+            || event.event_type === "combat_end"
+            || event.event_type === "xp_gain"
+            || event.event_type === "loot_drop"
+          ))
+          .slice(-8);
         return {
-          stateChanges: [`Used ${skillName} on ${targetLabel}.`],
+          stateChanges: combatEventBatch.length > 0
+            ? combatEventBatch.slice(0, 3).map((event) => {
+                if (event.event_type === "damage") return `Hit landed on ${targetLabel}.`;
+                if (event.event_type === "healed") return `Healing resolved for ${targetLabel}.`;
+                if (event.event_type === "moved") return "Movement resolved.";
+                if (event.event_type === "status_applied") return "Status effect applied.";
+                if (event.event_type === "power_gain") return "MP gained.";
+                if (event.event_type === "power_drain") return "MP drained.";
+                if (event.event_type === "death") return "Target dropped.";
+                if (event.event_type === "combat_end") return "Combat resolved.";
+                if (event.event_type === "xp_gain") return "XP granted.";
+                if (event.event_type === "loot_drop") return "Loot granted.";
+                return `Used ${skillName} on ${targetLabel}.`;
+              })
+            : [`Used ${skillName} on ${targetLabel}.`],
           context: {
             skill_id: args.skillId,
             target: args.target,
             combat_ended: result.ended,
+            combat_event_batch: combatEventBatch,
           },
         };
       },
@@ -2006,6 +2223,7 @@ export default function MythicGameScreen() {
       activeTurnCombatantId: combatState.activeTurnCombatantId,
       focusedCombatantId,
       combatStatus: combatState.session?.status ?? null,
+      rewardSummary: combatRewardSummary,
     });
   }, [
     board,
@@ -2016,6 +2234,7 @@ export default function MythicGameScreen() {
     combatState.activeTurnCombatantId,
     combatState.combatants,
     combatState.session?.status,
+    combatRewardSummary,
     focusedCombatantId,
     invRowsSafe,
     playerCombatantId,
@@ -2036,6 +2255,8 @@ export default function MythicGameScreen() {
         playerCombatantId,
         focusedCombatantId,
         quickCastAvailability,
+        paceState: combatPaceModel,
+        rewardSummary: combatRewardSummary,
       },
     });
   }, [
@@ -2045,6 +2266,8 @@ export default function MythicGameScreen() {
     combatState.combatants,
     combatState.events,
     combatState.session,
+    combatPaceModel,
+    combatRewardSummary,
     focusedCombatantId,
     mythicDmContext.context,
     playerCombatantId,
@@ -2120,7 +2343,72 @@ export default function MythicGameScreen() {
   }, [campaignId, combat, refetch, refetchCombatState]);
 
   useEffect(() => {
-    if (!canAdvanceNpcTurn || isAdvancingTurn || isNarratedActionBusy || dmLoading || combat.isTicking) return;
+    if (canAdvanceNpcTurn) return;
+    setCombatAutoPacePhase("idle");
+    setCombatAutoStepIndex(0);
+    autoTickKeyRef.current = null;
+    voiceGateDeadlineRef.current = null;
+    voiceGateBaselineEndedAtRef.current = null;
+  }, [canAdvanceNpcTurn]);
+
+  useEffect(() => {
+    if (!canAdvanceNpcTurn) return;
+    if (combatAutoPacePhase !== "waiting_voice_end") return;
+    if (!shouldGateNpcStepOnVoice) {
+      voiceGateDeadlineRef.current = null;
+      voiceGateBaselineEndedAtRef.current = null;
+      setCombatAutoPacePhase("next_step_ready");
+      return;
+    }
+    if (dmVoice.isSpeaking) return;
+    const now = Date.now();
+    const deadline = voiceGateDeadlineRef.current;
+    const baselineEndedAt = voiceGateBaselineEndedAtRef.current;
+    const hasNewSpeechEnd = (
+      typeof dmVoice.speechEndedAt === "number"
+      && dmVoice.speechEndedAt > 0
+      && dmVoice.speechEndedAt !== baselineEndedAt
+    );
+    if (hasNewSpeechEnd) {
+      voiceGateDeadlineRef.current = null;
+      voiceGateBaselineEndedAtRef.current = null;
+      setCombatAutoPacePhase("next_step_ready");
+      return;
+    }
+    if (deadline !== null && now >= deadline) {
+      screenLogger.warn("mythic.combat.voice_gate_timeout", {
+        campaign_id: campaignId,
+        combat_session_id: combatSessionId,
+        turn_index: combatState.session?.current_turn_index ?? null,
+        phase: combatAutoPacePhase,
+      });
+      voiceGateDeadlineRef.current = null;
+      voiceGateBaselineEndedAtRef.current = null;
+      setCombatAutoPacePhase("next_step_ready");
+    }
+  }, [
+    campaignId,
+    canAdvanceNpcTurn,
+    combatAutoPacePhase,
+    combatSessionId,
+    combatState.session?.current_turn_index,
+    dmVoice.isSpeaking,
+    dmVoice.speechEndedAt,
+    shouldGateNpcStepOnVoice,
+  ]);
+
+  useEffect(() => {
+    if (!canAdvanceNpcTurn) return;
+    if (isAdvancingTurn || isNarratedActionBusy || dmLoading || combat.isTicking) return;
+    if (combatAutoPacePhase === "waiting_voice_end" || combatAutoPacePhase === "narrating" || combatAutoPacePhase === "step_committed") {
+      return;
+    }
+    if (shouldGateNpcStepOnVoice && dmVoice.isSpeaking) {
+      setCombatAutoPacePhase("waiting_voice_end");
+      voiceGateDeadlineRef.current = Date.now() + AUTO_TICK_VOICE_DEADLOCK_MS;
+      voiceGateBaselineEndedAtRef.current = dmVoice.speechEndedAt;
+      return;
+    }
     const key = `${combatSessionId}:${combatState.session?.current_turn_index ?? -1}:${activeTurnCombatant?.id ?? "none"}`;
     if (autoTickKeyRef.current === key) return;
     autoTickKeyRef.current = key;
@@ -2130,11 +2418,15 @@ export default function MythicGameScreen() {
     activeTurnCombatant?.id,
     canAdvanceNpcTurn,
     combat.isTicking,
+    combatAutoPacePhase,
     combatSessionId,
     combatState.session?.current_turn_index,
+    dmVoice.isSpeaking,
+    dmVoice.speechEndedAt,
     dmLoading,
     isAdvancingTurn,
     isNarratedActionBusy,
+    shouldGateNpcStepOnVoice,
   ]);
 
   const isInitialScreenLoading = authLoading || boardInitialLoading || charInitialLoading || isBootstrapping;

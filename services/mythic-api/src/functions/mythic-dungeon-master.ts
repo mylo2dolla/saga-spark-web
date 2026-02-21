@@ -817,11 +817,50 @@ function compactCombatPayload(combat: unknown) {
   const recentEvents = Array.isArray(dmPayload?.recent_events)
     ? dmPayload?.recent_events
       .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === "object")
-      .slice(0, 5)
+      .slice(0, 8)
       .map((event) => ({
         event_type: event.event_type ?? null,
         turn_index: event.turn_index ?? null,
         created_at: event.created_at ?? null,
+        actor: (() => {
+          const payload = asObject(event.payload);
+          return payload?.source_name
+            ?? payload?.actor_name
+            ?? payload?.actor_display
+            ?? null;
+        })(),
+        target: (() => {
+          const payload = asObject(event.payload);
+          return payload?.target_name
+            ?? payload?.target_display
+            ?? null;
+        })(),
+        amount: (() => {
+          const payload = asObject(event.payload);
+          const amount = Number(
+            payload?.damage_to_hp
+            ?? payload?.amount
+            ?? payload?.final_damage
+            ?? payload?.tiles_used
+            ?? Number.NaN,
+          );
+          return Number.isFinite(amount) ? Math.max(0, Math.floor(amount)) : null;
+        })(),
+        status: (() => {
+          const payload = asObject(event.payload);
+          const status = asObject(payload?.status);
+          if (typeof status?.id === "string" && status.id.trim().length > 0) return status.id.trim();
+          if (typeof payload?.status_id === "string" && payload.status_id.trim().length > 0) return payload.status_id.trim();
+          return null;
+        })(),
+        from: (() => {
+          const payload = asObject(event.payload);
+          return asObject(payload?.from) ?? null;
+        })(),
+        to: (() => {
+          const payload = asObject(event.payload);
+          return asObject(payload?.to) ?? null;
+        })(),
       }))
     : [];
   return {
@@ -1307,6 +1346,82 @@ function synthesizeRecoveryPayload(args: {
     ? context?.state_changes.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).slice(0, 3)
     : [];
   const firstStateChange = stateChanges[0] ?? null;
+  const combatEventBatch = Array.isArray(context?.combat_event_batch)
+    ? context?.combat_event_batch
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+      .slice(-8)
+    : [];
+  const combatLines = combatEventBatch
+    .map((entry) => {
+      const eventType = typeof entry.event_type === "string" ? entry.event_type : "";
+      const payload = asObject(entry.payload);
+      const actor = (
+        payload?.source_name
+        ?? payload?.actor_name
+        ?? payload?.actor_display
+        ?? "A combatant"
+      );
+      const target = (
+        payload?.target_name
+        ?? payload?.target_display
+        ?? "the line"
+      );
+      const amount = Number(
+        payload?.damage_to_hp
+        ?? payload?.amount
+        ?? payload?.final_damage
+        ?? payload?.tiles_used
+        ?? Number.NaN,
+      );
+      const amountText = Number.isFinite(amount) ? String(Math.max(0, Math.floor(amount))) : null;
+      if (eventType === "moved") {
+        const to = asObject(payload?.to);
+        const x = Number(to?.x);
+        const y = Number(to?.y);
+        if (Number.isFinite(x) && Number.isFinite(y)) {
+          return `${actor} shifts to (${Math.floor(x)}, ${Math.floor(y)}).`;
+        }
+        return `${actor} repositions for the next exchange.`;
+      }
+      if (eventType === "damage") {
+        return amountText ? `${actor} hits ${target} for ${amountText}.` : `${actor} lands a hit on ${target}.`;
+      }
+      if (eventType === "healed") {
+        return amountText ? `${actor} restores ${amountText} to ${target}.` : `${actor} stabilizes ${target}.`;
+      }
+      if (eventType === "status_applied") {
+        const status = asObject(payload?.status);
+        const statusId = typeof status?.id === "string" ? status.id : (typeof payload?.status_id === "string" ? payload.status_id : "pressure");
+        return `${actor} tags ${target} with ${statusId.replace(/_/g, " ")}.`;
+      }
+      if (eventType === "power_gain") {
+        return amountText ? `${actor} recovers ${amountText} MP.` : `${actor} recovers MP.`;
+      }
+      if (eventType === "power_drain") {
+        return amountText ? `${actor} strips ${amountText} MP from ${target}.` : `${actor} strips MP from ${target}.`;
+      }
+      if (eventType === "death") {
+        return `${target} goes down hard.`;
+      }
+      if (eventType === "xp_gain") {
+        return amountText ? `XP payout locked: +${amountText}.` : "XP payout locked.";
+      }
+      if (eventType === "loot_drop") {
+        const lootName = typeof payload?.name === "string" && payload.name.trim().length > 0
+          ? payload.name.trim()
+          : typeof payload?.item_id === "string" && payload.item_id.trim().length > 0
+            ? payload.item_id.trim()
+            : "loot";
+        return `Loot secured: ${lootName}.`;
+      }
+      if (eventType === "combat_end") {
+        const won = payload?.won === true;
+        return won ? "The floor clears and victory is confirmed." : "The floor breaks and the fight resolves against you.";
+      }
+      return null;
+    })
+    .filter((line): line is string => Boolean(line))
+    .slice(0, 3);
 
   const actionSummary = compactLabel(
     firstStateChange
@@ -1331,13 +1446,21 @@ function synthesizeRecoveryPayload(args: {
   const recoveryBeat = boardType === "combat"
     ? "Pick a target, force tempo, and make the next exchange hurt."
     : "Commit one decisive move and keep pressure on the nearest fault line.";
-  const narrative = [
-    `${actionSummary} ${recoveryPressure}`,
-    companionCheckin
-      ? `${companionCheckin.line} The ${boardAnchor} hook is hot and the board already committed the pressure lines for this turn.`
-      : `The ${boardLabel} board answers with hard state, not fog: positions, hooks, and pressure are already committed for this turn.`,
-    `${recoveryBeat}`,
-  ].join(" ");
+  const narrative = boardType === "combat"
+    ? [
+      combatLines[0] ?? `${actionSummary} ${recoveryPressure}`,
+      combatLines[1] ?? (companionCheckin
+        ? `${companionCheckin.line} ${boardAnchor} pressure is committed.`
+        : `${boardLabel} pressure is already committed this turn.`),
+      combatLines[2] ?? `${recoveryBeat}`,
+    ].join(" ")
+    : [
+      `${actionSummary} ${recoveryPressure}`,
+      companionCheckin
+        ? `${companionCheckin.line} The ${boardAnchor} hook is hot and the board already committed the pressure lines for this turn.`
+        : `The ${boardLabel} board answers with hard state, not fog: positions, hooks, and pressure are already committed for this turn.`,
+      `${recoveryBeat}`,
+    ].join(" ");
 
   const vendors = extractVendorsFromBoardSummary(args.boardSummary);
   const baseActions: NarratorUiAction[] = boardType === "town"
@@ -1849,6 +1972,8 @@ RULES YOU MUST OBEY
 - Narration must be compact and high-signal: ${NARRATION_MIN_WORDS}-${NARRATION_MAX_WORDS} words total, max 2 short paragraphs.
 - No filler, no recap padding, no repeated adjectives.
 - Narration quality is primary. scene/effects should help render visual board state updates.
+- If board_type is combat, narrate action-by-action from committed combat events in short lines (movement, hit, status, resource shifts).
+- Never output generic combat filler such as "Resolved X non-player turn steps".
 - Provide a non-empty runtime_delta object that pushes forward rumors/objectives/discovery state.
 - Provide 2-4 grounded ui_actions tied to active board context (avoid generic labels like "Action 1").
 - Do not use generic prompts like "continue/proceed/advance"; each prompt must reference current board pressure.

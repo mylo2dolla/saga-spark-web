@@ -2,15 +2,34 @@ import { useCallback, useState } from "react";
 import { toast } from "sonner";
 import { callEdgeFunction } from "@/lib/edge";
 import { parseEdgeError } from "@/lib/edgeError";
+import { supabase } from "@/integrations/supabase/client";
 import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
 import { createLogger } from "@/lib/observability/logger";
+import type {
+  MythicActionEventRow,
+  MythicCombatantRow,
+  MythicCombatSessionRow,
+  MythicTurnOrderRow,
+} from "@/hooks/useMythicCombatState";
 
 const logger = createLogger("mythic-combat-hook");
 
 export type MythicCombatStartResult =
   | { ok: true; combatSessionId: string }
   | { ok: false; message: string; code: string | null; requestId: string | null };
+
+export interface MythicCombatMutationSnapshot {
+  session: MythicCombatSessionRow | null;
+  combatants: MythicCombatantRow[];
+  turnOrder: MythicTurnOrderRow[];
+  events: MythicActionEventRow[];
+  activeTurnCombatantId: string | null;
+}
+
+function extractRecentEventBatch(events: MythicActionEventRow[], maxItems = 12): MythicActionEventRow[] {
+  return events.slice(-Math.max(1, maxItems));
+}
 
 export function useMythicCombat() {
   const [isStarting, setIsStarting] = useState(false);
@@ -19,6 +38,55 @@ export function useMythicCombat() {
   const [startOperation, setStartOperation] = useState<OperationState | null>(null);
   const [actionOperation, setActionOperation] = useState<OperationState | null>(null);
   const [tickOperation, setTickOperation] = useState<OperationState | null>(null);
+
+  const loadSnapshot = useCallback(async (
+    campaignId: string,
+    combatSessionId: string,
+  ): Promise<MythicCombatMutationSnapshot | null> => {
+    const [{ data: session }, { data: combatants }, { data: turnOrder }, { data: events }] = await Promise.all([
+      supabase
+        .schema("mythic")
+        .from("combat_sessions")
+        .select("id,campaign_id,seed,status,current_turn_index,scene_json,updated_at")
+        .eq("id", combatSessionId)
+        .eq("campaign_id", campaignId)
+        .maybeSingle(),
+      supabase
+        .schema("mythic")
+        .from("combatants")
+        .select("*")
+        .eq("combat_session_id", combatSessionId)
+        .order("initiative", { ascending: false })
+        .order("name", { ascending: true }),
+      supabase
+        .schema("mythic")
+        .from("turn_order")
+        .select("*")
+        .eq("combat_session_id", combatSessionId)
+        .order("turn_index", { ascending: true }),
+      supabase
+        .schema("mythic")
+        .from("action_events")
+        .select("*")
+        .eq("combat_session_id", combatSessionId)
+        .order("created_at", { ascending: true })
+        .limit(500),
+    ]);
+    const sessionRow = (session ?? null) as unknown as MythicCombatSessionRow | null;
+    const combatantRows = (combatants ?? []) as unknown as MythicCombatantRow[];
+    const turnRows = (turnOrder ?? []) as unknown as MythicTurnOrderRow[];
+    const eventRows = (events ?? []) as unknown as MythicActionEventRow[];
+    const activeTurnCombatantId = sessionRow
+      ? turnRows.find((row) => row.turn_index === sessionRow.current_turn_index)?.combatant_id ?? null
+      : null;
+    return {
+      session: sessionRow,
+      combatants: combatantRows,
+      turnOrder: turnRows,
+      events: eventRows,
+      activeTurnCombatantId,
+    };
+  }, []);
 
   const startCombat = useCallback(async (campaignId: string): Promise<MythicCombatStartResult> => {
     setIsStarting(true);
@@ -53,7 +121,7 @@ export function useMythicCombat() {
     } finally {
       setIsStarting(false);
     }
-  }, []);
+  }, [loadSnapshot]);
 
   const useSkill = useCallback(async (args: {
     campaignId: string;
@@ -96,7 +164,17 @@ export function useMythicCombat() {
           return data;
         },
       });
-      return { ok: true as const, ended: Boolean(data.ended) };
+      const snapshot = await loadSnapshot(args.campaignId, args.combatSessionId).catch((error) => {
+        logger.warn("combat.use_skill.snapshot_failed", { error: error instanceof Error ? error.message : String(error) });
+        return null;
+      });
+      return {
+        ok: true as const,
+        ended: Boolean(data.ended),
+        data,
+        snapshot,
+        eventBatch: snapshot ? extractRecentEventBatch(snapshot.events) : [],
+      };
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to use skill";
       logger.error("combat.use_skill.failed", e);
@@ -149,7 +227,16 @@ export function useMythicCombat() {
           return data;
         },
       });
-      return { ok: true as const, data };
+      const snapshot = await loadSnapshot(args.campaignId, args.combatSessionId).catch((error) => {
+        logger.warn("combat.tick.snapshot_failed", { error: error instanceof Error ? error.message : String(error) });
+        return null;
+      });
+      return {
+        ok: true as const,
+        data,
+        snapshot,
+        eventBatch: snapshot ? extractRecentEventBatch(snapshot.events) : [],
+      };
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to advance combat";
       logger.error("combat.tick.failed", e);
@@ -158,7 +245,7 @@ export function useMythicCombat() {
     } finally {
       setIsTicking(false);
     }
-  }, []);
+  }, [loadSnapshot]);
 
   return {
     isStarting,
