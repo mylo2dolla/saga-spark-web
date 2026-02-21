@@ -39,15 +39,28 @@ Goal: reduce dead-wait feel, reduce stale/racy context updates, suppress low-sig
 - `npm run smoke:board`: PASS
 - `npm run smoke:prod`: PASS
 
-## Smoke Request IDs (Post-Alignment)
-- `mythic-create-campaign`: `98c3a844-46a5-4a55-afd7-ebfa4702da18`
-- `mythic-create-character`: `17af6ab9-0ffd-4e5f-a7ee-f78a485a33f1`
-- `mythic-dm-context`: `bf04d4b7-8c2d-4afe-95df-83c86e8c8217`
-- `mythic-dungeon-master`: `98d22065-343e-4d67-a66f-51c8bf1f1c98`
-- `mythic-runtime-transition:travel`: `22ffbff4-a761-4ab0-80a3-d6833fb48f53`
-- `mythic-runtime-transition:dungeon`: `888451b0-2acf-4540-be50-c1c071b6e004`
-- `mythic-runtime-transition:town`: `a1d7e75d-98aa-4efa-b730-9ff2d6e6019e`
-- `mythic-combat-start`: `4c1aa0bb-c6fb-4a59-b3e8-898b2bbae21a`
+## Production Deploy
+- Commit: `26f6cc1`
+- Frontend (Vercel):
+  - URL: `https://saga-spark-426d0wvwi-mylo2dollas-projects.vercel.app`
+  - Alias: `https://mythweaver.online`
+  - Deployment ID: `dpl_9vhWkueKHgCWucmJzHQG4gPhACXw`
+  - Created: `Sat Feb 21 2026 06:49:08 GMT-0700 (MST)`
+- VM runtime:
+  - Host: `api.mythweaver.online`
+  - Path: `/opt/mythic-api`
+  - Deploy method: `docker compose up -d --build --force-recreate`
+  - Health check: `GET /healthz` success
+
+## Smoke Request IDs (Post-Deploy)
+- `mythic-create-campaign`: `d3b82923-be7a-4950-adad-7c717b235a03`
+- `mythic-create-character`: `5e41cd3d-2333-4562-98fe-13e42e9c15a2`
+- `mythic-dm-context`: `5850a70f-5c62-4e9b-b7cf-98991ed0273d`
+- `mythic-dungeon-master`: `8aa975d1-6d2d-4b12-80b5-fa924d679e05`
+- `mythic-runtime-transition:travel`: `044d0f39-ccab-47f4-a060-54fd0e12dda6`
+- `mythic-runtime-transition:dungeon`: `1371141b-57b5-4ad9-a0db-22966dea0341`
+- `mythic-runtime-transition:town`: `99b2dbfd-9ae8-43d5-a04b-b872fd4dc545`
+- `mythic-combat-start`: `6b983abc-68cb-4830-a85b-8dc06452ffb6`
 
 ## Residual Risks
 - DM responsiveness is still bounded by upstream model latency variance; this pass reduces avoidable overhead but does not eliminate provider-side jitter.
