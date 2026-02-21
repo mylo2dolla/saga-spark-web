@@ -16,6 +16,7 @@ import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
 import { createLogger } from "@/lib/observability/logger";
 import { AsyncStateCard } from "@/ui/components/AsyncStateCard";
+import { useMythicDevSurfaces } from "@/lib/mythic/featureFlags";
 
 type HealthStatus = "ready" | "needs_migration" | "broken";
 
@@ -76,6 +77,7 @@ function inferJoinErrorCode(message: string): string {
 
 export default function DashboardScreen() {
   const { user, session } = useAuth();
+  const devSurfaces = useMythicDevSurfaces();
   const { toast } = useToast();
   const navigate = useNavigate();
   const { setLastError, recordOperation } = useDiagnostics();
@@ -110,7 +112,7 @@ export default function DashboardScreen() {
   const activeUser = user ?? null;
   const activeUserId = session?.user?.id ?? user?.id ?? null;
   const activeAccessToken = activeSession?.access_token ?? null;
-  const dbEnabled = Boolean(activeUserId);
+  const dbEnabled = devSurfaces.enabled && Boolean(activeUserId);
   const { status: dbStatus, lastError: dbError } = useDbHealth(dbEnabled);
 
   const loadCampaigns = useCallback(async () => {
@@ -377,15 +379,19 @@ export default function DashboardScreen() {
       <div>
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">Mythic-only campaigns and access codes.</p>
-        <div className="mt-2 text-xs text-muted-foreground">
-          Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
-        </div>
-        {loadOp?.status === "RUNNING" ? (
-          <div className="mt-1 text-xs text-muted-foreground">
-            Campaign sync running (attempt {loadOp.attempt})
-          </div>
+        {devSurfaces.enabled ? (
+          <>
+            <div className="mt-2 text-xs text-muted-foreground">
+              Auth: {activeSession ? "session" : "guest"} | userId: {activeUserId ?? "null"} | DB: {dbStatusLabel}
+            </div>
+            {loadOp?.status === "RUNNING" ? (
+              <div className="mt-1 text-xs text-muted-foreground">
+                Campaign sync running (attempt {loadOp.attempt})
+              </div>
+            ) : null}
+            {dbError ? <div className="mt-1 text-xs text-destructive">DB Error: {dbError}</div> : null}
+          </>
         ) : null}
-        {dbError ? <div className="mt-1 text-xs text-destructive">DB Error: {dbError}</div> : null}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
