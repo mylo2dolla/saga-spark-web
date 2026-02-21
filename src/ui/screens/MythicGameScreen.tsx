@@ -182,6 +182,7 @@ function profileDraftFromCharacter(character: { name: string; class_json: Record
 
 const MAX_CONSOLE_ACTIONS = 6;
 const DM_ACTION_TIMEOUT_MS = 110_000;
+const AUTO_TICK_MAX_STEPS = 3;
 const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative update)$/i;
 const LOW_SIGNAL_NARRATION_PROMPT = /^(continue|proceed|advance|next(\s+(step|move))?|refresh(\s+state)?|narrate|describe)(\b|[\s.,])/i;
 const screenLogger = createLogger("mythic-game-screen");
@@ -1837,6 +1838,7 @@ export default function MythicGameScreen() {
     setIsAdvancingTurn(true);
     try {
       const activeName = activeTurnCombatant?.name ?? "enemy";
+      const beforeTurnIndex = Number(combatState.session?.current_turn_index ?? 0);
       await runNarratedAction({
         source: "combat_enemy_tick",
         intent: "dm_prompt",
@@ -1844,16 +1846,18 @@ export default function MythicGameScreen() {
         appendUser: false,
         payload: {
           combat_session_id: combatSessionId,
-          current_turn_index: Number(combatState.session?.current_turn_index ?? 0),
+          current_turn_index: beforeTurnIndex,
           active_turn_combatant_id: activeTurnCombatant?.id ?? null,
+          auto_tick_batch: true,
+          max_steps: AUTO_TICK_MAX_STEPS,
         },
-        prompt: `${activeName} takes the enemy turn. Narrate the committed combat events and new tactical pressure.`,
+        prompt: `${activeName} resolves non-player turns from committed combat events. Keep it tight: movement, damage, status shifts, and immediate pressure.`,
         execute: async () => {
           const tickResult = await tickCombat({
             campaignId,
             combatSessionId,
-            maxSteps: 1,
-            currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
+            maxSteps: AUTO_TICK_MAX_STEPS,
+            currentTurnIndex: beforeTurnIndex,
           });
           if (!tickResult.ok) {
             return {
@@ -1865,10 +1869,23 @@ export default function MythicGameScreen() {
             };
           }
           await Promise.all([refetchCombatState(), refetch()]);
+          const afterTurnIndex = Number(
+            (tickResult.data as { current_turn_index?: unknown } | undefined)?.current_turn_index
+              ?? beforeTurnIndex,
+          );
+          const turnAdvance = Math.max(0, afterTurnIndex - beforeTurnIndex);
+          const requiresPlayerAction = (tickResult.data as { requires_player_action?: unknown } | undefined)?.requires_player_action === true;
           return {
-            stateChanges: ["Enemy turn resolved from authoritative combat tick."],
+            stateChanges: [
+              turnAdvance > 0
+                ? `Resolved ${turnAdvance} non-player turn step${turnAdvance === 1 ? "" : "s"}.`
+                : "Resolved non-player turn step from authoritative combat tick.",
+            ],
             context: {
               combat_tick: tickResult.data ?? null,
+              auto_tick_batch: true,
+              turn_advance: turnAdvance,
+              requires_player_action: requiresPlayerAction,
             },
           };
         },

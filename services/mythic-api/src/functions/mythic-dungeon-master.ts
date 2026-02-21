@@ -85,6 +85,7 @@ OUTPUT CONTRACT (STRICT)
   - action_chips: array of action chip objects (same shape as ui_actions)
   - reward_hints: array of { key, detail?, weight? } for deterministic micro-reward scoring
 - "ui_actions" must contain 2-4 concrete intent suggestions for the current board state.
+  Action labels must start with a strong verb and a concrete object (target, room, route, vendor, gate).
   Each action item must be an object with:
   - id (string), label (string), intent (enum), optional hint_key (string), optional prompt (string), optional payload (object).
   - intent must be one of: quest_action, combat_start, combat_action, shop_action, open_panel, companion_action, dm_prompt, refresh.
@@ -121,10 +122,12 @@ const DM_STYLE_PROFILE = {
   tone: "dark tactical with bite",
   directives: [
     "Voice is sharp, predatory, and immediate. Every line should imply consequence.",
+    "Narrate in second-person pressure with mythic noir edge, not sterile summary.",
     "Use concrete board nouns (gate, segment, room, target, flank) instead of abstract filler.",
     "Keep momentum brutal and compact. No sterile recap language.",
     "Favor active verbs and tactical stakes over exposition.",
     "Use dark wit when it helps pressure and clarity, never fluff.",
+    "End on a tactical hook, never a generic filler close.",
   ],
 } as const;
 
@@ -1311,6 +1314,12 @@ function synthesizeRecoveryPayload(args: {
       ?? `I execute ${actionIntent.replace(/_/g, " ")} from the current board state.`,
     160,
   );
+  const companionCheckin = latestCompanionCheckin(args.boardState);
+  const boardAnchor = typeof args.boardSummary?.travel_goal === "string"
+    ? args.boardSummary.travel_goal
+    : typeof args.boardSummary?.search_target === "string"
+      ? args.boardSummary.search_target
+      : boardLabel;
 
   const recoveryPressure = boardType === "town"
     ? "The square feels like a trap wrapped in lantern light."
@@ -1324,7 +1333,9 @@ function synthesizeRecoveryPayload(args: {
     : "Commit one decisive move and keep pressure on the nearest fault line.";
   const narrative = [
     `${actionSummary} ${recoveryPressure}`,
-    `The ${boardLabel} board answers with hard state, not fog: positions, hooks, and pressure are already committed for this turn.`,
+    companionCheckin
+      ? `${companionCheckin.line} The ${boardAnchor} hook is hot and the board already committed the pressure lines for this turn.`
+      : `The ${boardLabel} board answers with hard state, not fog: positions, hooks, and pressure are already committed for this turn.`,
     `${recoveryBeat}`,
   ].join(" ");
 
@@ -1358,17 +1369,17 @@ function synthesizeRecoveryPayload(args: {
       ? [
         { id: "recovery-travel-scout", label: "Scout The Route", intent: "dm_prompt", prompt: "I scout the route and pressure the immediate travel threat." },
         { id: "recovery-travel-dungeon", label: "Enter Dungeon", intent: "quest_action", boardTarget: "dungeon", payload: { mode: "dungeon" } },
-        { id: "recovery-travel-town", label: "Return To Town", intent: "quest_action", boardTarget: "town", payload: { mode: "town" } },
+        { id: "recovery-travel-trace", label: "Track Fresh Traces", intent: "dm_prompt", prompt: "I track the freshest trace and force a concrete encounter lead from committed route state." },
       ]
       : boardType === "dungeon"
         ? [
           { id: "recovery-dungeon-assess", label: "Assess This Room", intent: "dm_prompt", prompt: "I assess this room for threats, exits, and objective leverage." },
-          { id: "recovery-dungeon-proceed", label: "Press The Next Door", intent: "dm_prompt", prompt: "I press the next doorway and narrate committed outcomes only." },
+          { id: "recovery-dungeon-proceed", label: "Breach The Next Door", intent: "dm_prompt", prompt: "I breach the next doorway and narrate committed outcomes only." },
           { id: "recovery-dungeon-retreat", label: "Fall Back To Town", intent: "quest_action", boardTarget: "town", payload: { mode: "town" } },
         ]
         : [
-          { id: "recovery-combat-read", label: "Combat Read", intent: "dm_prompt", prompt: "Give me the immediate tactical read from committed combat events." },
-          { id: "recovery-combat-focus", label: "Focus Target", intent: "combat_action", payload: { target_combatant_id: context?.active_turn_combatant_id ?? null } },
+          { id: "recovery-combat-read", label: "Call The Kill Read", intent: "dm_prompt", prompt: "Give me the immediate tactical read from committed combat events." },
+          { id: "recovery-combat-focus", label: "Pressure Priority Target", intent: "combat_action", payload: { target_combatant_id: context?.active_turn_combatant_id ?? null } },
           { id: "recovery-combat-push", label: "Advance On Closest Hostile", intent: "dm_prompt", prompt: "I advance on the nearest hostile and commit pressure; narrate committed movement and threat response." },
         ];
 
@@ -1378,20 +1389,20 @@ function synthesizeRecoveryPayload(args: {
     boardSummary: args.boardSummary,
   }).slice(0, 4);
 
-  const companionCheckin = latestCompanionCheckin(args.boardState);
+  const latestCheckin = latestCompanionCheckin(args.boardState);
   let actionChips = sanitizeUiActions({
     actions: sanitizedActions,
     boardType,
     boardSummary: args.boardSummary,
   }).slice(0, 6);
 
-  if (companionCheckin && !isCompanionFollowupResolved(args.boardState, companionCheckin)) {
+  if (latestCheckin && !isCompanionFollowupResolved(args.boardState, latestCheckin)) {
     const hasExistingCompanion = actionChips.some((chip) => {
       const payload = chip.payload && typeof chip.payload === "object" ? chip.payload as Record<string, unknown> : null;
-      return payload?.companion_id === companionCheckin.companion_id && payload?.resolved !== true;
+      return payload?.companion_id === latestCheckin.companion_id && payload?.resolved !== true;
     });
     if (!hasExistingCompanion) {
-      actionChips = [...actionChips.slice(0, 5), buildCompanionFollowupAction(companionCheckin)];
+      actionChips = [...actionChips.slice(0, 5), buildCompanionFollowupAction(latestCheckin)];
     }
   }
 
@@ -1840,6 +1851,7 @@ RULES YOU MUST OBEY
 - Narration quality is primary. scene/effects should help render visual board state updates.
 - Provide a non-empty runtime_delta object that pushes forward rumors/objectives/discovery state.
 - Provide 2-4 grounded ui_actions tied to active board context (avoid generic labels like "Action 1").
+- Do not use generic prompts like "continue/proceed/advance"; each prompt must reference current board pressure.
 - Mirror those action candidates into runtime_delta.action_chips so dynamic actions persist after refresh.
 - If command execution context is provided, narrate outcomes using that state delta and avoid contradiction.
 - Violence/gore allowed. Harsh language allowed.

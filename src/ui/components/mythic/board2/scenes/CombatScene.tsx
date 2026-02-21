@@ -30,6 +30,11 @@ function compactName(name: string, max = 9): string {
   return `${clean.slice(0, Math.max(3, max - 1))}…`;
 }
 
+function cellCenterPercent(cell: number, total: number): number {
+  if (total <= 0) return 0;
+  return ((Math.floor(cell) + 0.5) / total) * 100;
+}
+
 export function CombatScene(props: CombatSceneProps) {
   const details = props.scene.details as CombatSceneData;
   const cols = props.scene.grid.cols;
@@ -74,6 +79,87 @@ export function CombatScene(props: CombatSceneProps) {
     return out;
   }, [details.recentDeltas, nowMs]);
 
+  const movementTrails = useMemo(() => {
+    return details.recentDeltas
+      .filter((delta) => delta.eventType === "moved" && delta.from && delta.to)
+      .filter((delta) => {
+        const createdAtMs = Number(new Date(delta.createdAt));
+        if (!Number.isFinite(createdAtMs)) return false;
+        return nowMs - createdAtMs <= 2_800;
+      })
+      .slice(-6)
+      .map((delta) => {
+        const from = delta.from!;
+        const to = delta.to!;
+        const x1 = cellCenterPercent(from.x, cols);
+        const y1 = cellCenterPercent(from.y, rows);
+        const x2 = cellCenterPercent(to.x, cols);
+        const y2 = cellCenterPercent(to.y, rows);
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const length = Math.max(0.6, Math.sqrt((dx * dx) + (dy * dy)));
+        const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+        return {
+          id: delta.id,
+          x1,
+          y1,
+          x2,
+          y2,
+          length,
+          angle,
+        };
+      });
+  }, [cols, details.recentDeltas, nowMs, rows]);
+
+  const tileStackIndexByCombatant = useMemo(() => {
+    const grouped = new Map<string, string[]>();
+    details.combatants.forEach((combatant) => {
+      const key = `${Math.floor(combatant.x)}:${Math.floor(combatant.y)}`;
+      const list = grouped.get(key) ?? [];
+      list.push(combatant.id);
+      grouped.set(key, list);
+    });
+    const out = new Map<string, number>();
+    grouped.forEach((ids) => {
+      ids.forEach((id, index) => out.set(id, index));
+    });
+    return out;
+  }, [details.combatants]);
+
+  const activeTurnCombatant = useMemo(
+    () => (details.activeTurnCombatantId
+      ? details.combatants.find((entry) => entry.id === details.activeTurnCombatantId) ?? null
+      : null),
+    [details.activeTurnCombatantId, details.combatants],
+  );
+  const turnCue = useMemo(() => {
+    if (!activeTurnCombatant) {
+      return {
+        label: "Awaiting Turn",
+        tone: "border-amber-200/35 text-amber-100/80",
+      };
+    }
+    const isPlayer = activeTurnCombatant.entity_type === "player";
+    const isAlly = !isPlayer && typeof activeTurnCombatant.player_id === "string" && activeTurnCombatant.player_id.trim().length > 0;
+    if (isPlayer) {
+      return {
+        label: "Your Turn",
+        tone: "border-emerald-200/40 text-emerald-100/90",
+      };
+    }
+    if (isAlly) {
+      return {
+        label: "Ally Turn",
+        tone: "border-cyan-200/40 text-cyan-100/90",
+      };
+    }
+    return {
+      label: "Enemy Turn",
+      tone: "border-rose-200/40 text-rose-100/90",
+    };
+  }, [activeTurnCombatant]);
+  const turnPulsePercent = (nowMs % 2200) / 22;
+
   const compactNameById = useMemo(() => {
     const baseCounts = new Map<string, number>();
     details.combatants.forEach((combatant) => {
@@ -106,11 +192,38 @@ export function CombatScene(props: CombatSceneProps) {
       <div className="pointer-events-none absolute left-2 top-2 rounded border border-red-200/35 bg-black/35 px-2 py-1 text-[10px] uppercase tracking-wide text-red-100/85">
         Combat {details.status}
       </div>
-      {props.isActing ? (
-        <div className="pointer-events-none absolute right-2 top-2 rounded border border-red-200/35 bg-black/35 px-2 py-1 text-[10px] uppercase tracking-wide text-red-100/85">
-          Resolving...
+      <div className={`pointer-events-none absolute right-2 top-2 rounded border bg-black/35 px-2 py-1 text-[10px] uppercase tracking-wide ${turnCue.tone}`}>
+        {props.isActing ? "Action Committed" : turnCue.label}
+      </div>
+      {activeTurnCombatant ? (
+        <div className="pointer-events-none absolute right-2 top-[30px] h-1.5 w-[120px] overflow-hidden rounded-full border border-white/15 bg-black/45">
+          <div
+            className="h-full rounded-full bg-[linear-gradient(90deg,rgba(244,114,182,0.8),rgba(56,189,248,0.85))]"
+            style={{ width: `${Math.max(8, Math.min(100, turnPulsePercent))}%` }}
+          />
         </div>
       ) : null}
+
+      {movementTrails.map((trail) => (
+        <div key={`trail-${trail.id}`} className="pointer-events-none absolute inset-0">
+          <div
+            className="absolute h-[2px] origin-left rounded bg-sky-200/75 shadow-[0_0_8px_rgba(125,211,252,0.6)]"
+            style={{
+              left: `${trail.x1}%`,
+              top: `${trail.y1}%`,
+              width: `${trail.length}%`,
+              transform: `translateY(-50%) rotate(${trail.angle}deg)`,
+            }}
+          />
+          <div
+            className="absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-sky-100 shadow-[0_0_10px_rgba(186,230,253,0.85)]"
+            style={{
+              left: `${trail.x2}%`,
+              top: `${trail.y2}%`,
+            }}
+          />
+        </div>
+      ))}
 
       {details.combatants.map((combatant) => {
         const x = Math.max(0, Math.min(cols - 1, Math.floor(combatant.x)));
@@ -124,6 +237,8 @@ export function CombatScene(props: CombatSceneProps) {
         const hotspot = props.scene.hotspots.find((entry) => entry.id === `combatant-${combatant.id}`);
         const liveDeltas = liveDeltaByCombatant.get(combatant.id) ?? [];
         const movedRecently = movedRecentlyByCombatant.has(combatant.id);
+        const stackIndex = tileStackIndexByCombatant.get(combatant.id) ?? 0;
+        const offsetPx = Math.min(3, stackIndex) * 5;
 
         return (
           <button
@@ -141,6 +256,7 @@ export function CombatScene(props: CombatSceneProps) {
               top: toPercent(y, rows),
               width: toPercent(1, cols),
               minHeight: "30px",
+              transform: offsetPx > 0 ? `translate(${offsetPx}px, ${-offsetPx}px)` : undefined,
             }}
             onClick={(event) => {
               event.stopPropagation();
