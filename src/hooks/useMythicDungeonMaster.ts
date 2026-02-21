@@ -88,7 +88,8 @@ const MAX_HISTORY_MESSAGES = 16;
 const MAX_MESSAGE_CONTENT = 1800;
 const DEFAULT_DM_TIMEOUT_MS = 95_000;
 const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative\s+update)$/i;
-const LOW_SIGNAL_ACTION_TEXT = /^(continue|proceed|next(\s+step|\s+move)?|press\s+on|advance|do\s+that|do\s+this|work\s+a\s+lead)$/i;
+const LOW_SIGNAL_ACTION_TEXT = /^(continue|proceed|next(\s+step|\s+move)?|press\s+on|advance|do\s+that|do\s+this|work\s+a\s+lead|refresh(\s+state)?|check\s+status)$/i;
+const LOW_SIGNAL_ACTION_PROMPT = /^(continue|proceed|advance|refresh|narrate|describe)(\b|[\s.,])/i;
 
 const trimMessage = (content: string) =>
   content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
@@ -119,6 +120,7 @@ function isLowSignalPrompt(value: string): boolean {
   if (!clean) return true;
   if (clean.length < 18 && /^(continue|proceed|advance|next|narrate|describe)/.test(clean)) return true;
   if (/^(continue|proceed|advance|next (step|move)|narrate what happens|describe what happens)$/.test(clean)) return true;
+  if (LOW_SIGNAL_ACTION_PROMPT.test(clean) && clean.length < 48) return true;
   return false;
 }
 
@@ -147,9 +149,9 @@ function defaultLabelForIntent(intent: MythicUiIntent): string {
   if (intent === "shop_action") return "Open Shop";
   if (intent === "companion_action") return "Companion Follow-Up";
   if (intent === "open_panel") return "Open Panel";
-  if (intent === "dm_prompt") return "Press The Scene";
+  if (intent === "dm_prompt") return "Press The Lead";
   if (intent === "focus_target") return "Focus Target";
-  if (intent === "refresh") return "Refresh State";
+  if (intent === "refresh") return "Recheck Board State";
   return `Go ${titleCaseWords(intent)}`;
 }
 
@@ -323,6 +325,30 @@ function fallbackActionFromLine(line: string, index: number): MythicUiAction | n
   return null;
 }
 
+function buildDeterministicFallbackAction(args: {
+  narration: string;
+  scene?: Record<string, unknown>;
+}): MythicUiAction {
+  const scene = args.scene ?? {};
+  const focus = typeof scene.focus === "string" && scene.focus.trim().length > 0
+    ? scene.focus.trim()
+    : typeof scene.travel_goal === "string" && scene.travel_goal.trim().length > 0
+      ? scene.travel_goal.trim()
+      : "";
+  const label = focus
+    ? compactLabel(`Press ${focus}`, 52)
+    : "Press Tactical Lead";
+  const prompt = focus
+    ? `I press ${focus} and commit the next concrete step from board state.`
+    : `I press the strongest tactical lead from this state: ${compactLabel(args.narration, 120)}`;
+  return {
+    id: "mythic-fallback-1",
+    label,
+    intent: "dm_prompt",
+    prompt,
+  };
+}
+
 function parseAssistantPayload(text: string): MythicDmParsedPayload {
   const trimmed = text.trim();
   const jsonText = extractBalancedJsonObject(trimmed);
@@ -344,11 +370,15 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
         const scene = asRecord(raw.scene) ?? undefined;
         const effects = asRecord(raw.effects) ?? undefined;
         const meta = asRecord(raw.meta) as MythicDmResponseMeta | undefined;
+        const sanitizedActions = actions.length > 0
+          ? dedupeUiActions(actions.filter((entry) => !isLowSignalAction(entry)))
+          : [];
+        const uiActions = sanitizedActions.length > 0
+          ? sanitizedActions
+          : [buildDeterministicFallbackAction({ narration, scene })];
         return {
           narration,
-          ui_actions: actions.length > 0
-            ? dedupeUiActions(actions.filter((entry) => !isLowSignalAction(entry)))
-            : undefined,
+          ui_actions: uiActions,
           scene,
           effects,
           meta,
@@ -371,7 +401,9 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
     .slice(0, 8);
   return {
     narration: trimmed || "The scene shifts. Describe your next move.",
-    ui_actions: fallbackActions.length > 0 ? dedupeUiActions(fallbackActions, 6) : undefined,
+    ui_actions: fallbackActions.length > 0
+      ? dedupeUiActions(fallbackActions, 6)
+      : [buildDeterministicFallbackAction({ narration: trimmed || "The scene shifts." })],
   };
 }
 
@@ -428,11 +460,34 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
       }
       const controller = new AbortController();
       abortRef.current = controller;
+      const phaseTimers: number[] = [];
+      const clearPhaseTimers = () => {
+        while (phaseTimers.length > 0) {
+          const timer = phaseTimers.pop();
+          if (typeof timer === "number" && typeof window !== "undefined") {
+            window.clearTimeout(timer);
+          }
+        }
+      };
+      const schedulePhase = (nextPhase: MythicDmPhase, delayMs: number) => {
+        if (typeof window === "undefined") return;
+        const timer = window.setTimeout(() => {
+          if (requestSeq !== activeSeqRef.current) return;
+          if (controller.signal.aborted) return;
+          setPhase((prev) => {
+            if (prev === "committing_turn") return prev;
+            return nextPhase;
+          });
+        }, delayMs);
+        phaseTimers.push(timer);
+      };
       setIsLoading(true);
       setCurrentResponse("");
       setOperation(null);
       setLastError(null);
       setPhase("assembling_context");
+      schedulePhase("resolving_narration", 1_200);
+      schedulePhase("committing_turn", 5_800);
 
       let assistantContent = "";
       try {
@@ -586,6 +641,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         }
         throw error;
       } finally {
+        clearPhaseTimers();
         if (abortRef.current === controller) {
           abortRef.current = null;
         }

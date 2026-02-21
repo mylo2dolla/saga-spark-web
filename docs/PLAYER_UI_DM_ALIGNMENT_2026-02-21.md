@@ -41,6 +41,29 @@ Supabase remains auth/db only. Gameplay runtime remains VM-hosted via `VITE_MYTH
   - Validation hard bounds loosened slightly while keeping compact output.
 - No response envelope or intent schema keys changed.
 
+## Follow-Up Latency + Voice Tightening (same date)
+- `services/mythic-api/src/functions/mythic-dungeon-master.ts`
+  - Reduced DM prompt footprint (shorter message window + tighter serialized state caps) to cut completion latency.
+  - Added stronger low-signal action suppression and action dedupe in sanitizer.
+  - Replaced generic recovery chips with board-mode tactical actions (especially in combat).
+  - Enabled earlier deterministic fast-recovery for critical schema/JSON failures.
+  - Slightly reduced generation temperature for more stable tactical output.
+- `src/hooks/useMythicDungeonMaster.ts`
+  - Added stricter prompt/label low-signal filters and deterministic board-aware fallback chip generation when model actions are weak/empty.
+  - Added DM phase progression timers so players see progress (`assembling -> resolving -> committing`) during longer turns.
+- `src/ui/components/mythic/NarrativePage.tsx`
+  - Updated phase text to player-readable phrasing.
+
+## Follow-Up Smoke Request IDs
+- `mythic-create-campaign`: `f2dc586a-92fb-4d52-8751-cb6038142f41`
+- `mythic-create-character`: `4149fe68-e9bb-4caf-9904-6450772863d6`
+- `mythic-dm-context`: `a1ac99fe-ec6d-4d08-9930-adea5735737d`
+- `mythic-dungeon-master`: `6757d23c-922d-4c16-9dd7-164e0e700ebc`
+- `mythic-runtime-transition:travel`: `bb1b6a32-7afa-414a-b610-2cc1f767fa93`
+- `mythic-runtime-transition:dungeon`: `900af5ae-80d5-4f19-99cc-c99f692b1da8`
+- `mythic-runtime-transition:town`: `1dcd0d0d-72b9-4cf0-88d1-7dea649bd619`
+- `mythic-combat-start`: `420ac293-eac0-430c-ac33-56aecbd09ae6`
+
 ## Validation Matrix
 - `npm run typecheck`: PASS
 - `npm run build`: PASS

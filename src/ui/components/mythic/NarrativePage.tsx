@@ -24,11 +24,11 @@ interface NarrativePageProps {
 
 export function NarrativePage(props: NarrativePageProps) {
   const phaseLabel = props.dmPhase === "assembling_context"
-    ? "assembling context"
+    ? "assembling scene context"
     : props.dmPhase === "resolving_narration"
-      ? "resolving narration"
+      ? "forging narration"
       : props.dmPhase === "committing_turn"
-        ? "committing turn"
+        ? "syncing turn commit"
         : "processing";
   return (
     <div className="flex h-full min-h-0 flex-col">

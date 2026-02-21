@@ -111,9 +111,11 @@ const MAX_TEXT_FIELD_LEN = 900;
 const NARRATION_MIN_WORDS = 52;
 const NARRATION_MAX_WORDS = 110;
 const DM_IDEMPOTENCY_TTL_MS = 20_000;
-const MAX_PROMPT_MESSAGES = 10;
-const MAX_PROMPT_MESSAGE_CHARS = 520;
-const GENERIC_ACTION_LABEL_RX = /^(action\s+\d+|narrative\s+update)$/i;
+const MAX_PROMPT_MESSAGES = 8;
+const MAX_PROMPT_MESSAGE_CHARS = 420;
+const GENERIC_ACTION_LABEL_RX = /^(action\s+\d+|narrative\s+update|fallback\s+action|default\s+action)$/i;
+const LOW_SIGNAL_ACTION_LABEL_RX = /^(continue|proceed|advance|next(\s+(step|move))?|do\s+(that|this)|refresh(\s+state)?|check\s+status)$/i;
+const LOW_SIGNAL_ACTION_PROMPT_RX = /^(continue|proceed|advance|refresh|narrate|describe)(\b|[\s.,])/i;
 const DM_STYLE_PROFILE = {
   id: "dark_tactical_with_bite.v1",
   tone: "dark tactical with bite",
@@ -122,6 +124,7 @@ const DM_STYLE_PROFILE = {
     "Use concrete board nouns (gate, segment, room, target, flank) instead of abstract filler.",
     "Keep momentum brutal and compact. No sterile recap language.",
     "Favor active verbs and tactical stakes over exposition.",
+    "Use dark wit when it helps pressure and clarity, never fluff.",
   ],
 } as const;
 
@@ -211,6 +214,17 @@ function compactLabel(text: string, maxLen = 80): string {
 
 function isGenericActionLabel(value: string): boolean {
   return GENERIC_ACTION_LABEL_RX.test(value.trim());
+}
+
+function isLowSignalActionLabel(value: string): boolean {
+  return LOW_SIGNAL_ACTION_LABEL_RX.test(value.trim());
+}
+
+function isLowSignalActionPrompt(value: string): boolean {
+  const clean = value.trim();
+  if (!clean) return true;
+  if (clean.length < 24 && LOW_SIGNAL_ACTION_PROMPT_RX.test(clean)) return true;
+  return LOW_SIGNAL_ACTION_PROMPT_RX.test(clean) && clean.length < 48;
 }
 
 function canonicalIntent(value: string): NarratorUiAction["intent"] {
@@ -304,7 +318,7 @@ function repairActionLabel(args: {
     return `Focus ${target}`;
   }
   if (args.intent === "combat_start") return "Start Combat";
-  if (args.intent === "refresh") return "Refresh State";
+  if (args.intent === "refresh") return `Recheck ${titleCaseWords(args.boardType)} State`;
   if (args.intent === "quest_action") {
     const payload = args.action.payload && typeof args.action.payload === "object"
       ? args.action.payload as Record<string, unknown>
@@ -366,10 +380,47 @@ function synthesizeActionPrompt(action: NarratorUiAction, boardType: string): st
   }
   if (action.intent === "combat_action") return "I focus that target and prepare the next strike.";
   if (action.intent === "companion_action") return "I follow companion guidance and request the next concrete step.";
-  if (action.intent === "refresh") return "Refresh the board state and summarize what changed.";
+  if (action.intent === "refresh") {
+    return boardType === "combat"
+      ? "Recheck turn order, target pressure, and immediate combat deltas from committed state."
+      : `Recheck ${boardType} hooks and summarize only what changed in committed runtime state.`;
+  }
   return boardType === "combat"
     ? `I commit to ${action.label.toLowerCase()} and want the result narrated from current combat events.`
     : `I commit to ${action.label.toLowerCase()} and want the result narrated from current board state.`;
+}
+
+function actionDedupeKey(action: NarratorUiAction): string {
+  const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : null;
+  const targetKey = typeof payload?.target_combatant_id === "string"
+    ? payload.target_combatant_id
+    : typeof payload?.vendorId === "string"
+      ? payload.vendorId
+      : typeof payload?.room_id === "string"
+        ? payload.room_id
+        : typeof payload?.to_room_id === "string"
+          ? payload.to_room_id
+          : typeof payload?.search_target === "string"
+            ? payload.search_target
+            : typeof action.panel === "string"
+              ? action.panel
+              : "none";
+  const hint = typeof action.hint_key === "string" ? action.hint_key : "nohint";
+  const label = compactLabel(action.label, 48).toLowerCase();
+  return `${action.intent}:${hint}:${targetKey}:${label}`;
+}
+
+function shouldFilterLowSignalAction(action: NarratorUiAction): boolean {
+  const label = action.label.trim();
+  const prompt = typeof action.prompt === "string" ? action.prompt.trim() : "";
+  if (isGenericActionLabel(label)) {
+    return action.intent === "dm_prompt" || action.intent === "refresh";
+  }
+  if (action.intent === "dm_prompt" || action.intent === "refresh") {
+    if (isLowSignalActionLabel(label)) return true;
+    if (prompt && isLowSignalActionPrompt(prompt)) return true;
+  }
+  return false;
 }
 
 function sanitizeUiActions(args: {
@@ -378,7 +429,7 @@ function sanitizeUiActions(args: {
   boardSummary: Record<string, unknown> | null;
 }): NarratorUiAction[] {
   const { actions, boardType, boardSummary } = args;
-  return actions
+  const normalized = actions
     .slice(0, 6)
     .map((action, index) => {
       const actionRaw = action as NarratorUiAction & { board_target?: NarratorUiAction["boardTarget"]; hint_key?: string };
@@ -413,6 +464,20 @@ function sanitizeUiActions(args: {
         payload,
       };
     });
+
+  const deduped: NarratorUiAction[] = [];
+  const seen = new Set<string>();
+  for (const action of normalized) {
+    const key = actionDedupeKey(action);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(action);
+    if (deduped.length >= 6) break;
+  }
+
+  const highSignal = deduped.filter((action) => !shouldFilterLowSignalAction(action));
+  if (highSignal.length >= 2) return highSignal.slice(0, 6);
+  return deduped.slice(0, 6);
 }
 
 function streamOpenAiDelta(text: string): ReadableStream<Uint8Array> {
@@ -1252,10 +1317,10 @@ function synthesizeRecoveryPayload(args: {
         payload: { mode: "travel" },
       },
       {
-        id: "recovery-town-hooks",
-        label: "Work The Board Hooks",
+        id: "recovery-town-rumor",
+        label: "Lean On A Rumor",
         intent: "dm_prompt",
-        prompt: "I work the strongest town hook and force a concrete next step from current board truth.",
+        prompt: "I lean on the strongest rumor in town and force a concrete consequence from current board truth.",
       },
     ]
     : boardType === "travel"
@@ -1273,7 +1338,7 @@ function synthesizeRecoveryPayload(args: {
         : [
           { id: "recovery-combat-read", label: "Combat Read", intent: "dm_prompt", prompt: "Give me the immediate tactical read from committed combat events." },
           { id: "recovery-combat-focus", label: "Focus Target", intent: "combat_action", payload: { target_combatant_id: context?.active_turn_combatant_id ?? null } },
-          { id: "recovery-combat-refresh", label: "Refresh State", intent: "refresh" },
+          { id: "recovery-combat-push", label: "Advance On Closest Hostile", intent: "dm_prompt", prompt: "I advance on the nearest hostile and commit pressure; narrate committed movement and threat response." },
         ];
 
   const sanitizedActions = sanitizeUiActions({
@@ -1707,31 +1772,31 @@ ${jsonInline(compactRules, 2200)}
 
 AUTHORITATIVE STATE (DB VIEWS)
 - Active board payload (mythic.v_board_state_for_dm):
-${jsonInline(compactBoard ?? null, 2600)}
+${jsonInline(compactBoard ?? null, 1900)}
 
 - Player character payload (mythic.v_character_state_for_dm):
-${jsonInline(compactCharacter ?? null, 2000)}
+${jsonInline(compactCharacter ?? null, 1400)}
 
 - Combat payload (mythic.v_combat_state_for_dm or null):
-${jsonInline(compactCombat ?? null, 2200)}
+${jsonInline(compactCombat ?? null, 1400)}
 
 - DM campaign state:
-${jsonInline(dmCampaignState ?? null, 1200)}
+${jsonInline(dmCampaignState ?? null, 700)}
 
 - DM world tension:
-${jsonInline(dmWorldTension ?? null, 1000)}
+${jsonInline(dmWorldTension ?? null, 600)}
 
 - Campaign companions:
-${jsonInline(compactCompanions, 1400)}
+${jsonInline(compactCompanions, 900)}
 
 - Board narrative samples:
-${jsonInline(boardNarrativeSamples, 1400)}
+${jsonInline(boardNarrativeSamples, 900)}
 
 - Recent command execution context (authoritative client action result, may be null):
-${jsonInline(actionContextRecord ?? null, 1200)}
+${jsonInline(actionContextRecord ?? null, 700)}
 
 - Runtime warnings:
-${jsonInline(warnings, 800)}
+${jsonInline(warnings, 500)}
 
 ${styleProfilePrompt()}
 
@@ -1766,6 +1831,7 @@ ${jsonOnlyContract()}
         warning_count: warnings.length,
         intro_mode: introMode,
         intro_pending_before: introPendingBefore,
+        prompt_chars: systemPrompt.length,
       });
       ctx.log.info("dm.intro.mode", {
         request_id: ctx.requestId,
@@ -1955,14 +2021,20 @@ ${jsonOnlyContract()}
       };
 
       const shouldFastRecover = (attempt: number, errors: string[]) => {
-        if (attempt < 2) return false;
-        return errors.some((entry) =>
+        if (attempt < 1) return false;
+        const critical = errors.some((entry) =>
           entry.includes("runtime_delta_missing_or_invalid")
           || entry.includes("scene_missing_or_invalid")
           || entry.includes("ui_actions_count_out_of_bounds")
-          || entry.includes("narration_word_count_out_of_bounds")
-          || entry.includes("vendorId_invalid"),
+          || entry.includes("vendorId_invalid")
+          || entry.includes("json_parse_failed")
+          || entry.includes("invalid_json"),
         );
+        if (critical) return true;
+        if (attempt >= 2) {
+          return errors.some((entry) => entry.includes("narration_word_count_out_of_bounds"));
+        }
+        return false;
       };
 
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -2001,7 +2073,7 @@ ${jsonOnlyContract()}
           {
             messages: attemptMessages,
             stream: true,
-            temperature: 0.7,
+            temperature: 0.55,
           },
           requestedModel,
         );
@@ -2020,7 +2092,7 @@ ${jsonOnlyContract()}
         }
 
         const narrationWords = countWords(parsedOut.value.narration);
-        if (narrationWords > NARRATION_MAX_WORDS + 20 || narrationWords < Math.max(24, NARRATION_MIN_WORDS - 18)) {
+        if (narrationWords > NARRATION_MAX_WORDS + 34 || narrationWords < Math.max(20, NARRATION_MIN_WORDS - 26)) {
           lastErrors = [`narration_word_count_out_of_bounds:${narrationWords}:expected_${NARRATION_MIN_WORDS}-${NARRATION_MAX_WORDS}`];
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
           dmParsed = { ok: false, errors: lastErrors };
