@@ -233,6 +233,40 @@ function canStandAt(point: Position, blocked: Set<string>, occupied: Set<string>
   return !blocked.has(`${point.x},${point.y}`) && !occupied.has(`${point.x},${point.y}`);
 }
 
+function enrichEventPayloadNames(
+  payload: Record<string, unknown>,
+  actorCombatantId: string | null,
+  combatantNames: Map<string, string>,
+): Record<string, unknown> {
+  const sourceId = (
+    typeof payload.source_combatant_id === "string" && payload.source_combatant_id.trim().length > 0
+      ? payload.source_combatant_id
+      : typeof payload.actor_combatant_id === "string" && payload.actor_combatant_id.trim().length > 0
+        ? payload.actor_combatant_id
+        : actorCombatantId
+  );
+  const targetId = typeof payload.target_combatant_id === "string" && payload.target_combatant_id.trim().length > 0
+    ? payload.target_combatant_id
+    : null;
+  const sourceName = sourceId ? (combatantNames.get(sourceId) ?? null) : null;
+  const targetName = targetId ? (combatantNames.get(targetId) ?? null) : null;
+  return {
+    ...payload,
+    source_combatant_id: sourceId ?? payload.source_combatant_id ?? null,
+    actor_combatant_id: sourceId ?? payload.actor_combatant_id ?? null,
+    target_combatant_id: targetId ?? payload.target_combatant_id ?? null,
+    source_name: typeof payload.source_name === "string" && payload.source_name.trim().length > 0
+      ? payload.source_name
+      : sourceName,
+    actor_name: typeof payload.actor_name === "string" && payload.actor_name.trim().length > 0
+      ? payload.actor_name
+      : sourceName,
+    target_name: typeof payload.target_name === "string" && payload.target_name.trim().length > 0
+      ? payload.target_name
+      : targetName,
+  };
+}
+
 function chooseMoveStep(current: Position, target: Position, blocked: Set<string>, occupied: Set<string>): Position | null {
   const dx = target.x - current.x;
   const dy = target.y - current.y;
@@ -692,6 +726,13 @@ export const mythicCombatUseSkill: FunctionHandler = {
         .select("*")
         .eq("combat_session_id", combatSessionId);
       if (allCombatantsErr) throw allCombatantsErr;
+      const combatantNames = new Map<string, string>();
+      ((allCombatants ?? []) as CombatantRow[]).forEach((entry) => {
+        const id = String(entry.id ?? "").trim();
+        const name = String(entry.name ?? "").trim();
+        if (!id || !name) return;
+        combatantNames.set(id, name);
+      });
       const allTargets = getTargetsForShape({
         shape,
         metric,
@@ -1191,7 +1232,7 @@ export const mythicCombatUseSkill: FunctionHandler = {
           turn_index: e.turn_index,
           actor_combatant_id: e.actor_id,
           event_type: e.event_type,
-          payload: e.payload,
+          payload: enrichEventPayloadNames(e.payload, e.actor_id, combatantNames),
         });
       }
 
@@ -1326,7 +1367,11 @@ export const mythicCombatUseSkill: FunctionHandler = {
         turn_index: turnIndex,
         actor_combatant_id: (actor as any).id,
         event_type: "turn_end",
-        payload: { actor_combatant_id: (actor as any).id },
+        payload: enrichEventPayloadNames(
+          { actor_combatant_id: (actor as any).id },
+          (actor as any).id,
+          combatantNames,
+        ),
       });
 
       await svc.rpc("mythic_append_action_event", {
@@ -1334,7 +1379,11 @@ export const mythicCombatUseSkill: FunctionHandler = {
         turn_index: nextIndex,
         actor_combatant_id: nextCombatantId,
         event_type: "turn_start",
-        payload: { actor_combatant_id: nextCombatantId },
+        payload: enrichEventPayloadNames(
+          { actor_combatant_id: nextCombatantId },
+          nextCombatantId,
+          combatantNames,
+        ),
       });
 
       const response = new Response(JSON.stringify({ ok: true, next_turn_index: nextIndex, next_actor_combatant_id: nextCombatantId }), {

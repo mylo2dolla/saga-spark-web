@@ -174,13 +174,41 @@ async function appendEvent(
   actorId: string | null,
   eventType: string,
   payload: Record<string, unknown>,
+  combatantNames?: Map<string, string>,
 ) {
+  const sourceId = (
+    typeof payload.source_combatant_id === "string" && payload.source_combatant_id.trim().length > 0
+      ? payload.source_combatant_id
+      : typeof payload.actor_combatant_id === "string" && payload.actor_combatant_id.trim().length > 0
+        ? payload.actor_combatant_id
+        : actorId
+  );
+  const targetId = typeof payload.target_combatant_id === "string" && payload.target_combatant_id.trim().length > 0
+    ? payload.target_combatant_id
+    : null;
+  const sourceName = sourceId && combatantNames ? (combatantNames.get(sourceId) ?? null) : null;
+  const targetName = targetId && combatantNames ? (combatantNames.get(targetId) ?? null) : null;
+  const enrichedPayload = {
+    ...payload,
+    source_combatant_id: sourceId ?? payload.source_combatant_id ?? null,
+    actor_combatant_id: sourceId ?? payload.actor_combatant_id ?? null,
+    target_combatant_id: targetId ?? payload.target_combatant_id ?? null,
+    source_name: typeof payload.source_name === "string" && payload.source_name.trim().length > 0
+      ? payload.source_name
+      : sourceName,
+    actor_name: typeof payload.actor_name === "string" && payload.actor_name.trim().length > 0
+      ? payload.actor_name
+      : sourceName,
+    target_name: typeof payload.target_name === "string" && payload.target_name.trim().length > 0
+      ? payload.target_name
+      : targetName,
+  };
   const { error } = await svc.rpc("mythic_append_action_event", {
     combat_session_id: combatSessionId,
     turn_index: turnIndex,
     actor_combatant_id: actorId,
     event_type: eventType,
-    payload,
+    payload: enrichedPayload,
   });
   if (error) throw error;
 }
@@ -448,6 +476,13 @@ export const mythicCombatTick: FunctionHandler = {
           .eq("is_alive", true);
         if (livingErr) throw livingErr;
         const living = (livingRows ?? []) as Combatant[];
+        const combatantNames = new Map<string, string>();
+        living.forEach((entry) => {
+          const id = String(entry.id ?? "").trim();
+          const name = String(entry.name ?? "").trim();
+          if (!id || !name) return;
+          combatantNames.set(id, name);
+        });
         const opponents = living.filter((entry) => !sameTeam(actorAfterTick as Combatant, entry));
         if (!opponents.length) {
           ended = true;
@@ -510,7 +545,7 @@ export const mythicCombatTick: FunctionHandler = {
                 combatant_id: (actorAfterTick as any).id,
                 phase: nextPhase,
                 hp_pct: hpPct,
-              });
+              }, combatantNames);
             }
 
             const phaseRow = phases.find((row) => Number(row.phase ?? 1) === nextPhase) ?? phases[0] ?? {};
@@ -565,7 +600,7 @@ export const mythicCombatTick: FunctionHandler = {
                 dash_tiles: budget,
                 tiles_used: moved.steps,
                 ai_move: true,
-              });
+              }, combatantNames);
             }
           }
           const afterMoveDistance = tileDistance(actorAfterTick as Combatant, movementTarget);
@@ -598,7 +633,7 @@ export const mythicCombatTick: FunctionHandler = {
           skill_id: skillKey,
           skill_name: skillName,
           target_count: targets.length,
-        });
+        }, combatantNames);
 
         if (skillKey === "basic_defend") {
           const armorGain = Math.max(4, Math.floor(Number((actorAfterTick as any).defense) * 0.22) + Math.floor(Number((actorAfterTick as any).support) * 0.12));
@@ -635,11 +670,11 @@ export const mythicCombatTick: FunctionHandler = {
           await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "status_applied", {
             target_combatant_id: (actorAfterTick as any).id,
             status: { id: "barrier", amount: armorGain, duration_turns: 1 },
-          });
+          }, combatantNames);
           await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "status_applied", {
             target_combatant_id: (actorAfterTick as any).id,
             status: { id: "guard", amount: armorGain, duration_turns: 1 },
-          });
+          }, combatantNames);
         } else if (skillKey === "basic_recover_mp") {
           const recoverAmount = Math.max(6, Math.floor(Number((actorAfterTick as any).utility) * 0.18) + Math.floor(Number((actorAfterTick as any).support) * 0.12));
           const beforePower = Math.max(0, Number((actorAfterTick as any).power ?? 0));
@@ -659,7 +694,7 @@ export const mythicCombatTick: FunctionHandler = {
             target_combatant_id: (actorAfterTick as any).id,
             amount: gained,
             power_after: nextPower,
-          });
+          }, combatantNames);
         } else {
           for (const t of targets) {
             const { data: dmgJson, error: dmgErr } = await svc.rpc("mythic_compute_damage", {
@@ -706,7 +741,7 @@ export const mythicCombatTick: FunctionHandler = {
               damage_to_hp: hpDelta,
               hp_after: nextHp,
               armor_after: nextArmor,
-            });
+            }, combatantNames);
 
             if (skillKey === "boss_mark" || skillKey === "boss_vuln") {
               const { data: targetRow } = await svc
@@ -733,14 +768,14 @@ export const mythicCombatTick: FunctionHandler = {
               await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "status_applied", {
                 target_combatant_id: (t as any).id,
                 status: { id: "vulnerable", duration_turns: 2 },
-              });
+              }, combatantNames);
             }
 
             if (died) {
               await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "death", {
                 target_combatant_id: (t as any).id,
                 by: { combatant_id: (actorAfterTick as any).id, skill_id: skillKey },
-              });
+              }, combatantNames);
             }
           }
         }
@@ -789,6 +824,7 @@ export const mythicCombatTick: FunctionHandler = {
                 actorId ?? null,
                 eventType,
                 payload,
+                combatantNames,
               );
             },
           });
@@ -807,9 +843,25 @@ export const mythicCombatTick: FunctionHandler = {
           updated_at: new Date().toISOString(),
         }).eq("id", combatSessionId);
 
-        await appendEvent(svc, combatSessionId, turnIndex, (actorAfterTick as any).id, "turn_end", { actor_combatant_id: (actorAfterTick as any).id });
+        await appendEvent(
+          svc,
+          combatSessionId,
+          turnIndex,
+          (actorAfterTick as any).id,
+          "turn_end",
+          { actor_combatant_id: (actorAfterTick as any).id },
+          combatantNames,
+        );
         if (nextActorId) {
-          await appendEvent(svc, combatSessionId, nextIndex, nextActorId, "turn_start", { actor_combatant_id: nextActorId });
+          await appendEvent(
+            svc,
+            combatSessionId,
+            nextIndex,
+            nextActorId,
+            "turn_start",
+            { actor_combatant_id: nextActorId },
+            combatantNames,
+          );
         }
       }
 

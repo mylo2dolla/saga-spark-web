@@ -185,6 +185,7 @@ const MAX_CONSOLE_ACTIONS = 6;
 const DM_ACTION_TIMEOUT_MS = 110_000;
 const AUTO_TICK_MAX_STEPS = 1;
 const AUTO_TICK_VOICE_DEADLOCK_MS = 12_000;
+const AUTO_TICK_MIN_STEP_GAP_MS = 1_800;
 const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative update)$/i;
 const LOW_SIGNAL_NARRATION_PROMPT = /^(continue|proceed|advance|next(\s+(step|move))?|refresh(\s+state)?|narrate|describe)(\b|[\s.,])/i;
 const screenLogger = createLogger("mythic-game-screen");
@@ -355,6 +356,77 @@ function isLowSignalNarrationPrompt(prompt: string): boolean {
   if (!clean) return true;
   if (LOW_SIGNAL_NARRATION_PROMPT.test(clean) && clean.length < 80) return true;
   return false;
+}
+
+function isMechanicalExecutionError(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+  return normalized.includes("not your turn")
+    || normalized.includes("target out of range")
+    || normalized.includes("line of sight blocked")
+    || normalized.includes("cannot move to selected tile")
+    || normalized.includes("no valid target")
+    || normalized.includes("no valid targets in area");
+}
+
+function enrichCombatEventBatchForNarration(
+  events: unknown,
+  combatants: Array<{ id: string; name: string }>,
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(events) || events.length === 0) return [];
+  const combatantNames = new Map<string, string>();
+  combatants.forEach((entry) => {
+    const id = entry.id.trim();
+    const name = entry.name.trim();
+    if (!id || !name) return;
+    combatantNames.set(id, name);
+  });
+  return events
+    .map((entry) => {
+      const row = asRecord(entry);
+      if (!row) return null;
+      const payload = asRecord(row.payload) ?? {};
+      const actorId = (
+        typeof payload.source_combatant_id === "string" && payload.source_combatant_id.trim().length > 0
+          ? payload.source_combatant_id
+          : typeof payload.actor_combatant_id === "string" && payload.actor_combatant_id.trim().length > 0
+            ? payload.actor_combatant_id
+            : typeof row.actor_combatant_id === "string" && row.actor_combatant_id.trim().length > 0
+              ? row.actor_combatant_id
+              : null
+      );
+      const targetId = (
+        typeof payload.target_combatant_id === "string" && payload.target_combatant_id.trim().length > 0
+          ? payload.target_combatant_id
+          : null
+      );
+      const actorName = (
+        typeof payload.source_name === "string" && payload.source_name.trim().length > 0
+          ? payload.source_name.trim()
+          : typeof payload.actor_name === "string" && payload.actor_name.trim().length > 0
+            ? payload.actor_name.trim()
+            : (actorId ? (combatantNames.get(actorId) ?? null) : null)
+      );
+      const targetName = (
+        typeof payload.target_name === "string" && payload.target_name.trim().length > 0
+          ? payload.target_name.trim()
+          : (targetId ? (combatantNames.get(targetId) ?? null) : null)
+      );
+      return {
+        ...row,
+        payload: {
+          ...payload,
+          source_combatant_id: actorId ?? payload.source_combatant_id ?? null,
+          actor_combatant_id: actorId ?? payload.actor_combatant_id ?? null,
+          target_combatant_id: targetId ?? payload.target_combatant_id ?? null,
+          source_name: actorName ?? null,
+          actor_name: actorName ?? null,
+          target_name: targetName ?? null,
+        },
+      };
+    })
+    .filter(Boolean)
+    .slice(-10) as Array<Record<string, unknown>>;
 }
 
 function synthesizePromptFromAction(action: MythicUiAction, args: {
@@ -576,12 +648,15 @@ export default function MythicGameScreen() {
   const [isAdvancingTurn, setIsAdvancingTurn] = useState(false);
   const [combatAutoPacePhase, setCombatAutoPacePhase] = useState<CombatAutoPacePhase>("idle");
   const [combatAutoStepIndex, setCombatAutoStepIndex] = useState(0);
+  const [autoTickGateNonce, setAutoTickGateNonce] = useState(0);
   const [combatRewardSummary, setCombatRewardSummary] = useState<CombatRewardSummaryModel | null>(null);
   const [isNarratedActionBusy, setIsNarratedActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const autoTickKeyRef = useRef<string | null>(null);
   const voiceGateDeadlineRef = useRef<number | null>(null);
   const voiceGateBaselineEndedAtRef = useRef<number | null>(null);
+  const nextAutoTickReadyAtRef = useRef<number | null>(null);
+  const autoTickDelayTimerRef = useRef<number | null>(null);
   const lastRewardCombatEndEventIdRef = useRef<string | null>(null);
   const narratedActionQueueRef = useRef<Promise<void>>(Promise.resolve());
   const lastPlayerInputRef = useRef<string>("");
@@ -864,6 +939,11 @@ export default function MythicGameScreen() {
     setCombatAutoStepIndex(0);
     voiceGateDeadlineRef.current = null;
     voiceGateBaselineEndedAtRef.current = null;
+    nextAutoTickReadyAtRef.current = null;
+    if (autoTickDelayTimerRef.current !== null) {
+      window.clearTimeout(autoTickDelayTimerRef.current);
+      autoTickDelayTimerRef.current = null;
+    }
     autoTickKeyRef.current = null;
   }, [board?.board_type]);
 
@@ -1322,6 +1402,30 @@ export default function MythicGameScreen() {
         executionError,
       });
 
+      const contextWithNamedEvents = Array.isArray(context.combat_event_batch)
+        ? {
+            ...context,
+            combat_event_batch: enrichCombatEventBatchForNarration(
+              context.combat_event_batch,
+              combatState.combatants.map((entry) => ({ id: entry.id, name: entry.name })),
+            ),
+          }
+        : context;
+
+      if (executionError && isMechanicalExecutionError(executionError)) {
+        await refreshAllState();
+        setDmContextRefreshSignal((prev) => prev + 1);
+        setActionError(executionError);
+        toast.error(executionError);
+        screenLogger.info("mythic.action.narration_skipped_for_mechanical_error", {
+          action_trace_id: actionTraceId,
+          source: args.source,
+          intent: args.intent,
+          execution_error: executionError,
+        });
+        return;
+      }
+
       const narrationPrompt = executionError
         ? `I attempted ${args.intent}, but it failed: ${executionError}. Narrate the failure against committed state only.`
         : prompt.length > 0
@@ -1344,7 +1448,7 @@ export default function MythicGameScreen() {
             payload: args.payload ?? null,
             state_changes: stateChanges,
             execution_error: executionError,
-            ...context,
+            ...contextWithNamedEvents,
           },
         });
       } catch (error) {
@@ -1396,7 +1500,7 @@ export default function MythicGameScreen() {
         queuedNarrationKeysRef.current.delete(dedupeKey);
       }
     });
-  }, [campaignId, enqueueNarratedAction, mythicDm, refetch, refetchCombatState, refreshAllState]);
+  }, [campaignId, combatState.combatants, enqueueNarratedAction, mythicDm, refetch, refetchCombatState, refreshAllState]);
 
   const handlePlayerInput = useCallback(async (message: string) => {
     if (!campaignId) return;
@@ -1749,6 +1853,13 @@ export default function MythicGameScreen() {
                 error: "No active player combatant is available for quick-cast.",
               };
             }
+            if (combatState.activeTurnCombatantId !== playerCombatantId) {
+              return {
+                stateChanges: [],
+                context: { quick_cast_skill_id: quickCastSkillId },
+                error: "Not your turn. Wait for the current turn to finish.",
+              };
+            }
             const targeting = typeof payload.quick_cast_targeting === "string" ? payload.quick_cast_targeting : "single";
             const payloadTargetCombatantId = typeof payload.target_combatant_id === "string" ? payload.target_combatant_id : null;
             const payloadTargetTile = payload.quick_cast_target_tile && typeof payload.quick_cast_target_tile === "object"
@@ -1966,6 +2077,7 @@ export default function MythicGameScreen() {
     character,
     combat,
     combatSessionId,
+    combatState.activeTurnCombatantId,
     combatState.combatants,
     combatState.session?.current_turn_index,
     devSurfaces.enabled,
@@ -2094,9 +2206,15 @@ export default function MythicGameScreen() {
         autoTickKeyRef.current = null;
         voiceGateDeadlineRef.current = null;
         voiceGateBaselineEndedAtRef.current = null;
+        nextAutoTickReadyAtRef.current = null;
+        if (autoTickDelayTimerRef.current !== null) {
+          window.clearTimeout(autoTickDelayTimerRef.current);
+          autoTickDelayTimerRef.current = null;
+        }
         return;
       }
       setCombatAutoStepIndex((prev) => prev + 1);
+      nextAutoTickReadyAtRef.current = Date.now() + AUTO_TICK_MIN_STEP_GAP_MS;
       if (shouldGateNpcStepOnVoice) {
         setCombatAutoPacePhase("waiting_voice_end");
         voiceGateDeadlineRef.current = Date.now() + AUTO_TICK_VOICE_DEADLOCK_MS;
@@ -2143,6 +2261,10 @@ export default function MythicGameScreen() {
     target: { kind: "self" } | { kind: "combatant"; combatant_id: string } | { kind: "tile"; x: number; y: number };
   }) => {
     if (!campaignId || !combatSessionId) return;
+    if (args.actorCombatantId === playerCombatantId && combatState.activeTurnCombatantId !== args.actorCombatantId) {
+      toast.error("Not your turn. Wait for the current turn to finish.");
+      return;
+    }
     const skillName = skills.find((skill) => skill.id === args.skillId)?.name ?? "skill";
     const targetLabel = describeCombatTarget(args.target);
     await runNarratedAction({
@@ -2216,7 +2338,7 @@ export default function MythicGameScreen() {
         };
       },
     });
-  }, [campaignId, combat, combatSessionId, combatState.session?.current_turn_index, describeCombatTarget, refetch, refetchCombatState, runNarratedAction, skills]);
+  }, [campaignId, combat, combatSessionId, combatState.activeTurnCombatantId, combatState.session?.current_turn_index, describeCombatTarget, playerCombatantId, refetch, refetchCombatState, runNarratedAction, skills]);
 
   const quickCastAvailability = useMemo(
     () => commandSkillAvailability.filter((entry) => entry.kind === "active" || entry.kind === "ultimate").slice(0, 8),
@@ -2328,6 +2450,10 @@ export default function MythicGameScreen() {
 
   const triggerQuickCast = useCallback(async (skillId: string, targeting: string) => {
     if (!playerCombatantId || !combatSessionId) return;
+    if (combatState.activeTurnCombatantId !== playerCombatantId) {
+      toast.error("Not your turn. Wait for the current turn to finish.");
+      return;
+    }
     const target = selectQuickCastTarget(targeting);
     if (!target) {
       toast.error("No valid combat target is available.");
@@ -2359,7 +2485,7 @@ export default function MythicGameScreen() {
       skillId,
       target,
     });
-  }, [combatSessionId, combatState.combatants, executeCombatSkillNarration, playerCombatantId, selectQuickCastTarget, skills]);
+  }, [combatSessionId, combatState.activeTurnCombatantId, combatState.combatants, executeCombatSkillNarration, playerCombatantId, selectQuickCastTarget, skills]);
 
   const retryLastAction = useCallback(() => {
     if (!lastPlayerInputRef.current) return;
@@ -2392,7 +2518,21 @@ export default function MythicGameScreen() {
     autoTickKeyRef.current = null;
     voiceGateDeadlineRef.current = null;
     voiceGateBaselineEndedAtRef.current = null;
+    nextAutoTickReadyAtRef.current = null;
+    if (autoTickDelayTimerRef.current !== null) {
+      window.clearTimeout(autoTickDelayTimerRef.current);
+      autoTickDelayTimerRef.current = null;
+    }
   }, [canAdvanceNpcTurn]);
+
+  useEffect(() => {
+    return () => {
+      if (autoTickDelayTimerRef.current !== null) {
+        window.clearTimeout(autoTickDelayTimerRef.current);
+        autoTickDelayTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!canAdvanceNpcTurn) return;
@@ -2452,6 +2592,21 @@ export default function MythicGameScreen() {
       voiceGateBaselineEndedAtRef.current = dmVoice.speechEndedAt;
       return;
     }
+    const readyAt = nextAutoTickReadyAtRef.current;
+    if (typeof readyAt === "number" && Date.now() < readyAt) {
+      if (autoTickDelayTimerRef.current !== null) {
+        window.clearTimeout(autoTickDelayTimerRef.current);
+      }
+      autoTickDelayTimerRef.current = window.setTimeout(() => {
+        autoTickDelayTimerRef.current = null;
+        setAutoTickGateNonce((prev) => prev + 1);
+      }, Math.max(40, readyAt - Date.now()));
+      return;
+    }
+    if (autoTickDelayTimerRef.current !== null) {
+      window.clearTimeout(autoTickDelayTimerRef.current);
+      autoTickDelayTimerRef.current = null;
+    }
     const key = `${combatSessionId}:${combatState.session?.current_turn_index ?? -1}:${activeTurnCombatant?.id ?? "none"}`;
     if (autoTickKeyRef.current === key) return;
     autoTickKeyRef.current = key;
@@ -2459,6 +2614,7 @@ export default function MythicGameScreen() {
   }, [
     advanceNpcTurn,
     activeTurnCombatant?.id,
+    autoTickGateNonce,
     canAdvanceNpcTurn,
     combat.isTicking,
     combatAutoPacePhase,

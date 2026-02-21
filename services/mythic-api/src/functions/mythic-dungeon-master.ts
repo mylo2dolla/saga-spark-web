@@ -1355,16 +1355,26 @@ function synthesizeRecoveryPayload(args: {
     .map((entry) => {
       const eventType = typeof entry.event_type === "string" ? entry.event_type : "";
       const payload = asObject(entry.payload);
+      const actorId = typeof entry.actor_combatant_id === "string" && entry.actor_combatant_id.trim().length > 0
+        ? entry.actor_combatant_id
+        : typeof payload?.actor_combatant_id === "string" && payload.actor_combatant_id.trim().length > 0
+          ? payload.actor_combatant_id
+          : typeof payload?.source_combatant_id === "string" && payload.source_combatant_id.trim().length > 0
+            ? payload.source_combatant_id
+            : null;
+      const targetId = typeof payload?.target_combatant_id === "string" && payload.target_combatant_id.trim().length > 0
+        ? payload.target_combatant_id
+        : null;
       const actor = (
         payload?.source_name
         ?? payload?.actor_name
         ?? payload?.actor_display
-        ?? "A combatant"
+        ?? (actorId ? `Unit ${actorId.slice(0, 6)}` : "Unknown combatant")
       );
       const target = (
         payload?.target_name
         ?? payload?.target_display
-        ?? "the line"
+        ?? (targetId ? `Unit ${targetId.slice(0, 6)}` : "an opening")
       );
       const amount = Number(
         payload?.damage_to_hp
@@ -1384,7 +1394,7 @@ function synthesizeRecoveryPayload(args: {
         return `${actor} repositions for the next exchange.`;
       }
       if (eventType === "damage") {
-        return amountText ? `${actor} hits ${target} for ${amountText}.` : `${actor} lands a hit on ${target}.`;
+        return amountText ? `${actor} strikes ${target} for ${amountText}.` : `${actor} lands a hit on ${target}.`;
       }
       if (eventType === "healed") {
         return amountText ? `${actor} restores ${amountText} to ${target}.` : `${actor} stabilizes ${target}.`;

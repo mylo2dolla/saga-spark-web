@@ -176,7 +176,10 @@ export function useMythicCombat() {
         eventBatch: snapshot ? extractRecentEventBatch(snapshot.events) : [],
       };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to use skill";
+      const parsed = parseEdgeError(e, "Failed to use skill");
+      const msg = parsed.message.toLowerCase().includes("not your turn")
+        ? "Not your turn. Wait for the current turn to finish."
+        : parsed.message;
       logger.error("combat.use_skill.failed", e);
       toast.error(msg);
       return { ok: false as const, error: msg };
@@ -238,7 +241,8 @@ export function useMythicCombat() {
         eventBatch: snapshot ? extractRecentEventBatch(snapshot.events) : [],
       };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Failed to advance combat";
+      const parsed = parseEdgeError(e, "Failed to advance combat");
+      const msg = parsed.message;
       logger.error("combat.tick.failed", e);
       toast.error(msg);
       return { ok: false as const, error: msg };
