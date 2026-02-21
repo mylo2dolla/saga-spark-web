@@ -115,29 +115,32 @@ export function buildSkillAvailability(args: {
     .map((skill) => {
       const skillId = String(skill.id);
       const cdRemaining = cooldowns.get(skillId) ?? 0;
-      let reason: string | null = null;
-      if (!playerCombatant) reason = "No player combatant present.";
-      else if (!playerCombatant.is_alive) reason = "You are down.";
-      else if (!isPlayersTurn) reason = "Not your turn.";
-      else if (cdRemaining > 0) reason = `Cooldown ${cdRemaining} turn(s).`;
+      let gateReason: string | null = null;
+      if (!playerCombatant) gateReason = "No player combatant present.";
+      else if (!playerCombatant.is_alive) gateReason = "You are down.";
+      else if (!isPlayersTurn) gateReason = "Not your turn.";
+      else if (cdRemaining > 0) gateReason = `Cooldown ${cdRemaining} turn(s).`;
       const requiresTarget = skill.targeting !== "self";
       const hasFocusedTarget = Boolean(focusedTarget);
-      if (!reason && requiresTarget && !hasFocusedTarget) reason = "Select a target.";
       const metricRaw = String(skill.targeting_json?.metric ?? "manhattan").toLowerCase();
       const metric = metricRaw === "euclidean" || metricRaw === "chebyshev" ? metricRaw : "manhattan";
       const rangeToFocused = playerCombatant && focusedTarget
         ? distanceForMetric(playerCombatant.x, playerCombatant.y, focusedTarget.x, focusedTarget.y, metric)
         : null;
       const inRangeForFocused = rangeToFocused === null ? null : rangeToFocused <= Math.max(0, Number(skill.range_tiles ?? 0));
-      if (!reason && requiresTarget && inRangeForFocused === false) {
-        const rangeTiles = Math.max(0, Number(skill.range_tiles ?? 0));
-        reason = `Out of range (${rangeToFocused?.toFixed(1)} > ${rangeTiles}).`;
-      }
       const resourceCost = readSkillPowerCost(skill);
       const hasEnoughPower = !playerCombatant || resourceCost <= 0 || Number(playerCombatant.power ?? 0) >= resourceCost;
-      if (!reason && !hasEnoughPower) {
-        reason = `Needs ${Math.max(0, Math.floor(resourceCost))} MP.`;
+      if (!gateReason && !hasEnoughPower) {
+        gateReason = `Needs ${Math.max(0, Math.floor(resourceCost))} MP.`;
       }
+      let advisoryReason: string | null = null;
+      if (requiresTarget && !hasFocusedTarget) {
+        advisoryReason = "Select a target.";
+      } else if (requiresTarget && inRangeForFocused === false) {
+        const rangeTiles = Math.max(0, Number(skill.range_tiles ?? 0));
+        advisoryReason = `Focused target out of range (${rangeToFocused?.toFixed(1)} > ${rangeTiles}).`;
+      }
+      const reason = gateReason ?? advisoryReason;
 
       return {
         skillId,
@@ -148,7 +151,7 @@ export function buildSkillAvailability(args: {
         cooldownTurns: Number(skill.cooldown_turns ?? 0),
         cooldownRemaining: cdRemaining,
         isPlayersTurn,
-        usableNow: reason === null,
+        usableNow: gateReason === null,
         reason,
         rangeToFocused,
         inRangeForFocused,

@@ -950,19 +950,20 @@ export const mythicCombatUseSkill: FunctionHandler = {
             utility: attacker.utility,
             weapon_power: (actor as any).weapon_power ?? 0,
             skill_mult: Number.isFinite(skillMult) ? skillMult : 1,
-            resist: Number((target as any).resist ?? 0) + Number((target as any).armor ?? 0),
+            resist: Number((target as any).resist ?? 0),
             spread_pct: 0.10,
           });
           if (dmgErr) throw dmgErr;
           const dmgObj = asObject(dmgJson);
           const finalDamage = Number((dmgObj as any).final_damage ?? 0);
-          const raw = Number.isFinite(finalDamage) ? Math.max(0, finalDamage) : 0;
+          const raw = Number.isFinite(finalDamage) ? Math.max(0, Math.floor(finalDamage)) : 0;
 
-          const shield = Math.max(0, Number((target as any).armor ?? 0));
+          const shield = Math.max(0, Math.floor(Number((target as any).armor ?? 0)));
           const absorbed = Math.min(shield, raw);
-          const remaining = raw - absorbed;
-          const newArmor = shield - absorbed;
-          const newHp = Math.max(0, Number((target as any).hp ?? 0) - remaining);
+          const remaining = Math.max(0, raw - absorbed);
+          const newArmor = Math.max(0, shield - absorbed);
+          const currentHp = Math.max(0, Math.floor(Number((target as any).hp ?? 0)));
+          const newHp = Math.max(0, currentHp - remaining);
           const died = newHp <= 0.0001;
 
           const { error: targetUpdateErr } = await svc

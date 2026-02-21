@@ -31,7 +31,7 @@ export interface MythicUiAction {
   prompt?: string;
   hint_key?: string;
   boardTarget?: "town" | "travel" | "dungeon" | "combat";
-  panel?: "status" | "character" | "loadout" | "loadouts" | "gear" | "equipment" | "skills" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
+  panel?: "status" | "character" | "equipment" | "skills" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
   payload?: Record<string, unknown>;
 }
 
@@ -247,8 +247,13 @@ function normalizeUiAction(entry: unknown, index: number): MythicUiAction | null
   if (!intent) return null;
   const prompt = typeof raw.prompt === "string" && raw.prompt.trim() ? raw.prompt.trim() : undefined;
   const panelRaw = String(raw.panel ?? "").toLowerCase();
-  const panel = panelRaw === "status" || panelRaw === "character" || panelRaw === "loadout" || panelRaw === "loadouts" || panelRaw === "gear" || panelRaw === "equipment" || panelRaw === "skills" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "combat" || panelRaw === "companions" || panelRaw === "shop" || panelRaw === "commands" || panelRaw === "settings"
-    ? panelRaw
+  const panelNormalized = panelRaw === "loadout" || panelRaw === "loadouts"
+    ? "skills"
+    : panelRaw === "gear"
+      ? "equipment"
+      : panelRaw;
+  const panel = panelNormalized === "status" || panelNormalized === "character" || panelNormalized === "equipment" || panelNormalized === "skills" || panelNormalized === "progression" || panelNormalized === "quests" || panelNormalized === "combat" || panelNormalized === "companions" || panelNormalized === "shop" || panelNormalized === "commands" || panelNormalized === "settings"
+    ? panelNormalized
     : undefined;
   const boardTargetRaw = String(raw.boardTarget ?? raw.board_target ?? "").toLowerCase();
   const boardTarget = boardTargetRaw === "town" || boardTargetRaw === "travel" || boardTargetRaw === "dungeon" || boardTargetRaw === "combat"

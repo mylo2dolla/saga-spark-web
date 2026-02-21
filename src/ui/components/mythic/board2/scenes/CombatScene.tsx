@@ -299,8 +299,8 @@ export function CombatScene(props: CombatSceneProps) {
               <div className="h-full rounded bg-sky-300" style={{ width: `${mp}%` }} />
             </div>
             <div className="mt-0.5 flex items-center justify-between text-[8px] text-white/85">
-              <span>{Math.floor(combatant.hp)}</span>
-              <span>{Math.floor(combatant.power)}MP</span>
+              <span>{Math.max(0, Math.round(combatant.hp))}</span>
+              <span>{Math.max(0, Math.round(combatant.power))}MP</span>
             </div>
           </button>
         );

@@ -3,7 +3,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
 import type {
   MythicCharacterBundle,
-  MythicCharacterLoadoutRow,
   MythicQuestThreadRow,
   MythicCharacterRow,
   MythicProgressionEventRow,
@@ -131,7 +130,6 @@ export function useMythicCharacter(campaignId: string | undefined) {
       const mythic = supabase.schema("mythic") as any;
 
       const [
-        { data: loadouts, error: loadoutsError },
         { data: progressionEvents, error: progressionError },
         { data: memoryEvents, error: memoryError },
         { data: runtimeTransitions, error: transitionsError },
@@ -140,12 +138,6 @@ export function useMythicCharacter(campaignId: string | undefined) {
         { data: factions, error: factionsError },
       ] =
         await Promise.all([
-          supabase
-            .schema("mythic")
-            .from("character_loadouts")
-            .select("*")
-            .eq("character_id", (character as MythicCharacterRow).id)
-            .order("updated_at", { ascending: false }),
           supabase
             .schema("mythic")
             .from("progression_events")
@@ -189,7 +181,6 @@ export function useMythicCharacter(campaignId: string | undefined) {
             .eq("campaign_id", campaignId),
         ]);
 
-      if (loadoutsError) throw loadoutsError;
       if (progressionError) throw progressionError;
       if (memoryError) throw memoryError;
       if (transitionsError) throw transitionsError;
@@ -326,26 +317,13 @@ export function useMythicCharacter(campaignId: string | undefined) {
         })
         .slice(0, 80);
 
-      let loadoutSlotCap = 2;
-      try {
-        const { data: slotCapData, error: slotCapError } = await supabase
-          .rpc("mythic_loadout_slots_for_level", { lvl: (character as MythicCharacterRow).level });
-        if (!slotCapError && Number.isFinite(Number(slotCapData))) {
-          loadoutSlotCap = Math.max(1, Number(slotCapData));
-        }
-      } catch {
-        // Keep fallback when function is missing in out-of-date environments.
-      }
-
       if (isMountedRef.current) {
         setBundle({
           character: character as MythicCharacterRow,
           skills: (skills ?? []) as unknown as MythicSkill[],
           items: ((inv ?? []).map((row) => row)) as unknown as Array<Record<string, unknown>>,
-          loadouts: (loadouts ?? []) as unknown as MythicCharacterLoadoutRow[],
           progressionEvents: (progressionEvents ?? []) as unknown as MythicProgressionEventRow[],
           questThreads: sortedThreads,
-          loadoutSlotCap,
         });
       }
     } catch (e) {
@@ -439,10 +417,8 @@ export function useMythicCharacter(campaignId: string | undefined) {
     character: bundle?.character ?? null,
     skills: bundle?.skills ?? [],
     items: bundle?.items ?? [],
-    loadouts: bundle?.loadouts ?? [],
     progressionEvents: bundle?.progressionEvents ?? [],
     questThreads: bundle?.questThreads ?? [],
-    loadoutSlotCap: bundle?.loadoutSlotCap ?? 2,
     isInitialLoading,
     isRefreshing,
     isLoading: isInitialLoading,

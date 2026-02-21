@@ -671,17 +671,18 @@ export const mythicCombatTick: FunctionHandler = {
               utility: (actorAfterTick as any).utility,
               weapon_power: (actorAfterTick as any).weapon_power ?? 0,
               skill_mult: skillMultFor(skillKey, targetHpPct),
-              resist: Number((t as any).resist ?? 0) + Number((t as any).armor ?? 0),
+              resist: Number((t as any).resist ?? 0),
               spread_pct: 0.1,
             });
             if (dmgErr) throw dmgErr;
             const roll = (dmgJson ?? {}) as Record<string, unknown>;
-            const rawDamage = Math.max(0, Number((roll as any).final_damage ?? 0));
-            const shield = Math.max(0, Number((t as any).armor ?? 0));
+            const rawDamage = Math.max(0, Math.floor(Number((roll as any).final_damage ?? 0)));
+            const shield = Math.max(0, Math.floor(Number((t as any).armor ?? 0)));
             const absorbed = Math.min(shield, rawDamage);
             const hpDelta = Math.max(0, rawDamage - absorbed);
-            const nextArmor = shield - absorbed;
-            const nextHp = Math.max(0, Number((t as any).hp ?? 0) - hpDelta);
+            const nextArmor = Math.max(0, shield - absorbed);
+            const currentHp = Math.max(0, Math.floor(Number((t as any).hp ?? 0)));
+            const nextHp = Math.max(0, currentHp - hpDelta);
             const died = nextHp <= 0.0001;
 
             const { error: updateTargetErr } = await svc

@@ -323,15 +323,17 @@ function buildRecentStepResolutions(args: {
       const targetId = asString(payload.target_combatant_id) || null;
       const actor = actorId ? (args.displayNames[actorId]?.fullName ?? actorId) : "Unknown";
       const target = targetId ? (args.displayNames[targetId]?.fullName ?? targetId) : null;
-      const amount = Math.max(
-        0,
-        Math.floor(
-          asNumber(payload.damage_to_hp, Number.NaN)
-          || asNumber(payload.final_damage, Number.NaN)
-          || asNumber(payload.amount, Number.NaN)
-          || 0,
-        ),
-      );
+      const damageToHp = asNumber(payload.damage_to_hp, Number.NaN);
+      const finalDamage = asNumber(payload.final_damage, Number.NaN);
+      const genericAmount = asNumber(payload.amount, Number.NaN);
+      const amountRaw = Number.isFinite(damageToHp)
+        ? damageToHp
+        : Number.isFinite(finalDamage)
+          ? finalDamage
+          : Number.isFinite(genericAmount)
+            ? genericAmount
+            : 0;
+      const amount = Math.max(0, Math.round(amountRaw));
       const statusPayload = asRecord(payload.status);
       const status = asString(statusPayload.id) || asString(payload.status_id) || null;
       const movedTo = parseGridPoint(payload.to);
@@ -395,7 +397,12 @@ function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][
   const payload = asRecord(event.payload);
   const targetCombatantId = asString(payload.target_combatant_id) || null;
   if (event.event_type === "damage") {
-    const amount = Math.max(0, Math.floor(asNumber(payload.damage_to_hp, asNumber(payload.final_damage, 0))));
+    const damageToHp = asNumber(payload.damage_to_hp, Number.NaN);
+    const finalDamage = asNumber(payload.final_damage, 0);
+    const amount = Math.max(
+      0,
+      Math.round(Number.isFinite(damageToHp) ? damageToHp : finalDamage),
+    );
     return {
       id: event.id,
       eventType: "damage" as const,
@@ -407,7 +414,7 @@ function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][
     };
   }
   if (event.event_type === "healed") {
-    const amount = Math.max(0, Math.floor(asNumber(payload.amount, 0)));
+    const amount = Math.max(0, Math.round(asNumber(payload.amount, 0)));
     return {
       id: event.id,
       eventType: "healed" as const,
@@ -419,7 +426,7 @@ function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][
     };
   }
   if (event.event_type === "power_gain") {
-    const amount = Math.max(0, Math.floor(asNumber(payload.amount, 0)));
+    const amount = Math.max(0, Math.round(asNumber(payload.amount, 0)));
     return {
       id: event.id,
       eventType: "power_gain" as const,
@@ -431,7 +438,7 @@ function parseCombatDelta(event: NarrativeBoardAdapterInput["combat"]["events"][
     };
   }
   if (event.event_type === "power_drain") {
-    const amount = Math.max(0, Math.floor(asNumber(payload.amount, 0)));
+    const amount = Math.max(0, Math.round(asNumber(payload.amount, 0)));
     return {
       id: event.id,
       eventType: "power_drain" as const,

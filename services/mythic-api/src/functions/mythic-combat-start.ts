@@ -378,7 +378,8 @@ export const mythicCombatStart: FunctionHandler = {
       ]
         .filter((entry) => entry.length > 0)
         .join(" ");
-      const enemies = Array.from({ length: enemyCount }, (_, i) => {
+      const enemies: Array<Record<string, unknown>> = [];
+      for (let i = 0; i < enemyCount; i += 1) {
         const base = 35 + rngInt(seed, `enemy:base:${i}`, 0, 25);
         const mobility = clampInt(base + rngInt(seed, `enemy:mob:${i}`, -5, 10), 0, 100);
         const offense = clampInt(base + rngInt(seed, `enemy:off:${i}`, -5, 15), 0, 100);
@@ -390,8 +391,17 @@ export const mythicCombatStart: FunctionHandler = {
 
         const x = 8 + rngInt(seed, `enemy:x:${i}`, 0, 2);
         const y = 1 + i;
+        const hpBaseRes = await svc.rpc("mythic_max_hp", {
+          lvl,
+          defense,
+          support,
+        });
+        throwIfError(hpBaseRes.error, "enemy max_hp");
+        const hpBase = Math.max(1, Math.floor(Number(hpBaseRes.data ?? 100)));
+        const hpVariancePct = rngInt(seed, `enemy:hp_variance:${i}`, -10, 10);
+        const enemyHpMax = Math.max(50, Math.floor(hpBase * (1 + (hpVariancePct / 100))));
 
-        return {
+        enemies.push({
           combat_session_id: combatId,
           entity_type: "npc",
           player_id: null,
@@ -408,8 +418,8 @@ export const mythicCombatStart: FunctionHandler = {
           utility,
           weapon_power: 0,
           armor_power: 0,
-          hp: 100,
-          hp_max: 100,
+          hp: enemyHpMax,
+          hp_max: enemyHpMax,
           power: 0,
           power_max: 0,
           armor: 0,
@@ -417,8 +427,8 @@ export const mythicCombatStart: FunctionHandler = {
           statuses: [],
           initiative,
           is_alive: true,
-        };
-      });
+        });
+      }
 
       const { data: insertedCombatants, error: combatantsError } = await svc
         .schema("mythic")

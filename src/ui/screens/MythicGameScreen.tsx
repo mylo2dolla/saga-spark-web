@@ -262,8 +262,13 @@ function normalizeUiActionFromUnknown(entry: unknown, fallbackId: string): Mythi
     ? boardTargetRaw
     : undefined;
   const panelRaw = String(raw.panel ?? "").trim().toLowerCase();
-  const panel = panelRaw === "status" || panelRaw === "character" || panelRaw === "loadout" || panelRaw === "loadouts" || panelRaw === "gear" || panelRaw === "equipment" || panelRaw === "skills" || panelRaw === "progression" || panelRaw === "quests" || panelRaw === "combat" || panelRaw === "companions" || panelRaw === "shop" || panelRaw === "commands" || panelRaw === "settings"
-    ? panelRaw
+  const panelNormalized = panelRaw === "loadout" || panelRaw === "loadouts"
+    ? "skills"
+    : panelRaw === "gear"
+      ? "equipment"
+      : panelRaw;
+  const panel = panelNormalized === "status" || panelNormalized === "character" || panelNormalized === "equipment" || panelNormalized === "skills" || panelNormalized === "progression" || panelNormalized === "quests" || panelNormalized === "combat" || panelNormalized === "companions" || panelNormalized === "shop" || panelNormalized === "commands" || panelNormalized === "settings"
+    ? panelNormalized
     : undefined;
   const prompt = typeof raw.prompt === "string" && raw.prompt.trim().length > 0 ? raw.prompt.trim() : undefined;
   const payload = asRecord(raw.payload) ?? undefined;
@@ -1490,6 +1495,38 @@ export default function MythicGameScreen() {
     transitionRuntime,
   ]);
 
+  const selectBestQuickCastEnemy = useCallback((preferredCombatantId?: string | null) => {
+    const aliveEnemies = combatState.combatants.filter(
+      (entry) => entry.player_id === null && entry.is_alive,
+    );
+    if (aliveEnemies.length === 0) return null;
+    if (preferredCombatantId) {
+      const preferred = aliveEnemies.find((entry) => entry.id === preferredCombatantId) ?? null;
+      if (preferred) return preferred;
+    }
+    const focused = focusedCombatantId
+      ? aliveEnemies.find((entry) => entry.id === focusedCombatantId) ?? null
+      : null;
+    if (focused) return focused;
+    const activeEnemy = activeTurnCombatant
+      && activeTurnCombatant.player_id === null
+      && activeTurnCombatant.is_alive
+      ? activeTurnCombatant
+      : null;
+    if (activeEnemy) return activeEnemy;
+    const player = playerCombatantId
+      ? combatState.combatants.find((entry) => entry.id === playerCombatantId) ?? null
+      : null;
+    if (!player) return aliveEnemies[0] ?? null;
+    const ordered = [...aliveEnemies].sort((a, b) => {
+      const da = Math.abs(a.x - player.x) + Math.abs(a.y - player.y);
+      const db = Math.abs(b.x - player.x) + Math.abs(b.y - player.y);
+      if (da !== db) return da - db;
+      return a.name.localeCompare(b.name);
+    });
+    return ordered[0] ?? null;
+  }, [activeTurnCombatant, combatState.combatants, focusedCombatantId, playerCombatantId]);
+
   const executeBoardAction = useCallback(async (action: MythicUiAction, source: UnifiedActionSource = "console_action") => {
     if (!campaignId || !board) return;
     const resolvedIntent = resolveActionIntent(action, board.board_type);
@@ -1579,9 +1616,6 @@ export default function MythicGameScreen() {
             || panelRaw === "combat"
             || panelRaw === "quests"
             || panelRaw === "companions"
-            || panelRaw === "loadout"
-            || panelRaw === "loadouts"
-            || panelRaw === "gear"
             || panelRaw === "equipment"
           ) {
             const section = mapCharacterSheetSection(panelRaw);
@@ -1728,14 +1762,7 @@ export default function MythicGameScreen() {
             const payloadTarget = payloadTargetCombatantId
               ? combatState.combatants.find((entry) => entry.id === payloadTargetCombatantId && entry.is_alive) ?? null
               : null;
-            const focusedTarget = focusedCombatantId
-              ? combatState.combatants.find((entry) => entry.id === focusedCombatantId && entry.is_alive) ?? null
-              : null;
-            const activeEnemy = activeTurnCombatant && activeTurnCombatant.player_id === null && activeTurnCombatant.is_alive
-              ? activeTurnCombatant
-              : null;
-            const fallbackEnemy = combatState.combatants.find((entry) => entry.player_id === null && entry.is_alive) ?? null;
-            const selected = payloadTarget ?? focusedTarget ?? activeEnemy ?? fallbackEnemy;
+            const selected = payloadTarget ?? selectBestQuickCastEnemy(payloadTargetCombatantId);
             const target = targeting === "self"
               ? { kind: "self" } as const
               : targeting === "single"
@@ -1770,7 +1797,9 @@ export default function MythicGameScreen() {
                   target,
                   combat_use_skill_failed: true,
                 },
-                error: skillResult.error || "Quick-cast failed.",
+                error: skillResult.error === "Target out of range"
+                  ? "Target out of range. Use Move Here or Advance on Target first."
+                  : (skillResult.error || "Quick-cast failed."),
               };
             }
             await Promise.all([refetchCombatState(), refetch()]);
@@ -1949,6 +1978,7 @@ export default function MythicGameScreen() {
     refetchCombatState,
     resolveActionIntent,
     runNarratedAction,
+    selectBestQuickCastEnemy,
     skills,
     townVendors,
     transitionRuntime,
@@ -2288,20 +2318,13 @@ export default function MythicGameScreen() {
     if (targeting === "self") {
       return { kind: "self" } as const;
     }
-    const focusedTarget = focusedCombatantId
-      ? combatState.combatants.find((entry) => entry.id === focusedCombatantId && entry.is_alive) ?? null
-      : null;
-    const activeEnemy = activeTurnCombatant && activeTurnCombatant.player_id === null && activeTurnCombatant.is_alive
-      ? activeTurnCombatant
-      : null;
-    const fallbackEnemy = combatState.combatants.find((entry) => entry.player_id === null && entry.is_alive) ?? null;
-    const selected = focusedTarget ?? activeEnemy ?? fallbackEnemy;
+    const selected = selectBestQuickCastEnemy();
     if (!selected) return null;
     if (targeting === "single") {
       return { kind: "combatant", combatant_id: selected.id } as const;
     }
     return { kind: "tile", x: selected.x, y: selected.y } as const;
-  }, [activeTurnCombatant, combatState.combatants, focusedCombatantId]);
+  }, [selectBestQuickCastEnemy]);
 
   const triggerQuickCast = useCallback(async (skillId: string, targeting: string) => {
     if (!playerCombatantId || !combatSessionId) return;
@@ -2310,13 +2333,33 @@ export default function MythicGameScreen() {
       toast.error("No valid combat target is available.");
       return;
     }
+    const player = combatState.combatants.find((entry) => entry.id === playerCombatantId && entry.is_alive) ?? null;
+    const targetedCombatant = target.kind === "combatant"
+      ? combatState.combatants.find((entry) => entry.id === target.combatant_id && entry.is_alive) ?? null
+      : null;
+    const skill = skills.find((entry) => entry.id === skillId) ?? null;
+    if (player && targetedCombatant && skill) {
+      const metricRaw = String(skill.targeting_json?.metric ?? "manhattan").toLowerCase();
+      const dx = Math.abs(player.x - targetedCombatant.x);
+      const dy = Math.abs(player.y - targetedCombatant.y);
+      const distance = metricRaw === "euclidean"
+        ? Math.sqrt((dx * dx) + (dy * dy))
+        : metricRaw === "chebyshev"
+          ? Math.max(dx, dy)
+          : dx + dy;
+      const rangeTiles = Math.max(0, Number(skill.range_tiles ?? 0));
+      if (distance > rangeTiles) {
+        toast.error("Target out of range. Use Move Here or Advance on Target first.");
+        return;
+      }
+    }
     await executeCombatSkillNarration({
       source: "combat_quick_cast",
       actorCombatantId: playerCombatantId,
       skillId,
       target,
     });
-  }, [combatSessionId, executeCombatSkillNarration, playerCombatantId, selectQuickCastTarget]);
+  }, [combatSessionId, combatState.combatants, executeCombatSkillNarration, playerCombatantId, selectQuickCastTarget, skills]);
 
   const retryLastAction = useCallback(() => {
     if (!lastPlayerInputRef.current) return;

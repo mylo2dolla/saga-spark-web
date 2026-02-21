@@ -31,7 +31,7 @@ export interface MythicActionChip {
   hint_key?: string;
   prompt?: string;
   boardTarget?: "town" | "travel" | "dungeon" | "combat";
-  panel?: "status" | "character" | "loadout" | "loadouts" | "gear" | "equipment" | "skills" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
+  panel?: "status" | "character" | "equipment" | "skills" | "progression" | "quests" | "combat" | "companions" | "shop" | "commands" | "settings";
   payload?: Record<string, unknown>;
   companion_id?: string;
   turn_index?: number;
@@ -249,22 +249,11 @@ export interface MythicCharacterClassJson extends Record<string, unknown> {
   profile?: MythicCharacterProfile;
 }
 
-export interface MythicCharacterLoadoutRow {
-  id: string;
-  character_id: string;
-  campaign_id: string;
-  name: string;
-  is_active: boolean;
-  slots_json: string[];
-  created_at: string;
-  updated_at: string;
-}
-
 export interface MythicProgressionEventRow {
   id: string;
   campaign_id: string;
   character_id: string;
-  event_type: "xp_applied" | "level_up" | "points_spent" | "loadout_changed" | "gear_progression" | string;
+  event_type: "xp_applied" | "level_up" | "points_spent" | "gear_progression" | string;
   payload: Record<string, unknown>;
   created_at: string;
 }
@@ -283,10 +272,8 @@ export interface MythicCharacterBundle {
   character: MythicCharacterRow;
   skills: MythicSkill[];
   items: Array<Record<string, unknown>>;
-  loadouts: MythicCharacterLoadoutRow[];
   progressionEvents: MythicProgressionEventRow[];
   questThreads: MythicQuestThreadRow[];
-  loadoutSlotCap: number;
 }
 
 export interface MythicCreateCharacterRequest {

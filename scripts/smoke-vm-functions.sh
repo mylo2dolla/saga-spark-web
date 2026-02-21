@@ -52,7 +52,6 @@ endpoints=(
   mythic-inventory-equip
   mythic-inventory-unequip
   mythic-recompute-character
-  mythic-set-loadout
   mythic-shop-buy
   mythic-shop-stock
   mythic-tts

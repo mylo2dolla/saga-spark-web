@@ -14,9 +14,8 @@ export type PlayerCommandIntent =
 
 export type PlayerCommandPanel =
   | "character"
-  | "gear"
+  | "equipment"
   | "skills"
-  | "loadouts"
   | "progression"
   | "quests"
   | "shop"
@@ -45,9 +44,9 @@ function cleanText(value: string): string {
 
 function panelFromText(value: string): PlayerCommandPanel | undefined {
   const lower = value.toLowerCase();
-  if (/\b(gear|equipment|inventory)\b/.test(lower)) return "gear";
+  if (/\b(gear|equipment|inventory)\b/.test(lower)) return "equipment";
   if (/\b(skill|skills|ability|abilities)\b/.test(lower)) return "skills";
-  if (/\b(loadout|loadouts)\b/.test(lower)) return "loadouts";
+  if (/\b(loadout|loadouts)\b/.test(lower)) return "skills";
   if (/\b(progression|level|xp)\b/.test(lower)) return "progression";
   if (/\b(quest|quests)\b/.test(lower)) return "quests";
   if (/\b(shop|market|vendor|merchant|store)\b/.test(lower)) return "shop";

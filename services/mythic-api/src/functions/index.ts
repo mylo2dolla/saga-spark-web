@@ -16,7 +16,6 @@ import { mythicRuntimeTransition } from "./mythic-runtime-transition.js";
 import { mythicInventoryEquip } from "./mythic-inventory-equip.js";
 import { mythicInventoryUnequip } from "./mythic-inventory-unequip.js";
 import { mythicRecomputeCharacter } from "./mythic-recompute-character.js";
-import { mythicSetLoadout } from "./mythic-set-loadout.js";
 import { mythicShopBuy } from "./mythic-shop-buy.js";
 import { mythicShopStock } from "./mythic-shop-stock.js";
 import { mythicTts } from "./mythic-tts.js";
@@ -39,7 +38,6 @@ const handlers: FunctionHandler[] = [
   mythicInventoryEquip,
   mythicInventoryUnequip,
   mythicRecomputeCharacter,
-  mythicSetLoadout,
   mythicShopBuy,
   mythicShopStock,
   mythicTts,

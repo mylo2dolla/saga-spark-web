@@ -92,14 +92,17 @@ export const UiActionSchema = z
     payload: z.record(z.unknown()).optional(),
     boardTarget: z.enum(["town", "travel", "dungeon", "combat"]).optional(),
     board_target: z.enum(["town", "travel", "dungeon", "combat"]).optional(),
-    panel: z.enum([
+    panel: z.preprocess((value) => {
+      if (typeof value !== "string") return value;
+      const key = value.trim().toLowerCase();
+      if (key === "loadout" || key === "loadouts") return "skills";
+      if (key === "gear") return "equipment";
+      return key;
+    }, z.enum([
       "status",
       "character",
-      "gear",
       "equipment",
       "skills",
-      "loadout",
-      "loadouts",
       "progression",
       "quests",
       "combat",
@@ -107,7 +110,7 @@ export const UiActionSchema = z
       "shop",
       "commands",
       "settings",
-    ]).optional(),
+    ])).optional(),
   })
   .strict();
 
