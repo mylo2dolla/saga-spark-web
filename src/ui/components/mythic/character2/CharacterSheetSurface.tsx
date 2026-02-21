@@ -22,6 +22,18 @@ interface CharacterSheetSurfaceProps {
   draft: CharacterProfileDraft;
   onDraftChange: (next: CharacterProfileDraft) => void;
   saveState: CharacterSheetSaveState;
+  equipmentBusy: boolean;
+  equipmentError: string | null;
+  onEquipItem: (inventoryId: string) => void;
+  onUnequipItem: (inventoryId: string) => void;
+  partyBusy: boolean;
+  partyError: string | null;
+  onIssueCompanionCommand: (payload: {
+    companionId: string;
+    stance: "aggressive" | "balanced" | "defensive";
+    directive: "focus" | "protect" | "harry" | "hold";
+    targetHint?: string;
+  }) => void;
 }
 
 export function CharacterSheetSurface(props: CharacterSheetSurfaceProps) {
@@ -46,6 +58,13 @@ export function CharacterSheetSurface(props: CharacterSheetSurfaceProps) {
             draft={props.draft}
             onDraftChange={props.onDraftChange}
             saveState={props.saveState}
+            equipmentBusy={props.equipmentBusy}
+            equipmentError={props.equipmentError}
+            onEquipItem={props.onEquipItem}
+            onUnequipItem={props.onUnequipItem}
+            partyBusy={props.partyBusy}
+            partyError={props.partyError}
+            onIssueCompanionCommand={props.onIssueCompanionCommand}
           />
         </div>
       </SheetContent>

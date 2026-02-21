@@ -9,7 +9,6 @@ interface NarrativeBoardViewportProps {
   isActing: boolean;
   onSelectHotspot: (hotspot: NarrativeHotspot, point: { x: number; y: number }) => void;
   onSelectMiss: (point: { x: number; y: number }) => void;
-  onQuickCast: (skillId: string, targeting: string) => void;
 }
 
 export function NarrativeBoardViewport(props: NarrativeBoardViewportProps) {
@@ -49,7 +48,6 @@ export function NarrativeBoardViewport(props: NarrativeBoardViewportProps) {
       isActing={props.isActing}
       onSelectHotspot={props.onSelectHotspot}
       onSelectMiss={props.onSelectMiss}
-      onQuickCast={props.onQuickCast}
     />
   );
 }

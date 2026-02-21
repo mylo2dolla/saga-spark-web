@@ -69,6 +69,13 @@ interface CompanionState {
   metadata: Record<string, unknown>;
 }
 
+type CompanionCommandPayload = {
+  companion_id: string;
+  stance: "aggressive" | "balanced" | "defensive";
+  directive: "focus" | "protect" | "harry" | "hold";
+  target_hint?: string | null;
+};
+
 const syllableA = [
   "Ash",
   "Iron",
@@ -295,6 +302,90 @@ function buildCompanionPresence(companions: CompanionState[]): Array<Record<stri
     archetype: companion.archetype,
     mood: companion.mood,
   }));
+}
+
+function parseCompanionCommand(value: unknown): CompanionCommandPayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const companionId = typeof row.companion_id === "string" ? row.companion_id.trim() : "";
+  if (!companionId) return null;
+  const stanceRaw = typeof row.stance === "string" ? row.stance.trim().toLowerCase() : "";
+  const directiveRaw = typeof row.directive === "string" ? row.directive.trim().toLowerCase() : "";
+  if (stanceRaw !== "aggressive" && stanceRaw !== "balanced" && stanceRaw !== "defensive") return null;
+  if (directiveRaw !== "focus" && directiveRaw !== "protect" && directiveRaw !== "harry" && directiveRaw !== "hold") return null;
+  const targetHint = typeof row.target_hint === "string" && row.target_hint.trim().length > 0
+    ? row.target_hint.trim().slice(0, 80)
+    : null;
+  return {
+    companion_id: companionId,
+    stance: stanceRaw,
+    directive: directiveRaw,
+    target_hint: targetHint,
+  };
+}
+
+function applyCompanionCommand(args: {
+  state: Record<string, unknown>;
+  companions: CompanionState[];
+  command: CompanionCommandPayload | null;
+}): Record<string, unknown> {
+  if (!args.command) return args.state;
+  const now = nowIso();
+  const companionCommands = asRecord(args.state.companion_commands);
+  const nextCommands = {
+    ...companionCommands,
+    [args.command.companion_id]: {
+      companion_id: args.command.companion_id,
+      stance: args.command.stance,
+      directive: args.command.directive,
+      target_hint: args.command.target_hint ?? null,
+      updated_at: now,
+    },
+  };
+
+  const basePresence = Array.isArray(args.state.companion_presence)
+    ? args.state.companion_presence.map((entry) => asRecord(entry))
+    : buildCompanionPresence(args.companions).map((entry) => asRecord(entry));
+  const nextPresence: Array<Record<string, unknown>> = [];
+  let updated = false;
+  for (const entry of basePresence) {
+    const companionId = typeof entry.companion_id === "string" ? entry.companion_id : null;
+    if (!companionId) {
+      nextPresence.push(entry);
+      continue;
+    }
+    if (companionId !== args.command.companion_id) {
+      nextPresence.push(entry);
+      continue;
+    }
+    nextPresence.push({
+      ...entry,
+      stance: args.command.stance,
+      directive: args.command.directive,
+      target_hint: args.command.target_hint ?? null,
+      command_updated_at: now,
+    });
+    updated = true;
+  }
+  if (!updated) {
+    const known = args.companions.find((entry) => entry.companion_id === args.command.companion_id) ?? null;
+    nextPresence.push({
+      companion_id: args.command.companion_id,
+      name: known?.name ?? args.command.companion_id,
+      archetype: known?.archetype ?? "ally",
+      mood: known?.mood ?? "steady",
+      stance: args.command.stance,
+      directive: args.command.directive,
+      target_hint: args.command.target_hint ?? null,
+      command_updated_at: now,
+    });
+  }
+
+  return {
+    ...args.state,
+    companion_presence: nextPresence.slice(0, 12),
+    companion_commands: nextCommands,
+  };
 }
 
 function normalizeJobPosting(entry: unknown, fallbackId: string): Record<string, unknown> | null {
@@ -952,6 +1043,7 @@ export const mythicRuntimeTransition: FunctionHandler = {
       const reason = typeof payload.reason_label === "string"
         ? humanizeReason(payload.reason_label)
         : humanizeReason(rawReason);
+      const companionCommand = parseCompanionCommand(payload.companion_command);
 
       const svc = createServiceClient();
       await assertCampaignAccess(svc, campaignId, user.userId);
@@ -1035,6 +1127,12 @@ export const mythicRuntimeTransition: FunctionHandler = {
           companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
         };
       }
+
+      nextState = applyCompanionCommand({
+        state: nextState,
+        companions,
+        command: companionCommand,
+      });
 
       const archivedRuntimeIds = activeRuntimeRows
         .slice(1)

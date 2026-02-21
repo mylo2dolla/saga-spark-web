@@ -45,6 +45,12 @@ export interface MythicBoardTransitionPayload {
   travel_goal?: string | null;
   search_target?: string | null;
   discovery_flags?: Record<string, unknown>;
+  companion_command?: {
+    companion_id: string;
+    stance: "aggressive" | "balanced" | "defensive";
+    directive: "focus" | "protect" | "harry" | "hold";
+    target_hint?: string | null;
+  };
   [key: string]: unknown;
 }
 

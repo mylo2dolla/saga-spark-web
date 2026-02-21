@@ -1,11 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { MythicDMChat } from "@/components/MythicDMChat";
-import type { MythicDMMessage } from "@/hooks/useMythicDungeonMaster";
+import type { MythicDMMessage, MythicDmPhase } from "@/hooks/useMythicDungeonMaster";
 
 interface NarrativePageProps {
   messages: MythicDMMessage[];
   isDmLoading: boolean;
   currentResponse: string;
+  dmPhase?: MythicDmPhase | null;
   operationAttempt?: number;
   operationNextRetryAt?: number;
   actionError: string | null;
@@ -22,6 +23,13 @@ interface NarrativePageProps {
 }
 
 export function NarrativePage(props: NarrativePageProps) {
+  const phaseLabel = props.dmPhase === "assembling_context"
+    ? "assembling context"
+    : props.dmPhase === "resolving_narration"
+      ? "resolving narration"
+      : props.dmPhase === "committing_turn"
+        ? "committing turn"
+        : "processing";
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-b border-border/40 px-4 py-3">
@@ -44,7 +52,7 @@ export function NarrativePage(props: NarrativePageProps) {
         {props.isDmLoading ? (
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/40 bg-background/30 px-3 py-2 text-xs text-muted-foreground">
             <span>
-              DM request running (attempt {props.operationAttempt ?? 1}
+              DM {phaseLabel} (attempt {props.operationAttempt ?? 1}
               {props.operationNextRetryAt
                 ? ` · retry ${new Date(props.operationNextRetryAt).toLocaleTimeString()}`
                 : ""}

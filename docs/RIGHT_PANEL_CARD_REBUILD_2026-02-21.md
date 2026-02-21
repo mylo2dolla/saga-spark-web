@@ -115,3 +115,11 @@ Highlights:
 - DM/runtime contracts were not modified.
 - Legacy panel/action compatibility remains intact.
 - Additional visual polish can be layered later without changing board action semantics.
+
+## Superseded By Board-Only Pass
+Later on 2026-02-21, player mode switched to a stricter board-only right panel:
+- card dock is no longer the default player render path,
+- inspect detail remains popup-first on top of the board,
+- combat actions are delivered via combat rail overlay.
+
+Reference: `docs/BOARD_PLAYER_SHEET_LATENCY_PASS_2026-02-21.md`.

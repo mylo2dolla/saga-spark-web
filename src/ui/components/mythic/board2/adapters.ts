@@ -797,6 +797,16 @@ function buildTownScene(args: {
       actionsTitle: "Town Actions",
       compact: true,
     },
+    popup: {
+      title: "Town Inspect",
+      inspectHint: "Inspect building details first, then confirm an action.",
+      emptyProbeHint: "Probe empty tiles for rumors or hidden opportunities.",
+    },
+    combatRail: {
+      enabled: false,
+      title: "Core Actions",
+      skillsLabel: "Skills",
+    },
     grid: {
       cols: 12,
       rows: 8,
@@ -953,6 +963,16 @@ function buildTravelScene(args: {
       inspectTitle: "Inspect",
       actionsTitle: "Route Actions",
       compact: true,
+    },
+    popup: {
+      title: "Route Inspect",
+      inspectHint: "Inspect route nodes before committing movement.",
+      emptyProbeHint: "Probe empty tiles to scout danger and resources.",
+    },
+    combatRail: {
+      enabled: false,
+      title: "Core Actions",
+      skillsLabel: "Skills",
     },
     grid: {
       cols: 12,
@@ -1157,6 +1177,16 @@ function buildDungeonScene(args: {
       actionsTitle: "Dungeon Actions",
       compact: true,
     },
+    popup: {
+      title: "Dungeon Inspect",
+      inspectHint: "Inspect rooms and features before committing actions.",
+      emptyProbeHint: "Probe empty tiles to assess hazards and paths.",
+    },
+    combatRail: {
+      enabled: false,
+      title: "Core Actions",
+      skillsLabel: "Skills",
+    },
     grid: {
       cols: 12,
       rows: 8,
@@ -1269,6 +1299,16 @@ function buildCombatScene(args: {
       inspectTitle: "Inspect",
       actionsTitle: "Combat Actions",
       compact: true,
+    },
+    popup: {
+      title: "Combat Inspect",
+      inspectHint: "Inspect a target first, then confirm the action.",
+      emptyProbeHint: "Probe empty tiles for tactical readouts.",
+    },
+    combatRail: {
+      enabled: true,
+      title: "Core Actions",
+      skillsLabel: "Skills",
     },
     grid: {
       cols: gridCols,

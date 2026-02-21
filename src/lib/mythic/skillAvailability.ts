@@ -66,6 +66,17 @@ function isActiveSkill(skill: MythicSkill): boolean {
   return skill.kind === "active" || skill.kind === "ultimate";
 }
 
+function readSkillPowerCost(skill: MythicSkill): number {
+  const costJson = skill.cost_json ?? {};
+  const raw =
+    Number(costJson.power)
+    || Number(costJson.mp)
+    || Number(costJson.amount)
+    || 0;
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.floor(raw));
+}
+
 function findByQuery<T extends { id: string; name: string }>(entries: T[], query: string): T | null {
   const clean = query.trim();
   if (!clean) return null;
@@ -122,7 +133,7 @@ export function buildSkillAvailability(args: {
         const rangeTiles = Math.max(0, Number(skill.range_tiles ?? 0));
         reason = `Out of range (${rangeToFocused?.toFixed(1)} > ${rangeTiles}).`;
       }
-      const resourceCost = Number(skill.cost_json?.amount ?? 0);
+      const resourceCost = readSkillPowerCost(skill);
       const hasEnoughPower = !playerCombatant || resourceCost <= 0 || Number(playerCombatant.power ?? 0) >= resourceCost;
       if (!reason && !hasEnoughPower) {
         reason = `Needs ${Math.max(0, Math.floor(resourceCost))} MP.`;

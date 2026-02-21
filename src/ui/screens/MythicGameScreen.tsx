@@ -142,8 +142,9 @@ function mapPanelTab(panel: string | undefined): MythicPanelTab | null {
 function mapCharacterSheetSection(panel: string | undefined): CharacterSheetSection {
   if (panel === "combat") return "combat";
   if (panel === "quests") return "quests";
-  if (panel === "companions") return "companions";
-  if (panel === "skills" || panel === "loadout" || panel === "loadouts" || panel === "gear") return "skills";
+  if (panel === "companions") return "party";
+  if (panel === "gear") return "equipment";
+  if (panel === "skills" || panel === "loadout" || panel === "loadouts") return "skills";
   return "overview";
 }
 
@@ -572,6 +573,10 @@ export default function MythicGameScreen() {
   const [loadoutName, setLoadoutName] = useState("Default");
   const [selectedLoadoutSkillIds, setSelectedLoadoutSkillIds] = useState<string[]>([]);
   const [isSavingLoadout, setIsSavingLoadout] = useState(false);
+  const [isEquipmentBusy, setIsEquipmentBusy] = useState(false);
+  const [equipmentActionError, setEquipmentActionError] = useState<string | null>(null);
+  const [isPartyCommandBusy, setIsPartyCommandBusy] = useState(false);
+  const [partyCommandError, setPartyCommandError] = useState<string | null>(null);
   const [isAdvancingTurn, setIsAdvancingTurn] = useState(false);
   const [isNarratedActionBusy, setIsNarratedActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -729,7 +734,7 @@ export default function MythicGameScreen() {
   );
 
   const transitionRuntime = useCallback(async (
-    toMode: "town" | "travel" | "dungeon",
+    toMode: "town" | "travel" | "dungeon" | "combat",
     reason: string,
     payload?: Record<string, unknown>,
   ): Promise<{ ok: boolean; data: Record<string, unknown> | null }> => {
@@ -757,6 +762,108 @@ export default function MythicGameScreen() {
     });
     await refetchCharacter();
   };
+
+  const equipInventoryItem = useCallback(async (inventoryId: string) => {
+    if (!campaignId || !character) return;
+    setIsEquipmentBusy(true);
+    setEquipmentActionError(null);
+    try {
+      const { data, error } = await callEdgeFunction<{ ok: boolean; error?: string; code?: string; requestId?: string }>(
+        "mythic-inventory-equip",
+        {
+          requireAuth: true,
+          idempotencyKey: `${character.id}:equip:${inventoryId}`,
+          body: {
+            campaignId,
+            characterId: character.id,
+            inventoryId,
+          },
+        },
+      );
+      if (error) throw error;
+      if (!data?.ok) {
+        const request = data?.requestId ? ` (requestId: ${data.requestId})` : "";
+        throw new Error(`${data?.error ?? "Equip failed"} [${data?.code ?? "inventory_equip_failed"}]${request}`);
+      }
+      await Promise.all([recomputeCharacter(), refetch()]);
+      toast.success("Item equipped.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to equip item.";
+      setEquipmentActionError(message);
+      toast.error(message);
+    } finally {
+      setIsEquipmentBusy(false);
+    }
+  }, [campaignId, character, recomputeCharacter, refetch]);
+
+  const unequipInventoryItem = useCallback(async (inventoryId: string) => {
+    if (!campaignId || !character) return;
+    setIsEquipmentBusy(true);
+    setEquipmentActionError(null);
+    try {
+      const { data, error } = await callEdgeFunction<{ ok: boolean; error?: string; code?: string; requestId?: string }>(
+        "mythic-inventory-unequip",
+        {
+          requireAuth: true,
+          idempotencyKey: `${character.id}:unequip:${inventoryId}`,
+          body: {
+            campaignId,
+            characterId: character.id,
+            inventoryId,
+          },
+        },
+      );
+      if (error) throw error;
+      if (!data?.ok) {
+        const request = data?.requestId ? ` (requestId: ${data.requestId})` : "";
+        throw new Error(`${data?.error ?? "Unequip failed"} [${data?.code ?? "inventory_unequip_failed"}]${request}`);
+      }
+      await Promise.all([recomputeCharacter(), refetch()]);
+      toast.success("Item unequipped.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to unequip item.";
+      setEquipmentActionError(message);
+      toast.error(message);
+    } finally {
+      setIsEquipmentBusy(false);
+    }
+  }, [campaignId, character, recomputeCharacter, refetch]);
+
+  const issueCompanionCommand = useCallback(async (payload: {
+    companionId: string;
+    stance: "aggressive" | "balanced" | "defensive";
+    directive: "focus" | "protect" | "harry" | "hold";
+    targetHint?: string;
+  }) => {
+    if (!board) return;
+    setIsPartyCommandBusy(true);
+    setPartyCommandError(null);
+    try {
+      const reasonLabel = `Companion ${payload.directive}`;
+      const mode = board.board_type;
+      const result = await transitionRuntime(mode, reasonLabel, {
+        reason_code: `companion_${payload.directive}`,
+        reason_label: reasonLabel,
+        companion_command: {
+          companion_id: payload.companionId,
+          stance: payload.stance,
+          directive: payload.directive,
+          target_hint: payload.targetHint ?? null,
+        },
+      });
+      if (!result.ok) {
+        throw new Error("Companion command failed.");
+      }
+      await Promise.all([refetch(), refetchCharacter()]);
+      toast.success("Companion command updated.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to issue companion command.";
+      setPartyCommandError(message);
+      toast.error(message);
+    } finally {
+      setIsPartyCommandBusy(false);
+    }
+  }, [board, refetch, refetchCharacter, transitionRuntime]);
 
   const saveLoadout = async () => {
     if (!campaignId || !character) return;
@@ -847,34 +954,104 @@ export default function MythicGameScreen() {
 
   const latestAssistantActions = useMemo(() => (latestAssistantParsed?.ui_actions ?? []).slice(0, MAX_CONSOLE_ACTIONS), [latestAssistantParsed?.ui_actions]);
 
+  const companionPresenceById = useMemo(() => {
+    const rows = Array.isArray(boardStateRecord.companion_presence) ? boardStateRecord.companion_presence : [];
+    const map = new Map<string, { name: string; archetype: string; voice: string; mood: string }>();
+    rows.forEach((entry, index) => {
+      const row = asRecord(entry);
+      if (!row) return;
+      const companionId = typeof row.companion_id === "string" && row.companion_id.trim().length > 0
+        ? row.companion_id.trim()
+        : `companion_${index + 1}`;
+      map.set(companionId, {
+        name: typeof row.name === "string" && row.name.trim().length > 0 ? row.name : companionId,
+        archetype: typeof row.archetype === "string" && row.archetype.trim().length > 0 ? row.archetype : "ally",
+        voice: typeof row.voice === "string" && row.voice.trim().length > 0 ? row.voice : "steady",
+        mood: typeof row.mood === "string" && row.mood.trim().length > 0 ? row.mood : "steady",
+      });
+    });
+    return map;
+  }, [boardStateRecord.companion_presence]);
+
+  const companionCommandById = useMemo(() => {
+    const raw = asRecord(boardStateRecord.companion_commands) ?? {};
+    const map = new Map<string, { stance: "aggressive" | "balanced" | "defensive"; directive: "focus" | "protect" | "harry" | "hold"; targetHint: string | null }>();
+    for (const [companionId, entry] of Object.entries(raw)) {
+      const row = asRecord(entry) ?? {};
+      const stanceRaw = typeof row.stance === "string" ? row.stance : "balanced";
+      const directiveRaw = typeof row.directive === "string" ? row.directive : "hold";
+      const stance = stanceRaw === "aggressive" || stanceRaw === "defensive" ? stanceRaw : "balanced";
+      const directive = directiveRaw === "focus" || directiveRaw === "protect" || directiveRaw === "harry" ? directiveRaw : "hold";
+      const targetHint = typeof row.target_hint === "string" && row.target_hint.trim().length > 0 ? row.target_hint.trim() : null;
+      map.set(companionId, { stance, directive, targetHint });
+    }
+    return map;
+  }, [boardStateRecord.companion_commands]);
+
   const companionCheckins = useMemo(() => {
     const rows = Array.isArray(boardStateRecord.companion_checkins) ? boardStateRecord.companion_checkins : [];
-    return rows
+    const mapped = rows
       .map((entry, index) => {
         const row = asRecord(entry);
         if (!row) return null;
+        const companionId = typeof row.companion_id === "string" ? row.companion_id : "companion";
+        const presence = companionPresenceById.get(companionId);
+        const command = companionCommandById.get(companionId);
         const line = typeof row.line === "string" ? row.line.trim() : "";
         if (!line) return null;
         return {
-          id: `${typeof row.companion_id === "string" ? row.companion_id : "companion"}:${index}`,
-          companionId: typeof row.companion_id === "string" ? row.companion_id : "companion",
+          id: `${companionId}:${index}`,
+          companionId,
+          name: presence?.name ?? companionId,
+          archetype: presence?.archetype ?? "ally",
+          voice: presence?.voice ?? "steady",
           line,
-          mood: typeof row.mood === "string" ? row.mood : "steady",
+          mood: typeof row.mood === "string" ? row.mood : (presence?.mood ?? "steady"),
           urgency: typeof row.urgency === "string" ? row.urgency : "medium",
           hookType: typeof row.hook_type === "string" ? row.hook_type : "companion_checkin",
           turnIndex: Number.isFinite(Number(row.turn_index)) ? Number(row.turn_index) : index,
+          stance: command?.stance ?? "balanced",
+          directive: command?.directive ?? "hold",
+          targetHint: command?.targetHint ?? null,
         };
       })
       .filter((entry): entry is {
         id: string;
         companionId: string;
+        name: string;
+        archetype: string;
+        voice: string;
         line: string;
         mood: string;
         urgency: string;
         hookType: string;
         turnIndex: number;
+        stance: "aggressive" | "balanced" | "defensive";
+        directive: "focus" | "protect" | "harry" | "hold";
+        targetHint: string | null;
       } => Boolean(entry));
-  }, [boardStateRecord.companion_checkins]);
+
+    if (mapped.length > 0) return mapped;
+
+    return Array.from(companionPresenceById.entries()).map(([companionId, presence], index) => {
+      const command = companionCommandById.get(companionId);
+      return {
+        id: `${companionId}:presence`,
+        companionId,
+        name: presence.name,
+        archetype: presence.archetype,
+        voice: presence.voice,
+        line: "Companion ready for orders.",
+        mood: presence.mood,
+        urgency: "medium",
+        hookType: "companion_presence",
+        turnIndex: index,
+        stance: command?.stance ?? "balanced",
+        directive: command?.directive ?? "hold",
+        targetHint: command?.targetHint ?? null,
+      };
+    });
+  }, [boardStateRecord.companion_checkins, companionCommandById, companionPresenceById]);
 
   const latestAssistantMessage = useMemo(() => {
     for (let index = mythicDm.messages.length - 1; index >= 0; index -= 1) {
@@ -900,12 +1077,6 @@ export default function MythicGameScreen() {
     if (!latestAssistantNarration) return;
     speakDmNarration(latestAssistantNarration, latestAssistantMessage.id);
   }, [latestAssistantMessage, latestAssistantNarration, speakDmNarration]);
-
-  const openPanel = useCallback((tab: MythicPanelTab) => {
-    setActivePanel(tab);
-    setUtilityTab("panels");
-    setUtilityDrawerOpen(true);
-  }, []);
 
   const openCharacterSheet = useCallback((section: CharacterSheetSection = "overview") => {
     setCharacterSheetSection(section);
@@ -1270,12 +1441,15 @@ export default function MythicGameScreen() {
             refetchCombat: refetchCombatState,
             refetchCharacter,
             openMenu: (panel: PlayerCommandPanel) => {
-              const mapped = mapPanelTab(panel);
-              if (mapped) {
-                openPanel(mapped);
+              if (panel === "commands" || panel === "settings") {
+                openUtility(panel === "commands" && devSurfaces.enabled ? "logs" : "settings");
                 return;
               }
-              openUtility(panel === "commands" && devSurfaces.enabled ? "logs" : "settings");
+              if (panel === "shop") {
+                openUtility("panels");
+                return;
+              }
+              openCharacterSheet(mapCharacterSheetSection(panel));
             },
           });
           if (resolution.combatStartError) {
@@ -1315,7 +1489,6 @@ export default function MythicGameScreen() {
     combatState.session?.current_turn_index,
     focusedCombatantId,
     openCharacterSheet,
-    openPanel,
     openUtility,
     playerCombatantId,
     refetch,
@@ -1413,6 +1586,10 @@ export default function MythicGameScreen() {
             panelRaw === "character"
             || panelRaw === "status"
             || panelRaw === "progression"
+            || panelRaw === "skills"
+            || panelRaw === "combat"
+            || panelRaw === "quests"
+            || panelRaw === "companions"
             || panelRaw === "loadout"
             || panelRaw === "loadouts"
             || panelRaw === "gear"
@@ -1435,10 +1612,18 @@ export default function MythicGameScreen() {
             }
             return { stateChanges: [], error: "Panel target missing for this interaction." };
           }
-          openPanel(tab);
+          if (tab === "shop") {
+            openUtility("panels");
+            return {
+              stateChanges: ["Opened menu panel."],
+              context: { panel: "shop" },
+            };
+          }
+          const section = mapCharacterSheetSection(tab);
+          openCharacterSheet(section);
           return {
-            stateChanges: [`Opened ${tab} panel.`],
-            context: { panel: tab },
+            stateChanges: [`Opened character sheet (${section}).`],
+            context: { character_sheet_section: section },
           };
         }
 
@@ -1728,7 +1913,6 @@ export default function MythicGameScreen() {
     devSurfaces.enabled,
     findVendorName,
     focusedCombatantId,
-    openPanel,
     openUtility,
     openShop,
     playerCombatantId,
@@ -1873,15 +2057,22 @@ export default function MythicGameScreen() {
       boardMode: board.board_type,
       coins,
       skills,
+      inventoryRows: invRowsSafe,
       questThreads,
       companionNotes: companionCheckins.map((entry) => ({
         id: entry.id,
         companionId: entry.companionId,
+        name: entry.name,
+        archetype: entry.archetype,
+        voice: entry.voice,
         line: entry.line,
         mood: entry.mood,
         urgency: entry.urgency,
         hookType: entry.hookType,
         turnIndex: entry.turnIndex,
+        stance: entry.stance,
+        directive: entry.directive,
+        targetHint: entry.targetHint,
       })),
       skillAvailability: commandSkillAvailability,
       combatants: combatState.combatants,
@@ -1900,26 +2091,11 @@ export default function MythicGameScreen() {
     combatState.combatants,
     combatState.session?.status,
     focusedCombatantId,
+    invRowsSafe,
     playerCombatantId,
     questThreads,
     skills,
   ]);
-
-  const rightPanelCharacterHero = useMemo(() => {
-    if (!characterSheetModel) return null;
-    return {
-      name: characterSheetModel.name,
-      level: characterSheetModel.level,
-      className: characterSheetModel.className,
-      role: characterSheetModel.role,
-      hpCurrent: characterSheetModel.hpGauge.current,
-      hpMax: characterSheetModel.hpGauge.max,
-      mpCurrent: characterSheetModel.mpGauge.current,
-      mpMax: characterSheetModel.mpGauge.max,
-      armor: characterSheetModel.combat.armor,
-      turnLabel: characterSheetModel.combat.playerTurnLabel,
-    };
-  }, [characterSheetModel]);
 
   const boardScene = useMemo(() => {
     return buildNarrativeBoardScene({
@@ -2245,23 +2421,33 @@ export default function MythicGameScreen() {
       {activePanel === "skills" ? (
         <div className="space-y-3">
           <div className="rounded-lg border border-border bg-background/30 p-3">
-            <div className="mb-1 text-sm font-semibold">Equipped Abilities</div>
+            <div className="mb-1 text-sm font-semibold">Combat Skills</div>
             <div className="mb-2 text-xs text-muted-foreground">
-              Equipped slots: {equippedActiveSkills.length}/{Math.max(1, loadoutSlotCap)}
+              All active and ultimate skills are castable from current MP/cooldown state.
             </div>
-            {equippedActiveSkills.length === 0 ? (
-              <div className="text-xs text-muted-foreground">No equipped active abilities are currently active.</div>
+            {commandSkillAvailability.length === 0 ? (
+              <div className="text-xs text-muted-foreground">No active combat skills are loaded.</div>
             ) : (
               <div className="space-y-2">
-                {equippedActiveSkills.map((skill) => (
-                  <div key={skill.id} className="rounded border border-border bg-background/20 px-2 py-2 text-xs">
+                {commandSkillAvailability.map((skill) => (
+                  <div key={skill.skillId} className="rounded border border-border bg-background/20 px-2 py-2 text-xs">
                     <div className="font-medium text-foreground">{skill.name}</div>
-                    <div className="text-muted-foreground">{skill.kind} · {skill.targeting} · range {skill.range_tiles} · cooldown {skill.cooldown_turns}</div>
-                    {skill.description ? <div className="mt-1 text-muted-foreground">{skill.description}</div> : null}
+                    <div className="text-muted-foreground">
+                      MP {Math.max(0, Math.floor(Number(skills.find((entry) => entry.id === skill.skillId)?.cost_json?.power ?? skills.find((entry) => entry.id === skill.skillId)?.cost_json?.mp ?? skills.find((entry) => entry.id === skill.skillId)?.cost_json?.amount ?? 0)))} · {skill.targeting} · range {skill.rangeTiles} · cooldown {skill.cooldownTurns}
+                      {skill.cooldownRemaining > 0 ? ` (${skill.cooldownRemaining} remaining)` : ""}
+                    </div>
+                    <div className={skill.usableNow ? "mt-1 text-emerald-300" : "mt-1 text-amber-200"}>
+                      {skill.usableNow ? "Ready" : (skill.reason ?? "Unavailable")}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
+            <div className="mt-3">
+              <Button size="sm" variant="secondary" onClick={() => openCharacterSheet("skills")}>
+                Open Full Skills Sheet
+              </Button>
+            </div>
           </div>
           <div className="rounded-lg border border-border bg-background/30 p-3">
             <div className="mb-1 text-sm font-semibold">Passive Skills</div>
@@ -2502,6 +2688,7 @@ export default function MythicGameScreen() {
             messages={mythicDm.messages}
             isDmLoading={mythicDm.isLoading || isNarratedActionBusy}
             currentResponse={mythicDm.currentResponse}
+            dmPhase={mythicDm.phase}
             operationAttempt={mythicDm.operation?.attempt}
             operationNextRetryAt={mythicDm.operation?.next_retry_at}
             actionError={actionError}
@@ -2530,15 +2717,12 @@ export default function MythicGameScreen() {
               <NarrativeBoardPage
                 scene={boardScene}
                 baseActions={boardStripBaseActions}
-                baseActionSourceBySignature={boardStripBase.sourceBySignature}
                 isBusy={mythicDm.isLoading || isNarratedActionBusy || combat.isActing || combat.isTicking}
                 isStateRefreshing={isStateRefreshing}
                 transitionError={transitionError}
                 combatStartError={combatStartError}
                 dmContextError={mythicDmContext.error}
                 showDevDetails={devSurfaces.enabled}
-                characterHero={rightPanelCharacterHero}
-                onOpenCharacterSheet={() => openCharacterSheet("overview")}
                 onRetryCombatStart={() => void retryCombatStart()}
                 onQuickCast={(skillId, targeting) => void triggerQuickCast(skillId, targeting)}
                 onAction={(action, source) => triggerConsoleAction(action, source === "board_hotspot" ? "board_hotspot" : "console_action")}
@@ -2558,6 +2742,13 @@ export default function MythicGameScreen() {
           draft={profileDraft}
           onDraftChange={handleProfileDraftChange}
           saveState={profileSaveState}
+          equipmentBusy={isEquipmentBusy}
+          equipmentError={equipmentActionError}
+          onEquipItem={(inventoryId) => { void equipInventoryItem(inventoryId); }}
+          onUnequipItem={(inventoryId) => { void unequipInventoryItem(inventoryId); }}
+          partyBusy={isPartyCommandBusy}
+          partyError={partyCommandError}
+          onIssueCompanionCommand={(payload) => { void issueCompanionCommand(payload); }}
         />
       ) : null}
 

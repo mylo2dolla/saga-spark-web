@@ -1,7 +1,17 @@
+import { useEffect, useMemo, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type {
+  CharacterCompanionSummary,
   CharacterProfileDraft,
   CharacterSheetSaveState,
   CharacterSheetSection,
@@ -15,7 +25,25 @@ interface CharacterSheetSectionsProps {
   draft: CharacterProfileDraft;
   onDraftChange: (next: CharacterProfileDraft) => void;
   saveState: CharacterSheetSaveState;
+  equipmentBusy: boolean;
+  equipmentError: string | null;
+  onEquipItem: (inventoryId: string) => void;
+  onUnequipItem: (inventoryId: string) => void;
+  partyBusy: boolean;
+  partyError: string | null;
+  onIssueCompanionCommand: (payload: {
+    companionId: string;
+    stance: "aggressive" | "balanced" | "defensive";
+    directive: "focus" | "protect" | "harry" | "hold";
+    targetHint?: string;
+  }) => void;
 }
+
+type CompanionDraft = {
+  stance: "aggressive" | "balanced" | "defensive";
+  directive: "focus" | "protect" | "harry" | "hold";
+  targetHint: string;
+};
 
 function saveStatusLabel(state: CharacterSheetSaveState): string {
   if (state.isSaving) return "Saving...";
@@ -32,6 +60,26 @@ function gaugePercent(current: number, max: number): number {
   return Math.max(0, Math.min(100, Math.round((current / max) * 100)));
 }
 
+function fmtStatMods(mods: Record<string, number>): string {
+  const pairs = Object.entries(mods);
+  if (pairs.length === 0) return "No stat mods";
+  return pairs
+    .map(([key, value]) => `${key} ${value >= 0 ? `+${value}` : `${value}`}`)
+    .join(" · ");
+}
+
+function slotLabel(slot: string): string {
+  return slot.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function companionDefaultDraft(entry: CharacterCompanionSummary): CompanionDraft {
+  return {
+    stance: entry.stance,
+    directive: entry.directive,
+    targetHint: entry.targetHint ?? "",
+  };
+}
+
 export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
   const statusTone = props.saveState.error
     ? "text-red-200"
@@ -39,13 +87,31 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
       ? "text-amber-200"
       : "text-emerald-200";
 
+  const [companionDrafts, setCompanionDrafts] = useState<Record<string, CompanionDraft>>({});
+
+  const companionDefaults = useMemo(
+    () => Object.fromEntries(props.model.companionNotes.map((entry) => [entry.companionId, companionDefaultDraft(entry)])),
+    [props.model.companionNotes],
+  );
+
+  useEffect(() => {
+    setCompanionDrafts((prev) => {
+      const next: Record<string, CompanionDraft> = { ...prev };
+      for (const [companionId, draft] of Object.entries(companionDefaults)) {
+        if (!next[companionId]) next[companionId] = draft;
+      }
+      return next;
+    });
+  }, [companionDefaults]);
+
   return (
     <Tabs value={props.section} onValueChange={(value) => props.onSectionChange(value as CharacterSheetSection)}>
       <TabsList className="w-full justify-start overflow-auto bg-amber-100/10 text-amber-100/75">
         <TabsTrigger value="overview">Overview</TabsTrigger>
         <TabsTrigger value="combat">Combat</TabsTrigger>
         <TabsTrigger value="skills">Skills</TabsTrigger>
-        <TabsTrigger value="companions">Companions</TabsTrigger>
+        <TabsTrigger value="equipment">Equipment</TabsTrigger>
+        <TabsTrigger value="party">Party</TabsTrigger>
         <TabsTrigger value="quests">Quests</TabsTrigger>
       </TabsList>
 
@@ -149,12 +215,12 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
         </div>
 
         <div className="rounded-lg border border-amber-200/25 bg-amber-100/5 p-3">
-          <div className="mb-2 text-sm font-semibold text-amber-100">Quick Skill Read</div>
-          {props.model.equippedSkills.length === 0 ? (
-            <div className="text-xs text-amber-100/70">No equipped combat skills available.</div>
+          <div className="mb-2 text-sm font-semibold text-amber-100">Combat Castables</div>
+          {props.model.combatSkills.length === 0 ? (
+            <div className="text-xs text-amber-100/70">No combat skills available.</div>
           ) : (
             <div className="space-y-2">
-              {props.model.equippedSkills.slice(0, 6).map((skill) => (
+              {props.model.combatSkills.slice(0, 8).map((skill) => (
                 <div key={skill.id} className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/80">
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-medium text-amber-100">{skill.name}</div>
@@ -162,7 +228,10 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
                       {skill.usableNow ? "Ready" : (skill.reason ?? "Locked")}
                     </div>
                   </div>
-                  <div>{skill.targeting} · range {skill.rangeTiles} · cooldown {skill.cooldownTurns}</div>
+                  <div>
+                    MP {skill.mpCost} · {skill.targeting} · range {skill.rangeTiles} · cooldown {skill.cooldownTurns}
+                    {skill.cooldownRemaining > 0 ? ` (${skill.cooldownRemaining} remaining)` : ""}
+                  </div>
                 </div>
               ))}
             </div>
@@ -172,15 +241,18 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
 
       <TabsContent value="skills" className="space-y-3">
         <div className="rounded-lg border border-amber-200/25 bg-amber-100/5 p-3">
-          <div className="mb-2 text-sm font-semibold text-amber-100">Equipped Abilities</div>
-          {props.model.equippedSkills.length === 0 ? (
-            <div className="text-xs text-amber-100/70">No equipped abilities.</div>
+          <div className="mb-2 text-sm font-semibold text-amber-100">Active + Ultimate Skills</div>
+          {props.model.combatSkills.length === 0 ? (
+            <div className="text-xs text-amber-100/70">No active skills recorded.</div>
           ) : (
             <div className="space-y-2">
-              {props.model.equippedSkills.map((skill) => (
+              {props.model.combatSkills.map((skill) => (
                 <div key={skill.id} className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/80">
                   <div className="font-medium text-amber-100">{skill.name}</div>
-                  <div>{skill.kind} · {skill.targeting} · range {skill.rangeTiles} · cooldown {skill.cooldownTurns}</div>
+                  <div>
+                    {skill.kind} · MP {skill.mpCost} · {skill.targeting} · range {skill.rangeTiles} · cooldown {skill.cooldownTurns}
+                    {skill.cooldownRemaining > 0 ? ` (${skill.cooldownRemaining} remaining)` : ""}
+                  </div>
                   {skill.description ? <div className="mt-1 text-amber-100/70">{skill.description}</div> : null}
                 </div>
               ))}
@@ -206,20 +278,178 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
         </div>
       </TabsContent>
 
-      <TabsContent value="companions" className="space-y-3">
+      <TabsContent value="equipment" className="space-y-3">
+        <div className="rounded-lg border border-amber-200/25 bg-amber-100/5 p-3">
+          <div className="mb-2 text-sm font-semibold text-amber-100">Equipped Totals</div>
+          {Object.keys(props.model.equipmentTotals).length === 0 ? (
+            <div className="text-xs text-amber-100/70">No active equipment bonuses.</div>
+          ) : (
+            <div className="flex flex-wrap gap-2 text-xs text-amber-100/80">
+              {Object.entries(props.model.equipmentTotals).map(([key, value]) => (
+                <span key={`equipment-total-${key}`} className="rounded border border-amber-200/20 bg-background/20 px-2 py-1">
+                  {key}: {value >= 0 ? `+${value}` : value}
+                </span>
+              ))}
+            </div>
+          )}
+          {props.equipmentError ? <div className="mt-2 text-xs text-red-200">{props.equipmentError}</div> : null}
+        </div>
+
+        <div className="space-y-2">
+          {props.model.equipmentSlots.length === 0 ? (
+            <div className="rounded-lg border border-amber-200/25 bg-amber-100/5 p-3 text-xs text-amber-100/70">
+              No equipment inventory is available for this character.
+            </div>
+          ) : props.model.equipmentSlots.map((slot) => (
+            <div key={`equipment-slot-${slot.slot}`} className="rounded-lg border border-amber-200/25 bg-amber-100/5 p-3">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-100/75">{slotLabel(slot.slot)}</div>
+              <div className="space-y-2">
+                {slot.equippedItems.length === 0 ? (
+                  <div className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/70">No equipped item.</div>
+                ) : slot.equippedItems.map((item) => (
+                  <div key={item.inventoryId} className="rounded border border-emerald-200/30 bg-emerald-500/10 p-2 text-xs text-emerald-100">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium">{item.name}</div>
+                      <div className="text-[10px] uppercase tracking-wide">equipped</div>
+                    </div>
+                    <div className="mt-1 text-emerald-100/80">{item.rarity} · {fmtStatMods(item.statMods)}</div>
+                    {item.grantedAbilities.length > 0 ? (
+                      <div className="mt-1 text-[11px] text-emerald-100/80">Abilities: {item.grantedAbilities.join(", ")}</div>
+                    ) : null}
+                    <div className="mt-2">
+                      <Button size="sm" variant="secondary" disabled={props.equipmentBusy} onClick={() => props.onUnequipItem(item.inventoryId)}>
+                        Unequip
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+
+                {slot.backpackItems.map((item) => (
+                  <div key={item.inventoryId} className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/80">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium text-amber-100">{item.name}</div>
+                      <div className="text-[10px] uppercase tracking-wide">{item.rarity}</div>
+                    </div>
+                    <div className="mt-1">{fmtStatMods(item.statMods)}</div>
+                    {Object.keys(item.deltaMods).length > 0 ? (
+                      <div className="mt-1 text-[11px]">
+                        Delta: {Object.entries(item.deltaMods).map(([key, value]) => `${key} ${value >= 0 ? `+${value}` : value}`).join(" · ")}
+                      </div>
+                    ) : null}
+                    <div className="mt-2">
+                      <Button size="sm" disabled={props.equipmentBusy} onClick={() => props.onEquipItem(item.inventoryId)}>
+                        Equip
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </TabsContent>
+
+      <TabsContent value="party" className="space-y-3">
         <div className="rounded-lg border border-fuchsia-200/25 bg-fuchsia-300/5 p-3">
-          <div className="mb-2 text-sm font-semibold text-fuchsia-100">Companion Activity</div>
+          <div className="mb-2 text-sm font-semibold text-fuchsia-100">Companion Roster + Commands</div>
+          {props.partyError ? <div className="mb-2 text-xs text-red-200">{props.partyError}</div> : null}
           {props.model.companionNotes.length === 0 ? (
-            <div className="text-xs text-fuchsia-100/70">No companion check-ins yet.</div>
+            <div className="text-xs text-fuchsia-100/70">No companion roster is currently active.</div>
           ) : (
             <div className="space-y-2">
-              {props.model.companionNotes.map((entry) => (
-                <div key={entry.id} className="rounded border border-fuchsia-200/20 bg-background/20 p-2 text-xs text-fuchsia-100/80">
-                  <div className="font-medium text-fuchsia-100">{entry.companionId}</div>
-                  <div className="mt-1">{entry.line}</div>
-                  <div className="mt-1 text-[11px]">Mood {entry.mood} · Urgency {entry.urgency} · Hook {entry.hookType}</div>
-                </div>
-              ))}
+              {props.model.companionNotes.map((entry) => {
+                const draft = companionDrafts[entry.companionId] ?? companionDefaultDraft(entry);
+                return (
+                  <div key={entry.id} className="rounded border border-fuchsia-200/20 bg-background/20 p-2 text-xs text-fuchsia-100/80">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-medium text-fuchsia-100">{entry.name || entry.companionId}</div>
+                      <div className="text-[11px]">{entry.archetype}</div>
+                    </div>
+                    <div className="mt-1">{entry.line}</div>
+                    <div className="mt-1 text-[11px]">Mood {entry.mood} · Urgency {entry.urgency}</div>
+
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <div className="mb-1 text-[11px] uppercase tracking-wide text-fuchsia-100/70">Stance</div>
+                        <Select
+                          value={draft.stance}
+                          onValueChange={(value) => {
+                            if (value !== "aggressive" && value !== "balanced" && value !== "defensive") return;
+                            setCompanionDrafts((prev) => ({
+                              ...prev,
+                              [entry.companionId]: { ...draft, stance: value },
+                            }));
+                          }}
+                        >
+                          <SelectTrigger className="h-8 border-fuchsia-200/20 bg-background/30 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="aggressive">Aggressive</SelectItem>
+                            <SelectItem value="balanced">Balanced</SelectItem>
+                            <SelectItem value="defensive">Defensive</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div>
+                        <div className="mb-1 text-[11px] uppercase tracking-wide text-fuchsia-100/70">Directive</div>
+                        <Select
+                          value={draft.directive}
+                          onValueChange={(value) => {
+                            if (value !== "focus" && value !== "protect" && value !== "harry" && value !== "hold") return;
+                            setCompanionDrafts((prev) => ({
+                              ...prev,
+                              [entry.companionId]: { ...draft, directive: value },
+                            }));
+                          }}
+                        >
+                          <SelectTrigger className="h-8 border-fuchsia-200/20 bg-background/30 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="focus">Focus</SelectItem>
+                            <SelectItem value="protect">Protect</SelectItem>
+                            <SelectItem value="harry">Harry</SelectItem>
+                            <SelectItem value="hold">Hold</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="mt-2">
+                      <Input
+                        value={draft.targetHint}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          setCompanionDrafts((prev) => ({
+                            ...prev,
+                            [entry.companionId]: { ...draft, targetHint: value },
+                          }));
+                        }}
+                        maxLength={80}
+                        className="h-8 border-fuchsia-200/20 bg-background/30 text-xs"
+                        placeholder="Target hint (optional)"
+                      />
+                    </div>
+
+                    <div className="mt-2">
+                      <Button
+                        size="sm"
+                        disabled={props.partyBusy}
+                        onClick={() => props.onIssueCompanionCommand({
+                          companionId: entry.companionId,
+                          stance: draft.stance,
+                          directive: draft.directive,
+                          targetHint: draft.targetHint.trim() || undefined,
+                        })}
+                      >
+                        Issue Command
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>

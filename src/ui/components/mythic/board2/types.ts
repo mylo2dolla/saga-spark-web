@@ -121,6 +121,18 @@ export interface NarrativeDockCardModel {
   devDetailLines?: string[];
 }
 
+export interface NarrativeBoardPopupModel {
+  title: string;
+  inspectHint: string;
+  emptyProbeHint: string;
+}
+
+export interface NarrativeBoardCombatRailModel {
+  enabled: boolean;
+  title: string;
+  skillsLabel: string;
+}
+
 export interface TownSceneData {
   vendors: Array<{ id: string; name: string; services: string[] }>;
   services: string[];
@@ -229,6 +241,8 @@ export interface NarrativeBoardSceneModel {
     actionsTitle: string;
     compact: boolean;
   };
+  popup: NarrativeBoardPopupModel;
+  combatRail: NarrativeBoardCombatRailModel;
   grid: {
     cols: number;
     rows: number;

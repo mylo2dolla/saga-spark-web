@@ -33,3 +33,40 @@ Original prompt: Implement Board Combat Dial-In Plan (Basic Actions, MP, Ally/En
   - `./scripts/smoke-vm-functions.sh` pass.
   - `npm run smoke:board` pass.
   - `https://mythweaver.online` opens with title `Saga Spark`.
+
+2026-02-21 (board-only + menu sheet + DM latency continuation)
+- Completed right-panel board-only strict path in `NarrativeBoardPage`:
+  - board remains primary surface,
+  - inspect popup overlays board (hotspot + miss-click),
+  - combat-only action rail for Attack/Defend/Recover MP + skill expansion.
+- Added stable board interaction test hooks:
+  - `data-testid="narrative-board-page"`
+  - `data-testid="board-grid-layer"`
+  - `data-testid="board-hotspot-*"`
+  - `data-testid="board-inspect-card"`
+- Updated `tests/right-panel-cards.spec.ts` for popup-first interaction checks (no card-dock assertions).
+- Extended player command parser panel type with `shop` (`/menu shop` now type-valid).
+- Finished DM backend latency-core call path in `mythic-dungeon-master.ts`:
+  - switched request attempts to `mythicOpenAIChatCompletionsStream`,
+  - parse streamed deltas via `readModelStreamText`,
+  - compacted prompt payload blocks with bounded `jsonInline`,
+  - compacted conversational message history with `compactModelMessages`,
+  - reduced validation attempts to 2 for earlier deterministic recovery.
+- Skill MP readiness normalization:
+  - `src/lib/mythic/skillAvailability.ts` now reads cost from `power|mp|amount` consistently.
+- Added docs:
+  - `docs/BOARD_PLAYER_SHEET_LATENCY_PASS_2026-02-21.md`
+  - updated `docs/RIGHT_PANEL_CARD_REBUILD_2026-02-21.md` with superseded note.
+
+Validation run:
+- `npm run typecheck` PASS
+- `npm run build` PASS
+- `npx playwright test tests/game-smoke.spec.ts tests/right-panel-cards.spec.ts` PASS (right-panel test skipped without `PLAYWRIGHT_MYTHIC_CAMPAIGN_ID`)
+- `./scripts/smoke-vm-functions.sh` PASS
+- `npm run smoke:board` PASS
+- `npm run smoke:prod` PASS
+
+TODO / next suggested hardening:
+- Remove legacy utility drawer panel stack (status/skills/combat/quests/companions/shop) in favor of direct 6-tab character-sheet launcher only.
+- Add one deterministic e2e for hotspot-specific town building popup actions once stable campaign fixture is available.
+- Capture manual QA notes from real campaign for DM latency perception (time-to-first-token and total turn resolution) to guide next DM tuning pass.

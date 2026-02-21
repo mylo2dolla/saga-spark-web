@@ -19,6 +19,7 @@ export type PlayerCommandPanel =
   | "loadouts"
   | "progression"
   | "quests"
+  | "shop"
   | "commands"
   | "settings";
 
@@ -49,6 +50,7 @@ function panelFromText(value: string): PlayerCommandPanel | undefined {
   if (/\b(loadout|loadouts)\b/.test(lower)) return "loadouts";
   if (/\b(progression|level|xp)\b/.test(lower)) return "progression";
   if (/\b(quest|quests)\b/.test(lower)) return "quests";
+  if (/\b(shop|market|vendor|merchant|store)\b/.test(lower)) return "shop";
   if (/\b(setting|settings|audio|voice|animation)\b/.test(lower)) return "settings";
   if (/\b(command|commands|help)\b/.test(lower)) return "commands";
   if (/\b(character|sheet|stats)\b/.test(lower)) return "character";

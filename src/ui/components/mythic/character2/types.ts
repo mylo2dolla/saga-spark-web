@@ -1,6 +1,6 @@
 import type { MythicBoardType, MythicQuestThreadRow, MythicSkill } from "@/types/mythic";
 
-export type CharacterSheetSection = "overview" | "combat" | "skills" | "companions" | "quests";
+export type CharacterSheetSection = "overview" | "combat" | "skills" | "equipment" | "party" | "quests";
 
 export interface CharacterProfileDraft {
   name: string;
@@ -29,8 +29,10 @@ export interface CharacterSkillSummary {
   name: string;
   kind: MythicSkill["kind"];
   targeting: MythicSkill["targeting"];
+  mpCost: number;
   rangeTiles: number;
   cooldownTurns: number;
+  cooldownRemaining: number;
   description: string;
   usableNow: boolean;
   reason: string | null;
@@ -39,11 +41,36 @@ export interface CharacterSkillSummary {
 export interface CharacterCompanionSummary {
   id: string;
   companionId: string;
+  name: string;
+  archetype: string;
+  voice: string;
   line: string;
   mood: string;
   urgency: string;
   hookType: string;
   turnIndex: number;
+  stance: "aggressive" | "balanced" | "defensive";
+  directive: "focus" | "protect" | "harry" | "hold";
+  targetHint: string | null;
+}
+
+export interface CharacterEquipmentItemSummary {
+  inventoryId: string;
+  itemId: string;
+  name: string;
+  slot: string;
+  rarity: string;
+  quantity: number;
+  equipped: boolean;
+  statMods: Record<string, number>;
+  deltaMods: Record<string, number>;
+  grantedAbilities: string[];
+}
+
+export interface CharacterEquipmentSlotGroup {
+  slot: string;
+  equippedItems: CharacterEquipmentItemSummary[];
+  backpackItems: CharacterEquipmentItemSummary[];
 }
 
 export interface CharacterCombatSummary {
@@ -72,9 +99,11 @@ export interface CharacterSheetViewModel {
   mpGauge: CharacterResourceGauge;
   combat: CharacterCombatSummary;
   statLenses: CharacterStatLens[];
-  equippedSkills: CharacterSkillSummary[];
+  combatSkills: CharacterSkillSummary[];
   passiveSkills: CharacterSkillSummary[];
   companionNotes: CharacterCompanionSummary[];
+  equipmentSlots: CharacterEquipmentSlotGroup[];
+  equipmentTotals: Record<string, number>;
   questThreads: MythicQuestThreadRow[];
 }
 

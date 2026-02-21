@@ -40,7 +40,10 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
     .slice(0, 10);
 
   return (
-    <div className={`rounded-lg border border-amber-200/30 bg-[linear-gradient(160deg,rgba(34,26,19,0.95),rgba(14,16,22,0.96))] p-3 text-amber-50 shadow-xl ${props.className ?? ""}`.trim()}>
+    <div
+      data-testid="board-inspect-card"
+      className={`rounded-lg border border-amber-200/30 bg-[linear-gradient(160deg,rgba(34,26,19,0.95),rgba(14,16,22,0.96))] p-3 text-amber-50 shadow-xl ${props.className ?? ""}`.trim()}
+    >
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="mb-1 text-[11px] uppercase tracking-wide text-amber-100/70">{props.title ?? "Inspect"}</div>

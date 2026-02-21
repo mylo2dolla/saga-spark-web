@@ -37,46 +37,35 @@ export function TravelScene(props: TravelSceneProps) {
   const routePath = buildRoutePath(props.scene);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2 rounded-xl border border-cyan-200/30 bg-[linear-gradient(165deg,rgba(9,44,57,0.9),rgba(8,15,24,0.97))] p-3 text-cyan-50">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="font-display text-lg text-cyan-100">{props.scene.title}</div>
-          <div className="text-xs text-cyan-100/75">{props.scene.subtitle}</div>
-        </div>
-        <div className="rounded border border-cyan-200/35 bg-cyan-100/10 px-2 py-1 text-[11px] text-cyan-100/80">
-          Route Grid
-        </div>
+    <BoardGridLayer
+      cols={cols}
+      rows={rows}
+      className="h-full border-cyan-200/35 bg-[radial-gradient(circle_at_70%_15%,rgba(103,232,249,0.22),rgba(4,7,16,0.95))]"
+      gridLineColor="rgba(207,250,254,0.10)"
+      onSelectMiss={props.onSelectMiss}
+    >
+      <div className="pointer-events-none absolute left-2 top-2 rounded border border-cyan-200/35 bg-black/35 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-100/80">
+        Travel
       </div>
-
-      <BoardGridLayer
+      {routePath ? (
+        <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-70" viewBox="0 0 100 100" preserveAspectRatio="none">
+          <polyline
+            points={routePath}
+            fill="none"
+            stroke="rgba(56,189,248,0.65)"
+            strokeWidth="0.9"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : null}
+      <HotspotOverlay
+        hotspots={props.scene.hotspots}
         cols={cols}
         rows={rows}
-        className="flex-1 border-cyan-200/35 bg-[radial-gradient(circle_at_70%_15%,rgba(103,232,249,0.22),rgba(4,7,16,0.95))]"
-        gridLineColor="rgba(207,250,254,0.10)"
-        onSelectMiss={props.onSelectMiss}
-      >
-        {routePath ? (
-          <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-70" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <polyline
-              points={routePath}
-              fill="none"
-              stroke="rgba(56,189,248,0.65)"
-              strokeWidth="0.9"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        ) : null}
-        <HotspotOverlay
-          hotspots={props.scene.hotspots}
-          cols={cols}
-          rows={rows}
-          accent="travel"
-          onSelectHotspot={props.onSelectHotspot}
-        />
-      </BoardGridLayer>
-
-      <div className="text-[11px] text-cyan-100/70">Probe segments or empty tiles to gather context before committing movement.</div>
-    </div>
+        accent="travel"
+        onSelectHotspot={props.onSelectHotspot}
+      />
+    </BoardGridLayer>
   );
 }

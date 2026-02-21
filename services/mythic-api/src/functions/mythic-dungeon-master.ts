@@ -3,7 +3,7 @@ import { z } from "zod";
 import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { assertCampaignAccess } from "../shared/authz.js";
-import { mythicOpenAIChatCompletions } from "../shared/ai_provider.js";
+import { mythicOpenAIChatCompletionsStream } from "../shared/ai_provider.js";
 import {
   enforceRateLimit,
   getIdempotentResponse,
@@ -111,6 +111,8 @@ const MAX_TEXT_FIELD_LEN = 900;
 const NARRATION_MIN_WORDS = 52;
 const NARRATION_MAX_WORDS = 110;
 const DM_IDEMPOTENCY_TTL_MS = 20_000;
+const MAX_PROMPT_MESSAGES = 10;
+const MAX_PROMPT_MESSAGE_CHARS = 520;
 const GENERIC_ACTION_LABEL_RX = /^(action\s+\d+|narrative\s+update)$/i;
 const DM_STYLE_PROFILE = {
   id: "dark_tactical_with_bite.v1",
@@ -137,6 +139,29 @@ function compactNarration(text: string, maxWords = NARRATION_MAX_WORDS): string 
   if (words.length <= maxWords) return text.trim();
   const sliced = words.slice(0, maxWords).join(" ").trim();
   return `${sliced}...`;
+}
+
+function compactPromptMessage(content: string): string {
+  const clean = content.trim().replace(/\s+/g, " ");
+  if (clean.length <= MAX_PROMPT_MESSAGE_CHARS) return clean;
+  return `${clean.slice(0, MAX_PROMPT_MESSAGE_CHARS).trim()}...`;
+}
+
+function compactModelMessages(messages: Array<{ role: "user" | "assistant" | "system"; content: string }>) {
+  return messages
+    .slice(-MAX_PROMPT_MESSAGES)
+    .map((entry) => ({ role: entry.role, content: compactPromptMessage(entry.content) }));
+}
+
+function jsonInline(value: unknown, maxLen = 2600): string {
+  try {
+    const text = JSON.stringify(value);
+    if (!text) return "null";
+    if (text.length <= maxLen) return text;
+    return `${text.slice(0, maxLen)}...<truncated>`;
+  } catch {
+    return "\"<unserializable>\"";
+  }
 }
 
 function styleProfilePrompt(): string {
@@ -398,6 +423,49 @@ function streamOpenAiDelta(text: string): ReadableStream<Uint8Array> {
       }
     },
   });
+}
+
+async function readModelStreamText(response: Response): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let out = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let splitIndex = buffer.indexOf("\n");
+    while (splitIndex >= 0) {
+      const rawLine = buffer.slice(0, splitIndex).replace(/\r$/, "");
+      buffer = buffer.slice(splitIndex + 1);
+      if (!rawLine.startsWith("data:")) {
+        splitIndex = buffer.indexOf("\n");
+        continue;
+      }
+      const payload = rawLine.slice(5).trim();
+      if (!payload || payload === "[DONE]") {
+        splitIndex = buffer.indexOf("\n");
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(payload) as Record<string, unknown>;
+        const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+        const first = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : null;
+        const delta = first && typeof first.delta === "object" ? first.delta as Record<string, unknown> : null;
+        const message = first && typeof first.message === "object" ? first.message as Record<string, unknown> : null;
+        if (typeof delta?.content === "string") {
+          out += delta.content;
+        } else if (typeof message?.content === "string") {
+          out += message.content;
+        }
+      } catch {
+        // Ignore malformed event fragments.
+      }
+      splitIndex = buffer.indexOf("\n");
+    }
+  }
+  return out.trim();
 }
 
 function shortText(value: unknown, maxLen = MAX_TEXT_FIELD_LEN): string | null {
@@ -1617,41 +1685,41 @@ You are the Mythic Weave Dungeon Master entity.
 You must narrate a living dungeon comic that strictly matches authoritative DB state.
 
 TURN CONTEXT (DETERMINISTIC, AUTHORITATIVE)
-${JSON.stringify({ expected_turn_index: expectedTurnIndex, turn_seed: turnSeed.toString(), rolls: rollContext }, null, 2)}
+${jsonInline({ expected_turn_index: expectedTurnIndex, turn_seed: turnSeed.toString(), rolls: rollContext }, 1400)}
 
 AUTHORITATIVE SCRIPT (DB): mythic.generator_scripts(name='mythic-weave-core')
-${JSON.stringify(compactScript, null, 2)}
+${jsonInline(compactScript, 2200)}
 
 AUTHORITATIVE RULES (DB): mythic.game_rules(name='mythic-weave-rules-v1')
-${JSON.stringify(compactRules, null, 2)}
+${jsonInline(compactRules, 2200)}
 
 AUTHORITATIVE STATE (DB VIEWS)
 - Active board payload (mythic.v_board_state_for_dm):
-${JSON.stringify(compactBoard ?? null, null, 2)}
+${jsonInline(compactBoard ?? null, 2600)}
 
 - Player character payload (mythic.v_character_state_for_dm):
-${JSON.stringify(compactCharacter ?? null, null, 2)}
+${jsonInline(compactCharacter ?? null, 2000)}
 
 - Combat payload (mythic.v_combat_state_for_dm or null):
-${JSON.stringify(compactCombat ?? null, null, 2)}
+${jsonInline(compactCombat ?? null, 2200)}
 
 - DM campaign state:
-${JSON.stringify(dmCampaignState ?? null, null, 2)}
+${jsonInline(dmCampaignState ?? null, 1200)}
 
 - DM world tension:
-${JSON.stringify(dmWorldTension ?? null, null, 2)}
+${jsonInline(dmWorldTension ?? null, 1000)}
 
 - Campaign companions:
-${JSON.stringify(compactCompanions, null, 2)}
+${jsonInline(compactCompanions, 1400)}
 
 - Board narrative samples:
-${JSON.stringify(boardNarrativeSamples, null, 2)}
+${jsonInline(boardNarrativeSamples, 1400)}
 
 - Recent command execution context (authoritative client action result, may be null):
-${JSON.stringify(actionContextRecord ?? null, null, 2)}
+${jsonInline(actionContextRecord ?? null, 1200)}
 
 - Runtime warnings:
-${JSON.stringify(warnings, null, 2)}
+${jsonInline(warnings, 800)}
 
 ${styleProfilePrompt()}
 
@@ -1696,7 +1764,8 @@ ${jsonOnlyContract()}
         intro_source: introSource,
       });
 
-      const maxAttempts = 3;
+      const compactMessages = compactModelMessages(messages);
+      const maxAttempts = 2;
       let lastErrors: string[] = [];
       let dmText = "";
       let dmParsed: ReturnType<typeof parseDmNarratorOutput> | null = null;
@@ -1888,12 +1957,12 @@ ${jsonOnlyContract()}
         validationAttempts = attempt;
         const attemptMessages = (() => {
           if (attempt === 1) {
-            return [{ role: "system" as const, content: systemPrompt }, ...messages];
+            return [{ role: "system" as const, content: systemPrompt }, ...compactMessages];
           }
           if (attempt === 2) {
             return [
               { role: "system" as const, content: systemPrompt },
-              ...messages,
+              ...compactMessages,
               {
                 role: "system" as const,
                 content: `Validation errors on previous output: ${JSON.stringify(lastErrors).slice(0, 2400)}. Regenerate one valid JSON object that satisfies every contract field.`,
@@ -1902,7 +1971,7 @@ ${jsonOnlyContract()}
           }
           return [
             { role: "system" as const, content: systemPrompt },
-            ...messages,
+            ...compactMessages,
             {
               role: "system" as const,
               content: [
@@ -1916,20 +1985,15 @@ ${jsonOnlyContract()}
           ];
         })();
 
-        const { data, model } = await mythicOpenAIChatCompletions(
+        const { response, model } = await mythicOpenAIChatCompletionsStream(
           {
             messages: attemptMessages,
-            stream: false,
+            stream: true,
             temperature: 0.7,
           },
           requestedModel,
         );
-
-        const rawContent = (data as Record<string, unknown>)?.choices
-          && Array.isArray((data as Record<string, unknown>).choices)
-          ? (((data as { choices: Array<{ message?: { content?: unknown } }> }).choices[0]?.message?.content) ?? "")
-          : "";
-        dmText = typeof rawContent === "string" ? rawContent : String(rawContent ?? "");
+        dmText = await readModelStreamText(response);
 
         const parsedOut = parseDmNarratorOutput(dmText);
         if (!parsedOut.ok) {

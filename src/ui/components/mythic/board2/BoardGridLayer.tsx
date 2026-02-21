@@ -7,6 +7,7 @@ interface BoardGridLayerProps {
   className?: string;
   gridLineColor?: string;
   blockedTileClassName?: string;
+  testId?: string;
   onSelectMiss: (point: { x: number; y: number }) => void;
   children?: ReactNode;
 }
@@ -38,6 +39,7 @@ export function BoardGridLayer(props: BoardGridLayerProps) {
 
   return (
     <div
+      data-testid={props.testId ?? "board-grid-layer"}
       className={`relative min-h-[280px] flex-1 overflow-hidden rounded-lg border ${props.className ?? ""}`.trim()}
       onClick={(event) => {
         props.onSelectMiss(readGridPointFromEvent(event, cols, rows));

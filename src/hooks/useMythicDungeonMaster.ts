@@ -83,6 +83,8 @@ export interface MythicDmLastResponseMeta {
   recoveryReason: string | null;
 }
 
+export type MythicDmPhase = "assembling_context" | "resolving_narration" | "committing_turn";
+
 const MAX_HISTORY_MESSAGES = 16;
 const MAX_MESSAGE_CONTENT = 1800;
 const DEFAULT_DM_TIMEOUT_MS = 95_000;
@@ -93,6 +95,21 @@ const trimMessage = (content: string) =>
   content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
 
 const logger = createLogger("mythic-dm-hook");
+
+function dedupeUiActions(actions: MythicUiAction[], maxActions = 8): MythicUiAction[] {
+  const seen = new Set<string>();
+  const out: MythicUiAction[] = [];
+  for (const entry of actions) {
+    const labelKey = entry.label.trim().toLowerCase().replace(/\s+/g, " ");
+    const promptKey = (entry.prompt ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    const key = `${entry.intent}:${entry.hint_key ?? ""}:${labelKey}:${promptKey}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(entry);
+    if (out.length >= maxActions) break;
+  }
+  return out;
+}
 
 function isLowSignalActionLabel(value: string): boolean {
   return LOW_SIGNAL_ACTION_LABEL.test(value.trim());
@@ -332,7 +349,7 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
         return {
           narration,
           ui_actions: actions.length > 0
-            ? actions.filter((entry) => !isLowSignalAction(entry))
+            ? dedupeUiActions(actions.filter((entry) => !isLowSignalAction(entry)))
             : undefined,
           scene,
           effects,
@@ -353,10 +370,10 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
     .map((line, index) => fallbackActionFromLine(line, index))
     .filter((entry): entry is MythicUiAction => Boolean(entry))
     .filter((entry) => !isLowSignalAction(entry))
-    .slice(0, 6);
+    .slice(0, 8);
   return {
     narration: trimmed || "The scene shifts. Describe your next move.",
-    ui_actions: fallbackActions.length > 0 ? fallbackActions : undefined,
+    ui_actions: fallbackActions.length > 0 ? dedupeUiActions(fallbackActions, 6) : undefined,
   };
 }
 
@@ -374,6 +391,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
   const [messages, setMessages] = useState<MythicDMMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentResponse, setCurrentResponse] = useState("");
+  const [phase, setPhase] = useState<MythicDmPhase | null>(null);
   const [operation, setOperation] = useState<OperationState | null>(null);
   const [lastError, setLastError] = useState<MythicDmErrorInfo | null>(null);
   const [lastResponseMeta, setLastResponseMeta] = useState<MythicDmLastResponseMeta | null>(null);
@@ -416,6 +434,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
       setCurrentResponse("");
       setOperation(null);
       setLastError(null);
+      setPhase("assembling_context");
 
       let assistantContent = "";
       try {
@@ -460,6 +479,9 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
 
         if (!response.body) throw new Error("No response body");
         const requestId = response.headers.get("x-request-id");
+        if (requestSeq === activeSeqRef.current) {
+          setPhase("resolving_narration");
+        }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
@@ -513,6 +535,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         };
 
         if (requestSeq === activeSeqRef.current) {
+          setPhase("committing_turn");
           setMessages((prev) => [...prev, assistantMessage]);
           setCurrentResponse("");
           setLastResponseMeta({
@@ -561,6 +584,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         }
         if (requestSeq === activeSeqRef.current) {
           setCurrentResponse("");
+          setPhase(null);
         }
         throw error;
       } finally {
@@ -569,6 +593,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         }
         if (requestSeq === activeSeqRef.current) {
           setIsLoading(false);
+          setPhase(null);
         }
       }
     },
@@ -581,6 +606,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
     setCurrentResponse("");
     setLastError(null);
     setLastResponseMeta(null);
+    setPhase(null);
   }, []);
 
   const cancelMessage = useCallback(() => {
@@ -591,6 +617,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
     messages,
     isLoading,
     currentResponse,
+    phase,
     operation,
     lastError,
     lastResponseMeta,

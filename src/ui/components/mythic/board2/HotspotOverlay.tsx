@@ -55,6 +55,7 @@ export function HotspotOverlay(props: HotspotOverlayProps) {
           <button
             key={hotspot.id}
             type="button"
+            data-testid={`board-hotspot-${hotspot.id}`}
             className={`absolute rounded-md border px-2 py-1 text-left text-[11px] shadow-[0_0_0_1px_rgba(0,0,0,0.2)] transition hover:brightness-110 ${accentClass(props.accent, tier)} ${emphasisClass}`.trim()}
             style={{
               left: toPercent(hotspot.rect.x, props.cols),
