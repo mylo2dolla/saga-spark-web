@@ -118,6 +118,7 @@ export interface NarrativeDockCardModel {
   tone?: NarrativeTone;
   previewLines: string[];
   detailLines?: string[];
+  devDetailLines?: string[];
 }
 
 export interface TownSceneData {

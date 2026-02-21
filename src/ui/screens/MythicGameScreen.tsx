@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { PromptAssistField } from "@/components/PromptAssistField";
 import {
   Sheet,
@@ -27,6 +28,7 @@ import { callEdgeFunction } from "@/lib/edge";
 import { sumStatMods, splitInventory, type MythicInventoryRow } from "@/lib/mythicEquipment";
 import { parsePlayerCommand, type PlayerCommandPanel } from "@/lib/mythic/playerCommandParser";
 import { executePlayerCommand } from "@/lib/mythic/playerCommandExecutor";
+import { useMythicDevSurfaces } from "@/lib/mythic/featureFlags";
 import { buildSkillAvailability } from "@/lib/mythic/skillAvailability";
 import { createLogger } from "@/lib/observability/logger";
 import { parseEdgeError } from "@/lib/edgeError";
@@ -579,6 +581,7 @@ export default function MythicGameScreen() {
   const [activePanel, setActivePanel] = useState<MythicPanelTab>("status");
   const [utilityDrawerOpen, setUtilityDrawerOpen] = useState(false);
   const [utilityTab, setUtilityTab] = useState<MythicUtilityTab>("settings");
+  const devSurfaces = useMythicDevSurfaces();
   const [focusedCombatantId, setFocusedCombatantId] = useState<string | null>(null);
   const [runtimeSettings, setRuntimeSettings] = useState<MythicRuntimeSettings>(() => loadMythicSettings());
   const [characterSheetOpen, setCharacterSheetOpen] = useState(false);
@@ -910,10 +913,24 @@ export default function MythicGameScreen() {
     setCharacterSheetOpen(true);
   }, []);
 
+  const resolveUtilityTab = useCallback((tab: MythicUtilityTab): MythicUtilityTab => {
+    if (!devSurfaces.enabled && (tab === "logs" || tab === "diagnostics")) {
+      return "settings";
+    }
+    return tab;
+  }, [devSurfaces.enabled]);
+
   const openUtility = useCallback((tab: MythicUtilityTab = "settings") => {
-    setUtilityTab(tab);
+    setUtilityTab(resolveUtilityTab(tab));
     setUtilityDrawerOpen(true);
-  }, []);
+  }, [resolveUtilityTab]);
+
+  useEffect(() => {
+    if (devSurfaces.enabled) return;
+    if (utilityTab === "logs" || utilityTab === "diagnostics") {
+      setUtilityTab("settings");
+    }
+  }, [devSurfaces.enabled, utilityTab]);
 
   const handleProfileDraftChange = useCallback((next: CharacterProfileDraft) => {
     setProfileDraft(next);
@@ -1258,7 +1275,7 @@ export default function MythicGameScreen() {
                 openPanel(mapped);
                 return;
               }
-              openUtility(panel === "commands" ? "logs" : "settings");
+              openUtility(panel === "commands" && devSurfaces.enabled ? "logs" : "settings");
             },
           });
           if (resolution.combatStartError) {
@@ -1410,10 +1427,10 @@ export default function MythicGameScreen() {
           const tab = mapPanelTab(panelRaw);
           if (!tab) {
             if (panelRaw === "commands" || panelRaw === "settings") {
-              openUtility(panelRaw === "commands" ? "logs" : "settings");
+              openUtility(panelRaw === "commands" && devSurfaces.enabled ? "logs" : "settings");
               return {
-                stateChanges: [`Opened ${panelRaw === "commands" ? "logs" : "settings"} utility drawer.`],
-                context: { utility: panelRaw === "commands" ? "logs" : "settings" },
+                stateChanges: [`Opened ${panelRaw === "commands" && devSurfaces.enabled ? "logs" : "settings"} utility drawer.`],
+                context: { utility: panelRaw === "commands" && devSurfaces.enabled ? "logs" : "settings" },
               };
             }
             return { stateChanges: [], error: "Panel target missing for this interaction." };
@@ -1708,6 +1725,7 @@ export default function MythicGameScreen() {
     combatSessionId,
     combatState.combatants,
     combatState.session?.current_turn_index,
+    devSurfaces.enabled,
     findVendorName,
     focusedCombatantId,
     openPanel,
@@ -2518,6 +2536,7 @@ export default function MythicGameScreen() {
                 transitionError={transitionError}
                 combatStartError={combatStartError}
                 dmContextError={mythicDmContext.error}
+                showDevDetails={devSurfaces.enabled}
                 characterHero={rightPanelCharacterHero}
                 onOpenCharacterSheet={() => openCharacterSheet("overview")}
                 onRetryCombatStart={() => void retryCombatStart()}
@@ -2547,39 +2566,65 @@ export default function MythicGameScreen() {
           <SheetHeader>
             <SheetTitle className="font-display text-amber-100">Utility Drawer</SheetTitle>
             <SheetDescription className="text-amber-100/70">
-              Character controls, settings, logs, and diagnostics.
+              {devSurfaces.enabled
+                ? "Character controls, settings, logs, and diagnostics."
+                : "Character controls and settings."}
             </SheetDescription>
           </SheetHeader>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button size="sm" variant={utilityTab === "panels" ? "default" : "secondary"} onClick={() => setUtilityTab("panels")}>Panels</Button>
             <Button size="sm" variant={utilityTab === "settings" ? "default" : "secondary"} onClick={() => setUtilityTab("settings")}>Settings</Button>
-            <Button size="sm" variant={utilityTab === "logs" ? "default" : "secondary"} onClick={() => setUtilityTab("logs")}>Logs</Button>
-            <Button size="sm" variant={utilityTab === "diagnostics" ? "default" : "secondary"} onClick={() => setUtilityTab("diagnostics")}>Diagnostics</Button>
+            {devSurfaces.enabled ? (
+              <>
+                <Button size="sm" variant={utilityTab === "logs" ? "default" : "secondary"} onClick={() => setUtilityTab("logs")}>Logs</Button>
+                <Button size="sm" variant={utilityTab === "diagnostics" ? "default" : "secondary"} onClick={() => setUtilityTab("diagnostics")}>Diagnostics</Button>
+              </>
+            ) : null}
           </div>
           <div className="mt-4 max-h-[calc(100vh-170px)] overflow-auto pr-1">
             {utilityTab === "panels" ? panelControlsContent : null}
 
             {utilityTab === "settings" ? (
-              <SettingsPanel
-                settings={runtimeSettings}
-                onSettingsChange={setRuntimeSettings}
-                voiceEnabled={dmVoice.enabled}
-                voiceSupported={dmVoice.supported}
-                voiceBlocked={dmVoice.blocked}
-                onToggleVoice={dmVoice.setEnabled}
-                onSpeakLatest={() => {
-                  if (!latestAssistantNarration) return;
-                  if (dmVoice.blocked && dmVoice.hasPreparedAudio) {
-                    void dmVoice.resumeLatest();
-                    return;
-                  }
-                  dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
-                }}
-                onStopVoice={dmVoice.stop}
-              />
+              <div className="space-y-3">
+                <SettingsPanel
+                  settings={runtimeSettings}
+                  onSettingsChange={setRuntimeSettings}
+                  voiceEnabled={dmVoice.enabled}
+                  voiceSupported={dmVoice.supported}
+                  voiceBlocked={dmVoice.blocked}
+                  onToggleVoice={dmVoice.setEnabled}
+                  onSpeakLatest={() => {
+                    if (!latestAssistantNarration) return;
+                    if (dmVoice.blocked && dmVoice.hasPreparedAudio) {
+                      void dmVoice.resumeLatest();
+                      return;
+                    }
+                    dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
+                  }}
+                  onStopVoice={dmVoice.stop}
+                />
+
+                {devSurfaces.allowed ? (
+                  <div className="rounded-lg border border-border bg-background/30 p-3">
+                    <div className="mb-1 text-sm font-semibold">Developer Surfaces</div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <Switch
+                        checked={devSurfaces.enabled}
+                        onCheckedChange={devSurfaces.setEnabled}
+                        aria-label="Toggle developer surfaces"
+                      />
+                      <span className="text-muted-foreground">
+                        {devSurfaces.enabled
+                          ? "Logs, diagnostics, and technical detail are visible."
+                          : "Player-facing mode is active. Developer panels are hidden."}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
-            {utilityTab === "logs" ? (
+            {devSurfaces.enabled && utilityTab === "logs" ? (
               <div className="space-y-3">
                 <div className="rounded-lg border border-amber-200/20 bg-background/20 p-3">
                   <div className="mb-1 text-sm font-semibold">Command Reference</div>
@@ -2611,7 +2656,7 @@ export default function MythicGameScreen() {
               </div>
             ) : null}
 
-            {utilityTab === "diagnostics" ? (
+            {devSurfaces.enabled && utilityTab === "diagnostics" ? (
               <div className="rounded-lg border border-amber-200/20 bg-background/20 p-3 text-xs text-amber-100/80">
                 <div className="mb-2 text-sm font-semibold">Runtime Diagnostics</div>
                 <div>campaign_id: {campaignId}</div>

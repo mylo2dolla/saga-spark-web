@@ -467,7 +467,7 @@ function heroStatus(mode: NarrativeBoardSceneModel["mode"], data: NarrativeBoard
 }
 
 function contextSourceLabel(contextSource: NarrativeBoardSceneModel["contextSource"]): string {
-  return contextSource === "runtime_and_dm_context" ? "Runtime + DM Context" : "Runtime Only";
+  return contextSource === "runtime_and_dm_context" ? "Story Sync: Live" : "Story Sync: Runtime";
 }
 
 function buildHero(args: {
@@ -480,7 +480,7 @@ function buildHero(args: {
     modeLabel: modeLabel(args.mode),
     statusLabel: heroStatus(args.mode, args.details),
     objective: heroObjective(args.mode, args.details),
-    syncLabel: "Board interactive",
+    syncLabel: "Ready",
     contextSourceLabel: contextSourceLabel(args.contextSource),
     chips: args.metrics.slice(0, 4).map((metric) => ({
       id: metric.id,
@@ -496,6 +496,7 @@ function cardFromLines(args: {
   title: string;
   previewLines: string[];
   detailLines?: string[];
+  devDetailLines?: string[];
   badge?: string;
   tone?: NarrativeTone;
 }): NarrativeDockCardModel {
@@ -506,6 +507,7 @@ function cardFromLines(args: {
     tone: args.tone,
     previewLines: args.previewLines.filter((line) => line.trim().length > 0).slice(0, 3),
     detailLines: (args.detailLines ?? []).filter((line) => line.trim().length > 0),
+    devDetailLines: (args.devDetailLines ?? []).filter((line) => line.trim().length > 0),
   };
 }
 
@@ -629,10 +631,15 @@ function buildFeedCard(feed: NarrativeFeedItem[]): NarrativeDockCardModel {
     title: "Feed",
     previewLines: feed.slice(0, 3).map((entry) => entry.label),
     detailLines: feed.slice(0, 12).map((entry) => {
+      const parts = [entry.label, entry.detail].filter((piece): piece is string => Boolean(piece));
+      return parts.join(" · ");
+    }),
+    devDetailLines: feed.slice(0, 12).map((entry) => {
       const parts = [
         entry.label,
         entry.detail,
         typeof entry.turnIndex === "number" ? `t${entry.turnIndex}` : null,
+        entry.createdAt ? new Date(entry.createdAt).toISOString() : null,
       ].filter((piece): piece is string => Boolean(piece));
       return parts.join(" · ");
     }),
@@ -650,11 +657,16 @@ function buildMoreCard(args: {
     id: "more",
     title: "More",
     previewLines: [
-      `Context: ${contextSourceLabel(args.contextSource)}`,
-      `${args.legend.length} legend tags`,
+      "Board legend and scene status",
+      `${args.legend.length} legend markers`,
       `${args.warnings.length} warnings`,
     ],
     detailLines: [
+      ...args.legend.map((entry) => `${entry.label}${entry.detail ? ` · ${entry.detail}` : ""}`),
+      ...args.warnings.map((warning) => `Warning: ${warning}`),
+    ],
+    devDetailLines: [
+      `Context: ${contextSourceLabel(args.contextSource)}`,
       ...args.metrics.map((metric) => `${metric.label}: ${metric.value}`),
       ...args.legend.map((entry) => `${entry.label}${entry.detail ? ` · ${entry.detail}` : ""}`),
       ...args.warnings.map((warning) => `Warning: ${warning}`),

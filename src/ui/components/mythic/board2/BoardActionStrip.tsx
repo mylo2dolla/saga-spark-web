@@ -14,6 +14,7 @@ interface BoardActionStripProps {
   actions: MythicUiAction[];
   sourceBySignature: Record<string, BoardActionSource>;
   isBusy: boolean;
+  showDevDetails?: boolean;
   onAction: (action: MythicUiAction, source: "board_hotspot" | "console_action") => void;
   className?: string;
   title?: string;
@@ -38,11 +39,14 @@ function sourceTone(source: BoardActionSource): string {
 }
 
 export function BoardActionStrip(props: BoardActionStripProps) {
+  const showDevDetails = props.showDevDetails === true;
   return (
     <div className={`rounded-lg border border-amber-200/30 bg-[linear-gradient(160deg,rgba(24,20,14,0.95),rgba(11,12,18,0.96))] p-3 ${props.className ?? ""}`.trim()}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="text-xs uppercase tracking-wide text-amber-100/70">{props.title ?? "Context Actions"}</div>
-        <div className="text-[11px] text-amber-100/60">inspect-first, explicit confirm</div>
+        <div className="text-[11px] text-amber-100/60">
+          {showDevDetails ? "inspect-first, explicit confirm" : "tap to confirm"}
+        </div>
       </div>
 
       {props.actions.length === 0 ? (
@@ -66,9 +70,11 @@ export function BoardActionStrip(props: BoardActionStripProps) {
                 >
                   {action.label}
                 </Button>
-                <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${sourceTone(source)}`}>
-                  {sourceLabel(source)}
-                </span>
+                {showDevDetails ? (
+                  <span className={`rounded border px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${sourceTone(source)}`}>
+                    {sourceLabel(source)}
+                  </span>
+                ) : null}
               </div>
             );
           })}

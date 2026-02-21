@@ -87,6 +87,7 @@ const MAX_HISTORY_MESSAGES = 16;
 const MAX_MESSAGE_CONTENT = 1800;
 const DEFAULT_DM_TIMEOUT_MS = 95_000;
 const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative\s+update)$/i;
+const LOW_SIGNAL_ACTION_TEXT = /^(continue|proceed|next(\s+step|\s+move)?|press\s+on|advance|do\s+that|do\s+this|work\s+a\s+lead)$/i;
 
 const trimMessage = (content: string) =>
   content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
@@ -95,6 +96,24 @@ const logger = createLogger("mythic-dm-hook");
 
 function isLowSignalActionLabel(value: string): boolean {
   return LOW_SIGNAL_ACTION_LABEL.test(value.trim());
+}
+
+function isLowSignalPrompt(value: string): boolean {
+  const clean = value.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!clean) return true;
+  if (clean.length < 18 && /^(continue|proceed|advance|next|narrate|describe)/.test(clean)) return true;
+  if (/^(continue|proceed|advance|next (step|move)|narrate what happens|describe what happens)$/.test(clean)) return true;
+  return false;
+}
+
+function isLowSignalAction(entry: MythicUiAction): boolean {
+  const label = entry.label.trim();
+  if (!label || isLowSignalActionLabel(label) || LOW_SIGNAL_ACTION_TEXT.test(label)) return true;
+  if (entry.intent === "dm_prompt") {
+    const prompt = entry.prompt ?? "";
+    if (isLowSignalPrompt(prompt)) return true;
+  }
+  return false;
 }
 
 function titleCaseWords(input: string): string {
@@ -313,7 +332,7 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
         return {
           narration,
           ui_actions: actions.length > 0
-            ? actions.filter((entry) => !isLowSignalActionLabel(entry.label))
+            ? actions.filter((entry) => !isLowSignalAction(entry))
             : undefined,
           scene,
           effects,
@@ -333,7 +352,7 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
   const fallbackActions = lines
     .map((line, index) => fallbackActionFromLine(line, index))
     .filter((entry): entry is MythicUiAction => Boolean(entry))
-    .filter((entry) => !isLowSignalActionLabel(entry.label))
+    .filter((entry) => !isLowSignalAction(entry))
     .slice(0, 6);
   return {
     narration: trimmed || "The scene shifts. Describe your next move.",

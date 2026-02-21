@@ -5,6 +5,7 @@ import type { NarrativeInspectTarget } from "@/ui/components/mythic/board2/types
 interface BoardInspectCardProps {
   target: NarrativeInspectTarget | null;
   isBusy: boolean;
+  showDevDetails?: boolean;
   onClose: () => void;
   onAction: (action: MythicUiAction) => void;
   className?: string;
@@ -51,10 +52,12 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
         </Button>
       </div>
 
-      <div className="mt-2 rounded border border-amber-200/25 bg-black/20 px-2 py-1 text-[11px] text-amber-100/80">
-        <span className="font-semibold text-amber-100">Source</span>: {target.interaction.source === "hotspot" ? "hotspot" : "board probe"}
-        <span className="ml-2 text-amber-100/65">grid ({target.interaction.x}, {target.interaction.y})</span>
-      </div>
+      {props.showDevDetails ? (
+        <div className="mt-2 rounded border border-amber-200/25 bg-black/20 px-2 py-1 text-[11px] text-amber-100/80">
+          <span className="font-semibold text-amber-100">Source</span>: {target.interaction.source === "hotspot" ? "hotspot" : "board probe"}
+          <span className="ml-2 text-amber-100/65">grid ({target.interaction.x}, {target.interaction.y})</span>
+        </div>
+      ) : null}
 
       {target.description ? <div className="mt-2 text-xs text-amber-100/80">{target.description}</div> : null}
 
@@ -83,7 +86,7 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
         )}
       </div>
 
-      {metaRows.length > 0 ? (
+      {props.showDevDetails && metaRows.length > 0 ? (
         <div className="mt-3 grid gap-1 rounded border border-amber-200/25 bg-black/20 p-2 text-[11px] text-amber-100/75 sm:grid-cols-2">
           {metaRows.map(([key, value]) => (
             <div key={`${target.id}:meta:${key}`}>

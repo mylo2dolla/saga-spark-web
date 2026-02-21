@@ -108,10 +108,20 @@ OUTPUT CONTRACT (STRICT)
 }
 
 const MAX_TEXT_FIELD_LEN = 900;
-const NARRATION_MIN_WORDS = 60;
-const NARRATION_MAX_WORDS = 95;
+const NARRATION_MIN_WORDS = 52;
+const NARRATION_MAX_WORDS = 110;
 const DM_IDEMPOTENCY_TTL_MS = 20_000;
 const GENERIC_ACTION_LABEL_RX = /^(action\s+\d+|narrative\s+update)$/i;
+const DM_STYLE_PROFILE = {
+  id: "dark_tactical_with_bite.v1",
+  tone: "dark tactical with bite",
+  directives: [
+    "Voice is sharp, predatory, and immediate. Every line should imply consequence.",
+    "Use concrete board nouns (gate, segment, room, target, flank) instead of abstract filler.",
+    "Keep momentum brutal and compact. No sterile recap language.",
+    "Favor active verbs and tactical stakes over exposition.",
+  ],
+} as const;
 
 type NarratorUiAction = NonNullable<DmNarratorOutput["ui_actions"]>[number];
 
@@ -127,6 +137,14 @@ function compactNarration(text: string, maxWords = NARRATION_MAX_WORDS): string 
   if (words.length <= maxWords) return text.trim();
   const sliced = words.slice(0, maxWords).join(" ").trim();
   return `${sliced}...`;
+}
+
+function styleProfilePrompt(): string {
+  return [
+    `VOICE PROFILE (${DM_STYLE_PROFILE.id})`,
+    `- Tone: ${DM_STYLE_PROFILE.tone}.`,
+    ...DM_STYLE_PROFILE.directives.map((entry) => `- ${entry}`),
+  ].join("\n");
 }
 
 function titleCaseWords(input: string): string {
@@ -1118,10 +1136,20 @@ function synthesizeRecoveryPayload(args: {
     160,
   );
 
+  const recoveryPressure = boardType === "town"
+    ? "The square feels like a trap wrapped in lantern light."
+    : boardType === "travel"
+      ? "The route narrows and every step can spring an ambush."
+      : boardType === "dungeon"
+        ? "Stone corridors hold their breath and punish hesitation."
+        : "Steel and spellfire keep the floor in constant motion.";
+  const recoveryBeat = boardType === "combat"
+    ? "Pick a target, force tempo, and make the next exchange hurt."
+    : "Commit one decisive move and keep pressure on the nearest fault line.";
   const narrative = [
-    `${actionSummary} The ${boardLabel} board answers immediately with concrete movement instead of dead air.`,
-    `Pressure shifts across active hooks, and the next beat is now tied to authoritative state updates already committed for this turn.`,
-    `You can press the strongest lead now, pivot boards for tempo, or force a tighter read on the nearest threat before it escalates.`,
+    `${actionSummary} ${recoveryPressure}`,
+    `The ${boardLabel} board answers with hard state, not fog: positions, hooks, and pressure are already committed for this turn.`,
+    `${recoveryBeat}`,
   ].join(" ");
 
   const vendors = extractVendorsFromBoardSummary(args.boardSummary);
@@ -1208,33 +1236,33 @@ function synthesizeRecoveryPayload(args: {
     narration: narrative,
     scene: {
       environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
-      mood: "tense forward momentum",
+      mood: "dark tactical pressure",
       focus: actionSummary,
       travel_goal: typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
     },
-    ui_actions: sanitizedActions,
-    runtime_delta: {
-      rumors: [{ title: "Pressure Spike", detail: actionSummary }],
-      objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
-      discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
-      scene_cache: {
-        environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
-        mood: "tense forward momentum",
-        focus: actionSummary,
+      ui_actions: sanitizedActions,
+      runtime_delta: {
+        rumors: [{ title: "Pressure Spike", detail: actionSummary }],
+        objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
+        discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
+        scene_cache: {
+          environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
+          mood: "dark tactical pressure",
+          focus: actionSummary,
+        },
+        action_chips: actionChips,
       },
-      action_chips: actionChips,
-    },
-    board_delta: {
-      rumors: [{ title: "Pressure Spike", detail: actionSummary }],
-      objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
-      discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
-      scene_cache: {
-        environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
-        mood: "tense forward momentum",
-        focus: actionSummary,
+      board_delta: {
+        rumors: [{ title: "Pressure Spike", detail: actionSummary }],
+        objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
+        discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
+        scene_cache: {
+          environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
+          mood: "dark tactical pressure",
+          focus: actionSummary,
+        },
+        action_chips: actionChips,
       },
-      action_chips: actionChips,
-    },
   };
 }
 
@@ -1625,6 +1653,8 @@ ${JSON.stringify(actionContextRecord ?? null, null, 2)}
 - Runtime warnings:
 ${JSON.stringify(warnings, null, 2)}
 
+${styleProfilePrompt()}
+
 RULES YOU MUST OBEY
 - Grid is truth. Never invent positions, HP, items, skills.
 - Determinism: if you reference a roll, it must be described as coming from action_events / compute_damage output.
@@ -1914,7 +1944,7 @@ ${jsonOnlyContract()}
         }
 
         const narrationWords = countWords(parsedOut.value.narration);
-        if (narrationWords > NARRATION_MAX_WORDS + 15 || narrationWords < Math.max(20, NARRATION_MIN_WORDS - 20)) {
+        if (narrationWords > NARRATION_MAX_WORDS + 20 || narrationWords < Math.max(24, NARRATION_MIN_WORDS - 18)) {
           lastErrors = [`narration_word_count_out_of_bounds:${narrationWords}:expected_${NARRATION_MIN_WORDS}-${NARRATION_MAX_WORDS}`];
           ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
           dmParsed = { ok: false, errors: lastErrors };

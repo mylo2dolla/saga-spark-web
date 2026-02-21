@@ -31,6 +31,7 @@ interface NarrativeBoardPageProps {
   transitionError: string | null;
   combatStartError: { message: string; code: string | null; requestId: string | null } | null;
   dmContextError: string | null;
+  showDevDetails: boolean;
   characterHero: RightPanelHeroCharacter | null;
   onOpenCharacterSheet: () => void;
   onRetryCombatStart: () => void;
@@ -43,20 +44,25 @@ function warningFromState(args: {
   combatStartError: { message: string; code: string | null; requestId: string | null } | null;
   dmContextError: string | null;
   sceneWarnings: string[];
+  showDevDetails: boolean;
 }): RightPanelHeroWarning | null {
   if (args.transitionError) {
     return {
       tone: "danger",
       title: "Runtime transition failed",
-      detail: args.transitionError,
+      detail: args.showDevDetails
+        ? args.transitionError
+        : "The world state could not transition cleanly. Retry the action.",
     };
   }
   if (args.combatStartError) {
-    const bits = [
-      args.combatStartError.message,
-      args.combatStartError.code ? `code: ${args.combatStartError.code}` : null,
-      args.combatStartError.requestId ? `requestId: ${args.combatStartError.requestId}` : null,
-    ].filter((entry): entry is string => Boolean(entry));
+    const bits = args.showDevDetails
+      ? [
+          args.combatStartError.message,
+          args.combatStartError.code ? `code: ${args.combatStartError.code}` : null,
+          args.combatStartError.requestId ? `requestId: ${args.combatStartError.requestId}` : null,
+        ].filter((entry): entry is string => Boolean(entry))
+      : [args.combatStartError.message];
     return {
       tone: "danger",
       title: "Combat start failed",
@@ -74,7 +80,9 @@ function warningFromState(args: {
     return {
       tone: "warn",
       title: "Runtime warning",
-      detail: args.sceneWarnings[0] ?? "Runtime warning",
+      detail: args.showDevDetails
+        ? (args.sceneWarnings[0] ?? "Runtime warning")
+        : "Some world updates need a refresh before the next move.",
     };
   }
   return null;
@@ -190,7 +198,8 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
     combatStartError: props.combatStartError,
     dmContextError: props.dmContextError,
     sceneWarnings: props.scene.warnings,
-  }), [props.combatStartError, props.dmContextError, props.scene.warnings, props.transitionError]);
+    showDevDetails: props.showDevDetails,
+  }), [props.combatStartError, props.dmContextError, props.scene.warnings, props.showDevDetails, props.transitionError]);
 
   const combatCoreActions = useMemo(
     () => props.scene.mode === "combat" ? (props.scene.details as CombatSceneData).coreActions : [],
@@ -237,6 +246,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
           target={inspectTarget}
           title={props.scene.dock.inspectTitle}
           isBusy={props.isBusy}
+          showDevDetails={props.showDevDetails}
           onClose={() => {
             setInspectTarget(null);
             setOpenCardId(null);
@@ -257,6 +267,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
           title={props.scene.dock.actionsTitle}
           sourceBySignature={stripActionSourceBySignature}
           isBusy={props.isBusy}
+          showDevDetails={props.showDevDetails}
           onAction={(action, source) => {
             props.onAction(action, source);
             if (source === "board_hotspot") {
@@ -278,10 +289,12 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
             <div key={`feed-detail-${entry.id}`} className="rounded border border-amber-200/20 bg-black/20 px-2 py-1.5">
               <div className={`font-medium ${toneTextClass(entry.tone)}`}>{entry.label}</div>
               {entry.detail ? <div className="mt-0.5 text-amber-100/70">{entry.detail}</div> : null}
-              <div className="mt-0.5 text-[10px] text-amber-100/55">
-                {typeof entry.turnIndex === "number" ? `Turn ${entry.turnIndex}` : "Live"}
-                {entry.createdAt ? ` · ${new Date(entry.createdAt).toLocaleTimeString()}` : ""}
-              </div>
+              {props.showDevDetails ? (
+                <div className="mt-0.5 text-[10px] text-amber-100/55">
+                  {typeof entry.turnIndex === "number" ? `Turn ${entry.turnIndex}` : "Live"}
+                  {entry.createdAt ? ` · ${new Date(entry.createdAt).toLocaleTimeString()}` : ""}
+                </div>
+              ) : null}
             </div>
           ))}
         </div>
@@ -290,8 +303,10 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
 
     return (
       <div className="space-y-1.5 text-xs text-amber-100/80">
-        {(card.detailLines && card.detailLines.length > 0
-          ? card.detailLines
+        {(props.showDevDetails && card.devDetailLines && card.devDetailLines.length > 0
+          ? card.devDetailLines
+          : card.detailLines && card.detailLines.length > 0
+            ? card.detailLines
           : card.previewLines
         ).map((line, index) => (
           <div key={`${card.id}-line-${index + 1}`} className="rounded border border-amber-200/20 bg-black/20 px-2 py-1">
@@ -308,7 +323,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
         ) : null}
       </div>
     );
-  }, [inspectTarget, props.combatStartError, props.isBusy, props.onAction, props.onRetryCombatStart, props.scene.dock.actionsTitle, props.scene.dock.inspectTitle, props.scene.feed, stripActionSourceBySignature, stripActions]);
+  }, [inspectTarget, props.combatStartError, props.isBusy, props.onAction, props.onRetryCombatStart, props.scene.dock.actionsTitle, props.scene.dock.inspectTitle, props.scene.feed, props.showDevDetails, stripActionSourceBySignature, stripActions]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 p-3">

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { BoardCardDetailSurface } from "@/ui/components/mythic/board2/BoardCardDetailSurface";
 import type { NarrativeDockCardModel, NarrativeTone } from "@/ui/components/mythic/board2/types";
 
@@ -16,12 +16,27 @@ function toneClass(tone: NarrativeTone | undefined): string {
   return "border-amber-200/25 bg-amber-100/8 text-amber-100/85";
 }
 
-function PreviewCard(props: { card: NarrativeDockCardModel; open: boolean }) {
-  const { card } = props;
+interface PreviewCardProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  card: NarrativeDockCardModel;
+  open: boolean;
+}
+
+const PreviewCard = forwardRef<HTMLButtonElement, PreviewCardProps>(function PreviewCard(
+  { card, open, className, ...buttonProps },
+  ref,
+) {
   return (
     <button
-      type="button"
-      className={`h-full w-full rounded-md border px-2.5 py-2 text-left transition hover:border-amber-200/45 hover:bg-amber-200/10 ${toneClass(card.tone)} ${props.open ? "ring-1 ring-amber-300/70" : ""}`.trim()}
+      {...buttonProps}
+      ref={ref}
+      type={buttonProps.type ?? "button"}
+      className={[
+        "h-full w-full rounded-md border px-2.5 py-2 text-left transition",
+        "hover:border-amber-200/45 hover:bg-amber-200/10",
+        toneClass(card.tone),
+        open ? "ring-1 ring-amber-300/70" : "",
+        className ?? "",
+      ].join(" ").trim()}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="text-[11px] font-semibold uppercase tracking-wide">{card.title}</div>
@@ -42,7 +57,7 @@ function PreviewCard(props: { card: NarrativeDockCardModel; open: boolean }) {
       </div>
     </button>
   );
-}
+});
 
 export function BoardCardDock(props: BoardCardDockProps) {
   return (
@@ -61,7 +76,7 @@ export function BoardCardDock(props: BoardCardDockProps) {
               onOpenChange={(nextOpen) => props.onOpenCardIdChange(nextOpen ? card.id : null)}
               title={card.title}
               subtitle={card.previewLines[0]}
-              trigger={<PreviewCard card={card} open={open} />}
+              trigger={<PreviewCard card={card} open={open} data-testid={`board-card-trigger-${card.id}`} />}
             >
               {props.renderDetail(card)}
             </BoardCardDetailSurface>

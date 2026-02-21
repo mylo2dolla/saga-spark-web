@@ -79,6 +79,20 @@ Highlights:
 - Core cards always visible: `Inspect`, `Actions`, `Scene`, `Feed`.
 - `More` card appears when extra detail payload is present.
 
+## Post-Fix Interaction Status
+- Quick-card click dead-state regression resolved.
+- Root cause: dock trigger component did not forward trigger props/ref required by `PopoverTrigger`/`DrawerTrigger` with `asChild`.
+- Fix: trigger now uses `forwardRef` and spreads injected trigger props onto native `button`.
+- Added stable card trigger test IDs: `board-card-trigger-inspect|actions|scene|feed`.
+
+## Dev-Surface Gating Summary
+- Added feature flag gate: `VITE_MYTHIC_DEV_SURFACES`.
+- Default behavior is player-facing:
+  - logs/diagnostics tabs hidden
+  - technical warning fragments hidden
+  - inspect/source/meta internals hidden
+- When env allows and user toggles developer surfaces on, technical detail is visible again without changing runtime behavior.
+
 ## QA Matrix
 
 ### Automated
