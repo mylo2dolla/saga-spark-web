@@ -66,3 +66,16 @@ Supabase remains auth/db only. Gameplay calls stay VM-hosted.
 ## Residual Notes
 - The right-panel Playwright popup test is campaign-dependent and skips unless `PLAYWRIGHT_MYTHIC_CAMPAIGN_ID` is set.
 - Existing backend endpoint names and response envelopes remain unchanged.
+
+## Deploy Lock
+- Git commit: `67c9365`
+- Frontend (Vercel prod):
+  - Inspect ID: `GDjawQMewp4GBSzN2ELU1hwnX982`
+  - Production URL: `https://saga-spark-l1j25ibna-mylo2dollas-projects.vercel.app`
+  - Alias: `https://mythweaver.online`
+  - Deploy time (UTC): `2026-02-21T02:25:48Z`
+- VM runtime:
+  - Host: `api.mythweaver.online`
+  - Path: `/opt/mythic-api`
+  - Deploy mode: rsync sync + `docker compose up -d --build --force-recreate`
+  - Health check: `http://127.0.0.1/healthz` pass after recreate
