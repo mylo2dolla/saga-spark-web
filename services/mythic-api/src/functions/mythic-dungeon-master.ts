@@ -150,10 +150,41 @@ function compactPromptMessage(content: string): string {
   return `${clean.slice(0, MAX_PROMPT_MESSAGE_CHARS).trim()}...`;
 }
 
+function summarizeAssistantTurnForPrompt(content: string): string {
+  const parsed = parseDmNarratorOutput(content);
+  if (!parsed.ok) return compactPromptMessage(content);
+
+  const value = parsed.value;
+  const scene = asObject(value.scene);
+  const focus = typeof scene?.focus === "string" ? compactLabel(scene.focus, 64) : null;
+  const mood = typeof scene?.mood === "string" ? compactLabel(scene.mood, 48) : null;
+  const actions = Array.isArray(value.ui_actions)
+    ? value.ui_actions
+      .slice(0, 2)
+      .map((entry) => compactLabel(`${entry.label}(${entry.intent})`, 52))
+      .filter((entry) => entry.length > 0)
+    : [];
+
+  const narration = compactPromptMessage(value.narration);
+  const chunks = [
+    `Narration: ${narration}`,
+    focus ? `Focus: ${focus}` : null,
+    mood ? `Mood: ${mood}` : null,
+    actions.length > 0 ? `Actions: ${actions.join(" | ")}` : null,
+  ].filter((entry): entry is string => Boolean(entry));
+  return compactPromptMessage(chunks.join(" || "));
+}
+
 function compactModelMessages(messages: Array<{ role: "user" | "assistant" | "system"; content: string }>) {
   return messages
+    .filter((entry) => entry.role !== "system")
     .slice(-MAX_PROMPT_MESSAGES)
-    .map((entry) => ({ role: entry.role, content: compactPromptMessage(entry.content) }));
+    .map((entry) => ({
+      role: entry.role,
+      content: entry.role === "assistant"
+        ? summarizeAssistantTurnForPrompt(entry.content)
+        : compactPromptMessage(entry.content),
+    }));
 }
 
 function jsonInline(value: unknown, maxLen = 2600): string {

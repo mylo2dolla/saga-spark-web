@@ -294,18 +294,68 @@ export const mythicDmContext: FunctionHandler = {
       await assertCampaignAccess(svc, campaignId, user.userId);
 
       const warnings: string[] = [];
+      const startedAt = Date.now();
+
+      const runtimeQueryPromise = svc
+        .schema("mythic")
+        .from("campaign_runtime")
+        .select("id,campaign_id,mode,status,state_json,ui_hints_json,combat_session_id,updated_at")
+        .eq("campaign_id", campaignId)
+        .eq("status", "active")
+        .order("updated_at", { ascending: false })
+        .limit(2);
+
+      const characterQueryPromise = svc
+        .schema("mythic")
+        .from("v_character_state_for_dm")
+        .select("*")
+        .eq("campaign_id", campaignId)
+        .eq("player_id", user.userId)
+        .limit(1)
+        .maybeSingle();
+
+      const rulesQueryPromise = svc
+        .schema("mythic")
+        .from("game_rules")
+        .select("name, version, rules")
+        .eq("name", "mythic-weave-rules-v1")
+        .maybeSingle();
+
+      const scriptQueryPromise = svc
+        .schema("mythic")
+        .from("generator_scripts")
+        .select("name, version, is_active, content")
+        .eq("name", "mythic-weave-core")
+        .eq("is_active", true)
+        .order("version", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const dmStatePromise = svc
+        .schema("mythic")
+        .from("dm_campaign_state")
+        .select("*")
+        .eq("campaign_id", campaignId)
+        .maybeSingle();
+
+      const tensionPromise = svc
+        .schema("mythic")
+        .from("dm_world_tension")
+        .select("*")
+        .eq("campaign_id", campaignId)
+        .maybeSingle();
+
+      const companionsPromise = svc
+        .schema("mythic")
+        .from("campaign_companions")
+        .select("companion_id,name,archetype,voice,mood,cadence_turns,urgency_bias,metadata")
+        .eq("campaign_id", campaignId)
+        .order("companion_id", { ascending: true });
 
       // Authoritative runtime payload.
       let board: Record<string, unknown> | null = null;
       {
-        const runtimeQuery = await svc
-          .schema("mythic")
-          .from("campaign_runtime")
-          .select("id,campaign_id,mode,status,state_json,ui_hints_json,combat_session_id,updated_at")
-          .eq("campaign_id", campaignId)
-          .eq("status", "active")
-          .order("updated_at", { ascending: false })
-          .limit(2);
+        const runtimeQuery = await runtimeQueryPromise;
         if (runtimeQuery.error) {
           warnings.push(`campaign_runtime unavailable: ${errMessage(runtimeQuery.error, "query failed")}`);
         } else {
@@ -337,14 +387,7 @@ export const mythicDmContext: FunctionHandler = {
       // Most recent mythic character for this player in this campaign, with table fallback.
       let char: Record<string, unknown> | null = null;
       {
-        const { data, error } = await svc
-          .schema("mythic")
-          .from("v_character_state_for_dm")
-          .select("*")
-          .eq("campaign_id", campaignId)
-          .eq("player_id", user.userId)
-          .limit(1)
-          .maybeSingle();
+        const { data, error } = await characterQueryPromise;
         if (error) {
           warnings.push(`v_character_state_for_dm unavailable: ${errMessage(error, "query failed")}`);
           const fallback = await svc
@@ -398,42 +441,45 @@ export const mythicDmContext: FunctionHandler = {
       }
 
       // Canonical rules/script for the DM.
-      const { data: rulesRow, error: rulesError } = await svc
-        .schema("mythic")
-        .from("game_rules")
-        .select("name, version, rules")
-        .eq("name", "mythic-weave-rules-v1")
-        .maybeSingle();
+      const [{ data: rulesRow, error: rulesError }, { data: scriptRow, error: scriptError }, dmState, tension, companions] = await Promise.all([
+        rulesQueryPromise,
+        scriptQueryPromise,
+        dmStatePromise,
+        tensionPromise,
+        companionsPromise,
+      ]);
       if (rulesError) {
         warnings.push(`game_rules unavailable: ${errMessage(rulesError, "query failed")}`);
       }
-
-      const { data: scriptRow, error: scriptError } = await svc
-        .schema("mythic")
-        .from("generator_scripts")
-        .select("name, version, is_active, content")
-        .eq("name", "mythic-weave-core")
-        .eq("is_active", true)
-        .order("version", { ascending: false })
-        .limit(1)
-        .maybeSingle();
       if (scriptError) {
         warnings.push(`generator_scripts unavailable: ${errMessage(scriptError, "query failed")}`);
       }
+      if (dmState.error) {
+        warnings.push(`dm_campaign_state unavailable: ${errMessage(dmState.error, "query failed")}`);
+      }
+      if (tension.error) {
+        warnings.push(`dm_world_tension unavailable: ${errMessage(tension.error, "query failed")}`);
+      }
+      if (companions.error) {
+        warnings.push(`campaign_companions unavailable: ${errMessage(companions.error, "query failed")}`);
+      }
 
-      const dmState = await svc
-        .schema("mythic")
-        .from("dm_campaign_state")
-        .select("*")
-        .eq("campaign_id", campaignId)
-        .maybeSingle();
-
-      const tension = await svc
-        .schema("mythic")
-        .from("dm_world_tension")
-        .select("*")
-        .eq("campaign_id", campaignId)
-        .maybeSingle();
+      const compactCompanions = Array.isArray(companions.data)
+        ? companions.data
+          .map((entry) => (entry && typeof entry === "object" ? entry as Record<string, unknown> : null))
+          .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+          .slice(0, 8)
+          .map((entry) => ({
+            companion_id: entry.companion_id ?? null,
+            name: entry.name ?? null,
+            archetype: entry.archetype ?? null,
+            voice: entry.voice ?? null,
+            mood: entry.mood ?? null,
+            cadence_turns: entry.cadence_turns ?? null,
+            urgency_bias: entry.urgency_bias ?? null,
+            metadata: entry.metadata && typeof entry.metadata === "object" ? entry.metadata : null,
+          }))
+        : [];
 
       const compactRules = {
         name: rulesRow?.name ?? "mythic-weave-rules-v1",
@@ -460,6 +506,7 @@ export const mythicDmContext: FunctionHandler = {
         name: scriptRow?.name ?? "mythic-weave-core",
         version: scriptRow?.version ?? null,
         is_active: scriptRow?.is_active ?? null,
+        style_profile: "dark_tactical_with_bite.v1",
         policy: {
           allow_gore: true,
           allow_mild_sexuality: true,
@@ -483,6 +530,10 @@ export const mythicDmContext: FunctionHandler = {
           script: compactScript,
           dm_campaign_state: dmState.data ?? null,
           dm_world_tension: tension.data ?? null,
+          companions: compactCompanions,
+          timings_ms: {
+            total: Date.now() - startedAt,
+          },
           warnings,
           requestId: ctx.requestId,
         }),

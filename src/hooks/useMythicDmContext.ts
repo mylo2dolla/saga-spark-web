@@ -18,8 +18,12 @@ export function useMythicDmContext(
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlightRef = useRef(false);
+  const pendingRef = useRef(false);
+  const requestSeqRef = useRef(0);
+  const activeSeqRef = useRef(0);
   const hasLoadedOnceRef = useRef(false);
   const isMountedRef = useRef(true);
+  const campaignRef = useRef<string | undefined>(campaignId);
   const lastBoardUpdatedAtRef = useRef<string | null>(null);
 
   const fetchContext = useCallback(async () => {
@@ -35,10 +39,19 @@ export function useMythicDmContext(
       return;
     }
 
-    if (inFlightRef.current) return;
+    if (inFlightRef.current) {
+      pendingRef.current = true;
+      return;
+    }
+
+    const requestSeq = requestSeqRef.current + 1;
+    requestSeqRef.current = requestSeq;
+    activeSeqRef.current = requestSeq;
+    const requestCampaignId = campaignId;
 
     try {
       inFlightRef.current = true;
+      pendingRef.current = false;
       if (isMountedRef.current) {
         if (hasLoadedOnceRef.current) {
           setIsRefreshing(true);
@@ -59,26 +72,39 @@ export function useMythicDmContext(
         throw new Error("DM context request returned an invalid payload.");
       }
 
-      if (isMountedRef.current) {
+      const isLatest = requestSeq === activeSeqRef.current;
+      const sameCampaign = campaignRef.current === requestCampaignId;
+      if (isMountedRef.current && isLatest && sameCampaign) {
         setContext(data);
       }
     } catch (err) {
       const message = formatError(err, "Failed to load DM context");
-      if (isMountedRef.current) {
+      const isLatest = requestSeq === activeSeqRef.current;
+      const sameCampaign = campaignRef.current === requestCampaignId;
+      if (isMountedRef.current && isLatest && sameCampaign) {
         setError(message);
       }
     } finally {
       inFlightRef.current = false;
-      hasLoadedOnceRef.current = true;
-      if (isMountedRef.current) {
+      const isLatest = requestSeq === activeSeqRef.current;
+      const sameCampaign = campaignRef.current === requestCampaignId;
+      if (isLatest && sameCampaign) {
+        hasLoadedOnceRef.current = true;
+      }
+      if (isMountedRef.current && isLatest && sameCampaign) {
         setIsInitialLoading(false);
         setIsRefreshing(false);
+      }
+      if (pendingRef.current && campaignRef.current === requestCampaignId) {
+        pendingRef.current = false;
+        void fetchContext();
       }
     }
   }, [campaignId]);
 
   useEffect(() => {
     isMountedRef.current = true;
+    campaignRef.current = campaignId;
     if (campaignId) {
       hasLoadedOnceRef.current = false;
       setIsInitialLoading(true);

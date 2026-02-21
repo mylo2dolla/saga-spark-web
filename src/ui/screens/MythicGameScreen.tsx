@@ -183,6 +183,7 @@ function profileDraftFromCharacter(character: { name: string; class_json: Record
 const MAX_CONSOLE_ACTIONS = 6;
 const DM_ACTION_TIMEOUT_MS = 110_000;
 const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative update)$/i;
+const LOW_SIGNAL_NARRATION_PROMPT = /^(continue|proceed|advance|next(\s+(step|move))?|refresh(\s+state)?|narrate|describe)(\b|[\s.,])/i;
 const screenLogger = createLogger("mythic-game-screen");
 
 type UnifiedActionSource =
@@ -337,6 +338,13 @@ function isExpectedDmCancellationError(message: string): boolean {
     || normalized.includes("dm request cancelled")
     || normalized.includes("aborterror")
     || normalized.includes("aborted");
+}
+
+function isLowSignalNarrationPrompt(prompt: string): boolean {
+  const clean = prompt.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!clean) return true;
+  if (LOW_SIGNAL_NARRATION_PROMPT.test(clean) && clean.length < 80) return true;
+  return false;
 }
 
 function synthesizePromptFromAction(action: MythicUiAction, args: {
@@ -1155,10 +1163,11 @@ export default function MythicGameScreen() {
   }) => {
     if (!campaignId) return Promise.resolve();
     const normalizedPrompt = args.prompt.trim().toLowerCase().replace(/\s+/g, " ");
+    const promptDedupeSlice = isLowSignalNarrationPrompt(normalizedPrompt) ? 48 : 160;
     const dedupeKey = args.intent === "refresh"
       ? "refresh"
       : args.intent === "dm_prompt" && normalizedPrompt.length > 0
-        ? `dm_prompt:${normalizedPrompt.slice(0, 160)}`
+        ? `dm_prompt:${normalizedPrompt.slice(0, promptDedupeSlice)}`
         : null;
     if (dedupeKey && queuedNarrationKeysRef.current.has(dedupeKey)) {
       screenLogger.info("mythic.action.duplicate_suppressed", {

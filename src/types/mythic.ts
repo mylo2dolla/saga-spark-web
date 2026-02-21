@@ -152,6 +152,10 @@ export interface MythicDmContextResponse {
   script: Record<string, unknown> | null;
   dm_campaign_state: Record<string, unknown> | null;
   dm_world_tension: Record<string, unknown> | null;
+  companions?: Array<Record<string, unknown>>;
+  timings_ms?: {
+    total?: number;
+  };
   warnings: string[];
   requestId?: string;
   [key: string]: unknown;
