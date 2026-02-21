@@ -133,10 +133,14 @@ cleanup_resources() {
   fi
 
   if [[ -n "${TEMP_CAMPAIGN_ID}" ]]; then
-    curl -sS -m 20 -X DELETE \
-      "${SUPABASE_URL}/rest/v1/campaigns?id=eq.${TEMP_CAMPAIGN_ID}" \
+    curl -sS -m 20 -X POST \
+      "${SUPABASE_URL}/rest/v1/rpc/admin_purge_campaigns" \
       -H "apikey: ${SUPABASE_SERVICE_ROLE_KEY}" \
       -H "Authorization: Bearer ${SUPABASE_SERVICE_ROLE_KEY}" \
+      -H "Accept-Profile: mythic" \
+      -H "Content-Profile: mythic" \
+      -H "Content-Type: application/json" \
+      -d "{\"target_campaign_ids\":[\"${TEMP_CAMPAIGN_ID}\"]}" \
       >/dev/null || true
   fi
 
