@@ -58,3 +58,34 @@ This pass upgraded campaign/class forge quality and companion setup:
   - `mythic-dm-context`: `e95614ad-87a6-4764-9b09-fc54c6ced525`
   - `mythic-dungeon-master`: `c016054e-b9da-4bd5-a6ff-b26ffb4d4624`
   - `mythic-combat-start`: `21e01a2f-cd0a-4d2f-8655-86b82952c3af`
+
+## Reset/Backfill Runbook (User-Scoped)
+### Scripts
+- Reset owned campaigns:
+  - `npx tsx scripts/reset-mythic-user-campaigns.ts --email=<owner-email> --dry-run`
+  - `npx tsx scripts/reset-mythic-user-campaigns.ts --email=<owner-email> --yes`
+- Backfill presentation/naming metadata:
+  - `npx tsx scripts/backfill-mythic-presentation-wordbank.ts --email=<owner-email> --yes`
+- Compatibility wrapper (legacy script entrypoint):
+  - `npx tsx scripts/backfill-mythic-naming-cutover.ts --email=<owner-email> --yes`
+
+### Latest User-Scoped Reset Execution
+- Owner: `strange-ops@cyber-wizard.com`
+- User ID: `76aeebff-aa12-417d-a5d8-e6b56c241080`
+- Purged campaigns:
+  - `932c0f21-55af-4c68-9fa2-098528ef727d`
+  - `ce637462-6600-48f1-9817-5400750f991f`
+  - `b24e8abf-0a46-404e-ad3a-4c3889fa8239`
+- Backfill result after reset: `No campaigns matched scope.` (expected after purge).
+
+### Post-Reset Seed Verification Smoke
+- Executed `bash scripts/smoke-mythic-board-auth.sh --post-reset-seed` ✅
+- Request IDs:
+  - `mythic-create-campaign`: `0c041707-f091-4b90-b198-852f2d1d27e2`
+  - `mythic-create-character`: `3a162af6-96e3-4cf5-891a-08321ac9367a`
+  - `mythic-dm-context`: `e59279e5-43c2-4b83-a113-42f70fa6d077`
+  - `mythic-dungeon-master`: `97bede89-96a7-4e8d-910f-64222afdd3de`
+  - `mythic-runtime-transition:travel`: `802f365b-c6e3-4ac8-9a55-64ece1b366c0`
+  - `mythic-runtime-transition:dungeon`: `f94a08c3-8a50-4b42-bc36-46bb6233c2a5`
+  - `mythic-runtime-transition:town`: `6045c477-7a35-4895-b082-2cee09c5f13d`
+  - `mythic-combat-start`: `40d8a942-4713-42a6-907f-5ba5c0961c99`

@@ -1,8 +1,19 @@
 import { expect, test } from "@playwright/test";
+import { parsePlayerCommand } from "@/lib/mythic/playerCommandParser";
 
 const campaignId = process.env.PLAYWRIGHT_MYTHIC_CAMPAIGN_ID;
 
 test.describe("mythic typed input primary", () => {
+  test("non-slash parser path is always dm_prompt", () => {
+    const freeform = parsePlayerCommand("tell me more about the quartermaster");
+    expect(freeform.intent).toBe("dm_prompt");
+    expect(freeform.explicit).toBe(false);
+
+    const slash = parsePlayerCommand("/travel town");
+    expect(slash.intent).toBe("town");
+    expect(slash.explicit).toBe(true);
+  });
+
   test.skip(!campaignId, "Set PLAYWRIGHT_MYTHIC_CAMPAIGN_ID to enable typed-input smoke.");
 
   test("non-slash text routes as freeform without command leakage", async ({ page }) => {

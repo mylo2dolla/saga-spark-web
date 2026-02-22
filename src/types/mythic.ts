@@ -64,6 +64,14 @@ export interface MythicDiscoveryFlags {
 }
 
 export interface MythicBoardState {
+  dm_presentation?: {
+    last_tone?: string | null;
+    last_board_opener_id?: string | null;
+    recent_line_hashes?: string[];
+    last_verb_keys?: string[];
+    last_template_ids?: string[];
+    last_event_cursor?: string | null;
+  };
   combat_resolution?: MythicCombatResolutionState | null;
   scene_cache?: Record<string, unknown>;
   companion_checkins?: MythicCompanionCheckin[];

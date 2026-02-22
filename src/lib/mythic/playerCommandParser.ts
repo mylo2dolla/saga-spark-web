@@ -257,7 +257,8 @@ export function parsePlayerCommand(input: string): PlayerCommandParseResult {
   if (!cleaned) {
     return { raw: input, cleaned, explicit: false, intent: "unknown" };
   }
-  const natural = parseNaturalLanguageCommand(input);
-  if (natural) return natural;
+
+  // Typed input is authoritative freeform by default.
+  // Slash commands remain the explicit mechanical command lane.
   return { raw: input, cleaned, explicit: false, intent: "dm_prompt" };
 }

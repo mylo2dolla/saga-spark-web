@@ -135,7 +135,8 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
   }
 
   if (command.intent === "town" || command.intent === "travel" || command.intent === "dungeon" || command.intent === "shop") {
-    if (args.boardType === "combat" && !args.combatResolutionPending) {
+    const combatLocked = Boolean(args.combatSessionId) && !args.combatResolutionPending;
+    if (combatLocked) {
       return {
         handled: true,
         error: "Combat is active. Finish the encounter before leaving the battlefield.",

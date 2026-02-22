@@ -149,6 +149,7 @@ export const BoardDeltaSchema = z
     objectives: z.array(BoardDeltaEntrySchema).max(24).optional(),
     discovery_log: z.array(BoardDeltaEntrySchema).max(36).optional(),
     discovery_flags: z.record(z.unknown()).optional(),
+    dm_presentation: z.record(z.unknown()).optional(),
     scene_cache: z.record(z.unknown()).optional(),
     companion_checkins: z.array(CompanionCheckinSchema).max(8).optional(),
     action_chips: z.array(UiActionSchema).max(8).optional(),

@@ -92,3 +92,16 @@ Two-wave stabilization on one branch:
 - Frontend commit anchor: current branch head at release time.
 - VM runtime path anchor: `/opt/saga-spark-web/services/mythic-api`.
 - If rollback required, deploy previous git SHA/tag in `/opt/saga-spark-web` and recreate compose from service path.
+
+## Ops Lock Addendum (2026-02-22 completion)
+- Canonical deploy guard now verifies:
+  - `vault` remote exists
+  - `vault/main` is fetchable
+  - compose config validates in `/opt/saga-spark-web/services/mythic-api`
+  - runtime `.env` exists
+  - reports branch, local head, `vault/main` head, ahead/behind, and dirty-line count
+- Guard command:
+  - `npm run vm:deploy:guard`
+- Canonical deploy path remains:
+  - repo checkout: `/opt/saga-spark-web`
+  - runtime service: `/opt/saga-spark-web/services/mythic-api`

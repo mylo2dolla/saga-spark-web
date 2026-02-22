@@ -24,7 +24,7 @@ This record captures closeout work after rewriting history to remove a leaked AP
 - Verified tracked files and reachable history are clean for OpenAI key patterns.
 - OpenAI key rotation completed (user-confirmed): old key revoked and replacement key created on 2026-02-20.
 - Exact dashboard revoke/create timestamps were not recorded during incident response.
-- Synced new `OPENAI_API_KEY` to local runtime file (`services/mythic-api/.env`) and VM runtime file (`/opt/mythic-api/.env`).
+- Synced new `OPENAI_API_KEY` to local runtime file (`services/mythic-api/.env`) and VM runtime file (`/opt/saga-spark-web/services/mythic-api/.env`).
 - Verified local/VM key parity by hash and restarted `mythic-api` container with `docker compose up -d --build` and `--force-recreate`.
 
 ## Remaining Manual Controls
@@ -32,9 +32,9 @@ This record captures closeout work after rewriting history to remove a leaked AP
 
 ## Runtime Secret Sync + Restart
 - VM API host: `api.mythweaver.online`
-- Runtime env file path: `/opt/mythic-api/.env`
+- Runtime env file path: `/opt/saga-spark-web/services/mythic-api/.env`
 - Service reload path:
-  - Prefer `docker compose up -d --build` in `/opt/mythic-api`
+  - Prefer `docker compose up -d --build` in `/opt/saga-spark-web/services/mythic-api`
   - Fallback `systemctl restart mythic-api`
 
 ## Verification

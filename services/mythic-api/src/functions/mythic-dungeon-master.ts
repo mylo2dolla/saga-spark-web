@@ -30,6 +30,7 @@ import {
   toneSeedLine,
   type EnemyPersonalityTraits,
   type PresentationState,
+  type ToneMode,
 } from "../lib/presentation/index.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
@@ -218,13 +219,24 @@ function readPresentationState(boardState: Record<string, unknown> | null): Pres
       .filter((entry) => entry.length > 0)
       .slice(-12)
     : [];
-  const lastTone = typeof row?.last_tone === "string" ? row.last_tone : null;
+  const lastTone = asToneMode(row?.last_tone);
   const lastOpenerId = typeof row?.last_board_opener_id === "string" ? row.last_board_opener_id : null;
+  const templateIds = Array.isArray(row?.last_template_ids)
+    ? row.last_template_ids
+      .map((entry) => String(entry).trim())
+      .filter((entry) => entry.length > 0)
+      .slice(-12)
+    : [];
+  const lastEventCursor = typeof row?.last_event_cursor === "string" && row.last_event_cursor.trim().length > 0
+    ? row.last_event_cursor.trim()
+    : null;
   return {
     last_tone: lastTone,
     last_board_opener_id: lastOpenerId,
     recent_line_hashes: lineHashes,
     last_verb_keys: verbKeys,
+    last_template_ids: templateIds,
+    last_event_cursor: lastEventCursor,
   };
 }
 
@@ -246,12 +258,93 @@ function mergePresentationState(
     .map((entry) => entry.trim().toLowerCase())
     .filter((entry) => entry.length > 0)
     .slice(-12);
+  const templateIds = [
+    ...(current.last_template_ids ?? []),
+    ...(next.last_template_ids ?? []),
+  ]
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .slice(-12);
   return {
     last_tone: next.last_tone ?? current.last_tone ?? null,
     last_board_opener_id: next.last_board_opener_id ?? current.last_board_opener_id ?? null,
     recent_line_hashes: lineHashes,
     last_verb_keys: verbKeys,
+    last_template_ids: templateIds,
+    last_event_cursor: next.last_event_cursor ?? current.last_event_cursor ?? null,
   };
+}
+
+function parseEventCursor(value: unknown): { turnIndex: number; eventId: string; createdAt: string } | null {
+  if (typeof value !== "string") return null;
+  const clean = value.trim();
+  if (!clean) return null;
+  const firstSep = clean.indexOf(":");
+  if (firstSep <= 0) return null;
+  const secondSep = clean.indexOf(":", firstSep + 1);
+  if (secondSep <= firstSep + 1) return null;
+  const turnRaw = clean.slice(0, firstSep);
+  const eventIdRaw = clean.slice(firstSep + 1, secondSep);
+  const createdAtRaw = clean.slice(secondSep + 1);
+  const turnIndex = Number(turnRaw);
+  if (!Number.isFinite(turnIndex)) return null;
+  const eventId = eventIdRaw.trim();
+  if (!eventId) return null;
+  return {
+    turnIndex: Math.floor(turnIndex),
+    eventId,
+    createdAt: createdAtRaw.trim(),
+  };
+}
+
+function eventCursorForBatchEvent(entry: Record<string, unknown>): { turnIndex: number; eventId: string; createdAt: string } | null {
+  const eventId = typeof entry.id === "string" && entry.id.trim().length > 0 ? entry.id.trim() : "";
+  const turnIndex = Number(entry.turn_index);
+  const createdAt = typeof entry.created_at === "string" ? entry.created_at.trim() : "";
+  if (!eventId || !Number.isFinite(turnIndex)) return null;
+  return {
+    turnIndex: Math.floor(turnIndex),
+    eventId,
+    createdAt,
+  };
+}
+
+function isBatchEventAfterCursor(
+  entry: Record<string, unknown>,
+  cursor: { turnIndex: number; eventId: string; createdAt: string } | null,
+): boolean {
+  if (!cursor) return true;
+  const eventCursor = eventCursorForBatchEvent(entry);
+  if (!eventCursor) return true;
+  if (eventCursor.turnIndex > cursor.turnIndex) return true;
+  if (eventCursor.turnIndex < cursor.turnIndex) return false;
+  if (eventCursor.createdAt && cursor.createdAt && eventCursor.createdAt > cursor.createdAt) return true;
+  if (eventCursor.createdAt && cursor.createdAt && eventCursor.createdAt < cursor.createdAt) return false;
+  return eventCursor.eventId !== cursor.eventId;
+}
+
+type CombatantStateHint = {
+  id: string;
+  is_alive: boolean;
+  hp: number;
+};
+
+function readCombatantStateHint(value: unknown): Record<string, CombatantStateHint> {
+  const entries = Array.isArray(value) ? value : [];
+  const out: Record<string, CombatantStateHint> = {};
+  for (const entry of entries) {
+    const row = asObject(entry);
+    const id = typeof row?.id === "string" && row.id.trim().length > 0 ? row.id.trim() : null;
+    if (!id) continue;
+    const hp = Number(row?.hp);
+    const alive = row?.is_alive === true && Number.isFinite(hp) ? hp > 0 : row?.is_alive === true;
+    out[id] = {
+      id,
+      is_alive: alive,
+      hp: Number.isFinite(hp) ? Math.floor(hp) : 0,
+    };
+  }
+  return out;
 }
 
 function buildIntroRecoveryNarration(args: {
@@ -727,6 +820,25 @@ function shortText(value: unknown, maxLen = MAX_TEXT_FIELD_LEN): string | null {
 function asObject(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function asToneMode(value: unknown): ToneMode | null {
+  if (value !== "tactical" && value !== "mythic" && value !== "whimsical" && value !== "brutal" && value !== "minimalist") {
+    return null;
+  }
+  return value;
+}
+
+function asNumberRecord(value: unknown): Record<string, number> {
+  const row = asObject(value);
+  if (!row) return {};
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(row)) {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) continue;
+    out[key] = parsed;
+  }
+  return out;
 }
 
 function sampleNarrativeEntries(value: unknown, maxItems = 4): unknown[] {
@@ -1470,9 +1582,31 @@ function synthesizeRecoveryPayload(args: {
   lastErrors: string[];
 }): DmNarratorOutput {
   const context = args.actionContext ?? null;
+  const boardStatePresentation = readPresentationState(args.boardState);
+  const contextCursor = parseEventCursor(context?.combat_event_cursor);
+  const presentationCursor = parseEventCursor(boardStatePresentation.last_event_cursor ?? null);
+  const effectiveCursor = contextCursor ?? presentationCursor;
+  const combatantStateHint = readCombatantStateHint(context?.combatant_state);
   const combatEventBatch = Array.isArray(context?.combat_event_batch)
     ? context?.combat_event_batch
       .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+      .filter((entry) => isBatchEventAfterCursor(entry, effectiveCursor))
+      .filter((entry) => {
+        const payload = asObject(entry.payload) ?? {};
+        const eventType = typeof entry.event_type === "string" ? entry.event_type.toLowerCase() : "";
+        if (eventType === "death") return true;
+        const actorId = typeof payload.source_combatant_id === "string"
+          ? payload.source_combatant_id
+          : typeof payload.actor_combatant_id === "string"
+            ? payload.actor_combatant_id
+            : typeof entry.actor_combatant_id === "string"
+              ? entry.actor_combatant_id
+              : null;
+        if (!actorId) return true;
+        const hinted = combatantStateHint[actorId];
+        if (!hinted) return true;
+        return hinted.is_alive && hinted.hp > 0;
+      })
       .slice(-8)
     : [];
   const boardType = (args.boardType === "combat" || combatEventBatch.length > 0) ? "combat" : args.boardType;
@@ -1484,6 +1618,10 @@ function synthesizeRecoveryPayload(args: {
     : null;
   const rawActionId = typeof context?.action_id === "string" ? String(context.action_id) : null;
   const contextPayload = asObject(context?.payload);
+  const suppressNarrationOnError = context?.suppress_narration_on_error === true;
+  const executionError = typeof context?.execution_error === "string" && context.execution_error.trim().length > 0
+    ? context.execution_error.trim()
+    : null;
   const introOpening = context?.source === "campaign_intro_auto"
     || contextPayload?.intro_opening === true;
   const actionPrompt = (() => {
@@ -1533,7 +1671,6 @@ function synthesizeRecoveryPayload(args: {
     return null;
   })();
 
-  const boardStatePresentation = readPresentationState(args.boardState);
   const seedKey = [
     boardType,
     actionIntent,
@@ -1635,11 +1772,16 @@ function synthesizeRecoveryPayload(args: {
         : "Choose the next room edge and force a consequence.";
 
   const narrativeParts = boardType === "combat"
-    ? [
-      middlewareOut.lines[0] ?? toneLine,
-      middlewareOut.lines[1] ?? recoveryBeat,
-      middlewareOut.lines[2] ?? "",
-    ]
+    ? (suppressNarrationOnError && executionError
+      ? [
+        `Action blocked: ${compactLabel(executionError, 180)}.`,
+        "Choose a legal target, move, or timing window and try again.",
+      ]
+      : [
+        middlewareOut.lines[0] ?? toneLine,
+        middlewareOut.lines[1] ?? recoveryBeat,
+        middlewareOut.lines[2] ?? "",
+      ])
     : introOpening
       ? [buildIntroRecoveryNarration({
           boardType,
@@ -1664,7 +1806,7 @@ function synthesizeRecoveryPayload(args: {
     notableKills: Array.isArray(contextPayload?.notable_kills)
       ? contextPayload.notable_kills.map((entry) => String(entry))
       : [],
-    factionStanding: asObject(contextPayload?.faction_standing) ?? {},
+    factionStanding: asNumberRecord(contextPayload?.faction_standing),
     seedKey: `${seedKey}:title`,
   });
 
@@ -1686,6 +1828,8 @@ function synthesizeRecoveryPayload(args: {
       ? middlewareOut.lineHashes
       : [hashLine(cleanNarrative)],
     last_verb_keys: middlewareOut.verbKeys,
+    last_template_ids: middlewareOut.templateIds,
+    last_event_cursor: middlewareOut.lastEventCursor ?? boardStatePresentation.last_event_cursor ?? null,
   });
 
   const vendors = extractVendorsFromBoardSummary(args.boardSummary);
@@ -1781,7 +1925,7 @@ function synthesizeRecoveryPayload(args: {
         rumors: [{ title: "Pressure Spike", detail: actionSummary }],
         objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
         discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
-        dm_presentation: nextPresentationState,
+        dm_presentation: { ...nextPresentationState },
         scene_cache: {
           environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
           mood: `${tone.tone} pressure`,
@@ -1793,7 +1937,7 @@ function synthesizeRecoveryPayload(args: {
         rumors: [{ title: "Pressure Spike", detail: actionSummary }],
         objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
         discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
-        dm_presentation: nextPresentationState,
+        dm_presentation: { ...nextPresentationState },
         scene_cache: {
           environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
           mood: `${tone.tone} pressure`,
@@ -2664,13 +2808,44 @@ ${jsonOnlyContract()}
       }
 
       if (dmParsed.ok) {
+        const suppressNarrationOnError = actionContextRecord?.suppress_narration_on_error === true
+          && typeof actionContextRecord?.execution_error === "string"
+          && actionContextRecord.execution_error.trim().length > 0;
+        if (suppressNarrationOnError) {
+          dmParsed.value.narration = sanitizeNarrationForPlayer(
+            `Action blocked: ${compactLabel(String(actionContextRecord.execution_error), 180)}. Choose a legal move and try again.`,
+            String(actionBoardType || "combat"),
+          );
+        }
+
+        const contextCursor = parseEventCursor(actionContextRecord?.combat_event_cursor);
+        const presentationCurrent = readPresentationState(boardStateRecord);
+        const presentationCursor = parseEventCursor(presentationCurrent.last_event_cursor ?? null);
+        const effectiveCursor = contextCursor ?? presentationCursor;
+        const combatantStateHint = readCombatantStateHint(actionContextRecord?.combatant_state);
         const combatBatch = Array.isArray(actionContextRecord?.combat_event_batch)
           ? actionContextRecord.combat_event_batch
             .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+            .filter((entry) => isBatchEventAfterCursor(entry, effectiveCursor))
+            .filter((entry) => {
+              const payload = asObject(entry.payload) ?? {};
+              const eventType = typeof entry.event_type === "string" ? entry.event_type.toLowerCase() : "";
+              if (eventType === "death") return true;
+              const actorId = typeof payload.source_combatant_id === "string"
+                ? payload.source_combatant_id
+                : typeof payload.actor_combatant_id === "string"
+                  ? payload.actor_combatant_id
+                  : typeof entry.actor_combatant_id === "string"
+                    ? entry.actor_combatant_id
+                    : null;
+              if (!actorId) return true;
+              const hinted = combatantStateHint[actorId];
+              if (!hinted) return true;
+              return hinted.is_alive && hinted.hp > 0;
+            })
             .slice(-10)
           : [];
         if (combatBatch.length > 0) {
-          const presentationCurrent = readPresentationState(boardStateRecord);
           const tone = selectToneMode({
             seedKey: `${campaignId}:${expectedTurnIndex}:combat-step`,
             lastTone: presentationCurrent.last_tone ?? null,
@@ -2704,15 +2879,17 @@ ${jsonOnlyContract()}
             last_tone: tone.tone,
             recent_line_hashes: middleware.lineHashes,
             last_verb_keys: middleware.verbKeys,
+            last_template_ids: middleware.templateIds,
+            last_event_cursor: middleware.lastEventCursor ?? presentationCurrent.last_event_cursor ?? null,
           });
           const delta = asObject(dmParsed.value.runtime_delta ?? dmParsed.value.board_delta) ?? {};
           dmParsed.value.runtime_delta = {
             ...delta,
-            dm_presentation: mergedPresentation,
+            dm_presentation: { ...mergedPresentation },
           };
           dmParsed.value.board_delta = {
             ...delta,
-            dm_presentation: mergedPresentation,
+            dm_presentation: { ...mergedPresentation },
           };
         }
       }

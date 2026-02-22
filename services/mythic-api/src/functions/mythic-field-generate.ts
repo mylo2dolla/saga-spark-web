@@ -26,8 +26,8 @@ const RequestSchema = z.object({
   context: z.record(z.unknown()).optional(),
 });
 
-const CLASS_CONCEPT_TARGET_MIN_CHARS = 220;
-const CLASS_CONCEPT_TARGET_MAX_CHARS = 420;
+const CLASS_CONCEPT_TARGET_MIN_CHARS = 240;
+const CLASS_CONCEPT_TARGET_MAX_CHARS = 640;
 
 function fieldDirective(fieldType: z.infer<typeof RequestSchema>["fieldType"]): string {
   switch (fieldType) {
@@ -36,7 +36,7 @@ function fieldDirective(fieldType: z.infer<typeof RequestSchema>["fieldType"]): 
     case "campaign_description":
       return "Output a concise world seed description (3-7 sentences) with setting, conflict, tone, and first hook.";
     case "class_concept":
-      return "Output exactly 2-3 sentences (220-420 chars) defining archetype identity, tactical loop, and explicit weakness/cost with fantasy/comic flair.";
+      return "Output 2-4 short but complete sentences (240-640 chars) defining archetype identity, tactical loop, and explicit weakness/cost with fantasy/comic flair.";
     case "character_name":
       return "Output one distinct character name, 1-3 words max.";
     case "dm_action":
@@ -73,26 +73,7 @@ function maxLengthForField(fieldType: z.infer<typeof RequestSchema>["fieldType"]
 
 const trimTo = (text: string, max: number) => (text.length > max ? text.slice(0, max).trimEnd() : text);
 
-function compactSentence(text: string, max: number): string {
-  const normalized = text.replace(/\s+/g, " ").trim().replace(/[.!?]+$/g, "");
-  if (!normalized) return "";
-  if (normalized.length <= max) return normalized;
-  return normalized.slice(0, max).replace(/\s+\S*$/g, "").trim();
-}
-
-function titleSentence(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  return trimmed.slice(0, 1).toUpperCase() + trimmed.slice(1);
-}
-
-function lowerSentence(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  return trimmed.slice(0, 1).toLowerCase() + trimmed.slice(1);
-}
-
-function condenseClassConceptText(input: string): string {
+function normalizeClassConceptText(input: string): string {
   const cleaned = input.replace(/\s+/g, " ").trim();
   if (!cleaned) return "";
   return trimTo(cleaned, CLASS_CONCEPT_TARGET_MAX_CHARS);
@@ -115,12 +96,10 @@ function deterministicFieldText(input: {
     return arr[hash % arr.length]!;
   };
 
-  if (input.mode === "expand" && input.currentText.trim().length > 0) {
+    if (input.mode === "expand" && input.currentText.trim().length > 0) {
     if (input.fieldType === "class_concept") {
-      const expanded = input.currentText.trim().length > CLASS_CONCEPT_TARGET_MAX_CHARS
-        ? condenseClassConceptText(input.currentText)
-        : `${input.currentText.trim()} Lock in one explicit resource cost, one risk window, and one finisher condition tied to positioning.`;
-      return trimTo(condenseClassConceptText(expanded), CLASS_CONCEPT_TARGET_MAX_CHARS);
+      const expanded = `${input.currentText.trim()} Lock in one explicit resource cost, one risk window, and one finisher condition tied to positioning.`;
+      return trimTo(normalizeClassConceptText(expanded), CLASS_CONCEPT_TARGET_MAX_CHARS);
     }
     const suffix = pick([
       "Add pressure points, rival factions, and one immediate objective.",
@@ -234,8 +213,8 @@ export const mythicFieldGenerate: FunctionHandler = {
       const isClassConcept = fieldType === "class_concept";
       const modeRules = isClassConcept
         ? mode === "random"
-          ? "Generate exactly 2-3 sentences within 220-420 chars. Include archetype identity, tactical loop, and explicit weakness/cost."
-          : "Expand and refine currentText into exactly 2-3 sentences within 220-420 chars. Must include tactical loop and explicit weakness/cost."
+          ? "Generate 2-4 short but complete sentences within 240-640 chars. Include archetype identity, tactical loop, and explicit weakness/cost."
+          : "Expand and refine currentText into 2-4 short but complete sentences within 240-640 chars. Must include tactical loop and explicit weakness/cost."
         : mode === "random"
           ? "If currentText is empty, generate from world/campaign context. If not empty, you may still use it as optional hint."
           : "Expand and refine currentText while preserving intent and theme. Add concrete details and tactical flavor.";
@@ -287,7 +266,7 @@ export const mythicFieldGenerate: FunctionHandler = {
 
       const fieldMax = maxLengthForField(fieldType);
       const normalizedText = isClassConcept
-        ? condenseClassConceptText(text)
+        ? normalizeClassConceptText(text)
         : text;
       const finalText = trimTo(normalizedText, fieldMax);
 

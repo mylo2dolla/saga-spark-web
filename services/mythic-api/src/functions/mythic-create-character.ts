@@ -12,7 +12,7 @@ import type { FunctionContext, FunctionHandler } from "./types.js";
 const TargetingEnum = z.enum(["self", "single", "tile", "area"]);
 const SkillKindEnum = z.enum(["active", "passive", "ultimate", "crafting", "life"]);
 
-type ForgeCompactionMode = "none" | "auto_condensed";
+type ForgeCompactionMode = "none";
 type ForgeRefinementReason = "llm" | "timeout" | "invalid_json" | "schema_invalid" | "provider_error" | "deterministic_fallback";
 type ForgeFailureReason = Exclude<ForgeRefinementReason, "llm" | "deterministic_fallback">;
 
@@ -79,9 +79,6 @@ const RequestSchema = z.object({
 const CLASS_FORGE_REFINEMENT_TIMEOUT_MS = 19_000;
 const CLASS_FORGE_PRIMARY_TIMEOUT_MS = 13_500;
 const CLASS_FORGE_MIN_REPAIR_TIMEOUT_MS = 2_500;
-const FORGE_CONCEPT_TARGET_MIN_CHARS = 280;
-const FORGE_CONCEPT_TARGET_MAX_CHARS = 420;
-
 const GENERIC_SKILL_NAME_RX = /^(action|ability|skill|trait|passive|ultimate)\s*\d*(?:\s*[:-]\s*(?:strike|guard|blast|carve|defense|utility|effect)?)?$/i;
 const LOW_SIGNAL_SKILL_NAME_RX = /^(strike|guard|ultimate|pressure wave|reposition|disrupt|weakness exploit|passive a|passive b|burst strike)$/i;
 const LOW_SIGNAL_SKILL_DESCRIPTION_RX = /^(a basic|movement tool\.?|defense tool\.?|burst tool\.?|control\/utility tool\.?|passive [ab] description\.?|uses [a-z0-9_\s]+ targeting at range \d+\.?)/i;
@@ -102,23 +99,6 @@ function trimText(value: string, max: number): string {
   const cleaned = value.replace(/\s+/g, " ").trim();
   if (cleaned.length <= max) return cleaned;
   return cleaned.slice(0, max).replace(/\s+\S*$/g, "").trim();
-}
-
-function compactSentence(text: string, max: number): string {
-  const normalized = trimText(text.replace(/[.!?]+$/g, ""), max);
-  return normalized;
-}
-
-function titleSentence(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  return trimmed.slice(0, 1).toUpperCase() + trimmed.slice(1);
-}
-
-function lowerSentence(text: string): string {
-  const trimmed = text.trim();
-  if (!trimmed) return "";
-  return trimmed.slice(0, 1).toLowerCase() + trimmed.slice(1);
 }
 
 function normalizeConcept(s: string): string {
@@ -199,66 +179,6 @@ function asStringArray(value: unknown): string[] {
 
 function hasAny(haystack: string, needles: string[]): boolean {
   return needles.some((n) => haystack.includes(n));
-}
-
-function condenseClassConceptForForge(input: string): {
-  value: string;
-  raw_chars: number;
-  used_chars: number;
-  mode: ForgeCompactionMode;
-} {
-  const raw = input.replace(/\s+/g, " ").trim();
-  if (!raw) {
-    return { value: "Mythic hybrid fighter with a risky burst loop and visible punish window.", raw_chars: 0, used_chars: 74, mode: "auto_condensed" };
-  }
-
-  if (raw.length <= FORGE_CONCEPT_TARGET_MAX_CHARS) {
-    return {
-      value: raw,
-      raw_chars: raw.length,
-      used_chars: raw.length,
-      mode: "none",
-    };
-  }
-
-  const sentences = (raw.match(/[^.!?]+[.!?]*/g) ?? [])
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const normalized = sentences.length > 0 ? sentences : [raw];
-
-  const pick = (rx: RegExp, fallbackIndex: number) =>
-    normalized.find((sentence) => rx.test(sentence.toLowerCase())) ?? normalized[Math.min(fallbackIndex, normalized.length - 1)] ?? raw;
-
-  const archetypeRaw = pick(/\b(assassin|guardian|mage|warlock|cleric|paladin|ninja|duelist|hunter|skirmisher|controller|support|tank|hybrid|spellblade|berserk|reaver|witch|oracle)\b/i, 0);
-  const tacticalRaw = pick(/\b(loop|combo|tempo|burst|dash|zone|control|stagger|reposition|pressure|execute|setup|rotation|flank|resource|cooldown|position)\b/i, 1);
-  const weaknessRaw = pick(/\b(weak|cost|risk|drawback|fragile|overheat|glass|resource|telegraph|cooldown|punish|crash|exposed|counterplay|interrupt)\b/i, normalized.length - 1);
-
-  const archetype = titleSentence(compactSentence(archetypeRaw, 140));
-  const tactical = lowerSentence(compactSentence(tacticalRaw, 140));
-  const weakness = lowerSentence(compactSentence(weaknessRaw, 120));
-
-  let composed = `${archetype}. Tactical loop: ${tactical}. Cost: ${weakness}.`.replace(/\s+/g, " ").trim();
-  composed = trimText(composed, FORGE_CONCEPT_TARGET_MAX_CHARS);
-
-  if (composed.length < FORGE_CONCEPT_TARGET_MIN_CHARS) {
-    const extras = normalized
-      .filter((sentence) => sentence !== archetypeRaw && sentence !== tacticalRaw && sentence !== weaknessRaw)
-      .map((sentence) => compactSentence(sentence, 110))
-      .filter(Boolean);
-    for (const extra of extras) {
-      const candidate = `${composed} ${titleSentence(extra)}.`.replace(/\s+/g, " ").trim();
-      if (candidate.length > FORGE_CONCEPT_TARGET_MAX_CHARS) break;
-      composed = candidate;
-      if (composed.length >= FORGE_CONCEPT_TARGET_MIN_CHARS) break;
-    }
-  }
-
-  return {
-    value: trimText(composed, FORGE_CONCEPT_TARGET_MAX_CHARS),
-    raw_chars: raw.length,
-    used_chars: trimText(composed, FORGE_CONCEPT_TARGET_MAX_CHARS).length,
-    mode: "auto_condensed",
-  };
 }
 
 function classifyFailureFromMessage(message: string): ForgeFailureReason {
@@ -936,7 +856,7 @@ export const mythicCreateCharacter: FunctionHandler = {
       };
 
       const primaryUserPrompt = [
-        `CLASS CONCEPT (condensed for latency): ${forgeConcept}`,
+        `CLASS CONCEPT: ${forgeConcept}`,
         `SEED: ${seed}`,
         "TASK:",
         "- Keep all mechanics unchanged.",

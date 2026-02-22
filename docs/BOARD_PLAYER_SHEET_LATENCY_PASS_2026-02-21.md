@@ -76,6 +76,6 @@ Supabase remains auth/db only. Gameplay calls stay VM-hosted.
   - Deploy time (UTC): `2026-02-21T02:25:48Z`
 - VM runtime:
   - Host: `api.mythweaver.online`
-  - Path: `/opt/mythic-api`
+  - Path: `/opt/saga-spark-web/services/mythic-api`
   - Deploy mode: rsync sync + `docker compose up -d --build --force-recreate`
   - Health check: `http://127.0.0.1/healthz` pass after recreate

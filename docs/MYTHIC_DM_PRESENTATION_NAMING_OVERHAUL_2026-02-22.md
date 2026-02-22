@@ -74,3 +74,35 @@ This pass shipped presentation-layer stabilization without touching combat math 
 - `mythic-runtime-transition:dungeon`: `8fa09666-d191-485b-8d8a-8fa35be7bae5`
 - `mythic-runtime-transition:town`: `e1f259d0-0e69-4ef1-8622-e11c83a1cd5c`
 - `mythic-combat-start`: `21e01a2f-cd0a-4d2f-8655-86b82952c3af`
+
+## Completion Addendum (2026-02-22, Wave 1/2 finish)
+- Added presentation cursor + template persistence fields in `dm_presentation`:
+  - `last_template_ids`
+  - `last_event_cursor`
+- Added action-context parity fields from UI to DM:
+  - `combat_event_cursor`
+  - `combatant_state`
+  - `suppress_narration_on_error`
+- Enforced dead-actor suppression in recovery and parsed narration paths by filtering event batches against `combatant_state` before rendering lines.
+- Enforced typed-first parser contract for non-slash text (`dm_prompt`) and locked transition blocking during active combat sessions.
+
+### Before/After Combat Sample (Presentation)
+- Before:
+  - `Resolved 3 non-player turn steps...`
+  - `A combatant tags the line with barrier.`
+- After:
+  - `Nightcoil tears in twice — 68 total damage.`
+  - `Nightcoil braces — barrier, guard locked.`
+
+### Zero-Duplication Sample Check
+- Implemented in `tests/dm-presentation-overhaul.spec.ts` with grouped duplicate damage + merged statuses and replay-suppression via `recentLineHashes`.
+
+### Latest Smoke Request IDs (completion run)
+- `mythic-create-campaign`: `d55c5c06-85d8-4c9d-a984-7289d88e1c49`
+- `mythic-create-character`: `101a9868-d017-4043-bea0-5e21f839c49a`
+- `mythic-dm-context`: `23242d06-0e62-4ce7-a41b-a3cea7b0cdb9`
+- `mythic-dungeon-master`: `747833af-8a69-4881-9e2f-a6bbe163aa55`
+- `mythic-runtime-transition:travel`: `455a7d71-1657-4728-9e43-726919ef876a`
+- `mythic-runtime-transition:dungeon`: `257408d6-e27d-470c-bd12-c2b4b335f5d8`
+- `mythic-runtime-transition:town`: `c2ed8c96-ba11-4480-a8c3-32dba4ce4987`
+- `mythic-combat-start`: `ba9e90f8-d10b-46f4-9134-eea36890f591`

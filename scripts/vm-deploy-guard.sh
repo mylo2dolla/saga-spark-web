@@ -24,6 +24,12 @@ if ! git remote get-url vault >/dev/null 2>&1; then
   echo 'missing vault remote in checkout' >&2
   exit 1
 fi
+if ! git show-ref --verify --quiet refs/remotes/vault/main; then
+  git fetch --quiet vault main || {
+    echo 'unable to fetch vault/main' >&2
+    exit 1
+  }
+fi
 if [ ! -f '${SERVICE_DIR}/.env' ]; then
   echo 'missing runtime env file: ${SERVICE_DIR}/.env' >&2
   exit 1
@@ -36,6 +42,9 @@ else
   exit 1
 fi
 HEAD_SHA=\$(git -C '${REMOTE_ROOT}' rev-parse --short HEAD)
+BRANCH=\$(git -C '${REMOTE_ROOT}' rev-parse --abbrev-ref HEAD)
 STATUS=\$(git -C '${REMOTE_ROOT}' status --short | wc -l | tr -d ' ')
-echo \"VM_DEPLOY_GUARD_OK host=${VM_HOST} head=\${HEAD_SHA} dirty_lines=\${STATUS}\"
+VAULT_MAIN_SHA=\$(git -C '${REMOTE_ROOT}' rev-parse --short refs/remotes/vault/main)
+AHEAD_BEHIND=\$(git -C '${REMOTE_ROOT}' rev-list --left-right --count HEAD...refs/remotes/vault/main)
+echo \"VM_DEPLOY_GUARD_OK host=${VM_HOST} branch=\${BRANCH} head=\${HEAD_SHA} vault_main=\${VAULT_MAIN_SHA} ahead_behind=\${AHEAD_BEHIND} dirty_lines=\${STATUS}\"
 "

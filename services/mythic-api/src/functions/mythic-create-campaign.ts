@@ -292,8 +292,26 @@ function makeTownState(args: {
   };
 }
 
-function deriveWorldProfile(args: { name: string; description: string; templateKey: TemplateKey; seed: number }) {
-  const { name, description, templateKey, seed } = args;
+function seedPick(seed: number, label: string, pool: readonly string[]): string {
+  return pool[hashSeed(`${seed}:${label}`) % pool.length]!;
+}
+
+function buildSettlementSeed(seed: number): string {
+  const starts = ["Honey", "Berry", "Brook", "Vale", "Glow", "Sun", "Moon", "Clover", "Sparkle", "Willow", "Lantern", "Apple", "Moss", "Puddle", "Rainbow"] as const;
+  const ends = ["haven", "ford", "glen", "hollow", "crossing", "rest", "meadow", "bay", "field", "crest"] as const;
+  return `${seedPick(seed, "settlement:start", starts)}${seedPick(seed, "settlement:end", ends)}`;
+}
+
+function deriveWorldProfile(args: {
+  name: string;
+  description: string;
+  templateKey: TemplateKey;
+  seed: number;
+  factionNames: string[];
+  starter: ReturnType<typeof buildStarterDirection>;
+  companions: Array<{ name: string; archetype: string }>;
+}) {
+  const { name, description, templateKey, seed, factionNames, starter, companions } = args;
   const tone = (() => {
     switch (templateKey) {
       case "sci_fi_ruins":
@@ -321,6 +339,19 @@ function deriveWorldProfile(args: { name: string; description: string; templateK
     template_key: templateKey,
     tone,
     starter_objective: "Establish a foothold and survive the first escalation.",
+    starter_settlement: buildSettlementSeed(seed),
+    faction_briefs: factionNames.slice(0, 6).map((entry, index) => ({
+      id: `faction_${index + 1}`,
+      name: entry,
+      pressure: seedPick(seed, `faction:pressure:${entry}`, ["low", "rising", "high", "volatile"]),
+    })),
+    seed_hooks: starter.discovery_log.slice(0, 4),
+    seed_rumors: starter.rumors.slice(0, 6),
+    seed_objectives: starter.objectives.slice(0, 4),
+    starter_companions: companions.slice(0, 4).map((entry) => ({
+      name: entry.name,
+      archetype: entry.archetype,
+    })),
   };
 }
 
@@ -410,10 +441,29 @@ export const mythicCreateCampaign: FunctionHandler = {
       }
 
       const seed = hashSeed(`${campaign.id}:${name}:${description}:${templateKey}`);
-      const worldProfileJson = deriveWorldProfile({ name, description, templateKey, seed });
       const baselineFactions = makeBaselineFactions(templateKey);
       const baselineCompanions = makeBaselineCompanions(seed, templateKey, companionBlueprint);
       const baselineFactionNames = baselineFactions.map((entry) => entry.name);
+      const starterDirection = buildStarterDirection({
+        seed,
+        templateKey,
+        campaignName: name,
+        campaignDescription: description,
+        factionNames: baselineFactionNames,
+        source: "create_campaign",
+      });
+      const worldProfileJson = deriveWorldProfile({
+        name,
+        description,
+        templateKey,
+        seed,
+        factionNames: baselineFactionNames,
+        starter: starterDirection,
+        companions: baselineCompanions.map((entry) => ({
+          name: entry.name,
+          archetype: entry.archetype,
+        })),
+      });
       const townState = makeTownState({
         campaignId: campaign.id,
         name,

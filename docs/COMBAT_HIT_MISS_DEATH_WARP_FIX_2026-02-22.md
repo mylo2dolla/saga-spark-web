@@ -73,7 +73,7 @@
   - `20260222093000_mythic_combat_miss_and_death_integrity.sql`
 - VM runtime deployment:
   - host: `api.mythweaver.online`
-  - path: `/opt/mythic-api` (source-synced + docker recreate)
+  - path: `/opt/saga-spark-web/services/mythic-api` (source-synced + docker recreate)
   - health: `https://api.mythweaver.online/healthz` => `200 {"ok":true}`
 
 ## Post-Deploy Smoke IDs (2026-02-21 UTC)

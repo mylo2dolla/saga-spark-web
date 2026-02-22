@@ -1,4 +1,4 @@
-import { dedupeKeepOrder, hashLine, pickDeterministic, stableInt } from "./deterministic.js";
+import { dedupeKeepOrder, hashLine, pickDeterministic } from "./deterministic.js";
 import { personalityLine } from "./enemyPersonality.js";
 import { buildSpellName } from "./spellNameBuilder.js";
 import { buildSpectacleLine } from "./spectacleEngine.js";
@@ -164,7 +164,16 @@ export function buildNarrativeLinesFromEvents(args: {
 
   const deadActors = new Set<string>();
   const lines: string[] = [];
+  const lineTemplateByText = new Map<string, string>();
   const usedVerbs = new Set<string>((args.recentVerbKeys ?? []).map((entry) => entry.trim().toLowerCase()).filter(Boolean));
+  const pushLine = (text: string, templateId: string) => {
+    const clean = compactSentence(text);
+    if (!clean) return;
+    lines.push(clean);
+    if (!lineTemplateByText.has(clean)) {
+      lineTemplateByText.set(clean, templateId);
+    }
+  };
 
   const groupedDamage = new Map<string, { event: NormalizedEvent; hits: number; total: number }>();
   const groupedStatuses = new Map<string, { event: NormalizedEvent; statuses: Set<string> }>();
@@ -214,7 +223,7 @@ export function buildNarrativeLinesFromEvents(args: {
     const text = row.hits > 1
       ? `${toneLead ? `${toneLead} ` : ""}${event.actorName} ${verb}s ${event.targetName} ${row.hits} times — ${row.total} total damage.`
       : `${toneLead ? `${toneLead} ` : ""}${event.actorName} ${verb}s ${event.targetName} for ${row.total}.`;
-    lines.push(compactSentence(text));
+    pushLine(text, row.hits > 1 ? "damage_grouped_multi" : "damage_grouped_single");
   });
 
   groupedStatuses.forEach((row) => {
@@ -224,57 +233,57 @@ export function buildNarrativeLinesFromEvents(args: {
       .filter((entry) => entry.length > 0)
       .slice(0, 3);
     if (statusList.length === 0) return;
-    lines.push(compactSentence(`${event.actorName} braces — ${statusList.join(", ")} locked on ${event.targetName}.`));
+    pushLine(`${event.actorName} braces — ${statusList.join(", ")} locked on ${event.targetName}.`, "status_merge");
   });
 
   for (const event of passthrough) {
     if (event.eventType === "moved" && event.to) {
-      lines.push(compactSentence(`${event.actorName} shifts to (${event.to.x}, ${event.to.y}).`));
+      pushLine(`${event.actorName} shifts to (${event.to.x}, ${event.to.y}).`, "moved");
       continue;
     }
     if (event.eventType === "miss") {
       const roll = toInt(event.payload.roll_d20);
       const required = toInt(event.payload.required_roll);
       if (roll !== null && required !== null) {
-        lines.push(compactSentence(`${event.actorName} misses ${event.targetName} (${roll} vs ${required}).`));
+        pushLine(`${event.actorName} misses ${event.targetName} (${roll} vs ${required}).`, "miss_roll");
       } else {
-        lines.push(compactSentence(`${event.actorName} misses ${event.targetName}.`));
+        pushLine(`${event.actorName} misses ${event.targetName}.`, "miss");
       }
       continue;
     }
     if (event.eventType === "healed") {
       const amount = Math.max(0, event.amount ?? 0);
-      lines.push(compactSentence(`${event.actorName} restores ${amount} to ${event.targetName}.`));
+      pushLine(`${event.actorName} restores ${amount} to ${event.targetName}.`, "healed");
       continue;
     }
     if (event.eventType === "power_gain") {
       const amount = Math.max(0, event.amount ?? 0);
-      lines.push(compactSentence(`${event.actorName} recovers ${amount} MP.`));
+      pushLine(`${event.actorName} recovers ${amount} MP.`, "power_gain");
       continue;
     }
     if (event.eventType === "power_drain") {
       const amount = Math.max(0, event.amount ?? 0);
-      lines.push(compactSentence(`${event.actorName} drains ${amount} MP from ${event.targetName}.`));
+      pushLine(`${event.actorName} drains ${amount} MP from ${event.targetName}.`, "power_drain");
       continue;
     }
     if (event.eventType === "status_tick") {
       const amount = Math.max(0, event.amount ?? 0);
       const statusName = event.statusId ? compactStatus(event.statusId) : "status";
-      lines.push(compactSentence(`${event.targetName} takes ${amount} from ${statusName}.`));
+      pushLine(`${event.targetName} takes ${amount} from ${statusName}.`, "status_tick");
       continue;
     }
     if (event.eventType === "status_expired") {
       const statusName = event.statusId ? compactStatus(event.statusId) : "effect";
-      lines.push(compactSentence(`${event.targetName}'s ${statusName} fades.`));
+      pushLine(`${event.targetName}'s ${statusName} fades.`, "status_expired");
       continue;
     }
     if (event.eventType === "armor_shred") {
       const amount = Math.max(0, event.amount ?? 0);
-      lines.push(compactSentence(`${event.actorName} shreds ${amount} armor from ${event.targetName}.`));
+      pushLine(`${event.actorName} shreds ${amount} armor from ${event.targetName}.`, "armor_shred");
       continue;
     }
     if (event.eventType === "death") {
-      lines.push(compactSentence(`${event.targetName} drops and is out.`));
+      pushLine(`${event.targetName} drops and is out.`, "death");
       continue;
     }
     if (event.eventType === "skill_used" && event.skillName) {
@@ -290,7 +299,7 @@ export function buildNarrativeLinesFromEvents(args: {
         styleTags: event.styleTags,
         targetName: event.targetName,
       });
-      lines.push(compactSentence(spectacle));
+      pushLine(spectacle, "skill_spectacle");
       continue;
     }
   }
@@ -302,7 +311,7 @@ export function buildNarrativeLinesFromEvents(args: {
       tone: args.tone,
       traits: args.enemyTraitsByCombatantId?.[personalitySeed.actorId],
     });
-    lines.push(compactSentence(personality));
+    pushLine(personality, "enemy_personality");
   }
 
   const dedupedLines = dedupeKeepOrder(lines).slice(0, maxLines * 2);
@@ -310,11 +319,14 @@ export function buildNarrativeLinesFromEvents(args: {
 
   const filteredLines: string[] = [];
   const nextHashes: string[] = [];
+  const templateIds: string[] = [];
   for (const line of dedupedLines) {
     const hash = hashLine(line);
     if (recentHashes.has(hash)) continue;
     filteredLines.push(line);
     nextHashes.push(hash);
+    const templateId = lineTemplateByText.get(line) ?? "generic_line";
+    templateIds.push(templateId);
     if (filteredLines.length >= maxLines) break;
   }
 
@@ -323,10 +335,17 @@ export function buildNarrativeLinesFromEvents(args: {
     : ["Steel and spellfire trade space. Pick the next decisive move."];
 
   const resultHashes = resultLines.map((line) => hashLine(line));
+  const resultTemplateIds = (filteredLines.length > 0 ? templateIds : ["fallback_combat_line"]).slice(-8);
+  const lastEvent = deduped[deduped.length - 1] ?? null;
+  const lastEventCursor = lastEvent
+    ? `${lastEvent.turnIndex}:${lastEvent.id}:${lastEvent.createdAt || "na"}`
+    : null;
   const verbKeys = [...usedVerbs].slice(-8);
   return {
     lines: resultLines,
     lineHashes: resultHashes,
     verbKeys,
+    templateIds: resultTemplateIds,
+    lastEventCursor,
   };
 }

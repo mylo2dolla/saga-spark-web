@@ -28,6 +28,8 @@ export interface PresentationState {
   last_board_opener_id?: string | null;
   recent_line_hashes?: string[];
   last_verb_keys?: string[];
+  last_template_ids?: string[];
+  last_event_cursor?: string | null;
 }
 
 export interface CombatPresentationEvent {
@@ -43,6 +45,8 @@ export interface NarrativeMiddlewareResult {
   lines: string[];
   lineHashes: string[];
   verbKeys: string[];
+  templateIds: string[];
+  lastEventCursor: string | null;
 }
 
 export interface ToneSelectionInput {

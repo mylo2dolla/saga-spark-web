@@ -487,6 +487,17 @@ function enrichCombatEventBatchForNarration(
     .slice(-10) as Array<Record<string, unknown>>;
 }
 
+function buildCombatEventCursor(events: Array<Record<string, unknown>>): string | null {
+  if (!Array.isArray(events) || events.length === 0) return null;
+  const last = events[events.length - 1] ?? null;
+  if (!last) return null;
+  const turnIndex = Number(last.turn_index);
+  const eventId = typeof last.id === "string" ? last.id.trim() : "";
+  const createdAt = typeof last.created_at === "string" ? last.created_at.trim() : "";
+  if (!Number.isFinite(turnIndex) || !eventId) return null;
+  return `${Math.floor(turnIndex)}:${eventId}:${createdAt || "na"}`;
+}
+
 function synthesizePromptFromAction(action: MythicUiAction, args: {
   boardType: "town" | "travel" | "dungeon" | "combat";
   vendorName: string | null;
@@ -1484,8 +1495,10 @@ export default function MythicGameScreen() {
         });
       }
 
+      let refreshedCombatSnapshot: Awaited<ReturnType<typeof refetchCombatState>> = null;
       try {
-        await Promise.all([refetchCombatState(), refetch()]);
+        const [combatSnapshot] = await Promise.all([refetchCombatState(), refetch()]);
+        refreshedCombatSnapshot = combatSnapshot;
       } catch (refreshError) {
         screenLogger.warn("mythic.action.pre_narration_refresh_failed", {
           action_trace_id: actionTraceId,
@@ -1501,12 +1514,15 @@ export default function MythicGameScreen() {
         executionError,
       });
 
+      const combatantsForNarration = Array.isArray(refreshedCombatSnapshot?.combatants)
+        ? refreshedCombatSnapshot.combatants
+        : combatState.combatants;
       const contextWithNamedEvents = Array.isArray(context.combat_event_batch)
         ? {
             ...context,
             combat_event_batch: enrichCombatEventBatchForNarration(
               context.combat_event_batch,
-              combatState.combatants.map((entry) => ({
+              combatantsForNarration.map((entry) => ({
                 id: entry.id,
                 name: entry.name,
                 isAlive: entry.is_alive,
@@ -1515,6 +1531,19 @@ export default function MythicGameScreen() {
             ),
           }
         : context;
+      const combatEventCursor = Array.isArray(contextWithNamedEvents.combat_event_batch)
+        ? buildCombatEventCursor(contextWithNamedEvents.combat_event_batch as Array<Record<string, unknown>>)
+        : null;
+      const combatantState = combatantsForNarration.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        is_alive: entry.is_alive,
+        hp: Number(entry.hp ?? 0),
+        x: Number(entry.x ?? 0),
+        y: Number(entry.y ?? 0),
+        updated_at: entry.updated_at ?? null,
+      }));
+      const suppressNarrationOnError = Boolean(executionError && isMechanicalExecutionError(executionError));
 
       if (executionError && isMechanicalExecutionError(executionError)) {
         await refreshAllState();
@@ -1552,6 +1581,9 @@ export default function MythicGameScreen() {
             payload: args.payload ?? null,
             state_changes: stateChanges,
             execution_error: executionError,
+            suppress_narration_on_error: suppressNarrationOnError,
+            combat_event_cursor: combatEventCursor,
+            combatant_state: combatantState,
             ...contextWithNamedEvents,
           },
         });

@@ -63,7 +63,7 @@ Supabase remains auth/db only. Gameplay runtime remains VM-hosted via `VITE_MYTH
   - Created: `Fri Feb 20 2026 21:23:40 GMT-0700 (MST)`
 - VM runtime:
   - Host: `api.mythweaver.online`
-  - Path: `/opt/mythic-api`
+  - Path: `/opt/saga-spark-web/services/mythic-api`
   - Deploy method: `docker compose up -d --build --force-recreate`
   - Health check: `GET /healthz` success
 
@@ -95,7 +95,7 @@ Supabase remains auth/db only. Gameplay runtime remains VM-hosted via `VITE_MYTH
   - Deployed UTC: `2026-02-21T01:05:13Z`
 - VM runtime:
   - Host: `api.mythweaver.online`
-  - Path: `/opt/mythic-api`
+  - Path: `/opt/saga-spark-web/services/mythic-api`
   - Deployed UTC: `2026-02-21T01:06:28Z`
   - Runtime marker SHA (`mythic-dungeon-master.ts`): `7492dd229b3b7ee028c1558bd4b447020394e2e1ddf13f98de0d75f2071aa7cf`
 

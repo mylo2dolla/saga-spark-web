@@ -92,7 +92,7 @@ VM function auth-smoke sample IDs:
 ## Production Deploy Verification (2026-02-21)
 - Frontend commit live: `e3043fb7437650e51bc5370bc383c81d2713507d`
 - Frontend production alias: `https://mythweaver.online`
-- VM API runtime path: `/opt/mythic-api` (synced from local `services/mythic-api` and rebuilt via Docker Compose)
+- VM API runtime path: `/opt/saga-spark-web/services/mythic-api` (synced from local `services/mythic-api` and rebuilt via Docker Compose)
 - VM API health check: `http://127.0.0.1:3001/healthz` returned `200 {"ok":true}`
 
 Post-deploy authenticated board smoke IDs:

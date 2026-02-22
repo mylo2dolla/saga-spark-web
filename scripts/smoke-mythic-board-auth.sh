@@ -14,6 +14,7 @@ Runs an authenticated Mythic board/runtime smoke flow against VM-hosted function
 
 Options:
   --keep-resources   keep temporary campaign/user for manual UI QA
+  --post-reset-seed  create campaign using deterministic post-reset seed payload (template + companions)
   --output=PATH      write key values (campaign_id, user_id, email, password, request ids) to PATH
   --help             show this help
 USAGE
@@ -52,11 +53,15 @@ extract_request_id() {
 }
 
 KEEP_RESOURCES=0
+POST_RESET_SEED=0
 OUTPUT_PATH=""
 for arg in "$@"; do
   case "$arg" in
     --keep-resources)
       KEEP_RESOURCES=1
+      ;;
+    --post-reset-seed)
+      POST_RESET_SEED=1
       ;;
     --output=*)
       OUTPUT_PATH="${arg#*=}"
@@ -314,7 +319,16 @@ if [[ -z "${ACCESS_TOKEN}" ]]; then
   exit 1
 fi
 
-create_campaign_payload="$(jq -cn --arg name "Board Smoke ${stamp}" --arg description "Disposable campaign for board stabilization smoke." '{name:$name,description:$description,templateKey:"custom"}')"
+if [[ "${POST_RESET_SEED}" == "1" ]]; then
+  create_campaign_payload="$(jq -cn \
+    --arg name "Board Smoke Post Reset ${stamp}" \
+    --arg description "Disposable post-reset campaign for board parity and naming verification." \
+    --arg templateKey "mythic_chaos" \
+    --argjson companions '[{"name":"Mira Honeybrook","archetype":"scout"},{"name":"Bram Lanternrest","archetype":"tactician"}]' \
+    '{name:$name,description:$description,template_key:$templateKey,companion_blueprint:$companions}')"
+else
+  create_campaign_payload="$(jq -cn --arg name "Board Smoke ${stamp}" --arg description "Disposable campaign for board stabilization smoke." '{name:$name,description:$description,template_key:"custom"}')"
+fi
 call_function_json_200 "mythic-create-campaign" "${create_campaign_payload}" 90
 TEMP_CAMPAIGN_ID="$(printf '%s' "${LAST_JSON}" | jq -r '.campaign.id // empty')"
 if [[ -z "${TEMP_CAMPAIGN_ID}" ]]; then

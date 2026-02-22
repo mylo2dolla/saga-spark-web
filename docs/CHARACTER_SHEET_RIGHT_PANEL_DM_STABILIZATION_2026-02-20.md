@@ -87,7 +87,7 @@ Legacy intents remain accepted and remapped without breaking contracts.
 
 ### VM runtime deployment
 - Runtime host: `api.mythweaver.online`
-- Deploy mode: rsync source to `/opt/mythic-api` + `docker compose up -d --build --force-recreate`
+- Deploy mode: rsync source to `/opt/saga-spark-web/services/mythic-api` + `docker compose up -d --build --force-recreate`
 - Deploy completed (UTC): `2026-02-20T23:53:09Z`
 - Runtime marker hash (`mythic-dungeon-master.ts` on host): `d62d1a6aa2a911b07aa259a5af563cf224812f07bd1620de9636347209883f94`
 - Runtime env presence verified: `SUPABASE_*`, `OPENAI_API_KEY`, `MYTHIC_ALLOWED_ORIGINS`
