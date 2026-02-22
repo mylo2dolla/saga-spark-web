@@ -78,3 +78,11 @@ The player-facing narration sanitization removes or suppresses patterns includin
 - No API endpoint names were changed.
 - No DB schema migration was required for this specific pass.
 - Supabase remains auth/db; gameplay runtime remains VM functions.
+
+## 2026-02-22 Addendum
+- Slash-command fallback no longer emits `command:unknown`; unknown slash text routes to `dm_prompt`.
+- `useMythicDmVoice` edge-TTS fallback now defaults to `alloy` instead of `nova`.
+- Town board clutter pass tightened:
+  - Town hotspot subtitles hidden in the board overlay.
+  - Landmark reserve padding increased to reduce NPC/landmark overlap collisions.
+- Character forge review surface no longer shows concept compaction messaging.

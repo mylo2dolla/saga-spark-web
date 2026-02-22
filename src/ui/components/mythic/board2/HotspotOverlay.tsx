@@ -73,7 +73,9 @@ export function HotspotOverlay(props: HotspotOverlayProps) {
             <div className="truncate font-semibold">
               {hotspot.visual?.icon ? `${hotspot.visual.icon} ` : ""}{hotspot.title}
             </div>
-            {hotspot.subtitle ? <div className="truncate text-[10px] opacity-85">{hotspot.subtitle}</div> : null}
+            {props.accent !== "town" && hotspot.subtitle ? (
+              <div className="truncate text-[10px] opacity-85">{hotspot.subtitle}</div>
+            ) : null}
           </button>
         );
       })}

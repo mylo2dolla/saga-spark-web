@@ -1184,12 +1184,12 @@ function buildTownScene(args: {
   data.vendors.slice(0, vendorSpots.length).forEach((_, index) => {
     const rect = vendorSpots[index];
     if (!rect) return;
-    reserveTownRectTiles({ reserved: reservedTiles, rect, cols, rows, pad: 0 });
+    reserveTownRectTiles({ reserved: reservedTiles, rect, cols, rows, pad: 1 });
   });
   if (hasNoticeBoard) {
-    reserveTownRectTiles({ reserved: reservedTiles, rect: noticeBoardRect, cols, rows, pad: 0 });
+    reserveTownRectTiles({ reserved: reservedTiles, rect: noticeBoardRect, cols, rows, pad: 1 });
   }
-  reserveTownRectTiles({ reserved: reservedTiles, rect: gateRect, cols, rows, pad: 0 });
+  reserveTownRectTiles({ reserved: reservedTiles, rect: gateRect, cols, rows, pad: 1 });
 
   const placedNpcs = data.npcs.slice(0, 10).map((npc) => {
     const placed = findNearestTownTile({
@@ -1226,7 +1226,7 @@ function buildTownScene(args: {
       id: `town-vendor-${vendor.id}`,
       kind: "vendor",
       title: vendor.name,
-      subtitle: formatVendorSubtitle(vendor.services),
+      subtitle: undefined,
       description: "Trade, rumor pressure, and contract leads.",
       rect: vendorSpots[index] ?? { x: 1, y: 1, w: 3, h: 2 },
       actions: buildTownVendorActions(vendor),
@@ -1246,7 +1246,7 @@ function buildTownScene(args: {
       id: "town-notice-board",
       kind: "notice_board",
       title: "Notice Board",
-      subtitle: `${townData.jobPostings.length} active postings`,
+      subtitle: undefined,
       description: "Public contracts, bounty chatter, and leverage points.",
       rect: noticeBoardRect,
       actions: buildTownNoticeBoardActions(townData.jobPostings.map((row) => ({ id: row.id, title: row.title, status: row.status }))),
@@ -1264,7 +1264,7 @@ function buildTownScene(args: {
     id: "town-gate",
     kind: "gate",
     title: "Town Gate",
-    subtitle: "Road control",
+    subtitle: undefined,
     description: "Leave the square and project force into the wilds.",
     rect: gateRect,
     actions: buildTownGateActions(),
@@ -1279,7 +1279,7 @@ function buildTownScene(args: {
       id: `town-npc-${npc.id}`,
       kind: "hotspot",
       title: npc.name,
-      subtitle: `${npc.role} · ${npc.faction} · ${npc.mood}`,
+      subtitle: undefined,
       description: `Relationship ${npc.relationship} · Grudge ${npc.grudge}`,
       rect: {
         x: npc.locationTile.x,

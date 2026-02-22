@@ -43,6 +43,13 @@ interface CampaignSummary {
   health_detail: string | null;
 }
 
+type CompanionArchetype = "scout" | "tactician" | "support" | "vanguard" | "hunter" | "mystic";
+
+interface CompanionBlueprintDraft {
+  name: string;
+  archetype: CompanionArchetype;
+}
+
 const TEMPLATE_OPTIONS: Array<{ key: TemplateKey; label: string; description: string }> = [
   { key: "custom", label: "Custom", description: "Use your own seed and let Mythic adapt." },
   { key: "graphic_novel_fantasy", label: "Graphic Novel Fantasy", description: "Heroic pulp, factions, and brutal adventure." },
@@ -90,6 +97,10 @@ export default function DashboardScreen() {
   const [newCampaignName, setNewCampaignName] = useState("");
   const [newCampaignDescription, setNewCampaignDescription] = useState("");
   const [templateKey, setTemplateKey] = useState<TemplateKey>("custom");
+  const [companionBlueprints, setCompanionBlueprints] = useState<CompanionBlueprintDraft[]>([
+    { name: "", archetype: "scout" },
+    { name: "", archetype: "tactician" },
+  ]);
 
   const [inviteCode, setInviteCode] = useState("");
   const [isCreating, setIsCreating] = useState(false);
@@ -256,6 +267,13 @@ export default function DashboardScreen() {
                 name,
                 description,
                 template_key: templateKey,
+                companion_blueprint: companionBlueprints
+                  .map((entry) => ({
+                    name: entry.name.trim(),
+                    archetype: entry.archetype,
+                  }))
+                  .filter((entry) => entry.name.length > 0)
+                  .slice(0, 4),
               },
             },
           );
@@ -281,6 +299,10 @@ export default function DashboardScreen() {
 
       setNewCampaignName("");
       setNewCampaignDescription("");
+      setCompanionBlueprints([
+        { name: "", archetype: "scout" },
+        { name: "", archetype: "tactician" },
+      ]);
       void loadCampaigns();
       navigate(`/mythic/${data.campaign.id}/create-character`);
     } catch (err) {
@@ -539,6 +561,42 @@ export default function DashboardScreen() {
                 <div className="text-xs text-muted-foreground">
                   {TEMPLATE_OPTIONS.find((option) => option.key === templateKey)?.description}
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-xs text-muted-foreground">Companion setup (optional)</div>
+                {companionBlueprints.map((entry, index) => (
+                  <div key={`companion-blueprint-${index + 1}`} className="grid grid-cols-[1fr,140px] gap-2">
+                    <Input
+                      value={entry.name}
+                      onChange={(event) => {
+                        const nextName = event.target.value;
+                        setCompanionBlueprints((prev) => prev.map((row, rowIndex) => (
+                          rowIndex === index ? { ...row, name: nextName } : row
+                        )));
+                      }}
+                      maxLength={60}
+                      placeholder={`Companion ${index + 1} name`}
+                    />
+                    <select
+                      value={entry.archetype}
+                      onChange={(event) => {
+                        const nextArchetype = event.target.value as CompanionArchetype;
+                        setCompanionBlueprints((prev) => prev.map((row, rowIndex) => (
+                          rowIndex === index ? { ...row, archetype: nextArchetype } : row
+                        )));
+                      }}
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    >
+                      <option value="scout">Scout</option>
+                      <option value="tactician">Tactician</option>
+                      <option value="support">Support</option>
+                      <option value="vanguard">Vanguard</option>
+                      <option value="hunter">Hunter</option>
+                      <option value="mystic">Mystic</option>
+                    </select>
+                  </div>
+                ))}
               </div>
 
               {createError ? <div className="text-xs text-destructive">{createError}</div> : null}

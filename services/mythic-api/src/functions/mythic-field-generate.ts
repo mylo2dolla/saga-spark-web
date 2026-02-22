@@ -95,38 +95,7 @@ function lowerSentence(text: string): string {
 function condenseClassConceptText(input: string): string {
   const cleaned = input.replace(/\s+/g, " ").trim();
   if (!cleaned) return "";
-
-  const sentences = (cleaned.match(/[^.!?]+[.!?]*/g) ?? [])
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const normalized = sentences.length > 0 ? sentences : [cleaned];
-
-  const pick = (rx: RegExp, fallbackIndex: number) =>
-    normalized.find((sentence) => rx.test(sentence.toLowerCase())) ?? normalized[Math.min(fallbackIndex, normalized.length - 1)] ?? cleaned;
-
-  const archetypeRaw = pick(/\b(assassin|guardian|mage|warlock|cleric|paladin|ninja|duelist|hunter|skirmisher|controller|support|tank|hybrid|spellblade|berserk)\b/i, 0);
-  const tacticalRaw = pick(/\b(loop|combo|tempo|burst|dash|zone|control|stagger|reposition|pressure|execute|setup|rotation)\b/i, 1);
-  const weaknessRaw = pick(/\b(weak|cost|risk|drawback|fragile|overheat|glass|resource|telegraph|cooldown|punish|crash|exposed)\b/i, normalized.length - 1);
-
-  const archetype = titleSentence(compactSentence(archetypeRaw, 130));
-  const tactical = lowerSentence(compactSentence(tacticalRaw, 140));
-  const weakness = lowerSentence(compactSentence(weaknessRaw, 130));
-
-  let composed = `${archetype}. Tactical loop: ${tactical}. Cost: ${weakness}.`.replace(/\s+/g, " ").trim();
-  composed = trimTo(composed, CLASS_CONCEPT_TARGET_MAX_CHARS);
-  if (composed.length >= CLASS_CONCEPT_TARGET_MIN_CHARS) return composed;
-
-  const extras = normalized
-    .filter((sentence) => sentence !== archetypeRaw && sentence !== tacticalRaw && sentence !== weaknessRaw)
-    .map((sentence) => compactSentence(sentence, 120))
-    .filter(Boolean);
-  for (const extra of extras) {
-    const candidate = `${composed} ${titleSentence(extra)}.`.replace(/\s+/g, " ").trim();
-    if (candidate.length > CLASS_CONCEPT_TARGET_MAX_CHARS) break;
-    composed = candidate;
-    if (composed.length >= CLASS_CONCEPT_TARGET_MIN_CHARS) break;
-  }
-  return trimTo(composed, CLASS_CONCEPT_TARGET_MAX_CHARS);
+  return trimTo(cleaned, CLASS_CONCEPT_TARGET_MAX_CHARS);
 }
 
 function deterministicFieldText(input: {
@@ -266,9 +235,7 @@ export const mythicFieldGenerate: FunctionHandler = {
       const modeRules = isClassConcept
         ? mode === "random"
           ? "Generate exactly 2-3 sentences within 220-420 chars. Include archetype identity, tactical loop, and explicit weakness/cost."
-          : currentText.trim().length > CLASS_CONCEPT_TARGET_MAX_CHARS
-            ? "Compress and refine currentText to exactly 2-3 sentences within 220-420 chars while preserving core intent."
-            : "Expand currentText into exactly 2-3 sentences within 220-420 chars. Must include tactical loop and explicit weakness/cost."
+          : "Expand and refine currentText into exactly 2-3 sentences within 220-420 chars. Must include tactical loop and explicit weakness/cost."
         : mode === "random"
           ? "If currentText is empty, generate from world/campaign context. If not empty, you may still use it as optional hint."
           : "Expand and refine currentText while preserving intent and theme. Add concrete details and tactical flavor.";
@@ -319,7 +286,9 @@ export const mythicFieldGenerate: FunctionHandler = {
       }
 
       const fieldMax = maxLengthForField(fieldType);
-      const normalizedText = isClassConcept ? condenseClassConceptText(text) : text;
+      const normalizedText = isClassConcept
+        ? condenseClassConceptText(text)
+        : text;
       const finalText = trimTo(normalizedText, fieldMax);
 
       assertContentAllowed([{ path: "generated_text", value: finalText }]);

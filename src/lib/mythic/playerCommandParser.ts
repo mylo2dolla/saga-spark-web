@@ -63,9 +63,9 @@ function parseSlashCommand(input: string): PlayerCommandParseResult | null {
   if (!cleaned) {
     return {
       raw: input,
-      cleaned: "",
+      cleaned: input.trim(),
       explicit: true,
-      intent: "unknown",
+      intent: "dm_prompt",
     };
   }
 
@@ -141,7 +141,7 @@ function parseSlashCommand(input: string): PlayerCommandParseResult | null {
     };
   }
 
-  return { raw: input, cleaned, explicit: true, intent: "unknown" };
+  return { raw: input, cleaned, explicit: true, intent: "dm_prompt" };
 }
 
 function parseNaturalLanguageCommand(input: string): PlayerCommandParseResult | null {

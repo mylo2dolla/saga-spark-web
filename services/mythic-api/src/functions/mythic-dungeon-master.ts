@@ -20,6 +20,17 @@ import {
   type DmNarratorOutput,
 } from "../shared/turn_contract.js";
 import { getConfig } from "../shared/env.js";
+import {
+  BANNED_PLAYER_PHRASES,
+  buildBoardNarration,
+  buildNarrativeLinesFromEvents,
+  buildReputationTitle,
+  hashLine,
+  selectToneMode,
+  toneSeedLine,
+  type EnemyPersonalityTraits,
+  type PresentationState,
+} from "../lib/presentation/index.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const MessageSchema = z.object({
@@ -138,7 +149,14 @@ const NON_PLAYER_NARRATION_PATTERNS: RegExp[] = [
   /\bthe\s+[a-z ]*board answers with hard state, not fog:[^.]*\.?/gi,
   /\b(board already committed|committed the pressure lines)[^.]*\.?/gi,
   /\bcommit one decisive move and keep pressure on the nearest fault line\.?/gi,
+  /\bcampaign_intro_opening_[a-z0-9_]*\b/gi,
+  /\bresolved\s+\d+\s+non-player turn steps\b/gi,
 ];
+
+const BANNED_PLAYER_FRAGMENT_PATTERNS: RegExp[] = BANNED_PLAYER_PHRASES.map((phrase) => {
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\s+/g, "\\s+");
+  return new RegExp(escaped, "gi");
+});
 
 function countWords(text: string): number {
   return text
@@ -171,6 +189,9 @@ function sanitizeNarrationForPlayer(text: string, boardType: string): string {
       for (const pattern of NON_PLAYER_NARRATION_PATTERNS) {
         clean = clean.replace(pattern, " ");
       }
+      for (const pattern of BANNED_PLAYER_FRAGMENT_PATTERNS) {
+        clean = clean.replace(pattern, " ");
+      }
       return clean.replace(/\s+/g, " ").trim();
     })
     .filter((line) => line.length > 0);
@@ -183,6 +204,56 @@ function sanitizeNarrationForPlayer(text: string, boardType: string): string {
   return joined;
 }
 
+function readPresentationState(boardState: Record<string, unknown> | null): PresentationState {
+  const row = asObject(boardState?.dm_presentation);
+  const lineHashes = Array.isArray(row?.recent_line_hashes)
+    ? row.recent_line_hashes
+      .map((entry) => String(entry).trim())
+      .filter((entry) => entry.length > 0)
+      .slice(-16)
+    : [];
+  const verbKeys = Array.isArray(row?.last_verb_keys)
+    ? row.last_verb_keys
+      .map((entry) => String(entry).trim().toLowerCase())
+      .filter((entry) => entry.length > 0)
+      .slice(-12)
+    : [];
+  const lastTone = typeof row?.last_tone === "string" ? row.last_tone : null;
+  const lastOpenerId = typeof row?.last_board_opener_id === "string" ? row.last_board_opener_id : null;
+  return {
+    last_tone: lastTone,
+    last_board_opener_id: lastOpenerId,
+    recent_line_hashes: lineHashes,
+    last_verb_keys: verbKeys,
+  };
+}
+
+function mergePresentationState(
+  current: PresentationState,
+  next: Partial<PresentationState>,
+): PresentationState {
+  const lineHashes = [
+    ...(current.recent_line_hashes ?? []),
+    ...(next.recent_line_hashes ?? []),
+  ]
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .slice(-16);
+  const verbKeys = [
+    ...(current.last_verb_keys ?? []),
+    ...(next.last_verb_keys ?? []),
+  ]
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0)
+    .slice(-12);
+  return {
+    last_tone: next.last_tone ?? current.last_tone ?? null,
+    last_board_opener_id: next.last_board_opener_id ?? current.last_board_opener_id ?? null,
+    recent_line_hashes: lineHashes,
+    last_verb_keys: verbKeys,
+  };
+}
+
 function buildIntroRecoveryNarration(args: {
   boardType: string;
   recoveryPressure: string;
@@ -192,18 +263,18 @@ function buildIntroRecoveryNarration(args: {
   summaryRumor: string | null;
 }): string {
   const introHook = args.summaryObjective
-    ? `Your first leverage point is clear: ${args.summaryObjective}.`
+    ? `First leverage is clear: ${args.summaryObjective}.`
     : args.summaryRumor
-      ? `A live rumor is already drawing blood: ${args.summaryRumor}.`
+      ? `A live rumor is already moving: ${args.summaryRumor}.`
       : `The first hinge is visible: ${args.boardAnchor}.`;
   if (args.boardType === "town") {
     return [args.recoveryPressure, introHook, args.recoveryBeat].join(" ");
   }
   if (args.boardType === "travel") {
-    return [args.recoveryPressure, introHook, "The route will punish drift, so choose a lane and commit."].join(" ");
+    return [args.recoveryPressure, introHook, "Pick a lane and move before the route closes."].join(" ");
   }
   if (args.boardType === "dungeon") {
-    return [args.recoveryPressure, introHook, "Stone remembers hesitation. Pick a room edge and force it."].join(" ");
+    return [args.recoveryPressure, introHook, "Pick a room edge and force a result."].join(" ");
   }
   return [args.recoveryPressure, introHook, args.recoveryBeat].join(" ");
 }
@@ -1431,113 +1502,6 @@ function synthesizeRecoveryPayload(args: {
     ? context?.state_changes.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).slice(0, 3)
     : [];
   const firstStateChange = stateChanges[0] ?? null;
-  const combatLines = combatEventBatch
-    .map((entry) => {
-      const eventType = typeof entry.event_type === "string" ? entry.event_type : "";
-      const payload = asObject(entry.payload);
-      const actorAlive = payload?.actor_alive !== false && payload?.source_alive !== false;
-      if (eventType !== "death" && !actorAlive) return null;
-      const actorId = typeof entry.actor_combatant_id === "string" && entry.actor_combatant_id.trim().length > 0
-        ? entry.actor_combatant_id
-        : typeof payload?.actor_combatant_id === "string" && payload.actor_combatant_id.trim().length > 0
-          ? payload.actor_combatant_id
-          : typeof payload?.source_combatant_id === "string" && payload.source_combatant_id.trim().length > 0
-          ? payload.source_combatant_id
-            : null;
-      const targetId = typeof payload?.target_combatant_id === "string" && payload.target_combatant_id.trim().length > 0
-        ? payload.target_combatant_id
-        : null;
-      const actor = (() => {
-        if (typeof payload?.source_name === "string" && payload.source_name.trim().length > 0) return payload.source_name.trim();
-        if (typeof payload?.actor_name === "string" && payload.actor_name.trim().length > 0) return payload.actor_name.trim();
-        if (typeof payload?.actor_display === "string" && payload.actor_display.trim().length > 0) return payload.actor_display.trim();
-        if (actorId) return `Fighter ${actorId.slice(0, 4).toUpperCase()}`;
-        return "A fighter";
-      })();
-      const target = (() => {
-        if (typeof payload?.target_name === "string" && payload.target_name.trim().length > 0) return payload.target_name.trim();
-        if (typeof payload?.target_display === "string" && payload.target_display.trim().length > 0) return payload.target_display.trim();
-        if (targetId) return `target ${targetId.slice(0, 4).toUpperCase()}`;
-        return "target";
-      })();
-      const amount = Number(
-        payload?.damage_to_hp
-        ?? payload?.amount
-        ?? payload?.final_damage
-        ?? payload?.tiles_used
-        ?? Number.NaN,
-      );
-      const amountText = Number.isFinite(amount) ? String(Math.max(0, Math.floor(amount))) : null;
-      if (eventType === "moved") {
-        const to = asObject(payload?.to);
-        const x = Number(to?.x);
-        const y = Number(to?.y);
-        if (Number.isFinite(x) && Number.isFinite(y)) {
-          return `${actor} shifts to (${Math.floor(x)}, ${Math.floor(y)}).`;
-        }
-        return `${actor} repositions for the next exchange.`;
-      }
-      if (eventType === "damage") {
-        return amountText ? `${actor} strikes ${target} for ${amountText}.` : `${actor} lands a hit on ${target}.`;
-      }
-      if (eventType === "miss") {
-        const roll = Number(payload?.roll_d20 ?? Number.NaN);
-        const required = Number(payload?.required_roll ?? Number.NaN);
-        if (Number.isFinite(roll) && Number.isFinite(required)) {
-          return `${actor} misses ${target} (${Math.floor(roll)} vs ${Math.floor(required)}).`;
-        }
-        return `${actor}'s strike misses ${target}.`;
-      }
-      if (eventType === "healed") {
-        return amountText ? `${actor} restores ${amountText} to ${target}.` : `${actor} stabilizes ${target}.`;
-      }
-      if (eventType === "status_applied") {
-        const status = asObject(payload?.status);
-        const statusId = typeof status?.id === "string" ? status.id : (typeof payload?.status_id === "string" ? payload.status_id : "pressure");
-        return `${actor} afflicts ${target} with ${statusId.replace(/_/g, " ")}.`;
-      }
-      if (eventType === "status_tick") {
-        const statusId = typeof payload?.status_id === "string" ? payload.status_id : "status";
-        return amountText
-          ? `${target} bleeds ${amountText} from ${statusId.replace(/_/g, " ")}.`
-          : `${statusId.replace(/_/g, " ")} pressure keeps ticking on ${target}.`;
-      }
-      if (eventType === "status_expired") {
-        const statusId = typeof payload?.status_id === "string" ? payload.status_id : "status";
-        return `${target}'s ${statusId.replace(/_/g, " ")} fades.`;
-      }
-      if (eventType === "armor_shred") {
-        return amountText ? `${actor} shreds ${amountText} armor from ${target}.` : `${actor} shreds ${target}'s guard.`;
-      }
-      if (eventType === "power_gain") {
-        return amountText ? `${actor} recovers ${amountText} MP.` : `${actor} regains MP.`;
-      }
-      if (eventType === "power_drain") {
-        return amountText ? `${actor} drains ${amountText} MP from ${target}.` : `${actor} drains MP from ${target}.`;
-      }
-      if (eventType === "death") {
-        return `${target} drops and is out of the fight.`;
-      }
-      if (eventType === "xp_gain") {
-        return amountText ? `XP payout locked: +${amountText}.` : "XP payout locked.";
-      }
-      if (eventType === "loot_drop") {
-        const lootName = typeof payload?.name === "string" && payload.name.trim().length > 0
-          ? payload.name.trim()
-          : typeof payload?.item_id === "string" && payload.item_id.trim().length > 0
-            ? payload.item_id.trim()
-            : "loot";
-        return `Loot secured: ${lootName}.`;
-      }
-      if (eventType === "combat_end") {
-        const won = payload?.won === true;
-        return won ? "The floor clears and victory is confirmed." : "The floor breaks and the fight resolves against you.";
-      }
-      return null;
-    })
-    .filter((line): line is string => Boolean(line))
-    .slice(0, 3);
-
   const actionSummary = compactLabel(
     firstStateChange
       ?? actionPrompt
@@ -1569,49 +1533,160 @@ function synthesizeRecoveryPayload(args: {
     return null;
   })();
 
-  const recoveryPressure = boardType === "town"
-    ? "Lantern light turns every bargain into a wager."
-    : boardType === "travel"
-      ? "The route narrows and the next mile can spring an ambush."
-      : boardType === "dungeon"
-        ? "Stone corridors hold their breath and punish hesitation."
-        : "Steel and spellfire keep the floor in constant motion.";
+  const boardStatePresentation = readPresentationState(args.boardState);
+  const seedKey = [
+    boardType,
+    actionIntent,
+    actionSummary,
+    rawActionId ?? "",
+    typeof context?.action_trace_id === "string" ? context.action_trace_id : "",
+    typeof args.boardSummary?.world_title === "string" ? args.boardSummary.world_title : "",
+  ]
+    .filter((entry) => entry.length > 0)
+    .join("|");
+  const pressureMetric = Number(
+    args.boardSummary?.guard_alertness
+      ?? args.boardSummary?.hazard_meter
+      ?? args.boardSummary?.trap_signals
+      ?? 0,
+  );
+  const tone = selectToneMode({
+    seedKey,
+    lastTone: boardStatePresentation.last_tone ?? null,
+    tension: Number.isFinite(pressureMetric) ? Math.max(0, Math.min(100, Math.floor(pressureMetric * 100))) : 48,
+    bossPresent: combatEventBatch.some((entry) => {
+      const payload = asObject(entry.payload);
+      return payload?.boss === true || payload?.is_boss === true;
+    }),
+    playerHpPct: (() => {
+      const payload = asObject(contextPayload);
+      const hp = Number(payload?.player_hp ?? payload?.hp ?? Number.NaN);
+      const hpMax = Number(payload?.player_hp_max ?? payload?.hp_max ?? Number.NaN);
+      if (!Number.isFinite(hp) || !Number.isFinite(hpMax) || hpMax <= 0) return 0.65;
+      return Math.max(0, Math.min(1, hp / hpMax));
+    })(),
+    regionTheme: `${boardType}:${typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : ""}`,
+  });
+  const toneLine = toneSeedLine(tone.tone, `${seedKey}:tone-line`);
+
+  const hooks = [
+    actionSummary,
+    summaryObjective,
+    summaryRumor,
+    typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
+    typeof args.boardSummary?.search_target === "string" ? args.boardSummary.search_target : null,
+  ]
+    .filter((entry): entry is string => Boolean(entry && entry.trim().length > 0))
+    .map((entry) => compactLabel(entry, 88))
+    .slice(0, 4);
+
+  const boardNarration = buildBoardNarration({
+    seedKey,
+    boardType: boardType === "town" || boardType === "travel" || boardType === "dungeon" || boardType === "combat"
+      ? boardType
+      : "town",
+    hooks,
+    timePressure: typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
+    factionTension: typeof args.boardSummary?.faction_count === "number"
+      ? `${args.boardSummary.faction_count} factions in play`
+      : null,
+    resourceWindow: typeof args.boardSummary?.service_count === "number"
+      ? `${args.boardSummary.service_count} service windows`
+      : null,
+    regionName: typeof args.boardSummary?.world_title === "string" ? args.boardSummary.world_title : null,
+    lastOpenerId: boardStatePresentation.last_board_opener_id ?? null,
+  });
+
+  const enemyTraitsByCombatantId: Record<string, Partial<EnemyPersonalityTraits>> = {};
+  for (const event of combatEventBatch) {
+    const payload = asObject(event.payload);
+    if (!payload) continue;
+    const actorId = typeof payload.source_combatant_id === "string"
+      ? payload.source_combatant_id
+      : typeof payload.actor_combatant_id === "string"
+        ? payload.actor_combatant_id
+        : null;
+    const traits = asObject(payload.enemy_traits ?? payload.actor_traits);
+    if (!actorId || !traits) continue;
+    enemyTraitsByCombatantId[actorId] = {
+      aggression: Number(traits.aggression),
+      discipline: Number(traits.discipline),
+      intelligence: Number(traits.intelligence),
+      instinct_type: typeof traits.instinct_type === "string" ? traits.instinct_type as EnemyPersonalityTraits["instinct_type"] : undefined,
+    };
+  }
+
+  const middlewareOut = buildNarrativeLinesFromEvents({
+    seedKey,
+    tone: tone.tone,
+    events: combatEventBatch as Array<{ event_type: string; payload?: Record<string, unknown> }>,
+    recentLineHashes: boardStatePresentation.recent_line_hashes ?? [],
+    recentVerbKeys: boardStatePresentation.last_verb_keys ?? [],
+    enemyTraitsByCombatantId,
+    maxLines: 4,
+  });
+
   const recoveryBeat = boardType === "combat"
-    ? "Pick a target and make the next exchange hurt."
+    ? "Pick the next target and keep tempo."
     : boardType === "town"
-      ? "Choose your next push: a contact, a contract, or the gate."
+      ? "Choose your next push: contact, contract, or gate."
       : boardType === "travel"
-        ? "Pick the segment you want to pressure next."
-        : "Choose the next room, door, or hazard and force a consequence.";
-  const narrative = boardType === "combat"
+        ? "Pick the route segment to pressure next."
+        : "Choose the next room edge and force a consequence.";
+
+  const narrativeParts = boardType === "combat"
     ? [
-      combatLines[0] ?? `${actionSummary} ${recoveryPressure}`,
-      combatLines[1] ?? (companionCheckin
-        ? `${companionCheckin.line} ${boardAnchor} is where the next clash breaks.`
-        : `${boardLabel} tempo is still live. Keep the next exchange sharp.`),
-      combatLines[2] ?? `${recoveryBeat}`,
-    ].join(" ")
+      middlewareOut.lines[0] ?? toneLine,
+      middlewareOut.lines[1] ?? recoveryBeat,
+      middlewareOut.lines[2] ?? "",
+    ]
     : introOpening
-      ? buildIntroRecoveryNarration({
-        boardType,
-        recoveryPressure,
-        recoveryBeat,
-        boardAnchor,
-        summaryObjective,
-        summaryRumor,
-      })
-    : [
-      `${actionSummary} ${recoveryPressure}`,
-      companionCheckin
-        ? `${companionCheckin.line} ${boardAnchor} is where the next consequence breaks.`
-        : summaryObjective
-          ? `Current leverage: ${summaryObjective}.`
-          : summaryRumor
-            ? `Latest rumor under tension: ${summaryRumor}.`
-            : `${boardLabel} stays volatile. One move now will tilt the square.`,
-      `${recoveryBeat}`,
-    ].join(" ");
-  const cleanNarrative = sanitizeNarrationForPlayer(narrative, boardType);
+      ? [buildIntroRecoveryNarration({
+          boardType,
+          recoveryPressure: boardNarration.text,
+          recoveryBeat,
+          boardAnchor,
+          summaryObjective,
+          summaryRumor,
+        })]
+      : [
+          boardNarration.text,
+          toneLine,
+          companionCheckin ? companionCheckin.line : recoveryBeat,
+        ];
+
+  const titleInput = buildReputationTitle({
+    baseName: typeof contextPayload?.player_name === "string" ? contextPayload.player_name : "Wanderer",
+    reputationScore: Number(contextPayload?.reputation_score ?? 0),
+    behaviorFlags: Array.isArray(contextPayload?.behavior_flags)
+      ? contextPayload.behavior_flags.map((entry) => String(entry))
+      : [],
+    notableKills: Array.isArray(contextPayload?.notable_kills)
+      ? contextPayload.notable_kills.map((entry) => String(entry))
+      : [],
+    factionStanding: asObject(contextPayload?.faction_standing) ?? {},
+    seedKey: `${seedKey}:title`,
+  });
+
+  let cleanNarrative = sanitizeNarrationForPlayer(
+    narrativeParts
+      .filter((entry) => entry && entry.trim().length > 0)
+      .slice(0, 3)
+      .join(" "),
+    boardType,
+  );
+  if (titleInput.tier >= 3 && titleInput.displayName.trim().length > 0) {
+    cleanNarrative = cleanNarrative.replace(/\bYou\b/g, titleInput.displayName);
+  }
+
+  const nextPresentationState = mergePresentationState(boardStatePresentation, {
+    last_tone: tone.tone,
+    last_board_opener_id: boardNarration.openerId,
+    recent_line_hashes: boardType === "combat"
+      ? middlewareOut.lineHashes
+      : [hashLine(cleanNarrative)],
+    last_verb_keys: middlewareOut.verbKeys,
+  });
 
   const vendors = extractVendorsFromBoardSummary(args.boardSummary);
   const baseActions: NarratorUiAction[] = boardType === "town"
@@ -1706,9 +1781,10 @@ function synthesizeRecoveryPayload(args: {
         rumors: [{ title: "Pressure Spike", detail: actionSummary }],
         objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
         discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
+        dm_presentation: nextPresentationState,
         scene_cache: {
           environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
-          mood: "dark tactical pressure",
+          mood: `${tone.tone} pressure`,
           focus: actionSummary,
         },
         action_chips: actionChips,
@@ -1717,9 +1793,10 @@ function synthesizeRecoveryPayload(args: {
         rumors: [{ title: "Pressure Spike", detail: actionSummary }],
         objectives: [{ title: `Advance ${boardLabel}`, description: "Commit one concrete move and hold tempo." }],
         discovery_log: [{ kind: "dm_recovery", detail: discoveryDetail }],
+        dm_presentation: nextPresentationState,
         scene_cache: {
           environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
-          mood: "dark tactical pressure",
+          mood: `${tone.tone} pressure`,
           focus: actionSummary,
         },
         action_chips: actionChips,
@@ -2584,6 +2661,60 @@ ${jsonOnlyContract()}
             lastErrors,
           })),
         };
+      }
+
+      if (dmParsed.ok) {
+        const combatBatch = Array.isArray(actionContextRecord?.combat_event_batch)
+          ? actionContextRecord.combat_event_batch
+            .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object")
+            .slice(-10)
+          : [];
+        if (combatBatch.length > 0) {
+          const presentationCurrent = readPresentationState(boardStateRecord);
+          const tone = selectToneMode({
+            seedKey: `${campaignId}:${expectedTurnIndex}:combat-step`,
+            lastTone: presentationCurrent.last_tone ?? null,
+            tension: 62,
+            bossPresent: combatBatch.some((entry) => asObject(entry.payload)?.boss === true),
+            playerHpPct: 0.62,
+            regionTheme: "combat",
+          });
+          const middleware = buildNarrativeLinesFromEvents({
+            seedKey: `${campaignId}:${expectedTurnIndex}:combat-step`,
+            tone: tone.tone,
+            events: combatBatch as Array<{ event_type: string; payload?: Record<string, unknown> }>,
+            recentLineHashes: presentationCurrent.recent_line_hashes ?? [],
+            recentVerbKeys: presentationCurrent.last_verb_keys ?? [],
+            maxLines: 4,
+          });
+          const generatedNarration = sanitizeNarrationForPlayer(
+            middleware.lines.join(" "),
+            "combat",
+          );
+          const hasLeak = NON_PLAYER_NARRATION_PATTERNS.some((pattern) => {
+            pattern.lastIndex = 0;
+            return pattern.test(dmParsed.value.narration);
+          })
+            || /\bA combatant\b/i.test(dmParsed.value.narration);
+          if (hasLeak || generatedNarration.length > 0) {
+            dmParsed.value.narration = generatedNarration;
+          }
+
+          const mergedPresentation = mergePresentationState(presentationCurrent, {
+            last_tone: tone.tone,
+            recent_line_hashes: middleware.lineHashes,
+            last_verb_keys: middleware.verbKeys,
+          });
+          const delta = asObject(dmParsed.value.runtime_delta ?? dmParsed.value.board_delta) ?? {};
+          dmParsed.value.runtime_delta = {
+            ...delta,
+            dm_presentation: mergedPresentation,
+          };
+          dmParsed.value.board_delta = {
+            ...delta,
+            dm_presentation: mergedPresentation,
+          };
+        }
       }
 
       const boardType = (compactBoard as Record<string, unknown> | null)?.board_type;

@@ -332,6 +332,89 @@ function skillTargetClause(skill: z.infer<typeof SkillSchema>): string {
   return `sweeps an area out to ${skill.range_tiles} tiles`;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function inferStyleElement(skill: z.infer<typeof SkillSchema>, seedKey: string): string {
+  const tags = asStringArray(asRecord(skill.effects_json).tags);
+  const lowerName = skill.name.toLowerCase();
+  if (tags.some((entry) => entry.includes("fire")) || lowerName.includes("fire") || lowerName.includes("inferno")) return "fire";
+  if (tags.some((entry) => entry.includes("ice") || entry.includes("frost")) || lowerName.includes("frost")) return "frost";
+  if (tags.some((entry) => entry.includes("lightning") || entry.includes("thunder")) || lowerName.includes("storm")) return "lightning";
+  if (tags.some((entry) => entry.includes("shadow")) || lowerName.includes("shadow")) return "shadow";
+  if (tags.some((entry) => entry.includes("holy") || entry.includes("radiant")) || lowerName.includes("judgment")) return "radiant";
+  if (tags.some((entry) => entry.includes("poison"))) return "toxin";
+  return pickByHash(["arcane", "wind", "earth", "water", "aether"], `${seedKey}:element`);
+}
+
+function inferStyleMood(skill: z.infer<typeof SkillSchema>): string {
+  if (skill.kind === "ultimate") return "cataclysmic";
+  if (skill.kind === "passive") return "steady";
+  const cost = Number(asRecord(skill.cost_json).amount ?? 0);
+  if (Number.isFinite(cost) && cost >= 30) return "volatile";
+  if (skill.cooldown_turns >= 3) return "heavy";
+  return "focused";
+}
+
+function inferImpactVerb(skill: z.infer<typeof SkillSchema>, seedKey: string): string {
+  const lowerName = skill.name.toLowerCase();
+  if (lowerName.includes("strike") || lowerName.includes("slash")) return "strike";
+  if (lowerName.includes("storm") || lowerName.includes("thunder")) return "smite";
+  if (lowerName.includes("snare") || lowerName.includes("bind")) return "lock";
+  if (lowerName.includes("guard") || lowerName.includes("ward")) return "brace";
+  return pickByHash(["strike", "burst", "slice", "slam", "zap", "shatter", "bonk"], `${seedKey}:impact`);
+}
+
+function withSkillPresentationMetadata(skill: z.infer<typeof SkillSchema>, index: number, seed: number): z.infer<typeof SkillSchema> {
+  const seedKey = `${seed}:skill:${index + 1}:${skill.name}`;
+  const existingEffects = asRecord(skill.effects_json);
+  const styleExisting = asRecord(existingEffects.style_tags);
+  const presentationExisting = asRecord(existingEffects.presentation);
+  const cost = Number(asRecord(skill.cost_json).amount ?? 0);
+  const rank = skill.kind === "ultimate" ? 5 : skill.kind === "passive" ? 1 : Math.max(2, Math.min(4, skill.cooldown_turns + 1));
+  const escalationLevel = rank + (Number.isFinite(cost) && cost >= 30 ? 2 : Number.isFinite(cost) && cost >= 18 ? 1 : 0);
+  const rarity = skill.kind === "ultimate"
+    ? "legendary"
+    : rank >= 4
+      ? "unique"
+      : "magical";
+  return {
+    ...skill,
+    effects_json: {
+      ...existingEffects,
+      style_tags: {
+        element: typeof styleExisting.element === "string" && styleExisting.element.trim().length > 0
+          ? styleExisting.element
+          : inferStyleElement(skill, seedKey),
+        mood: typeof styleExisting.mood === "string" && styleExisting.mood.trim().length > 0
+          ? styleExisting.mood
+          : inferStyleMood(skill),
+        visual_signature: typeof styleExisting.visual_signature === "string" && styleExisting.visual_signature.trim().length > 0
+          ? styleExisting.visual_signature
+          : pickByHash(["sky fracture", "ember spiral", "glass shockwave", "moonflare", "arc lattice"], `${seedKey}:visual`),
+        impact_verb: typeof styleExisting.impact_verb === "string" && styleExisting.impact_verb.trim().length > 0
+          ? styleExisting.impact_verb
+          : inferImpactVerb(skill, seedKey),
+      },
+      presentation: {
+        ...presentationExisting,
+        spell_base: typeof presentationExisting.spell_base === "string" && presentationExisting.spell_base.trim().length > 0
+          ? presentationExisting.spell_base
+          : skill.name,
+        rank: Number.isFinite(Number(presentationExisting.rank)) ? Number(presentationExisting.rank) : rank,
+        rarity: typeof presentationExisting.rarity === "string" && presentationExisting.rarity.trim().length > 0
+          ? presentationExisting.rarity
+          : rarity,
+        escalation_level: Number.isFinite(Number(presentationExisting.escalation_level))
+          ? Number(presentationExisting.escalation_level)
+          : escalationLevel,
+      },
+    },
+  };
+}
+
 function deterministicRefinement(input: {
   classDescription: string;
   kit: ReturnType<typeof generateMechanicalKit>;
@@ -364,23 +447,23 @@ function deterministicRefinement(input: {
   );
 
   const roleWordBank: Record<z.infer<typeof ResponseSchema>["role"], string[]> = {
-    tank: ["Aegis", "Stoneheart", "Lionguard", "Ironbound", "Bastion", "Wardwall"],
-    dps: ["Raven", "Bloodthorn", "Nightfang", "Stormrend", "Suncleaver", "Dreadedge"],
-    support: ["Dawn", "Hallow", "Lifebloom", "Moonward", "Kindled", "Mercy"],
-    controller: ["Hex", "Graveseal", "Starbind", "Ruinmark", "Thornlock", "Nullspire"],
-    skirmisher: ["Shade", "Swiftwind", "Ghoststep", "Riftdash", "Duskpierce", "Mistral"],
-    hybrid: ["Spellfire", "Mythglass", "Runeblade", "Astral", "Tempest", "Fate"],
+    tank: ["Sunwall", "Ironhaven", "Moonshield", "Granite Crown", "Wardkeep", "Clover Bastion"],
+    dps: ["Starfang", "Thunderedge", "Emberclaw", "Stormlash", "Skypiercer", "Dawnreaver"],
+    support: ["Honeylight", "Lantern Grace", "Lifebloom", "Willow Mercy", "Moonward", "Sparkheal"],
+    controller: ["Prismlock", "Starbind", "Glacier Sigil", "Tempest Latch", "Runegrasp", "Nulltide"],
+    skirmisher: ["Windstep", "Ghostlance", "Riftdash", "Swiftflare", "Shadowskip", "Mistral"],
+    hybrid: ["Spellfire", "Skyforge", "Runeblade", "Astral", "Tempest", "Fate"],
   };
 
   const weaponWordBank: Record<z.infer<typeof ResponseSchema>["weapon_identity"]["family"], string[]> = {
     blades: ["Edge", "Fang", "Saber", "Lancer", "Sever"],
-    axes: ["Cleaver", "Hewer", "Rend", "Splitter", "Goreaxe"],
+    axes: ["Cleaver", "Hewer", "Rend", "Splitter", "Stormaxe"],
     blunt: ["Hammer", "Maul", "Crush", "Breaker", "Sunder"],
     polearms: ["Pike", "Lance", "Halberd", "Skewer", "Driftlance"],
     ranged: ["Volley", "Bolt", "Deadeye", "Longshot", "Hawkeye"],
-    focus: ["Sigil", "Rune", "Arc", "Catalyst", "Glyph"],
+    focus: ["Arc", "Catalyst", "Glyph", "Prism", "Nova"],
     body: ["Claw", "Howl", "Pounce", "Ripper", "Feral"],
-    absurd: ["Chaos", "Jester", "Warp", "Mayhem", "Trickster"],
+    absurd: ["Chaos", "Jester", "Warp", "Mayhem", "Bonk"],
   };
 
   const tagWordBank: Record<string, string[]> = {
@@ -770,8 +853,8 @@ function generateMechanicalKit(input: {
       kind: "ultimate" as const,
       targeting: "area" as const,
       targeting_json: { shape: "cone", metric: "manhattan", length: 5, width: 3, friendly_fire: false, requires_los: false, blocks_on_walls: true },
-      name: "Ultimate",
-      description: "Dramatic, risky, consequence-heavy.",
+      name: "Starfall Verdict",
+      description: "Call down a final lane-breaking judgment that can end the exchange if timed right.",
       range_tiles: 5,
       cooldown_turns: 5,
       cost_json: mkCost(40),
@@ -817,8 +900,14 @@ export const mythicCreateCharacter: FunctionHandler = {
       const { campaignId, characterName, classDescription } = parsedBody.data;
       const seed = parsedBody.data.seed ?? rngInt(Date.now() % 2147483647, `seed:${campaignId}:${user.userId}`, 0, 2147483647);
 
-      const conceptCompaction = condenseClassConceptForForge(classDescription);
-      const forgeConcept = conceptCompaction.value;
+      const rawConcept = classDescription.replace(/\s+/g, " ").trim();
+      const forgeConcept = trimText(rawConcept, 2000);
+      const conceptCompaction = {
+        value: forgeConcept,
+        raw_chars: rawConcept.length,
+        used_chars: forgeConcept.length,
+        mode: "none" as ForgeCompactionMode,
+      };
 
       const svc = createServiceClient();
       await assertCampaignAccess(svc, campaignId, user.userId);
@@ -978,6 +1067,10 @@ export const mythicCreateCharacter: FunctionHandler = {
         refined: refinedData,
         fallback: deterministicFallback,
       });
+      refinedData = {
+        ...refinedData,
+        skills: refinedData.skills.map((skill, index) => withSkillPresentationMetadata(skill, index, seed)),
+      };
 
       const refinementMs = Date.now() - refinementStartedAt;
 

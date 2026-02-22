@@ -98,6 +98,8 @@ const NON_PLAYER_NARRATION_PATTERNS: RegExp[] = [
   /\bthe\s+[a-z ]*board answers with hard state, not fog:[^.]*\.?/gi,
   /\b(board already committed|committed the pressure lines)[^.]*\.?/gi,
   /\bcommit one decisive move and keep pressure on the nearest fault line\.?/gi,
+  /\bcampaign_intro_opening_[a-z0-9_]*\b/gi,
+  /\bresolved\s+\d+\s+non-player turn steps\b/gi,
 ];
 
 const trimMessage = (content: string) =>

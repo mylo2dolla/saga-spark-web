@@ -171,11 +171,6 @@ export function MythicCharacterCreator({ campaignId, onComplete, onCancel }: Pro
               <div className="rounded-lg border border-border bg-background/40 p-4">
                 <div className="font-display text-xl">{result.class.class_name}</div>
                 <div className="mt-1 text-sm text-muted-foreground">{result.class.class_description}</div>
-                {result.concept_compaction?.mode === "auto_condensed" ? (
-                  <div className="mt-3 rounded-md border border-cyan-300/35 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
-                    Forge compacted your concept from {Math.max(0, Math.floor(result.concept_compaction.raw_chars))} to {Math.max(0, Math.floor(result.concept_compaction.used_chars))} chars to preserve speed and output quality.
-                  </div>
-                ) : null}
                 {result.refinement_mode === "deterministic_fallback" ? (
                   <div className="mt-3 rounded-md border border-amber-300/35 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
                     Quality-safe deterministic refinement was used for this forge. Mechanics remain authoritative.

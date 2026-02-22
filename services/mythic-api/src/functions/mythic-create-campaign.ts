@@ -23,13 +23,22 @@ const TEMPLATE_KEYS = [
   "post_apocalypse",
 ] as const;
 
+const CompanionBlueprintSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  archetype: z.string().trim().min(1).max(24).optional(),
+  voice: z.string().trim().min(1).max(24).optional(),
+  mood: z.string().trim().min(1).max(24).optional(),
+});
+
 const RequestSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().min(1).max(1000),
   template_key: z.enum(TEMPLATE_KEYS).default("custom").optional(),
+  companion_blueprint: z.array(CompanionBlueprintSchema).max(4).optional(),
 });
 
 type TemplateKey = typeof TEMPLATE_KEYS[number];
+type CompanionBlueprintInput = z.infer<typeof CompanionBlueprintSchema>;
 
 const hashSeed = (input: string): number => {
   let hash = 0;
@@ -136,7 +145,41 @@ function makeBaselineFactions(template: TemplateKey): Array<{ name: string; desc
   }
 }
 
-function makeBaselineCompanions(seed: number, template: TemplateKey): Array<{
+function canonicalCompanionArchetype(raw: string | undefined): "scout" | "tactician" | "support" | "vanguard" | "hunter" | "mystic" {
+  const clean = (raw ?? "").trim().toLowerCase();
+  if (clean === "scout") return "scout";
+  if (clean === "tactician") return "tactician";
+  if (clean === "support" || clean === "healer") return "support";
+  if (clean === "vanguard" || clean === "tank") return "vanguard";
+  if (clean === "hunter" || clean === "ranger") return "hunter";
+  if (clean === "mystic" || clean === "caster" || clean === "mage") return "mystic";
+  return "scout";
+}
+
+function companionArchetypeProfile(archetype: "scout" | "tactician" | "support" | "vanguard" | "hunter" | "mystic") {
+  if (archetype === "tactician") {
+    return { voice: "blunt", mood: "measured", cadence_turns: 3, urgency_bias: 0.48, role: "tempo_control", hook_tags: ["supply", "timing", "fallback"] };
+  }
+  if (archetype === "support") {
+    return { voice: "steady", mood: "calm", cadence_turns: 2, urgency_bias: 0.42, role: "stability", hook_tags: ["triage", "recovery", "morale"] };
+  }
+  if (archetype === "vanguard") {
+    return { voice: "grit", mood: "focused", cadence_turns: 3, urgency_bias: 0.55, role: "frontline", hook_tags: ["threat", "guard", "breach"] };
+  }
+  if (archetype === "hunter") {
+    return { voice: "wry", mood: "intent", cadence_turns: 2, urgency_bias: 0.57, role: "pressure", hook_tags: ["mark", "pursuit", "ambush"] };
+  }
+  if (archetype === "mystic") {
+    return { voice: "hushed", mood: "charged", cadence_turns: 2, urgency_bias: 0.5, role: "arcane_control", hook_tags: ["ritual", "ward", "burst"] };
+  }
+  return { voice: "dry", mood: "watchful", cadence_turns: 3, urgency_bias: 0.52, role: "route_intel", hook_tags: ["threat", "recon", "ambush"] };
+}
+
+function makeBaselineCompanions(
+  seed: number,
+  template: TemplateKey,
+  blueprint: CompanionBlueprintInput[] | undefined,
+): Array<{
   companion_id: string;
   name: string;
   archetype: string;
@@ -146,40 +189,58 @@ function makeBaselineCompanions(seed: number, template: TemplateKey): Array<{
   urgency_bias: number;
   metadata: Record<string, unknown>;
 }> {
-  const firstNames = ["Ash", "Morrow", "Vex", "Rook", "Kestrel", "Nyx", "Vale", "Drift"];
-  const surnames = ["Vesper", "Pike", "Gallows", "Cinder", "Mire", "Quill", "Thorn", "Rune"];
+  const firstNames = ["Mira", "Kael", "Orin", "Poppy", "Juno", "Bram", "Iris", "Sable", "Lark", "Riven", "Talon", "Clover"];
+  const surnames = ["Honeybrook", "Moonvale", "Sparkford", "Willowcrest", "Lanternfield", "Sunmeadow", "Bramblecross", "Cinderbay", "Stormpike", "Rainbowglen"];
   const bySeed = (label: string, pool: string[]) => pool[hashSeed(`${seed}:${template}:${label}`) % pool.length]!;
-  const scoutName = `${bySeed("companion:scout:first", firstNames)} ${bySeed("companion:scout:last", surnames)}`;
-  const tacticianName = `${bySeed("companion:tactician:first", firstNames)} ${bySeed("companion:tactician:last", surnames)}`;
+  const unique = new Set<string>();
+  const ensureUniqueName = (raw: string, index: number) => {
+    const clean = raw.trim().replace(/\s+/g, " ");
+    const base = clean.length > 0 ? clean : `${bySeed(`companion:${index}:first`, firstNames)} ${bySeed(`companion:${index}:last`, surnames)}`;
+    let candidate = base;
+    let suffix = 2;
+    while (unique.has(candidate.toLowerCase())) {
+      candidate = `${base} ${suffix}`;
+      suffix += 1;
+    }
+    unique.add(candidate.toLowerCase());
+    return candidate;
+  };
 
-  return [
-    {
-      companion_id: "companion_01",
-      name: scoutName,
-      archetype: "scout",
-      voice: "dry",
-      mood: "watchful",
-      cadence_turns: 3,
-      urgency_bias: 0.52,
-      metadata: {
-        role: "route_intel",
-        hook_tags: ["threat", "recon", "ambush"],
-      },
-    },
-    {
-      companion_id: "companion_02",
-      name: tacticianName,
-      archetype: "tactician",
-      voice: "blunt",
-      mood: "measured",
-      cadence_turns: 3,
-      urgency_bias: 0.48,
-      metadata: {
-        role: "tempo_control",
-        hook_tags: ["supply", "timing", "fallback"],
-      },
-    },
+  const provided = (blueprint ?? [])
+    .map((entry) => ({
+      name: entry.name.trim(),
+      archetype: canonicalCompanionArchetype(entry.archetype),
+      voice: typeof entry.voice === "string" && entry.voice.trim().length > 0 ? entry.voice.trim() : null,
+      mood: typeof entry.mood === "string" && entry.mood.trim().length > 0 ? entry.mood.trim() : null,
+    }))
+    .filter((entry) => entry.name.length > 0)
+    .slice(0, 4);
+
+  const defaultCompanions = [
+    { name: `${bySeed("companion:scout:first", firstNames)} ${bySeed("companion:scout:last", surnames)}`, archetype: "scout" as const },
+    { name: `${bySeed("companion:tactician:first", firstNames)} ${bySeed("companion:tactician:last", surnames)}`, archetype: "tactician" as const },
   ];
+
+  const selected = provided.length > 0
+    ? provided
+    : defaultCompanions.map((entry) => ({ ...entry, voice: null, mood: null }));
+
+  return selected.map((entry, index) => {
+    const profile = companionArchetypeProfile(entry.archetype);
+    return {
+      companion_id: `companion_${String(index + 1).padStart(2, "0")}`,
+      name: ensureUniqueName(entry.name, index + 1),
+      archetype: entry.archetype,
+      voice: entry.voice ?? profile.voice,
+      mood: entry.mood ?? profile.mood,
+      cadence_turns: profile.cadence_turns,
+      urgency_bias: profile.urgency_bias,
+      metadata: {
+        role: profile.role,
+        hook_tags: profile.hook_tags,
+      },
+    };
+  });
 }
 
 function makeTownState(args: {
@@ -317,6 +378,7 @@ export const mythicCreateCampaign: FunctionHandler = {
       const name = parsed.data.name.trim();
       const description = parsed.data.description.trim();
       const templateKey = normalizeTemplate(parsed.data.template_key);
+      const companionBlueprint = parsed.data.companion_blueprint ?? [];
       const svc = createServiceClient();
 
       const idempotencyHeader = idempotencyKeyFromRequest(req);
@@ -350,7 +412,7 @@ export const mythicCreateCampaign: FunctionHandler = {
       const seed = hashSeed(`${campaign.id}:${name}:${description}:${templateKey}`);
       const worldProfileJson = deriveWorldProfile({ name, description, templateKey, seed });
       const baselineFactions = makeBaselineFactions(templateKey);
-      const baselineCompanions = makeBaselineCompanions(seed, templateKey);
+      const baselineCompanions = makeBaselineCompanions(seed, templateKey, companionBlueprint);
       const baselineFactionNames = baselineFactions.map((entry) => entry.name);
       const townState = makeTownState({
         campaignId: campaign.id,

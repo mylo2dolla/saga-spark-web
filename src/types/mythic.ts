@@ -303,6 +303,13 @@ export interface MythicCreateCharacterRequest {
   seed?: number;
 }
 
+export interface MythicCompanionBlueprint {
+  name: string;
+  archetype: "scout" | "tactician" | "support" | "vanguard" | "hunter" | "mystic";
+  voice?: string;
+  mood?: string;
+}
+
 export interface MythicCreateCharacterResponse {
   character_id: string;
   seed: number;

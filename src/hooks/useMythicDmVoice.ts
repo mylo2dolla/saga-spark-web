@@ -248,7 +248,7 @@ export function useMythicDmVoice(campaignId?: string) {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    const voice = settings.voice || "nova";
+    const voice = settings.voice || "alloy";
     const effectiveMessageId = messageId ?? crypto.randomUUID();
     const idempotencyKey = `tts:${campaignId}:${effectiveMessageId}`;
 
