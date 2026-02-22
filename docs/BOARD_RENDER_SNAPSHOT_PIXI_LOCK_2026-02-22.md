@@ -113,3 +113,13 @@ Added tests:
 - `mythic-runtime-transition:dungeon`: `a3784916-617c-44dc-8f93-70c63868654c`
 - `mythic-runtime-transition:town`: `a484f977-6bbe-4cc1-8361-ade539fb160f`
 - `mythic-combat-start`: `89d790a1-f51d-4923-ab92-53f38f44c429`
+
+### Post-Deploy Auth Board Smoke Request IDs (2026-02-22T11:33:23Z)
+- `mythic-create-campaign`: `50aac798-bdfb-4008-8371-4cd89eb9f03a`
+- `mythic-create-character`: `139bd1f7-d9c2-4d56-8810-8268a3ffbff8`
+- `mythic-dm-context`: `e4171d32-1b0b-4ad8-8480-47c4f45dd67c`
+- `mythic-dungeon-master`: `ae243d6a-007c-4a7b-b53c-d2eaacec2c81`
+- `mythic-runtime-transition:travel`: `ea476775-86d4-4c31-8176-f6e13a02c243`
+- `mythic-runtime-transition:dungeon`: `8db69fd3-ad41-4ed4-b39f-f78cfe3f1607`
+- `mythic-runtime-transition:town`: `2b3071bd-d71d-4e4e-a230-4ac651a3fb40`
+- `mythic-combat-start`: `0a874837-edd6-4580-aaf4-5942b42b110b`
