@@ -89,6 +89,8 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
       cinematicCamera: !props.fastMode,
       showDevOverlay: Boolean(props.showDevOverlay),
       reducedMotion,
+      uiDensity: "minimal" as const,
+      tokenLabelMode: "compact" as const,
       fitMode: "adaptive_contain" as const,
       edgePaddingPx: 10,
       safeInsetTopPx: Math.max(0, Math.floor(props.safeInsetTopPx ?? 0)),
@@ -147,6 +149,13 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
           fps {debugState.fps.toFixed(1)} · draw {debugState.drawCalls} · queue {debugState.queueDepth}
         </div>
       ) : null}
+
+      <div className="sr-only" aria-hidden="true">
+        <span data-testid="board-render-ui-density">{debugState.uiDensity ?? "minimal"}</span>
+        <span data-testid="board-render-token-label-mode">{debugState.tokenLabelMode ?? "compact"}</span>
+        <span data-testid="board-render-status-chip-mode">{debugState.statusChipMode ?? "none"}</span>
+        <span data-testid="board-render-intent-chip-mode">{debugState.intentChipMode ?? "none"}</span>
+      </div>
     </div>
   );
 }

@@ -13,6 +13,10 @@ test.describe("mythic one-panel layout", () => {
     await expect(boardPage).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("dm-overlay-bar")).toBeVisible();
     await expect(page.getByTestId("mythic-command-bar")).toBeVisible();
+    await expect(page.getByTestId("mythic-command-controls")).toBeVisible();
+    await expect(page.getByTestId("command-voice-toggle")).toHaveCount(1);
+    await expect(page.getByTestId("command-transcript-open")).toHaveCount(1);
+    await expect(page.getByTestId("dm-overlay-bar").getByText(/Voice:/i)).toHaveCount(0);
     await expect(page.getByTestId("board-grid-layer").first()).toBeVisible();
 
     const viewport = page.viewportSize();

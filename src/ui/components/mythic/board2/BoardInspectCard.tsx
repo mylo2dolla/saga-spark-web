@@ -41,6 +41,33 @@ function formatMeta(value: unknown): string {
   }
 }
 
+function asInt(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.floor(value);
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.floor(parsed);
+  }
+  return null;
+}
+
+function asString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const clean = value.trim();
+  return clean.length > 0 ? clean : null;
+}
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => {
+      if (typeof entry === "string") return entry.trim();
+      if (!entry || typeof entry !== "object") return "";
+      const record = entry as Record<string, unknown>;
+      return asString(record.id) ?? asString(record.name) ?? asString(record.status_id) ?? "";
+    })
+    .filter((entry) => entry.length > 0);
+}
+
 export function BoardInspectCard(props: BoardInspectCardProps) {
   const target = props.target;
   if (!target) return null;
@@ -59,6 +86,18 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
   const inRangeAttack = typeof target.meta?.in_range_attack === "boolean"
     ? target.meta.in_range_attack
     : null;
+  const fullName = asString(target.meta?.full_name);
+  const team = asString(target.meta?.team);
+  const intent = asString(target.meta?.intent);
+  const turnState = asString(target.meta?.turn_state);
+  const hpCurrent = asInt(target.meta?.hp_current);
+  const hpMax = asInt(target.meta?.hp_max);
+  const mpCurrent = asInt(target.meta?.mp_current);
+  const mpMax = asInt(target.meta?.mp_max);
+  const armor = asInt(target.meta?.armor);
+  const statusFamilies = asStringList(target.meta?.status_families);
+  const statuses = asStringList(target.meta?.statuses);
+  const tacticalStatuses = statusFamilies.length > 0 ? statusFamilies : statuses;
   const metaRows = Object.entries(target.meta ?? {})
     .filter(([key]) => !key.startsWith("_"))
     .slice(0, 10);
@@ -91,6 +130,30 @@ export function BoardInspectCard(props: BoardInspectCardProps) {
         <div className="mt-2 rounded border border-amber-200/25 bg-black/20 px-2 py-1 text-[11px] text-amber-100/80">
           {distanceToPlayer !== null ? `Distance ${distanceToPlayer}` : "Distance unknown"}
           {inRangeAttack !== null ? ` · ${inRangeAttack ? "In range" : "Out of range"}` : ""}
+        </div>
+      ) : null}
+      {fullName || team || intent || turnState || hpCurrent !== null || mpCurrent !== null || armor !== null || tacticalStatuses.length > 0 ? (
+        <div className="mt-2 rounded border border-amber-200/25 bg-black/20 px-2 py-1.5 text-[11px] text-amber-100/80">
+          <div data-testid="inspect-tactical-header" className="mb-1 text-[10px] uppercase tracking-wide text-amber-100/70">Tactical</div>
+          {fullName ? <div><span className="font-semibold text-amber-100">Unit</span>: {fullName}</div> : null}
+          {(team || intent || turnState) ? (
+            <div>
+              <span className="font-semibold text-amber-100">State</span>: {[team, intent, turnState].filter((entry): entry is string => Boolean(entry)).join(" · ")}
+            </div>
+          ) : null}
+          {(hpCurrent !== null || mpCurrent !== null || armor !== null) ? (
+            <div data-testid="inspect-tactical-vitals">
+              <span className="font-semibold text-amber-100">Vitals</span>: {hpCurrent !== null ? `HP ${hpCurrent}/${hpMax ?? "-"}` : "HP -"}
+              {mpCurrent !== null ? ` · MP ${mpCurrent}/${mpMax ?? "-"}` : ""}
+              {armor !== null ? ` · Armor ${armor}` : ""}
+            </div>
+          ) : null}
+          {tacticalStatuses.length > 0 ? (
+            <div data-testid="inspect-tactical-statuses">
+              <span className="font-semibold text-amber-100">Status</span>: {tacticalStatuses.slice(0, 6).join(", ")}
+              {tacticalStatuses.length > 6 ? ` +${tacticalStatuses.length - 6}` : ""}
+            </div>
+          ) : null}
         </div>
       ) : null}
 

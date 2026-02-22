@@ -3323,9 +3323,6 @@ export default function MythicGameScreen() {
                   latestNarration={latestAssistantNarration}
                   phase={mythicDm.phase}
                   isBusy={isBoardBusy}
-                  isVoiceEnabled={dmVoice.enabled}
-                  onToggleVoice={() => dmVoice.setEnabled(!dmVoice.enabled)}
-                  onOpenTranscript={() => setDmOverlayExpanded(true)}
                 />
               </div>
 

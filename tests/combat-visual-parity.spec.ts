@@ -20,8 +20,11 @@ test.describe("mythic combat visual parity", () => {
       await expect(combatRail).toContainText(/Recover MP/i);
 
       await expect(page.getByTestId("combat-move-state")).toContainText(/Move/i);
+      await expect(page.getByTestId("board-render-token-label-mode")).toContainText("compact");
+      await expect(page.getByTestId("board-render-status-chip-mode")).toContainText("none");
+      await expect(page.getByTestId("board-render-intent-chip-mode")).toContainText("none");
 
-      const paceBadge = page.getByTestId("combat-pace-badge");
+      const paceBadge = page.getByTestId("board-mode-pace");
       if (await paceBadge.count()) {
         await expect(paceBadge).toContainText(/Pace:/i);
       }
@@ -43,5 +46,25 @@ test.describe("mythic combat visual parity", () => {
     const inspectCard = page.getByTestId("board-inspect-card");
     await expect(inspectCard).toBeVisible();
     await expect(inspectCard).toContainText(/Confirm Action/i);
+    let tacticalHeaderCount = await page.getByTestId("inspect-tactical-header").count();
+    if (tacticalHeaderCount === 0) {
+      const box = await boardGrid.boundingBox();
+      if (box) {
+        const probes = [
+          { x: Math.max(8, Math.floor(box.width * 0.65)), y: Math.max(8, Math.floor(box.height * 0.35)) },
+          { x: Math.max(8, Math.floor(box.width * 0.5)), y: Math.max(8, Math.floor(box.height * 0.5)) },
+          { x: Math.max(8, Math.floor(box.width * 0.75)), y: Math.max(8, Math.floor(box.height * 0.55)) },
+        ];
+        for (const point of probes) {
+          await boardGrid.click({ position: point });
+          await expect(inspectCard).toBeVisible();
+          tacticalHeaderCount = await page.getByTestId("inspect-tactical-header").count();
+          if (tacticalHeaderCount > 0) break;
+        }
+      }
+    }
+    if (tacticalHeaderCount > 0) {
+      await expect(page.getByTestId("inspect-tactical-vitals")).toBeVisible();
+    }
   });
 });

@@ -61,6 +61,12 @@ function intentSymbol(intent: RenderEntity["intent"] | undefined): string {
   return "IDLE";
 }
 
+function compactTokenLabel(value: string, fallback: string): string {
+  const raw = (value.trim().length > 0 ? value : fallback).replace(/[^a-z0-9]/gi, "");
+  if (!raw) return "UNIT";
+  return raw.slice(0, 4).toUpperCase();
+}
+
 function tileOffsets(entities: RenderEntity[], tileSize: number): Map<string, { dx: number; dy: number }> {
   const grouped = new Map<string, string[]>();
   for (const entity of entities) {
@@ -71,18 +77,32 @@ function tileOffsets(entities: RenderEntity[], tileSize: number): Map<string, { 
   }
 
   const offsets = new Map<string, { dx: number; dy: number }>();
-  const presets = [
-    { dx: 0, dy: 0 },
-    { dx: tileSize * 0.14, dy: -tileSize * 0.1 },
-    { dx: -tileSize * 0.14, dy: tileSize * 0.08 },
-    { dx: tileSize * 0.12, dy: tileSize * 0.12 },
-    { dx: -tileSize * 0.12, dy: -tileSize * 0.12 },
-  ];
+  for (const idsRaw of grouped.values()) {
+    const ids = idsRaw.slice().sort((left, right) => left.localeCompare(right));
+    if (ids.length <= 1) {
+      const single = ids[0];
+      if (single) offsets.set(single, { dx: 0, dy: 0 });
+      continue;
+    }
 
-  for (const ids of grouped.values()) {
-    ids.forEach((id, idx) => {
-      offsets.set(id, presets[Math.min(idx, presets.length - 1)] ?? { dx: 0, dy: 0 });
-    });
+    let cursor = 0;
+    let ringIndex = 0;
+    let ringCap = 6;
+    while (cursor < ids.length) {
+      const countInRing = Math.min(ringCap, ids.length - cursor);
+      const radius = tileSize * (0.11 + (ringIndex * 0.09));
+      for (let i = 0; i < countInRing; i += 1) {
+        const id = ids[cursor + i];
+        const angle = ((Math.PI * 2 * i) / countInRing) - (Math.PI / 2);
+        offsets.set(id, {
+          dx: Math.cos(angle) * radius,
+          dy: Math.sin(angle) * radius * 0.82,
+        });
+      }
+      cursor += countInRing;
+      ringIndex += 1;
+      ringCap += 4;
+    }
   }
 
   return offsets;
@@ -112,6 +132,17 @@ function drawMarkerChip(text: string, fill: number, y: number): PIXI.Container {
 
 export class EntityRenderer {
   readonly container = new PIXI.Container();
+  private renderMeta: {
+    uiDensity: "minimal" | "balanced";
+    tokenLabelMode: "compact" | "full";
+    statusChipMode: "none" | "single" | "stack";
+    intentChipMode: "none" | "single" | "stack";
+  } = {
+    uiDensity: "minimal",
+    tokenLabelMode: "compact",
+    statusChipMode: "none",
+    intentChipMode: "none",
+  };
 
   constructor() {
     this.container.eventMode = "none";
@@ -122,6 +153,16 @@ export class EntityRenderer {
     const tileSize = snapshot.board.tileSize;
     const live = snapshot.entities.filter((entity) => entity.kind === "building" || entity.kind === "prop" || (entity.hp ?? 1) > 0);
     const offsets = tileOffsets(live, tileSize);
+    const compactCombatLabels = snapshot.board.type === "combat" && settings.tokenLabelMode === "compact";
+    const minimalCombatLabels = snapshot.board.type === "combat" && settings.uiDensity === "minimal";
+    const showStatusChips = settings.uiDensity === "balanced";
+    const showIntentChip = settings.uiDensity === "balanced";
+    this.renderMeta = {
+      uiDensity: settings.uiDensity,
+      tokenLabelMode: (minimalCombatLabels || compactCombatLabels) ? "compact" : "full",
+      statusChipMode: showStatusChips ? "single" : "none",
+      intentChipMode: showIntentChip ? "single" : "none",
+    };
 
     for (const entity of live) {
       const root = new PIXI.Container();
@@ -196,10 +237,12 @@ export class EntityRenderer {
       }
 
       const name = new PIXI.Text({
-        text: entity.displayName ?? entity.id,
+        text: (minimalCombatLabels || compactCombatLabels)
+          ? compactTokenLabel(entity.displayName ?? "", entity.id)
+          : (entity.displayName ?? entity.id),
         style: {
           fontFamily: "Verdana, sans-serif",
-          fontSize: 9,
+          fontSize: minimalCombatLabels ? 8 : 9,
           fill: 0xf8fafc,
           fontWeight: "bold",
         },
@@ -209,16 +252,18 @@ export class EntityRenderer {
       root.addChild(name);
 
       const statuses = entity.statuses ?? [];
-      const visibleStatuses = statuses.slice(0, 3);
-      visibleStatuses.forEach((status, index) => {
-        const chip = drawMarkerChip(statusShort(status.family), statusColor(status.family), -30 + (index * 12));
-        chip.x = 16;
-        root.addChild(chip);
-      });
-      if (statuses.length > 3) {
-        const overflow = drawMarkerChip(`+${statuses.length - 3}`, 0xcad3de, -30 + (3 * 12));
-        overflow.x = 16;
-        root.addChild(overflow);
+      if (showStatusChips) {
+        const first = statuses[0];
+        if (first) {
+          const chip = drawMarkerChip(statusShort(first.family), statusColor(first.family), -30);
+          chip.x = 16;
+          root.addChild(chip);
+          if (statuses.length > 1) {
+            const overflow = drawMarkerChip(`+${statuses.length - 1}`, 0xcad3de, -18);
+            overflow.x = 16;
+            root.addChild(overflow);
+          }
+        }
       }
 
       const roleText = markerLabel(entity.markerRole);
@@ -229,7 +274,7 @@ export class EntityRenderer {
       }
 
       const intentText = intentSymbol(entity.intent);
-      if (intentText && entity.kind !== "building") {
+      if (showIntentChip && intentText && entity.kind !== "building") {
         const intent = drawMarkerChip(intentText, 0xd4d8ff, -42);
         intent.x = 0;
         root.addChild(intent);
@@ -245,6 +290,10 @@ export class EntityRenderer {
 
       this.container.addChild(root);
     }
+  }
+
+  getRenderMeta() {
+    return this.renderMeta;
   }
 
   destroy() {

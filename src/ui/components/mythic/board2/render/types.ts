@@ -234,6 +234,8 @@ export interface RendererSettings {
   cinematicCamera: boolean;
   showDevOverlay: boolean;
   reducedMotion: boolean;
+  uiDensity: "minimal" | "balanced";
+  tokenLabelMode: "compact" | "full";
   fitMode: "adaptive_contain" | "contain" | "cover";
   edgePaddingPx: number;
   safeInsetTopPx: number;
@@ -248,6 +250,10 @@ export interface RendererDebugState {
   queueDepth: number;
   activeParticles: number;
   activeFloatingTexts: number;
+  uiDensity?: "minimal" | "balanced";
+  tokenLabelMode?: "compact" | "full";
+  statusChipMode?: "none" | "single" | "stack";
+  intentChipMode?: "none" | "single" | "stack";
   cameraScale?: number;
   cameraShakeMs?: number;
 }

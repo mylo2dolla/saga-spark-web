@@ -38,23 +38,44 @@ export function MythicCommandBar(props: MythicCommandBarProps) {
       data-testid="mythic-command-bar"
       className="pointer-events-auto rounded-lg border border-amber-200/35 bg-black/50 p-2 shadow-[0_-8px_24px_rgba(0,0,0,0.35)] backdrop-blur-[2px]"
     >
-      <div className="mb-2 flex flex-wrap items-center gap-2">
+      <div data-testid="mythic-command-controls" className="mb-2 flex flex-wrap items-center gap-1.5">
         <Button
+          data-testid="command-voice-toggle"
           size="sm"
           variant={props.voiceEnabled ? "secondary" : "outline"}
-          className="h-7 px-2 text-[11px]"
+          className="h-7 px-2 text-[10px] sm:text-[11px]"
           onClick={() => props.onToggleVoice?.(!props.voiceEnabled)}
           disabled={!props.voiceSupported}
         >
           Voice: {props.voiceEnabled ? "On" : "Off"}
         </Button>
-        <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => props.onSpeakLatest?.()} disabled={!props.voiceSupported}>
+        <Button
+          data-testid="command-voice-speak"
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 text-[10px] sm:text-[11px]"
+          onClick={() => props.onSpeakLatest?.()}
+          disabled={!props.voiceSupported}
+        >
           Speak Latest
         </Button>
-        <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => props.onStopVoice?.()} disabled={!props.voiceSupported}>
+        <Button
+          data-testid="command-voice-stop"
+          size="sm"
+          variant="outline"
+          className="h-7 px-2 text-[10px] sm:text-[11px]"
+          onClick={() => props.onStopVoice?.()}
+          disabled={!props.voiceSupported}
+        >
           Stop
         </Button>
-        <Button size="sm" variant="secondary" className="h-7 px-2 text-[11px]" onClick={props.onOpenTranscript}>
+        <Button
+          data-testid="command-transcript-open"
+          size="sm"
+          variant="secondary"
+          className="h-7 px-2 text-[10px] sm:text-[11px]"
+          onClick={props.onOpenTranscript}
+        >
           Transcript
         </Button>
         {props.isDmLoading ? (

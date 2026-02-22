@@ -26,6 +26,10 @@ const EMPTY_DEBUG: RendererDebugState = {
   queueDepth: 0,
   activeParticles: 0,
   activeFloatingTexts: 0,
+  uiDensity: "minimal",
+  tokenLabelMode: "compact",
+  statusChipMode: "none",
+  intentChipMode: "none",
 };
 
 export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
@@ -43,6 +47,8 @@ export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
       cinematicCamera: args.settings.cinematicCamera,
       showDevOverlay: args.settings.showDevOverlay,
       reducedMotion: args.settings.reducedMotion,
+      uiDensity: args.settings.uiDensity,
+      tokenLabelMode: args.settings.tokenLabelMode,
       fitMode: args.settings.fitMode,
       edgePaddingPx: args.settings.edgePaddingPx,
       safeInsetTopPx: args.settings.safeInsetTopPx,
@@ -54,6 +60,8 @@ export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
       args.settings.cinematicCamera,
       args.settings.showDevOverlay,
       args.settings.reducedMotion,
+      args.settings.uiDensity,
+      args.settings.tokenLabelMode,
       args.settings.fitMode,
       args.settings.edgePaddingPx,
       args.settings.safeInsetTopPx,

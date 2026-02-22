@@ -855,7 +855,7 @@ function combatPaceStripLabel(data: CombatSceneData): string | null {
   if (pace.phase === "waiting_voice_end") return "Pace: waiting on voice";
   if (pace.phase === "step_committed" || pace.phase === "narrating") return "Pace: narrating";
   if (pace.phase === "next_step_ready") return "Pace: next step ready";
-  return "Pace: idle";
+  return null;
 }
 
 function buildHero(args: {
@@ -1812,10 +1812,23 @@ function buildCombatScene(args: {
     const x = Math.max(0, Math.min(gridCols - 1, Math.floor(combatant.x)));
     const y = Math.max(0, Math.min(gridRows - 1, Math.floor(combatant.y)));
     const hpPct = combatant.hp_max > 0 ? Math.max(0, Math.min(100, Math.round((combatant.hp / combatant.hp_max) * 100))) : 0;
+    const hpCurrent = Math.max(0, Math.floor(combatant.hp));
+    const hpMax = Math.max(1, Math.floor(combatant.hp_max));
+    const mpCurrent = Math.max(0, Math.floor(combatant.power));
+    const mpMax = Math.max(0, Math.floor(combatant.power_max));
+    const armorCurrent = Math.max(0, Math.floor(combatant.armor));
     const distanceToPlayer = playerCombatant
       ? tileDistance({ x: Math.floor(playerCombatant.x), y: Math.floor(playerCombatant.y) }, { x, y })
       : null;
     const inRangeForAttack = distanceToPlayer !== null ? distanceToPlayer <= 1 : false;
+    const statusFamilies = data.statusFamiliesByCombatant[combatant.id] ?? [];
+    const isFocused = data.focusedCombatantId === combatant.id;
+    const isActive = combatant.id === data.activeTurnCombatantId;
+    const isAlly = isAllyCombatant(combatant);
+    const fullName = data.displayNames[combatant.id]?.fullName ?? combatant.name;
+    const displayLabel = data.displayNames[combatant.id]?.displayLabel ?? compactCombatantName(combatant.name, 8);
+    const turnState = isActive ? "active_turn" : (isFocused ? "focused" : "waiting");
+    const intent = isActive ? (isAlly ? "support" : "attack") : "idle";
     const moveReason = moveCore?.reason ?? (isPlayersTurn ? null : "Not your turn.");
     const attackReason = attackCore?.reason
       ?? (isPlayersTurn
@@ -1825,31 +1838,41 @@ function buildCombatScene(args: {
       id: `combatant-${combatant.id}`,
       kind: "combatant",
       title: combatant.name,
-      subtitle: `${combatant.entity_type} • hp ${Math.floor(combatant.hp)}/${Math.floor(combatant.hp_max)}`,
+      subtitle: `${combatant.entity_type} • hp ${hpCurrent}/${hpMax}`,
       description: "Focus target and trigger tactical narration/actions.",
       rect: { x, y, w: 1, h: 1 },
       actions: buildCombatantActions({
         combatantId: combatant.id,
         combatantName: combatant.name,
-        isFocused: data.focusedCombatantId === combatant.id,
-        isEnemy: !isAllyCombatant(combatant),
-        moveDisabledReason: !isAllyCombatant(combatant) ? moveReason : null,
-        attackDisabledReason: !isAllyCombatant(combatant) ? attackReason : null,
+        isFocused,
+        isEnemy: !isAlly,
+        moveDisabledReason: !isAlly ? moveReason : null,
+        attackDisabledReason: !isAlly ? attackReason : null,
         focusDisabledReason: focusReason,
       }),
       meta: {
         combatant_id: combatant.id,
+        full_name: fullName,
+        display_label: displayLabel,
         entity_type: combatant.entity_type,
+        team: isAlly ? "ally" : "enemy",
+        turn_state: turnState,
+        intent,
+        hp_current: hpCurrent,
+        hp_max: hpMax,
         hp_pct: hpPct,
-        power: Math.floor(combatant.power),
+        mp_current: mpCurrent,
+        mp_max: mpMax,
+        armor: armorCurrent,
         distance_to_player: distanceToPlayer,
         in_range_attack: inRangeForAttack,
         statuses: combatant.statuses,
+        status_families: statusFamilies,
       },
       visual: {
-        tier: isAllyCombatant(combatant) ? "secondary" : "primary",
-        icon: isAllyCombatant(combatant) ? "ALY" : "ENY",
-        emphasis: combatant.id === data.activeTurnCombatantId ? "pulse" : "normal",
+        tier: isAlly ? "secondary" : "primary",
+        icon: isAlly ? "ALY" : "ENY",
+        emphasis: isActive ? "pulse" : "normal",
       },
     };
   });

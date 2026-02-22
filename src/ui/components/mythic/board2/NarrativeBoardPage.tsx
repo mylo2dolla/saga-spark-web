@@ -164,13 +164,8 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
           <span className="rounded border border-amber-200/35 bg-black/35 px-1.5 py-0.5">{props.scene.modeStrip.turnOwnerLabel}</span>
         ) : null}
         {props.scene.modeStrip.paceLabel ? (
-          <span className="rounded border border-cyan-200/35 bg-black/35 px-1.5 py-0.5 text-cyan-100/85">
+          <span data-testid="board-mode-pace" className="rounded border border-cyan-200/35 bg-black/35 px-1.5 py-0.5 text-cyan-100/85">
             {props.scene.modeStrip.paceLabel}
-          </span>
-        ) : null}
-        {props.scene.modeStrip.moveStateLabel ? (
-          <span className="rounded border border-emerald-200/35 bg-black/35 px-1.5 py-0.5 text-emerald-100/85">
-            {props.scene.modeStrip.moveStateLabel}
           </span>
         ) : null}
       </div>
@@ -216,7 +211,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
           <div className="mb-1.5 flex flex-wrap items-center gap-1 text-[10px] uppercase tracking-wide text-red-100/75">
             <span>Core Actions</span>
             {props.scene.modeStrip.moveStateLabel ? (
-              <span className="rounded border border-red-100/30 bg-black/35 px-1.5 py-0.5 text-[9px] text-red-100/80">
+              <span data-testid="combat-move-state" className="rounded border border-red-100/30 bg-black/35 px-1.5 py-0.5 text-[9px] text-red-100/80">
                 {props.scene.modeStrip.moveStateLabel}
               </span>
             ) : null}

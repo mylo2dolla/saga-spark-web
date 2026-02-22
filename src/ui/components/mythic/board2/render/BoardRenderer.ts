@@ -27,6 +27,8 @@ function defaultSettings(): RendererSettings {
     cinematicCamera: true,
     showDevOverlay: false,
     reducedMotion: false,
+    uiDensity: "minimal",
+    tokenLabelMode: "compact",
     fitMode: "adaptive_contain",
     edgePaddingPx: 10,
     safeInsetTopPx: 0,
@@ -89,6 +91,10 @@ export class BoardRenderer {
     queueDepth: 0,
     activeParticles: 0,
     activeFloatingTexts: 0,
+    uiDensity: "minimal",
+    tokenLabelMode: "compact",
+    statusChipMode: "none",
+    intentChipMode: "none",
     cameraScale: 1,
     cameraShakeMs: 0,
   };
@@ -283,7 +289,15 @@ export class BoardRenderer {
   private drawUiMarkers(snapshot: RenderSnapshot) {
     this.uiLayer.removeChildren();
     const tileSize = snapshot.board.tileSize;
-    for (const marker of snapshot.uiOverlays) {
+    const visibleMarkers = snapshot.board.type === "combat"
+      ? snapshot.uiOverlays.filter((marker) => (
+        marker.type === "danger"
+          || marker.type === "objective"
+          || marker.type === "hot_hook"
+          || marker.priority <= 1
+      ))
+      : snapshot.uiOverlays;
+    for (const marker of visibleMarkers) {
       const x = (marker.x * tileSize) + 2;
       const y = (marker.y * tileSize) + 2;
       const box = new PIXI.Graphics();
@@ -423,6 +437,7 @@ export class BoardRenderer {
     }
 
     this.entityRenderer.render(this.snapshot, this.assetManager, this.settings);
+    const renderMeta = this.entityRenderer.getRenderMeta();
     this.telegraphRenderer.render(this.snapshot);
     this.drawUiMarkers(this.snapshot);
 
@@ -461,6 +476,10 @@ export class BoardRenderer {
     this.debugState.queueDepth = this.pendingEvents.length;
     this.debugState.activeParticles = this.particles.activeCount();
     this.debugState.activeFloatingTexts = this.floatingText.activeCount();
+    this.debugState.uiDensity = renderMeta.uiDensity;
+    this.debugState.tokenLabelMode = renderMeta.tokenLabelMode;
+    this.debugState.statusChipMode = renderMeta.statusChipMode;
+    this.debugState.intentChipMode = renderMeta.intentChipMode;
     this.debugState.cameraScale = cameraDebug.scale;
     this.debugState.cameraShakeMs = cameraDebug.shakeMs;
 
@@ -476,6 +495,12 @@ export class BoardRenderer {
       queueDepth: this.debugState.queueDepth,
       activeParticles: this.debugState.activeParticles,
       activeFloatingTexts: this.debugState.activeFloatingTexts,
+      uiDensity: this.debugState.uiDensity,
+      tokenLabelMode: this.debugState.tokenLabelMode,
+      statusChipMode: this.debugState.statusChipMode,
+      intentChipMode: this.debugState.intentChipMode,
+      cameraScale: this.debugState.cameraScale,
+      cameraShakeMs: this.debugState.cameraShakeMs,
     };
   }
 
