@@ -103,3 +103,12 @@ This pass upgraded campaign/class forge quality and companion setup:
   - `cd services/mythic-api && npm run test:worldforge` ✅
   - `cd services/mythic-api && npm run test:worldforge:contracts` ✅
   - `npm run test:balance:gate` ✅
+
+## Production Verification (2026-02-22, commit `a1d8758`)
+- Deployment synced to `https://mythweaver.online`.
+- Post-rollout forge/runtime smoke request IDs:
+  - `mythic-create-campaign`: `266ab98f-1e50-4f98-95cc-22ad77e0f71a`
+  - `mythic-create-character`: `38a4024d-0345-4a56-aed7-e12ac21bcf60`
+  - `mythic-dm-context`: `80d511e5-597d-47a8-9d47-f7440b457cfc`
+  - `mythic-dungeon-master`: `8ba858ad-bb46-4331-870a-f2d8dedde790`
+  - `mythic-combat-start`: `11a33535-fc20-48bb-89a1-ebdd0b8ebe0e`

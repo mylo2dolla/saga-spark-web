@@ -174,3 +174,19 @@ Two-wave stabilization on one branch:
   - `mythic-runtime-transition:dungeon`: `d277ed8c-d5f2-4938-b3d7-fc48b98a826b`
   - `mythic-runtime-transition:town`: `6dbeeb44-c127-4efe-9e1b-65d624c07728`
   - `mythic-combat-start`: `a8856eec-ed79-4c39-a3bf-e8fabfab1967`
+
+## Production Rollout Verification (2026-02-22, commit `a1d8758`)
+- Frontend production alias: `https://mythweaver.online`
+- Vercel inspect URL: `https://vercel.com/mylo2dollas-projects/saga-spark-web/4UuHzd5P41uX8M5xsmdjpXjb2WSq`
+- Vercel production URL: `https://saga-spark-14a6zubms-mylo2dollas-projects.vercel.app`
+- VM runtime deploy path: `/opt/saga-spark-web/services/mythic-api`
+- VM deploy mode: `git pull --ff-only vault main` + `docker compose up -d --build --force-recreate`
+- Post-rollout smoke request IDs:
+  - `mythic-create-campaign`: `266ab98f-1e50-4f98-95cc-22ad77e0f71a`
+  - `mythic-create-character`: `38a4024d-0345-4a56-aed7-e12ac21bcf60`
+  - `mythic-dm-context`: `80d511e5-597d-47a8-9d47-f7440b457cfc`
+  - `mythic-dungeon-master`: `8ba858ad-bb46-4331-870a-f2d8dedde790`
+  - `mythic-runtime-transition:travel`: `e5a05286-0025-453d-a75a-12a6c94d1946`
+  - `mythic-runtime-transition:dungeon`: `293cc64b-c22a-4726-bf40-0e8d35c92e68`
+  - `mythic-runtime-transition:town`: `558bc567-4737-4999-a7e6-6d91dda430a1`
+  - `mythic-combat-start`: `11a33535-fc20-48bb-89a1-ebdd0b8ebe0e`
