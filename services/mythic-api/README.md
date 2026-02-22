@@ -73,6 +73,22 @@ journalctl -u mythic-api -f
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `MYTHIC_ALLOWED_ORIGINS`
 - `OPENAI_API_KEY`
+- `DM_NARRATOR_MODE` (`ai` | `procedural` | `hybrid`, default `hybrid`)
+
+## DM narrator mode
+
+- `DM_NARRATOR_MODE=ai`: always use the LLM narrator path.
+- `DM_NARRATOR_MODE=procedural`: zero LLM calls; deterministic procedural narration only.
+- `DM_NARRATOR_MODE=hybrid`: try AI first, then procedural fallback on AI failure.
+
+Per-request overrides:
+- Header: `X-DM-Narrator-Mode: ai|procedural|hybrid`
+- Query param (dev only): `?dmNarrator=procedural`
+
+Development harness:
+- UI route: `/dev/narrator-test`
+- API endpoint: `POST /functions/v1/mythic-narrator-test`
+- Smoke test: `npm run test:narrator-smoke`
 
 ## Notes
 

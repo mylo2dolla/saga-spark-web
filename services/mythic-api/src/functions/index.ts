@@ -12,6 +12,7 @@ import { mythicFieldGenerate } from "./mythic-field-generate.js";
 import { mythicGenerateLoot } from "./mythic-generate-loot.js";
 import { mythicJoinCampaign } from "./mythic-join-campaign.js";
 import { mythicListCampaigns } from "./mythic-list-campaigns.js";
+import { mythicNarratorTest } from "./mythic-narrator-test.js";
 import { mythicRuntimeTransition } from "./mythic-runtime-transition.js";
 import { mythicInventoryEquip } from "./mythic-inventory-equip.js";
 import { mythicInventoryUnequip } from "./mythic-inventory-unequip.js";
@@ -35,6 +36,7 @@ const handlers: FunctionHandler[] = [
   mythicGenerateLoot,
   mythicJoinCampaign,
   mythicListCampaigns,
+  mythicNarratorTest,
   mythicInventoryEquip,
   mythicInventoryUnequip,
   mythicRecomputeCharacter,

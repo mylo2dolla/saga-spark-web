@@ -15,6 +15,7 @@
     "test:balance:gate": "playwright test tests/sim/balance.sim.test.ts --reporter=line",
     "smoke:prod": "playwright test tests/prod-smoke.spec.ts",
     "smoke:board": "bash scripts/smoke-mythic-board-auth.sh",
+    "test:narrator:smoke": "node scripts/narrator-smoke-test.js",
     "worldforge:backfill": "npx tsx scripts/backfill-worldforge-profiles.ts",
     "vm:deploy:guard": "bash scripts/vm-deploy-guard.sh",
     "test:e2e:headed": "playwright test --headed",

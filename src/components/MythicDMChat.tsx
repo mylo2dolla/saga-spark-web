@@ -115,6 +115,17 @@ export function MythicDMChat({
     setInput("");
   };
 
+  const narratorSourceForMessage = (message: MythicDMMessage): "ai" | "procedural" | null => {
+    const meta = message.parsed?.meta as Record<string, unknown> | undefined;
+    const value = typeof meta?.narrator_source === "string"
+      ? meta.narrator_source
+      : typeof meta?.narratorSource === "string"
+        ? meta.narratorSource
+        : "";
+    const normalized = value.trim().toLowerCase();
+    return normalized === "ai" || normalized === "procedural" ? normalized : null;
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="relative min-h-0 flex-1">
@@ -139,6 +150,11 @@ export function MythicDMChat({
                     <div className="mb-2 flex items-center gap-2">
                       <Sparkles className="h-4 w-4 text-primary" />
                       <span className="text-xs font-display text-primary uppercase">Mythic DM</span>
+                      {narratorSourceForMessage(m) ? (
+                        <span className="rounded border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[10px] uppercase text-primary/90">
+                          {narratorSourceForMessage(m)}
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
                   <div className="whitespace-pre-wrap text-sm text-foreground/90">
