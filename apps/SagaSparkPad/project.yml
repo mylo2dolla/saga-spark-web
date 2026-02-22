@@ -1,0 +1,33 @@
+name: "SagaSparkPad"
+options:
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0.0"
+packages:
+  LvlUpKit:
+    path: "../../../levelupkit/lvlupkit.package"
+targets:
+  "SagaSparkPad":
+    type: application
+    platform: "iOS"
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources
+    dependencies:
+      - package: LvlUpKit
+        product: LvlUpKitSagaSparkPad
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: "com.lvlupkit.sagasparkpad"
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "2"
+schemes:
+  "SagaSparkPad":
+    build:
+      targets:
+        "SagaSparkPad": all
+    run:
+      config: Debug
