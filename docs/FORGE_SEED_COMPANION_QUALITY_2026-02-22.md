@@ -49,3 +49,12 @@ This pass upgraded campaign/class forge quality and companion setup:
   - `mythic-dm-context`: `656e24ea-07e8-412e-ac4b-0e1794bfb1e9`
   - `mythic-dungeon-master`: `ee437449-910f-4b45-9a22-6913d3bbc5eb`
   - `mythic-combat-start`: `da9d5f91-5f98-4346-a651-e312ef4498c2`
+
+## Post-Deploy Verification (2026-02-22)
+- `npm run smoke:prod` ✅
+- `npm run smoke:board` ✅
+  - `mythic-create-campaign`: `245b719d-6822-4d67-957c-d6223b72954c`
+  - `mythic-create-character`: `b118c863-e84d-4e16-9964-22383c46f6dd`
+  - `mythic-dm-context`: `e95614ad-87a6-4764-9b09-fc54c6ced525`
+  - `mythic-dungeon-master`: `c016054e-b9da-4bd5-a6ff-b26ffb4d4624`
+  - `mythic-combat-start`: `21e01a2f-cd0a-4d2f-8655-86b82952c3af`

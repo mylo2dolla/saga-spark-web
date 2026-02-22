@@ -64,3 +64,13 @@ This pass shipped presentation-layer stabilization without touching combat math 
 - `mythic-runtime-transition:dungeon`: `160bff64-d981-4d57-b346-e714fb60c124`
 - `mythic-runtime-transition:town`: `87aae7b8-7256-47ee-a754-2d6f9a7fe590`
 - `mythic-combat-start`: `da9d5f91-5f98-4346-a651-e312ef4498c2`
+
+## Post-Deploy Verification (2026-02-22)
+- `mythic-create-campaign`: `245b719d-6822-4d67-957c-d6223b72954c`
+- `mythic-create-character`: `b118c863-e84d-4e16-9964-22383c46f6dd`
+- `mythic-dm-context`: `e95614ad-87a6-4764-9b09-fc54c6ced525`
+- `mythic-dungeon-master`: `c016054e-b9da-4bd5-a6ff-b26ffb4d4624`
+- `mythic-runtime-transition:travel`: `046e6afb-93df-48d7-9c8e-5a0bbfbf0f76`
+- `mythic-runtime-transition:dungeon`: `8fa09666-d191-485b-8d8a-8fa35be7bae5`
+- `mythic-runtime-transition:town`: `e1f259d0-0e69-4ef1-8622-e11c83a1cd5c`
+- `mythic-combat-start`: `21e01a2f-cd0a-4d2f-8655-86b82952c3af`
