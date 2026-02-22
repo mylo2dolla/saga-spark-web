@@ -70,3 +70,31 @@ TODO / next suggested hardening:
 - Remove legacy utility drawer panel stack (status/skills/combat/quests/companions/shop) in favor of direct 6-tab character-sheet launcher only.
 - Add one deterministic e2e for hotspot-specific town building popup actions once stable campaign fixture is available.
 - Capture manual QA notes from real campaign for DM latency perception (time-to-first-token and total turn resolution) to guide next DM tuning pass.
+
+2026-02-22 (RPG math + progression modular rules pass)
+- Added canonical modular rules package under `src/rules`:
+  - `schema.ts`, `constants.ts`, `leveling.ts`, `stats.ts`, `combatMath.ts`, `skills.ts`, `status.ts`, `loot.ts`, `equipment.ts`, `economy.ts`, `qol.ts`, `simulateFight.ts`
+- Added root compatibility exports under `rules/` to match requested module paths.
+- Added simulation harness and balance tests:
+  - `tests/sim/simulateFight.ts`
+  - `tests/sim/balance.sim.test.ts`
+- Added dev tuning surface:
+  - `src/debug/BalancePanel.tsx`
+  - mounted in `src/App.tsx`
+  - root compatibility export `debug/BalancePanel.tsx`
+- Character sheet adapter now builds canonical rules-backed view model with:
+  - rule version,
+  - derived stats/resistances/status summaries/tooltips,
+  - rank+power skill summaries,
+  - rule-based inventory auto-sort.
+- Combat + DM context rule-version wiring:
+  - `services/mythic-api/src/lib/rules/version.ts`
+  - `mythic-combat-use-skill`, `mythic-combat-tick`, `mythic-dm-context` now emit `rule_version` metadata.
+  - frontend combat snapshots/log diagnostics surface rule version.
+- Added rules documentation:
+  - `docs/rules.md`
+
+TODO / next suggested hardening:
+- Replace remaining DB RPC combat calculations (`mythic_compute_damage`, `mythic_status_apply_chance`) with shared TS rules calls for full single-source parity.
+- Add one focused e2e that opens the dev balance panel and verifies tune values reflect in table outputs.
+- Expand status simulation coverage for stacking mode edge cases (`stack` cap pressure and `intensity` overflow behavior).

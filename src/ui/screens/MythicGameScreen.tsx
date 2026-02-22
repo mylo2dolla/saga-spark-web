@@ -26,10 +26,11 @@ import { callEdgeFunction } from "@/lib/edge";
 import { sumStatMods, splitInventory, type MythicInventoryRow } from "@/lib/mythicEquipment";
 import { parsePlayerCommand, type PlayerCommandPanel } from "@/lib/mythic/playerCommandParser";
 import { executePlayerCommand } from "@/lib/mythic/playerCommandExecutor";
-import { useMythicDevSurfaces } from "@/lib/mythic/featureFlags";
+import { useMythicBoardRenderer, useMythicDevSurfaces } from "@/lib/mythic/featureFlags";
 import { buildSkillAvailability } from "@/lib/mythic/skillAvailability";
 import { createLogger } from "@/lib/observability/logger";
 import { parseEdgeError } from "@/lib/edgeError";
+import { RULE_VERSION } from "@/rules/constants";
 import { toast } from "sonner";
 import { BookShell } from "@/ui/components/mythic/BookShell";
 import { NarrativePage } from "@/ui/components/mythic/NarrativePage";
@@ -399,6 +400,14 @@ function isMechanicalExecutionError(message: string): boolean {
     || normalized.includes("no valid target")
     || normalized.includes("no valid targets in area")
     || normalized.includes("combat is active")
+    || normalized.includes("failed to transition mode")
+    || normalized.includes("board interaction failed")
+    || normalized.includes("travel probe failed")
+    || normalized.includes("combat session failed to start")
+    || normalized.includes("combat session did not start")
+    || normalized.includes("quick-cast failed")
+    || normalized.includes("skill execution failed")
+    || normalized.includes("no active combat session")
     || normalized.includes("failed (409)")
     || normalized.includes("mythic-combat-use-skill failed")
     || normalized.includes("mythic-combat-tick failed");
@@ -496,6 +505,57 @@ function buildCombatEventCursor(events: Array<Record<string, unknown>>): string 
   const createdAt = typeof last.created_at === "string" ? last.created_at.trim() : "";
   if (!Number.isFinite(turnIndex) || !eventId) return null;
   return `${Math.floor(turnIndex)}:${eventId}:${createdAt || "na"}`;
+}
+
+function parseCombatEventCursor(cursor: string | null): { turnIndex: number; eventId: string; createdAt: string } | null {
+  if (typeof cursor !== "string" || cursor.trim().length === 0) return null;
+  const clean = cursor.trim();
+  const firstSep = clean.indexOf(":");
+  if (firstSep <= 0) return null;
+  const secondSep = clean.indexOf(":", firstSep + 1);
+  if (secondSep <= firstSep + 1) return null;
+  const turnIndex = Number(clean.slice(0, firstSep));
+  if (!Number.isFinite(turnIndex)) return null;
+  const eventId = clean.slice(firstSep + 1, secondSep).trim();
+  if (!eventId) return null;
+  const createdAt = clean.slice(secondSep + 1).trim();
+  return {
+    turnIndex: Math.floor(turnIndex),
+    eventId,
+    createdAt,
+  };
+}
+
+function isCombatBatchEventAfterCursor(
+  event: Record<string, unknown>,
+  cursor: { turnIndex: number; eventId: string; createdAt: string } | null,
+): boolean {
+  if (!cursor) return true;
+  const turnIndex = Number(event.turn_index);
+  const eventId = typeof event.id === "string" ? event.id.trim() : "";
+  const createdAt = typeof event.created_at === "string" ? event.created_at.trim() : "";
+  if (!Number.isFinite(turnIndex) || !eventId) return false;
+  const normalizedTurn = Math.floor(turnIndex);
+  if (normalizedTurn > cursor.turnIndex) return true;
+  if (normalizedTurn < cursor.turnIndex) return false;
+  if (createdAt && cursor.createdAt) {
+    if (createdAt > cursor.createdAt) return true;
+    if (createdAt < cursor.createdAt) return false;
+    // Same timestamp and turn: require strict id progression to avoid replaying stale events.
+    return eventId > cursor.eventId;
+  }
+  if (!createdAt && cursor.createdAt) return false;
+  if (createdAt && !cursor.createdAt) return true;
+  return eventId > cursor.eventId;
+}
+
+function filterCombatBatchAfterCursor(
+  events: Array<Record<string, unknown>>,
+  cursor: string | null,
+): Array<Record<string, unknown>> {
+  const parsed = parseCombatEventCursor(cursor);
+  if (!parsed) return events;
+  return events.filter((event) => isCombatBatchEventAfterCursor(event, parsed));
 }
 
 function synthesizePromptFromAction(action: MythicUiAction, args: {
@@ -734,6 +794,7 @@ export default function MythicGameScreen() {
   const [utilityDrawerOpen, setUtilityDrawerOpen] = useState(false);
   const [utilityTab, setUtilityTab] = useState<MythicUtilityTab>("settings");
   const devSurfaces = useMythicDevSurfaces();
+  const boardRenderer = useMythicBoardRenderer(user?.email ?? null);
   const [focusedCombatantId, setFocusedCombatantId] = useState<string | null>(null);
   const [runtimeSettings, setRuntimeSettings] = useState<MythicRuntimeSettings>(() => loadMythicSettings());
   const [characterSheetOpen, setCharacterSheetOpen] = useState(false);
@@ -748,6 +809,11 @@ export default function MythicGameScreen() {
   const lastSavedProfileRef = useRef<CharacterProfileDraft | null>(null);
   const profileSaveSeqRef = useRef(0);
   const queuedNarrationKeysRef = useRef<Set<string>>(new Set());
+  const lastNarratedCombatEventCursorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    lastNarratedCombatEventCursorRef.current = null;
+  }, [campaignId, combatSessionId]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1517,23 +1583,32 @@ export default function MythicGameScreen() {
       const combatantsForNarration = Array.isArray(refreshedCombatSnapshot?.combatants)
         ? refreshedCombatSnapshot.combatants
         : combatState.combatants;
-      const contextWithNamedEvents = Array.isArray(context.combat_event_batch)
+      const enrichedCombatBatch = Array.isArray(context.combat_event_batch)
+        ? enrichCombatEventBatchForNarration(
+            context.combat_event_batch,
+            combatantsForNarration.map((entry) => ({
+              id: entry.id,
+              name: entry.name,
+              isAlive: entry.is_alive,
+              hp: Number(entry.hp ?? 0),
+            })),
+          )
+        : null;
+      const freshCombatBatch = Array.isArray(enrichedCombatBatch)
+        ? filterCombatBatchAfterCursor(enrichedCombatBatch, lastNarratedCombatEventCursorRef.current)
+        : null;
+      const contextWithNamedEvents = Array.isArray(freshCombatBatch)
         ? {
             ...context,
-            combat_event_batch: enrichCombatEventBatchForNarration(
-              context.combat_event_batch,
-              combatantsForNarration.map((entry) => ({
-                id: entry.id,
-                name: entry.name,
-                isAlive: entry.is_alive,
-                hp: Number(entry.hp ?? 0),
-              })),
-            ),
+            combat_event_batch: freshCombatBatch,
           }
         : context;
       const combatEventCursor = Array.isArray(contextWithNamedEvents.combat_event_batch)
         ? buildCombatEventCursor(contextWithNamedEvents.combat_event_batch as Array<Record<string, unknown>>)
         : null;
+      if (combatEventCursor) {
+        lastNarratedCombatEventCursorRef.current = combatEventCursor;
+      }
       const combatantState = combatantsForNarration.map((entry) => ({
         id: entry.id,
         name: entry.name,
@@ -1543,9 +1618,13 @@ export default function MythicGameScreen() {
         y: Number(entry.y ?? 0),
         updated_at: entry.updated_at ?? null,
       }));
-      const suppressNarrationOnError = Boolean(executionError && isMechanicalExecutionError(executionError));
+      const contextSuppressesNarration = context.suppress_narration_on_error === true;
+      const suppressNarrationOnError = Boolean(
+        executionError
+          && (contextSuppressesNarration || isMechanicalExecutionError(executionError)),
+      );
 
-      if (executionError && isMechanicalExecutionError(executionError)) {
+      if (executionError && suppressNarrationOnError) {
         await refreshAllState();
         setDmContextRefreshSignal((prev) => prev + 1);
         setActionError(executionError);
@@ -1554,7 +1633,8 @@ export default function MythicGameScreen() {
           action_trace_id: actionTraceId,
           source: args.source,
           intent: args.intent,
-          execution_error: executionError,
+            execution_error: executionError,
+            context_suppressed: contextSuppressesNarration,
         });
         return;
       }
@@ -1574,6 +1654,7 @@ export default function MythicGameScreen() {
           abortPrevious: false,
           idempotencyKey: `${campaignId}:${actionTraceId}`,
           actionContext: {
+            rule_version: RULE_VERSION,
             action_trace_id: actionTraceId,
             source: args.source,
             intent: args.intent,
@@ -2542,6 +2623,7 @@ export default function MythicGameScreen() {
       character,
       boardMode: board.board_type,
       coins,
+      currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
       skills,
       inventoryRows: invRowsSafe,
       questThreads,
@@ -2576,6 +2658,7 @@ export default function MythicGameScreen() {
     companionCheckins,
     combatState.activeTurnCombatantId,
     combatState.combatants,
+    combatState.session?.current_turn_index,
     combatState.session?.status,
     combatRewardSummary,
     focusedCombatantId,
@@ -2591,6 +2674,7 @@ export default function MythicGameScreen() {
       boardState: board?.state_json ?? {},
       dmContext: mythicDmContext.context,
       combat: {
+        ruleVersion: combatState.ruleVersion,
         session: combatState.session,
         combatants: combatState.combatants,
         events: combatState.events,
@@ -2609,6 +2693,7 @@ export default function MythicGameScreen() {
     combatState.activeTurnCombatantId,
     combatState.combatants,
     combatState.events,
+    combatState.ruleVersion,
     combatState.session,
     combatPaceModel,
     combatRewardSummary,
@@ -3254,6 +3339,8 @@ export default function MythicGameScreen() {
             <div className="min-h-0 flex-1">
               <NarrativeBoardPage
                 scene={boardScene}
+                renderer={boardRenderer.effective}
+                fastMode={runtimeSettings.animationIntensity === "low"}
                 baseActions={boardStripBaseActions}
                 isBusy={mythicDm.isLoading || isNarratedActionBusy || combat.isActing || combat.isTicking}
                 isStateRefreshing={isStateRefreshing}
@@ -3410,6 +3497,10 @@ export default function MythicGameScreen() {
                 <div>board_actions: {boardStripBaseActions.length}</div>
                 <div>board_layout_seed: {boardScene.layout.seed}</div>
                 <div>board_legend_items: {boardScene.legend.length}</div>
+                <div>rules_version_client: {RULE_VERSION}</div>
+                <div>rules_version_combat_snapshot: {combatState.ruleVersion}</div>
+                <div>rules_version_character_sheet: {characterSheetModel.ruleVersion}</div>
+                <div>rules_version_dm_context: {String((mythicDmContext.context?.rules as Record<string, unknown> | null)?.rule_version ?? "none")}</div>
                 <div>dm_context_loading: {mythicDmContext.isInitialLoading || mythicDmContext.isRefreshing ? "true" : "false"}</div>
                 <div>dm_context_warnings: {mythicDmContext.context?.warnings?.length ?? 0}</div>
                 {transitionError ? <div className="mt-2 text-destructive">transition_error: {transitionError}</div> : null}

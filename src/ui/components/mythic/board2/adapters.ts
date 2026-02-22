@@ -708,6 +708,7 @@ function parseCombatData(args: {
   const status = resolutionPending?.pending ? "resolved" : asString(args.combatInput.session?.status, "idle");
 
   return {
+    ruleVersion: asString(args.combatInput.ruleVersion, "unknown"),
     session: args.combatInput.session,
     status,
     combatants,

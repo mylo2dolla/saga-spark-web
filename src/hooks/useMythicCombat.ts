@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { runOperation } from "@/lib/ops/runOperation";
 import type { OperationState } from "@/lib/ops/operationState";
 import { createLogger } from "@/lib/observability/logger";
+import { RULE_VERSION } from "@/rules/constants";
 import type {
   MythicActionEventRow,
   MythicCombatantRow,
@@ -20,6 +21,7 @@ export type MythicCombatStartResult =
   | { ok: false; message: string; code: string | null; requestId: string | null };
 
 export interface MythicCombatMutationSnapshot {
+  ruleVersion: string;
   session: MythicCombatSessionRow | null;
   combatants: MythicCombatantRow[];
   turnOrder: MythicTurnOrderRow[];
@@ -124,6 +126,7 @@ export function useMythicCombat() {
       ? turnRows.find((row) => row.turn_index === sessionRow.current_turn_index)?.combatant_id ?? null
       : null;
     return {
+      ruleVersion: RULE_VERSION,
       session: sessionRow,
       combatants: combatantRows,
       turnOrder: turnRows,

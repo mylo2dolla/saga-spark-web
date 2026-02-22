@@ -1,4 +1,5 @@
 import type { MythicBoardType, MythicQuestThreadRow, MythicSkill } from "@/types/mythic";
+import type { CharacterSheetView } from "@/rules/schema";
 
 export type CharacterSheetSection = "overview" | "combat" | "skills" | "equipment" | "party" | "quests";
 
@@ -29,7 +30,11 @@ export interface CharacterSkillSummary {
   name: string;
   kind: MythicSkill["kind"];
   targeting: MythicSkill["targeting"];
+  rank: number;
+  maxRank: number;
   mpCost: number;
+  power: number;
+  powerSummary: string;
   rangeTiles: number;
   cooldownTurns: number;
   cooldownRemaining: number;
@@ -90,7 +95,17 @@ export interface CharacterCombatRewardSummary {
   victory: boolean;
 }
 
+export interface CharacterStatusSummary {
+  id: string;
+  category: string;
+  remainingTurns: number;
+  stacks: number;
+  intensity: number;
+  tooltip: string;
+}
+
 export interface CharacterSheetViewModel {
+  ruleVersion: string;
   characterId: string;
   boardMode: MythicBoardType;
   name: string;
@@ -111,6 +126,12 @@ export interface CharacterSheetViewModel {
   companionNotes: CharacterCompanionSummary[];
   equipmentSlots: CharacterEquipmentSlotGroup[];
   equipmentTotals: Record<string, number>;
+  baseStats: Record<string, number>;
+  derivedStats: Record<string, number>;
+  resistances: Record<string, number>;
+  statuses: CharacterStatusSummary[];
+  tooltips: Record<string, string>;
+  canonicalSheet: CharacterSheetView;
   lastCombatReward: CharacterCombatRewardSummary | null;
   questThreads: MythicQuestThreadRow[];
 }

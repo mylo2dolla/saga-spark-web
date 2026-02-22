@@ -13,17 +13,12 @@ export function TownScene(props: TownSceneProps) {
   const cols = props.scene.grid.cols;
   const rows = props.scene.grid.rows;
   const details = props.scene.details as TownSceneData;
-  const landmarks = props.scene.hotspots
-    .filter((hotspot) => hotspot.kind === "vendor" || hotspot.kind === "notice_board" || hotspot.kind === "gate")
-    .map((hotspot) => ({
-      id: hotspot.id,
-      rect: hotspot.rect,
-      tone: hotspot.kind === "vendor"
-        ? "border-amber-100/40 bg-amber-300/12 text-amber-50"
-        : hotspot.kind === "notice_board"
-          ? "border-yellow-100/35 bg-yellow-300/12 text-yellow-50"
-          : "border-orange-100/35 bg-orange-400/14 text-orange-50",
-    }));
+  const buildingHotspots = props.scene.hotspots.filter(
+    (hotspot) => hotspot.kind === "vendor" || hotspot.kind === "notice_board" || hotspot.kind === "gate",
+  );
+  const overlayHotspots = props.scene.hotspots.filter(
+    (hotspot) => hotspot.kind !== "vendor" && hotspot.kind !== "notice_board" && hotspot.kind !== "gate" && !hotspot.id.startsWith("town-npc-"),
+  );
 
   return (
     <BoardGridLayer
@@ -37,18 +32,38 @@ export function TownScene(props: TownSceneProps) {
       <div className="pointer-events-none absolute left-2 top-2 rounded border border-amber-200/30 bg-black/35 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-100/80">
         Town
       </div>
-      {landmarks.map((landmark) => (
-        <div
-          key={`town-landmark-${landmark.id}`}
-          className={`pointer-events-none absolute rounded-md border ${landmark.tone}`}
-          style={{
-            left: `${(landmark.rect.x / cols) * 100}%`,
-            top: `${(landmark.rect.y / rows) * 100}%`,
-            width: `${(landmark.rect.w / cols) * 100}%`,
-            minHeight: "34px",
-          }}
-        />
-      ))}
+      {buildingHotspots.map((hotspot) => {
+        const styleClass = hotspot.kind === "vendor"
+          ? "border-amber-100/60 bg-amber-300/18 text-amber-50"
+          : hotspot.kind === "notice_board"
+            ? "border-yellow-100/55 bg-yellow-300/18 text-yellow-50"
+            : "border-orange-100/55 bg-orange-400/20 text-orange-50";
+        const shortLabel = hotspot.title.trim().length > 22
+          ? `${hotspot.title.trim().slice(0, 22)}...`
+          : hotspot.title.trim();
+        return (
+          <button
+            key={`town-building-${hotspot.id}`}
+            type="button"
+            data-testid={`town-building-${hotspot.id}`}
+            className={`absolute z-[2] rounded-md border px-2 py-1 text-left text-[10px] shadow-[0_0_0_1px_rgba(0,0,0,0.22)] ${styleClass}`}
+            style={{
+              left: `${(hotspot.rect.x / cols) * 100}%`,
+              top: `${(hotspot.rect.y / rows) * 100}%`,
+              width: `${(hotspot.rect.w / cols) * 100}%`,
+              minHeight: "34px",
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onSelectHotspot(hotspot, readGridPointFromEvent(event, cols, rows));
+            }}
+          >
+            <div className="truncate font-semibold leading-tight">
+              {hotspot.visual?.icon ? `${hotspot.visual.icon} ` : ""}{shortLabel}
+            </div>
+          </button>
+        );
+      })}
       {details.npcs.map((npc) => {
         const hotspot = props.scene.hotspots.find((entry) => entry.id === `town-npc-${npc.id}`) ?? null;
         const danger = npc.grudge >= 35;
@@ -79,7 +94,7 @@ export function TownScene(props: TownSceneProps) {
         );
       })}
       <HotspotOverlay
-        hotspots={props.scene.hotspots}
+        hotspots={overlayHotspots}
         cols={cols}
         rows={rows}
         accent="town"

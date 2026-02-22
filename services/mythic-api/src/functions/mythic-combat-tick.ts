@@ -13,6 +13,7 @@ import {
 import { sanitizeError } from "../shared/redact.js";
 import { settleCombat } from "../lib/combat/settlement.js";
 import { resolveDeterministicHit } from "../lib/combat/hitResolution.js";
+import { RULE_VERSION } from "../lib/rules/version.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const RequestSchema = z.object({
@@ -362,7 +363,12 @@ export const mythicCombatTick: FunctionHandler = {
       if (idempotencyKey) {
         const cached = getIdempotentResponse(idempotencyKey);
         if (cached) {
-          ctx.log.info("combat_tick.idempotent_hit", { request_id: requestId, campaign_id: campaignId, combat_session_id: combatSessionId });
+          ctx.log.info("combat_tick.idempotent_hit", {
+            request_id: requestId,
+            campaign_id: campaignId,
+            combat_session_id: combatSessionId,
+            rule_version: RULE_VERSION,
+          });
           return cached;
         }
       }
@@ -956,6 +962,7 @@ export const mythicCombatTick: FunctionHandler = {
 
       const response = new Response(JSON.stringify({
         ok: true,
+        rule_version: RULE_VERSION,
         ticks,
         ended,
         requires_player_action: requiresPlayerAction,
@@ -970,6 +977,7 @@ export const mythicCombatTick: FunctionHandler = {
       }
 
       ctx.log.info("combat_tick.success", {
+        rule_version: RULE_VERSION,
         request_id: requestId,
         campaign_id: campaignId,
         combat_session_id: combatSessionId,

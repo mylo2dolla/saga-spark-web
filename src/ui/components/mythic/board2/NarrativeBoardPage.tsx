@@ -19,6 +19,8 @@ import type {
 
 interface NarrativeBoardPageProps {
   scene: NarrativeBoardSceneModel;
+  renderer: "dom" | "pixi";
+  fastMode?: boolean;
   baseActions: MythicUiAction[];
   isBusy: boolean;
   isStateRefreshing: boolean;
@@ -122,6 +124,9 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
       <NarrativeBoardViewport
         scene={props.scene}
         isActing={props.isBusy}
+        renderer={props.renderer}
+        fastMode={props.fastMode}
+        showDevOverlay={props.showDevDetails}
         onSelectHotspot={(hotspot, point) => {
           setInspectTarget(buildInspectTargetFromHotspot({ hotspot, x: point.x, y: point.y }));
         }}

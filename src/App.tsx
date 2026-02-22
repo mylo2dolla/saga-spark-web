@@ -14,6 +14,8 @@ import MythicCharacterScreen from "@/ui/screens/MythicCharacterScreen";
 import MythicGameScreen from "@/ui/screens/MythicGameScreen";
 import ServerAdminScreen from "@/ui/screens/ServerAdminScreen";
 import LandingScreen from "@/ui/screens/LandingScreen";
+import MythicRenderHarnessScreen from "@/ui/screens/MythicRenderHarnessScreen";
+import BalancePanel from "@/debug/BalancePanel";
 import GameSessionRoute from "./routes/GameSessionRoute";
 import NotFound from "./pages/NotFound";
 
@@ -26,6 +28,7 @@ const App = () => (
       <Sonner />
       <EnvGuard>
         <AuthProvider>
+          <BalancePanel />
           <BrowserRouter>
             <DiagnosticsProvider>
               <ErrorBoundary>
@@ -34,6 +37,7 @@ const App = () => (
                   <Route path="/login" element={<AuthScreen mode="login" />} />
                   <Route path="/signup" element={<AuthScreen mode="signup" />} />
                   <Route path="/auth" element={<Navigate to="/login" replace />} />
+                  <Route path="/mythic-render-harness" element={<MythicRenderHarnessScreen />} />
                   <Route element={<AppShell />}>
                     <Route path="/dashboard" element={<DashboardScreen />} />
                     <Route path="/servers" element={<ServerAdminScreen />} />

@@ -1,0 +1,119 @@
+import * as PIXI from "pixi.js";
+import { seededRange } from "@/ui/components/mythic/board2/render/deterministic";
+import type { RendererSettings } from "@/ui/components/mythic/board2/render/types";
+
+interface CameraState {
+  centerX: number;
+  centerY: number;
+  targetX: number;
+  targetY: number;
+  zoom: number;
+  targetZoom: number;
+  shakeMs: number;
+  shakePower: number;
+  shakeSeed: string;
+}
+
+export class CameraDirector {
+  private viewportW = 1;
+  private viewportH = 1;
+  private worldW = 1;
+  private worldH = 1;
+  private state: CameraState = {
+    centerX: 0,
+    centerY: 0,
+    targetX: 0,
+    targetY: 0,
+    zoom: 1,
+    targetZoom: 1,
+    shakeMs: 0,
+    shakePower: 0,
+    shakeSeed: "camera",
+  };
+
+  setViewport(width: number, height: number) {
+    this.viewportW = Math.max(1, width);
+    this.viewportH = Math.max(1, height);
+  }
+
+  setWorld(width: number, height: number) {
+    this.worldW = Math.max(1, width);
+    this.worldH = Math.max(1, height);
+    if (this.state.centerX === 0 && this.state.centerY === 0) {
+      this.state.centerX = this.worldW / 2;
+      this.state.centerY = this.worldH / 2;
+      this.state.targetX = this.state.centerX;
+      this.state.targetY = this.state.centerY;
+    }
+  }
+
+  focus(worldX: number, worldY: number) {
+    this.state.targetX = Math.max(0, Math.min(this.worldW, worldX));
+    this.state.targetY = Math.max(0, Math.min(this.worldH, worldY));
+  }
+
+  onHitImpact(intensity: number, seed: string, settings: RendererSettings) {
+    if (!settings.cinematicCamera || settings.fastMode || settings.reducedMotion) return;
+    const clamped = Math.max(0, Math.min(1, intensity));
+    this.state.targetZoom = 1 + (clamped * 0.08);
+    this.state.shakeMs = 180 + Math.round(clamped * 220);
+    this.state.shakePower = 2 + (clamped * 5);
+    this.state.shakeSeed = seed;
+  }
+
+  onHealImpact(intensity: number, settings: RendererSettings) {
+    if (!settings.cinematicCamera || settings.fastMode || settings.reducedMotion) return;
+    const clamped = Math.max(0, Math.min(1, intensity));
+    this.state.targetZoom = 1 + (clamped * 0.04);
+  }
+
+  update(deltaMs: number, settings: RendererSettings): { offsetX: number; offsetY: number; scale: number } {
+    const dt = Math.max(0.001, deltaMs / 1000);
+    const damping = settings.fastMode ? 18 : 12;
+
+    this.state.centerX += (this.state.targetX - this.state.centerX) * Math.min(1, damping * dt);
+    this.state.centerY += (this.state.targetY - this.state.centerY) * Math.min(1, damping * dt);
+
+    const zoomDamping = settings.fastMode ? 16 : 9;
+    this.state.zoom += (this.state.targetZoom - this.state.zoom) * Math.min(1, zoomDamping * dt);
+    this.state.targetZoom += (1 - this.state.targetZoom) * Math.min(1, 4 * dt);
+
+    let shakeX = 0;
+    let shakeY = 0;
+    if (!settings.fastMode && this.state.shakeMs > 0 && !settings.reducedMotion) {
+      this.state.shakeMs = Math.max(0, this.state.shakeMs - deltaMs);
+      const progress = this.state.shakeMs / 300;
+      const amp = this.state.shakePower * progress;
+      shakeX = seededRange(this.state.shakeSeed, -amp, amp, `${this.state.shakeMs}:x`);
+      shakeY = seededRange(this.state.shakeSeed, -amp, amp, `${this.state.shakeMs}:y`);
+    }
+
+    const scaledW = this.worldW * this.state.zoom;
+    const scaledH = this.worldH * this.state.zoom;
+    const desiredX = (this.viewportW / 2) - (this.state.centerX * this.state.zoom);
+    const desiredY = (this.viewportH / 2) - (this.state.centerY * this.state.zoom);
+
+    const minX = Math.min(0, this.viewportW - scaledW);
+    const minY = Math.min(0, this.viewportH - scaledH);
+    const offsetX = Math.min(0, Math.max(minX, desiredX + shakeX));
+    const offsetY = Math.min(0, Math.max(minY, desiredY + shakeY));
+
+    return {
+      offsetX,
+      offsetY,
+      scale: this.state.zoom,
+    };
+  }
+
+  applyTo(container: PIXI.Container, transform: { offsetX: number; offsetY: number; scale: number }) {
+    container.scale.set(transform.scale, transform.scale);
+    container.position.set(transform.offsetX, transform.offsetY);
+  }
+
+  debugState() {
+    return {
+      scale: this.state.zoom,
+      shakeMs: this.state.shakeMs,
+    };
+  }
+}

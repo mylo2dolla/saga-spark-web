@@ -315,12 +315,18 @@ function isBatchEventAfterCursor(
 ): boolean {
   if (!cursor) return true;
   const eventCursor = eventCursorForBatchEvent(entry);
-  if (!eventCursor) return true;
+  if (!eventCursor) return false;
   if (eventCursor.turnIndex > cursor.turnIndex) return true;
   if (eventCursor.turnIndex < cursor.turnIndex) return false;
-  if (eventCursor.createdAt && cursor.createdAt && eventCursor.createdAt > cursor.createdAt) return true;
-  if (eventCursor.createdAt && cursor.createdAt && eventCursor.createdAt < cursor.createdAt) return false;
-  return eventCursor.eventId !== cursor.eventId;
+  if (eventCursor.createdAt && cursor.createdAt) {
+    if (eventCursor.createdAt > cursor.createdAt) return true;
+    if (eventCursor.createdAt < cursor.createdAt) return false;
+    // Same timestamp and turn: avoid replaying stale events.
+    return eventCursor.eventId > cursor.eventId;
+  }
+  if (!eventCursor.createdAt && cursor.createdAt) return false;
+  if (eventCursor.createdAt && !cursor.createdAt) return true;
+  return eventCursor.eventId > cursor.eventId;
 }
 
 type CombatantStateHint = {

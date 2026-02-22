@@ -5,6 +5,7 @@ import { AuthError, requireUser } from "../shared/auth.js";
 import { AuthzError, assertCampaignAccess } from "../shared/authz.js";
 import { enforceRateLimit } from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
+import { RULE_VERSION } from "../lib/rules/version.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const RequestSchema = z.object({
@@ -513,6 +514,7 @@ export const mythicDmContext: FunctionHandler = {
       const compactRules = {
         name: rulesRow?.name ?? "mythic-weave-rules-v1",
         version: rulesRow?.version ?? null,
+        rule_version: RULE_VERSION,
         content_policy: (rulesRow?.rules as Record<string, unknown> | null)?.content_policy ?? null,
         boards: (rulesRow?.rules as Record<string, unknown> | null)?.boards
           ? {
@@ -556,6 +558,7 @@ export const mythicDmContext: FunctionHandler = {
           character: compactCharacterPayload(char),
           combat: compactCombatPayload(combat),
           rules: compactRules,
+          rule_version: RULE_VERSION,
           script: compactScript,
           dm_campaign_state: dmState.data ?? null,
           dm_world_tension: tension.data ?? null,

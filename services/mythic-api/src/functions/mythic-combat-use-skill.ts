@@ -15,6 +15,7 @@ import {
 import { sanitizeError } from "../shared/redact.js";
 import { settleCombat } from "../lib/combat/settlement.js";
 import { resolveDeterministicHit } from "../lib/combat/hitResolution.js";
+import { RULE_VERSION } from "../lib/rules/version.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const TargetSchema = z.union([
@@ -1302,6 +1303,7 @@ export const mythicCombatUseSkill: FunctionHandler = {
       if (builtInSkillId === "basic_move") {
         const response = new Response(JSON.stringify({
           ok: true,
+          rule_version: RULE_VERSION,
           moved: true,
           next_turn_index: turnIndex,
           next_actor_combatant_id: (actor as any).id,
@@ -1313,6 +1315,7 @@ export const mythicCombatUseSkill: FunctionHandler = {
           storeIdempotentResponse(idempotencyKey, response, 10_000);
         }
         ctx.log.info("combat_use_skill.move_success", {
+          rule_version: RULE_VERSION,
           request_id: requestId,
           campaign_id: campaignId,
           combat_session_id: combatSessionId,
@@ -1400,7 +1403,12 @@ export const mythicCombatUseSkill: FunctionHandler = {
           appendActionEvent,
         });
 
-        const response = new Response(JSON.stringify({ ok: true, ended: true, outcome: { alive_players: outcome.alive_players, alive_npcs: outcome.alive_npcs, won: outcome.won } }), {
+        const response = new Response(JSON.stringify({
+          ok: true,
+          rule_version: RULE_VERSION,
+          ended: true,
+          outcome: { alive_players: outcome.alive_players, alive_npcs: outcome.alive_npcs, won: outcome.won },
+        }), {
           status: 200,
           headers: baseHeaders,
         });
@@ -1408,6 +1416,7 @@ export const mythicCombatUseSkill: FunctionHandler = {
           storeIdempotentResponse(idempotencyKey, response, 15_000);
         }
         ctx.log.info("combat_use_skill.ended", {
+          rule_version: RULE_VERSION,
           request_id: requestId,
           campaign_id: campaignId,
           combat_session_id: combatSessionId,
@@ -1453,7 +1462,12 @@ export const mythicCombatUseSkill: FunctionHandler = {
         ),
       });
 
-      const response = new Response(JSON.stringify({ ok: true, next_turn_index: nextIndex, next_actor_combatant_id: nextCombatantId }), {
+      const response = new Response(JSON.stringify({
+        ok: true,
+        rule_version: RULE_VERSION,
+        next_turn_index: nextIndex,
+        next_actor_combatant_id: nextCombatantId,
+      }), {
         status: 200,
         headers: baseHeaders,
       });
@@ -1461,6 +1475,7 @@ export const mythicCombatUseSkill: FunctionHandler = {
         storeIdempotentResponse(idempotencyKey, response, 10_000);
       }
       ctx.log.info("combat_use_skill.success", {
+        rule_version: RULE_VERSION,
         request_id: requestId,
         campaign_id: campaignId,
         combat_session_id: combatSessionId,

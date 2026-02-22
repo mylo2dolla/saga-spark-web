@@ -276,6 +276,7 @@ export interface CombatResolutionPendingModel {
 }
 
 export interface CombatSceneData {
+  ruleVersion: string;
   session: MythicCombatSessionRow | null;
   status: string;
   combatants: MythicCombatantRow[];
@@ -339,6 +340,7 @@ export interface NarrativeBoardSceneModel {
 }
 
 export interface NarrativeBoardCombatInput {
+  ruleVersion?: string;
   session: MythicCombatSessionRow | null;
   combatants: MythicCombatantRow[];
   events: MythicActionEventRow[];
@@ -356,4 +358,142 @@ export interface NarrativeBoardAdapterInput {
   boardState: MythicBoardState;
   dmContext: MythicDmContextResponse | null;
   combat: NarrativeBoardCombatInput;
+}
+
+export type MythicBoardRenderer = "dom" | "pixi";
+
+export type BiomeSkinId =
+  | "town"
+  | "forest"
+  | "dungeon"
+  | "plains"
+  | "snow"
+  | "desert"
+  | "combat";
+
+export interface RenderTile {
+  id: string;
+  x: number;
+  y: number;
+  biome: BiomeSkinId;
+  blocked?: boolean;
+  hazard?: boolean;
+  fog?: boolean;
+  road?: boolean;
+  water?: boolean;
+  interactable?: boolean;
+}
+
+export interface RenderEntityStatusIcon {
+  id: string;
+  label: string;
+  family: string;
+}
+
+export interface RenderEntity {
+  id: string;
+  type: "player" | "ally" | "enemy" | "npc" | "building" | "prop";
+  label: string;
+  fullLabel: string;
+  x: number;
+  y: number;
+  hp: number;
+  hpMax: number;
+  mp: number;
+  mpMax: number;
+  armor?: number;
+  isAlive: boolean;
+  isActiveTurn?: boolean;
+  isFocused?: boolean;
+  intent?: "attack" | "defend" | "charge" | "support" | "idle";
+  statusIcons: RenderEntityStatusIcon[];
+}
+
+export interface RenderOverlayMarker {
+  id: string;
+  type: "quest" | "danger" | "merchant" | "healer" | "hook" | "travel" | "gate" | "notice";
+  label: string;
+  x: number;
+  y: number;
+  priority: 1 | 2 | 3;
+}
+
+export type VisualEvent =
+  | {
+      id: string;
+      type: "MoveTrail";
+      actorId: string;
+      from: { x: number; y: number };
+      to: { x: number; y: number };
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "AttackWindup";
+      actorId: string;
+      targetId: string | null;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "HitImpact";
+      actorId: string;
+      targetId: string;
+      amount: number | null;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "MissIndicator";
+      actorId: string;
+      targetId: string;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "DamageNumber" | "HealNumber";
+      targetId: string;
+      amount: number;
+      createdAt: string;
+      critical?: boolean;
+    }
+  | {
+      id: string;
+      type: "StatusApply" | "StatusTick" | "BarrierGain" | "BarrierBreak";
+      targetId: string;
+      label: string;
+      amount: number | null;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "DeathBurst";
+      targetId: string;
+      createdAt: string;
+    }
+  | {
+      id: string;
+      type: "TurnStart" | "TurnEnd";
+      actorId: string | null;
+      createdAt: string;
+    };
+
+export interface RenderEffectsQueueState {
+  queue: VisualEvent[];
+  latestCursor: string | null;
+}
+
+export interface RenderSnapshot {
+  board: {
+    mode: NarrativeBoardMode;
+    type: "town" | "travel" | "dungeon" | "combat";
+    width: number;
+    height: number;
+    tileSize: number;
+    biomeId: BiomeSkinId;
+  };
+  tiles: RenderTile[];
+  entities: RenderEntity[];
+  overlays: RenderOverlayMarker[];
+  effects: RenderEffectsQueueState;
 }

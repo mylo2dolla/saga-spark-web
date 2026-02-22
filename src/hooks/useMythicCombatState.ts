@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { formatError } from "@/ui/data/async";
+import { RULE_VERSION } from "@/rules/constants";
 
 export interface MythicCombatSessionRow {
   id: string;
@@ -58,6 +59,7 @@ export interface MythicActionEventRow {
 }
 
 export interface MythicCombatStateSnapshot {
+  ruleVersion: string;
   session: MythicCombatSessionRow | null;
   combatants: MythicCombatantRow[];
   turnOrder: MythicTurnOrderRow[];
@@ -162,6 +164,7 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
       }
 
       return {
+        ruleVersion: RULE_VERSION,
         session: sessionRow,
         combatants: combatantRows,
         turnOrder: turnRows,
@@ -208,6 +211,7 @@ export function useMythicCombatState(campaignId: string | undefined, combatSessi
   }, [campaignId, combatSessionId, fetchState, session?.status]);
 
   return {
+    ruleVersion: RULE_VERSION,
     session,
     combatants,
     turnOrder,

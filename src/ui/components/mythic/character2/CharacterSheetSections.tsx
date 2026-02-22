@@ -155,6 +155,7 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
                 <div>XP {props.model.xp} / next {props.model.xpToNext}</div>
                 <div>Unspent points {props.model.unspentPoints}</div>
                 <div>Coins {props.model.coins}</div>
+                <div>Rules {props.model.ruleVersion}</div>
                 {props.model.lastCombatReward ? (
                   <div className="mt-1 text-[11px] text-amber-100/75">
                     Last combat: {props.model.lastCombatReward.victory ? "Victory" : "Defeat"} ·
@@ -187,6 +188,22 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
                 <div>Modifier {stat.modifier >= 0 ? `+${stat.modifier}` : stat.modifier}</div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-amber-200/25 bg-amber-100/5 p-3">
+          <div className="mb-2 text-sm font-semibold text-amber-100">Derived Stats + Resistances</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <div className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/80">
+              {Object.entries(props.model.derivedStats).map(([key, value]) => (
+                <div key={`derived-${key}`}>{key}: {typeof value === "number" ? value.toFixed(value % 1 === 0 ? 0 : 2) : String(value)}</div>
+              ))}
+            </div>
+            <div className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/80">
+              {Object.entries(props.model.resistances).map(([key, value]) => (
+                <div key={`resist-${key}`}>{key}: {typeof value === "number" ? `${(value * 100).toFixed(1)}%` : String(value)}</div>
+              ))}
+            </div>
           </div>
         </div>
       </TabsContent>
@@ -250,9 +267,27 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
                     </div>
                   </div>
                   <div>
-                    MP {skill.mpCost} · {skill.targeting} · range {skill.rangeTiles} · cooldown {skill.cooldownTurns}
+                    R{skill.rank}/{skill.maxRank} · MP {skill.mpCost} · Power {skill.power} · {skill.targeting} · range {skill.rangeTiles} · cooldown {skill.cooldownTurns}
                     {skill.cooldownRemaining > 0 ? ` (${skill.cooldownRemaining} remaining)` : ""}
                   </div>
+                  <div className="mt-1 text-amber-100/70">{skill.powerSummary}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg border border-amber-200/25 bg-amber-100/5 p-3">
+          <div className="mb-2 text-sm font-semibold text-amber-100">Statuses</div>
+          {props.model.statuses.length === 0 ? (
+            <div className="text-xs text-amber-100/70">No active statuses.</div>
+          ) : (
+            <div className="space-y-2">
+              {props.model.statuses.map((status) => (
+                <div key={`status-${status.id}`} className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/80">
+                  <div className="font-medium text-amber-100">{status.id}</div>
+                  <div>{status.category} · {status.remainingTurns} turn(s) · stacks {status.stacks} · intensity {status.intensity}</div>
+                  <div className="mt-1 text-[11px] text-amber-100/70">{status.tooltip}</div>
                 </div>
               ))}
             </div>
@@ -271,9 +306,10 @@ export function CharacterSheetSections(props: CharacterSheetSectionsProps) {
                 <div key={skill.id} className="rounded border border-amber-200/20 bg-background/20 p-2 text-xs text-amber-100/80">
                   <div className="font-medium text-amber-100">{skill.name}</div>
                   <div>
-                    {skill.kind} · MP {skill.mpCost} · {skill.targeting} · range {skill.rangeTiles} · cooldown {skill.cooldownTurns}
+                    {skill.kind} · R{skill.rank}/{skill.maxRank} · MP {skill.mpCost} · Power {skill.power} · {skill.targeting} · range {skill.rangeTiles} · cooldown {skill.cooldownTurns}
                     {skill.cooldownRemaining > 0 ? ` (${skill.cooldownRemaining} remaining)` : ""}
                   </div>
+                  <div className="mt-1 text-amber-100/70">{skill.powerSummary}</div>
                   {skill.description ? <div className="mt-1 text-amber-100/70">{skill.description}</div> : null}
                 </div>
               ))}

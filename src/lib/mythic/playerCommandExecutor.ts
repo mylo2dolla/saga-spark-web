@@ -145,6 +145,7 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
           ...narrativeBase(args),
           state_changes: result.stateChanges,
           transition_blocked: true,
+          suppress_narration_on_error: true,
         },
       };
     }
@@ -185,6 +186,7 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
             board_target: target,
             transition_payload: transitionPayload,
             transition_failed: true,
+            suppress_narration_on_error: true,
           },
         };
       }
@@ -223,6 +225,7 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
             start_combat_failed: true,
             error_code: started.code ?? null,
             request_id: started.requestId ?? null,
+            suppress_narration_on_error: true,
           },
         };
       }
@@ -265,6 +268,7 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
             state_changes: result.stateChanges,
             probe,
             transition_failed: true,
+            suppress_narration_on_error: true,
           },
         };
       }
@@ -294,6 +298,7 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
           ...narrativeBase(args),
           state_changes: result.stateChanges,
           use_skill_error: "no_active_combat_session",
+          suppress_narration_on_error: true,
         },
       };
     }
@@ -306,6 +311,7 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
           ...narrativeBase(args),
           state_changes: result.stateChanges,
           use_skill_error: "player_combatant_missing",
+          suppress_narration_on_error: true,
         },
       };
     }
@@ -318,6 +324,7 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
           ...narrativeBase(args),
           state_changes: result.stateChanges,
           use_skill_error: "skill_name_missing",
+          suppress_narration_on_error: true,
         },
       };
     }
@@ -344,6 +351,7 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
           use_skill_error: resolveError,
           requested_skill: command.skillQuery,
           requested_target: command.targetQuery ?? null,
+          suppress_narration_on_error: true,
         },
       };
     }
@@ -367,6 +375,7 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
           state_changes: result.stateChanges,
           use_skill_error: skillError,
           skill_id: resolved.value.skill.id,
+          suppress_narration_on_error: true,
         },
       };
     }
