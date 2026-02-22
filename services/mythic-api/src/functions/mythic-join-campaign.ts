@@ -6,8 +6,9 @@ import { rngInt, rngPick } from "../shared/mythic_rng.js";
 import { buildStarterDirection } from "../shared/intro_seed.js";
 import {
   buildWorldProfilePayload,
+  buildRuntimeWorldBindings,
+  buildWorldSeedPayload,
   coerceCampaignContextFromProfile,
-  summarizeWorldContext,
   WORLD_FORGE_VERSION,
   type CampaignContext,
 } from "../lib/worldforge/index.js";
@@ -56,7 +57,12 @@ const makeTownState = (args: {
   campaignContext: CampaignContext;
 }) => {
   const { seed, campaignName, campaignDescription, campaignContext } = args;
-  const worldSummary = summarizeWorldContext(campaignContext);
+  const runtimeBindings = buildRuntimeWorldBindings(campaignContext, {
+    includeCampaignContext: true,
+    directiveLimit: 6,
+    coreConflictLimit: 4,
+    factionTensionLimit: 4,
+  });
   const vendorCount = rngInt(seed, "town:vendors", 1, 3);
   const vendors = Array.from({ length: vendorCount }).map((_, idx) => ({
     id: `vendor_${idx + 1}`,
@@ -79,19 +85,13 @@ const makeTownState = (args: {
 
   return {
     seed,
-    world_seed: {
+    world_seed: buildWorldSeedPayload(campaignContext, {
+      includeTitleDescription: true,
       title: campaignName,
       description: campaignDescription,
-      seed,
-      seed_string: campaignContext.worldSeed.seedString,
-    },
-    world_forge_version: WORLD_FORGE_VERSION,
-    campaign_context: campaignContext,
-    world_context: worldSummary,
-    dm_context: {
-      profile: campaignContext.dmContext.dmBehaviorProfile,
-      directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
-    },
+      includeLegacySeed: true,
+    }),
+    ...runtimeBindings,
     vendors,
     services: ["inn", "healer", "notice_board"],
     gossip: [],
@@ -106,10 +106,6 @@ const makeTownState = (args: {
     room_state: {},
     companion_checkins: [],
     consequence_flags: {},
-    world_state: campaignContext.worldContext.worldState,
-    moral_climate: campaignContext.worldContext.worldBible.moralClimate,
-    core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
-    faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 4),
   };
 };
 
@@ -297,19 +293,15 @@ export const mythicJoinCampaign: FunctionHandler = {
         if (runtimeInsertError) throw runtimeInsertError;
       } else if (activeRuntime.mode === "town") {
         const activeState = asRecord(activeRuntime.state_json);
+        const runtimeBindings = buildRuntimeWorldBindings(campaignContext, {
+          includeCampaignContext: true,
+          directiveLimit: 6,
+          coreConflictLimit: 4,
+          factionTensionLimit: 4,
+        });
         const patchedState = {
           ...activeState,
-          world_forge_version: WORLD_FORGE_VERSION,
-          campaign_context: campaignContext,
-          world_context: summarizeWorldContext(campaignContext),
-          dm_context: {
-            profile: campaignContext.dmContext.dmBehaviorProfile,
-            directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
-          },
-          world_state: campaignContext.worldContext.worldState,
-          moral_climate: campaignContext.worldContext.worldBible.moralClimate,
-          core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
-          faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 4),
+          ...runtimeBindings,
         };
         const patchRuntime = await svc
           .schema("mythic")
@@ -363,10 +355,7 @@ export const mythicJoinCampaign: FunctionHandler = {
         campaign,
         already_member: alreadyMember,
         world_forge_version: WORLD_FORGE_VERSION,
-        world_seed: {
-          seed_number: campaignContext.worldSeed.seedNumber,
-          seed_string: campaignContext.worldSeed.seedString,
-        },
+        world_seed: buildWorldSeedPayload(campaignContext),
         warnings,
         requestId: ctx.requestId,
       }), {

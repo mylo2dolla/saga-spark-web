@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   XP_PRESET_ORDER,
@@ -11,6 +11,12 @@ import {
   DEFAULT_RULE_TUNABLES,
   type RuleTunables,
 } from "@/rules";
+import {
+  readLatestMythicDebugSnapshot,
+  readMythicDebugHistory,
+  subscribeMythicDebugSnapshots,
+  type MythicDebugSnapshot,
+} from "@/lib/mythicDebugStore";
 
 function num(value: string, fallback: number): number {
   const parsed = Number(value);
@@ -19,6 +25,199 @@ function num(value: string, fallback: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return asArray(value)
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0);
+}
+
+function maybeNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function worldSeedFromContext(context: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!context) return null;
+  const direct = asRecord(context.world_seed ?? context.worldSeed);
+  if (direct) return direct;
+  const campaignContext = asRecord(context.campaign_context ?? context.campaignContext);
+  return asRecord(campaignContext?.worldSeed ?? campaignContext?.world_seed);
+}
+
+function worldContextFromContext(context: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!context) return null;
+  const direct = asRecord(context.world_context ?? context.worldContext);
+  if (direct) return direct;
+  const campaignContext = asRecord(context.campaign_context ?? context.campaignContext);
+  return asRecord(campaignContext?.worldContext ?? campaignContext?.world_context);
+}
+
+function worldStateFromContext(context: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!context) return null;
+  const direct = asRecord(context.world_state ?? context.worldState);
+  if (direct) return direct;
+  const worldContext = worldContextFromContext(context);
+  return asRecord(worldContext?.worldState ?? worldContext?.world_state);
+}
+
+function dmProfileFromContext(context: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!context) return null;
+  const dmContext = asRecord(context.dm_context ?? context.dmContext);
+  return asRecord(dmContext?.profile ?? dmContext?.dmBehaviorProfile);
+}
+
+function toneVectorFromSeed(seed: Record<string, unknown> | null): Array<{ key: string; value: number }> {
+  const rawTone = asRecord(seed?.tone_vector ?? seed?.toneVector);
+  const keys = ["darkness", "whimsy", "brutality", "absurdity", "cosmic", "heroic", "tragic", "cozy"];
+  return keys
+    .map((key) => {
+      const value = maybeNumber(rawTone?.[key]);
+      return value == null ? null : { key, value };
+    })
+    .filter((entry): entry is { key: string; value: number } => Boolean(entry));
+}
+
+function resolveWorldName(worldContext: Record<string, unknown> | null): string {
+  if (!worldContext) return "-";
+  const summaryName = typeof worldContext.world_name === "string" ? worldContext.world_name : null;
+  if (summaryName && summaryName.trim().length > 0) return summaryName;
+  const worldBible = asRecord(worldContext.worldBible);
+  const fullName = typeof worldBible?.worldName === "string" ? worldBible.worldName : null;
+  return fullName && fullName.trim().length > 0 ? fullName : "-";
+}
+
+function resolveMoralClimate(worldContext: Record<string, unknown> | null): string {
+  if (!worldContext) return "-";
+  const summary = typeof worldContext.moral_climate === "string" ? worldContext.moral_climate : null;
+  if (summary && summary.trim().length > 0) return summary;
+  const worldBible = asRecord(worldContext.worldBible);
+  const full = typeof worldBible?.moralClimate === "string" ? worldBible.moralClimate : null;
+  return full && full.trim().length > 0 ? full : "-";
+}
+
+function extractPresetTrace(context: Record<string, unknown> | null): string[] {
+  const campaignContext = asRecord(context?.campaign_context ?? context?.campaignContext);
+  const worldSeed = asRecord(campaignContext?.worldSeed ?? campaignContext?.world_seed);
+  return asStringArray(worldSeed?.presetTrace ?? worldSeed?.preset_trace);
+}
+
+function extractForgeInput(context: Record<string, unknown> | null): Record<string, unknown> {
+  const campaignContext = asRecord(context?.campaign_context ?? context?.campaignContext);
+  const worldSeed = asRecord(campaignContext?.worldSeed ?? campaignContext?.world_seed);
+  return asRecord(worldSeed?.forgeInput ?? worldSeed?.forge_input) ?? {};
+}
+
+function buildSnapshotDiffs(
+  current: MythicDebugSnapshot | null,
+  previous: MythicDebugSnapshot | null,
+): string[] {
+  if (!current || !previous) return [];
+
+  const currentContext = asRecord(current.context);
+  const previousContext = asRecord(previous.context);
+  const currentSeed = worldSeedFromContext(currentContext);
+  const previousSeed = worldSeedFromContext(previousContext);
+  const currentState = worldStateFromContext(currentContext);
+  const previousState = worldStateFromContext(previousContext);
+
+  const diffs: string[] = [];
+
+  const currentSeedString = String(currentSeed?.seed_string ?? currentSeed?.seedString ?? "").trim();
+  const previousSeedString = String(previousSeed?.seed_string ?? previousSeed?.seedString ?? "").trim();
+  if (currentSeedString && previousSeedString && currentSeedString !== previousSeedString) {
+    diffs.push(`Seed string changed: ${previousSeedString} -> ${currentSeedString}`);
+  }
+
+  const currentTone = toneVectorFromSeed(currentSeed);
+  const previousToneMap = new Map(
+    toneVectorFromSeed(previousSeed).map((entry) => [entry.key, entry.value]),
+  );
+  for (const entry of currentTone) {
+    const previousValue = previousToneMap.get(entry.key);
+    if (previousValue == null) continue;
+    const delta = Number((entry.value - previousValue).toFixed(3));
+    if (Math.abs(delta) >= 0.02) {
+      diffs.push(`Tone.${entry.key} shifted by ${delta > 0 ? "+" : ""}${delta.toFixed(3)}`);
+    }
+  }
+
+  const currentTick = maybeNumber(currentState?.tick);
+  const previousTick = maybeNumber(previousState?.tick);
+  if (currentTick != null && previousTick != null && currentTick !== previousTick) {
+    diffs.push(`World tick ${previousTick} -> ${currentTick}`);
+  }
+
+  const currentEscalation = maybeNumber(currentState?.villainEscalation ?? currentState?.villain_escalation);
+  const previousEscalation = maybeNumber(previousState?.villainEscalation ?? previousState?.villain_escalation);
+  if (currentEscalation != null && previousEscalation != null && currentEscalation !== previousEscalation) {
+    diffs.push(`Villain escalation ${previousEscalation} -> ${currentEscalation}`);
+  }
+
+  const currentRumors = asStringArray(currentState?.activeRumors ?? currentState?.active_rumors);
+  const previousRumors = asStringArray(previousState?.activeRumors ?? previousState?.active_rumors);
+  if (currentRumors.length !== previousRumors.length) {
+    diffs.push(`Active rumors ${previousRumors.length} -> ${currentRumors.length}`);
+  }
+
+  const currentCollapsed = asStringArray(currentState?.collapsedDungeons ?? currentState?.collapsed_dungeons);
+  const previousCollapsed = asStringArray(previousState?.collapsedDungeons ?? previousState?.collapsed_dungeons);
+  if (currentCollapsed.length !== previousCollapsed.length) {
+    diffs.push(`Collapsed dungeons ${previousCollapsed.length} -> ${currentCollapsed.length}`);
+  }
+
+  return diffs.slice(0, 10);
+}
+
+function summarizeForgeContributions(forgeInput: Record<string, unknown>): Array<{ key: string; value: string }> {
+  const entries: Array<{ key: string; value: string }> = [];
+  const orderedKeys = [
+    "tonePreset",
+    "selectedPresets",
+    "humorLevel",
+    "lethality",
+    "magicDensity",
+    "techLevel",
+    "creatureFocus",
+    "factionComplexity",
+    "worldSize",
+    "startingRegionType",
+    "villainArchetype",
+    "corruptionLevel",
+    "divineInterferenceLevel",
+    "randomizationMode",
+  ];
+
+  for (const key of orderedKeys) {
+    const value = forgeInput[key];
+    if (value == null) continue;
+    if (typeof value === "string" && value.trim().length === 0) continue;
+    if (Array.isArray(value) && value.length === 0) continue;
+
+    if (Array.isArray(value)) {
+      entries.push({ key, value: value.map((entry) => String(entry)).join(", ") });
+      continue;
+    }
+
+    if (typeof value === "object") {
+      entries.push({ key, value: JSON.stringify(value) });
+      continue;
+    }
+
+    entries.push({ key, value: String(value) });
+  }
+
+  return entries;
 }
 
 const SAMPLE_ATTACKER = {
@@ -107,6 +306,82 @@ export function BalancePanel() {
   const [epicWeight, setEpicWeight] = useState(DEFAULT_RULE_TUNABLES.loot.rarityWeights.epic);
   const [legendaryWeight, setLegendaryWeight] = useState(DEFAULT_RULE_TUNABLES.loot.rarityWeights.legendary);
 
+  const [latestSnapshot, setLatestSnapshot] = useState<MythicDebugSnapshot | null>(() => readLatestMythicDebugSnapshot());
+  const [snapshotHistory, setSnapshotHistory] = useState<MythicDebugSnapshot[]>(() => readMythicDebugHistory());
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return () => undefined;
+    setLatestSnapshot(readLatestMythicDebugSnapshot());
+    setSnapshotHistory(readMythicDebugHistory());
+    return subscribeMythicDebugSnapshots((snapshot) => {
+      setLatestSnapshot(snapshot);
+      setSnapshotHistory(readMythicDebugHistory());
+    });
+  }, []);
+
+  const previousSnapshot = useMemo(() => {
+    if (!latestSnapshot) return null;
+    const sameCampaign = snapshotHistory
+      .filter((entry) => entry.campaignId === latestSnapshot.campaignId && entry.capturedAt !== latestSnapshot.capturedAt)
+      .sort((left, right) => left.capturedAt.localeCompare(right.capturedAt));
+    return sameCampaign.at(-1) ?? null;
+  }, [latestSnapshot, snapshotHistory]);
+
+  const snapshotContext = useMemo(
+    () => asRecord(latestSnapshot?.context),
+    [latestSnapshot],
+  );
+
+  const worldSeed = useMemo(() => worldSeedFromContext(snapshotContext), [snapshotContext]);
+  const worldContext = useMemo(() => worldContextFromContext(snapshotContext), [snapshotContext]);
+  const worldState = useMemo(() => worldStateFromContext(snapshotContext), [snapshotContext]);
+  const dmProfile = useMemo(() => dmProfileFromContext(snapshotContext), [snapshotContext]);
+
+  const presetTrace = useMemo(() => extractPresetTrace(snapshotContext), [snapshotContext]);
+  const forgeInput = useMemo(() => extractForgeInput(snapshotContext), [snapshotContext]);
+  const forgeContributions = useMemo(() => summarizeForgeContributions(forgeInput), [forgeInput]);
+  const toneRows = useMemo(() => toneVectorFromSeed(worldSeed), [worldSeed]);
+  const diffRows = useMemo(() => buildSnapshotDiffs(latestSnapshot, previousSnapshot), [latestSnapshot, previousSnapshot]);
+
+  const timelineRows = useMemo(() => {
+    const rows = asArray(worldState?.history)
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+      .map((entry) => ({
+        tick: maybeNumber(entry.tick) ?? 0,
+        type: typeof entry.type === "string" ? entry.type : "event",
+        summary: typeof entry.summary === "string" ? entry.summary : "-",
+        impacts: asRecord(entry.impacts),
+      }))
+      .slice(-12)
+      .reverse();
+    return rows;
+  }, [worldState]);
+
+  const factionRows = useMemo(() => {
+    const rows = asArray(worldState?.factionStates ?? worldState?.faction_states)
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+      .map((entry) => ({
+        factionId: String(entry.factionId ?? entry.faction_id ?? "-") || "-",
+        powerLevel: maybeNumber(entry.powerLevel ?? entry.power_level) ?? 0,
+        trustDelta: maybeNumber(entry.trustDelta ?? entry.trust_delta) ?? 0,
+        lastActionTick: maybeNumber(entry.lastActionTick ?? entry.last_action_tick) ?? 0,
+      }))
+      .sort((left, right) => right.powerLevel - left.powerLevel)
+      .slice(0, 12);
+    return rows;
+  }, [worldState]);
+
+  const activeRumors = useMemo(
+    () => asStringArray(worldState?.activeRumors ?? worldState?.active_rumors).slice(-8).reverse(),
+    [worldState],
+  );
+  const collapsedDungeons = useMemo(
+    () => asStringArray(worldState?.collapsedDungeons ?? worldState?.collapsed_dungeons).slice(-8).reverse(),
+    [worldState],
+  );
+
   const tunables = useMemo<RuleTunables>(() => buildTunables({
     combat: {
       ...DEFAULT_RULE_TUNABLES.combat,
@@ -131,7 +406,7 @@ export function BalancePanel() {
         legendary: Math.max(0, Math.floor(legendaryWeight)),
       },
     },
-  }), [buyMultiplier, critMultiplier, dotScale, epicWeight, legendaryWeight, rareWeight, variancePct]);
+  }), [buyMultiplier, critMultiplier, dotScale, epicWeight, legendaryWeight, rareWeight, variancePct, hotScale]);
 
   const xpRows = useMemo(() => {
     const rows: Array<{ level: number; next: number; cumulative: number }> = [];
@@ -210,7 +485,7 @@ export function BalancePanel() {
   if (!import.meta.env.DEV) return null;
 
   return (
-    <div style={{ position: "fixed", left: 12, bottom: 12, zIndex: 10000, maxWidth: 680, pointerEvents: "auto" }}>
+    <div style={{ position: "fixed", left: 12, bottom: 12, zIndex: 10000, maxWidth: 840, pointerEvents: "auto" }}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
@@ -236,7 +511,7 @@ export function BalancePanel() {
             background: "rgba(14, 14, 20, 0.96)",
             color: "#f7f1d3",
             padding: 12,
-            maxHeight: "72vh",
+            maxHeight: "78vh",
             overflow: "auto",
             fontSize: 12,
           }}
@@ -369,6 +644,204 @@ export function BalancePanel() {
                 Uses current variance/crit settings and sample Lv15 attacker vs defender.
               </div>
             </div>
+          </div>
+
+          <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid rgba(242, 201, 76, 0.2)" }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Forge Inspector</div>
+            {latestSnapshot ? (
+              <>
+                <div style={{ marginBottom: 6, opacity: 0.9 }}>
+                  Captured: {latestSnapshot.capturedAt} | Campaign: {latestSnapshot.campaignId}
+                </div>
+                <div style={{ marginBottom: 6, opacity: 0.9 }}>
+                  World: {resolveWorldName(worldContext)} | Moral climate: {resolveMoralClimate(worldContext)}
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8 }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>Seed string</td>
+                      <td>{String(worldSeed?.seed_string ?? worldSeed?.seedString ?? "-")}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>Seed number</td>
+                      <td>{String(worldSeed?.seed_number ?? worldSeed?.seedNumber ?? worldSeed?.seed ?? "-")}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>Theme tags</td>
+                      <td>{asStringArray(worldSeed?.theme_tags ?? worldSeed?.themeTags).join(", ") || "-"}</td>
+                    </tr>
+                    <tr>
+                      <td style={{ fontWeight: 600 }}>Preset trace</td>
+                      <td>{presetTrace.join(" -> ") || "-"}</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {toneRows.length > 0 ? (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 3 }}>Tone vector</div>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr>
+                          <th align="left">Axis</th>
+                          <th align="right">Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {toneRows.map((row) => (
+                          <tr key={row.key}>
+                            <td>{row.key}</td>
+                            <td align="right">{row.value.toFixed(3)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+
+                {forgeContributions.length > 0 ? (
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 3 }}>Forge contributions</div>
+                    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr>
+                          <th align="left">Field</th>
+                          <th align="left">Value</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {forgeContributions.map((entry) => (
+                          <tr key={entry.key}>
+                            <td style={{ verticalAlign: "top" }}>{entry.key}</td>
+                            <td>{entry.value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+
+                <div>
+                  <div style={{ fontWeight: 600, marginBottom: 3 }}>Diff vs previous snapshot</div>
+                  {previousSnapshot ? (
+                    diffRows.length > 0 ? (
+                      <ul style={{ margin: 0, paddingLeft: 16 }}>
+                        {diffRows.map((entry) => (
+                          <li key={entry}>{entry}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <div>No material world-state diff detected.</div>
+                    )
+                  ) : (
+                    <div>No previous snapshot for this campaign yet.</div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div>No DM debug snapshot yet. Trigger a DM context fetch to populate inspector data.</div>
+            )}
+          </div>
+
+          <div style={{ marginTop: 14, paddingTop: 10, borderTop: "1px solid rgba(242, 201, 76, 0.2)" }}>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>World-State Timeline</div>
+
+            {worldState ? (
+              <>
+                <div style={{ marginBottom: 8 }}>
+                  Tick: {String(worldState.tick ?? "-")} | Villain escalation: {String(worldState.villainEscalation ?? worldState.villain_escalation ?? "-")}
+                </div>
+
+                <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>History (latest 12)</div>
+                    {timelineRows.length > 0 ? (
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr>
+                            <th align="right">Tick</th>
+                            <th align="left">Type</th>
+                            <th align="left">Summary</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {timelineRows.map((row, index) => (
+                            <tr key={`${row.tick}-${index}-${row.type}`}>
+                              <td align="right">{row.tick}</td>
+                              <td>{row.type}</td>
+                              <td>
+                                {row.summary}
+                                {row.impacts ? (
+                                  <div style={{ opacity: 0.8 }}>
+                                    {Object.entries(row.impacts)
+                                      .map(([key, value]) => `${key}:${String(value)}`)
+                                      .join(" | ")}
+                                  </div>
+                                ) : null}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div>No timeline history found.</div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Faction power/trust</div>
+                    {factionRows.length > 0 ? (
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                        <thead>
+                          <tr>
+                            <th align="left">Faction</th>
+                            <th align="right">Power</th>
+                            <th align="right">Trust</th>
+                            <th align="right">Last tick</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {factionRows.map((row) => (
+                            <tr key={row.factionId}>
+                              <td>{row.factionId}</td>
+                              <td align="right">{Math.floor(row.powerLevel)}</td>
+                              <td align="right">{Math.floor(row.trustDelta)}</td>
+                              <td align="right">{Math.floor(row.lastActionTick)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div>No faction state data.</div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Active rumors</div>
+                    {activeRumors.length > 0 ? (
+                      <ul style={{ margin: 0, paddingLeft: 16 }}>
+                        {activeRumors.map((entry) => <li key={entry}>{entry}</li>)}
+                      </ul>
+                    ) : (
+                      <div>No active rumors.</div>
+                    )}
+                  </div>
+
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Collapsed dungeons</div>
+                    {collapsedDungeons.length > 0 ? (
+                      <ul style={{ margin: 0, paddingLeft: 16 }}>
+                        {collapsedDungeons.map((entry) => <li key={entry}>{entry}</li>)}
+                      </ul>
+                    ) : (
+                      <div>No collapsed dungeons recorded.</div>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div>No world state payload in latest snapshot.</div>
+            )}
           </div>
         </div>
       ) : null}

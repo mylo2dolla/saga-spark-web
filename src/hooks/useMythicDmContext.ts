@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { callEdgeFunction } from "@/lib/edge";
 import { formatError } from "@/ui/data/async";
 import type { MythicDmContextResponse } from "@/types/mythic";
+import { publishMythicDebugSnapshot } from "@/lib/mythicDebugStore";
 
 interface UseMythicDmContextOptions {
   boardUpdatedAt?: string | null;
@@ -75,6 +76,11 @@ export function useMythicDmContext(
       const isLatest = requestSeq === activeSeqRef.current;
       const sameCampaign = campaignRef.current === requestCampaignId;
       if (isMountedRef.current && isLatest && sameCampaign) {
+        publishMythicDebugSnapshot({
+          capturedAt: new Date().toISOString(),
+          campaignId: requestCampaignId,
+          context: data,
+        });
         setContext(data);
       }
     } catch (err) {

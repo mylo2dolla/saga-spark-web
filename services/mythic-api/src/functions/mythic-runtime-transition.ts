@@ -7,8 +7,8 @@ import { rngInt, rngPick } from "../shared/mythic_rng.js";
 import {
   applyWorldGrowthToContext,
   buildWorldProfilePayload,
+  buildRuntimeWorldBindings,
   coerceCampaignContextFromProfile,
-  summarizeWorldContext,
   WORLD_FORGE_VERSION,
   type CampaignContext,
   type PlayerWorldAction,
@@ -1477,27 +1477,16 @@ export const mythicRuntimeTransition: FunctionHandler = {
           companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
         };
       }
-      const worldSummary = summarizeWorldContext(campaignContext);
+      const runtimeBindings = buildRuntimeWorldBindings(campaignContext, {
+        includeCampaignContext: true,
+        includeBiomeAtmosphere: true,
+        directiveLimit: 6,
+        coreConflictLimit: 4,
+        factionTensionLimit: 5,
+      });
       nextState = {
         ...nextState,
-        world_forge_version: WORLD_FORGE_VERSION,
-        campaign_context: campaignContext,
-        world_context: worldSummary,
-        dm_context: {
-          profile: campaignContext.dmContext.dmBehaviorProfile,
-          directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
-        },
-        world_state: campaignContext.worldContext.worldState,
-        moral_climate: campaignContext.worldContext.worldBible.moralClimate,
-        core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
-        faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 5),
-        biome_atmosphere: campaignContext.worldContext.biomeMap.regions.slice(0, 6).map((region) => ({
-          id: region.id,
-          name: region.name,
-          biome: region.dominantBiome,
-          corruption: region.corruption,
-          dungeon_density: region.dungeonDensity,
-        })),
+        ...runtimeBindings,
       };
 
       nextState = applyCompanionCommand({

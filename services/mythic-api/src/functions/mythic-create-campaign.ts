@@ -5,8 +5,9 @@ import { AuthError, requireUser } from "../shared/auth.js";
 import { buildStarterDirection } from "../shared/intro_seed.js";
 import {
   buildWorldProfilePayload,
+  buildWorldSeedPayload,
+  buildRuntimeWorldBindings,
   fromTemplateKey,
-  summarizeWorldContext,
   WORLD_FORGE_VERSION,
   type CampaignContext,
 } from "../lib/worldforge/index.js";
@@ -285,7 +286,12 @@ function makeTownState(args: {
 }) {
   const { campaignId, name, description, templateKey, seed, factionNames, campaignContext } = args;
   const services = makeTemplateServices(templateKey);
-  const worldSummary = summarizeWorldContext(campaignContext);
+  const runtimeWorldBindings = buildRuntimeWorldBindings(campaignContext, {
+    includeCampaignContext: true,
+    directiveLimit: 6,
+    coreConflictLimit: 4,
+    factionTensionLimit: 4,
+  });
   const starter = buildStarterDirection({
     seed,
     templateKey,
@@ -298,18 +304,14 @@ function makeTownState(args: {
     campaign_id: campaignId,
     template_key: templateKey,
     world_seed: {
-      title: name,
-      description,
-      seed,
-      seed_string: campaignContext.worldSeed.seedString,
+      ...buildWorldSeedPayload(campaignContext, {
+        includeTitleDescription: true,
+        title: name,
+        description,
+        includeLegacySeed: true,
+      }),
     },
-    world_forge_version: WORLD_FORGE_VERSION,
-    campaign_context: campaignContext,
-    world_context: worldSummary,
-    dm_context: {
-      profile: campaignContext.dmContext.dmBehaviorProfile,
-      directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
-    },
+    ...runtimeWorldBindings,
     vendors: [
       {
         id: "vendor_1",
@@ -330,10 +332,6 @@ function makeTownState(args: {
     discovery_flags: starter.discovery_flags,
     room_state: {},
     companion_checkins: [],
-    world_state: campaignContext.worldContext.worldState,
-    moral_climate: campaignContext.worldContext.worldBible.moralClimate,
-    core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
-    faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 4),
   };
 }
 
@@ -681,10 +679,10 @@ export const mythicCreateCampaign: FunctionHandler = {
           template_key: templateKey,
           world_forge_version: WORLD_FORGE_VERSION,
           world_seed: {
-            seed_number: campaignContext.worldSeed.seedNumber,
-            seed_string: campaignContext.worldSeed.seedString,
-            theme_tags: campaignContext.worldSeed.themeTags,
-            tone_vector: campaignContext.worldSeed.toneVector,
+            ...buildWorldSeedPayload(campaignContext, {
+              includeThemeTags: true,
+              includeToneVector: true,
+            }),
           },
           world_seed_status: seedStatus,
           health_status: warnings.length === 0 ? "Mythic Ready" : "Needs Repair",

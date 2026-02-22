@@ -21,6 +21,9 @@ import {
 } from "../shared/turn_contract.js";
 import { getConfig } from "../shared/env.js";
 import {
+  buildDmContextPayload,
+  buildPromptWorldContextBlock,
+  buildWorldSeedPayload,
   coerceCampaignContextFromProfile,
   summarizeWorldContext,
   WORLD_FORGE_VERSION,
@@ -2296,19 +2299,16 @@ export const mythicDungeonMaster: FunctionHandler = {
           worldForgeVersion = campaignContext.worldForgeVersion;
           campaignContextForPrompt = campaignContext as unknown as Record<string, unknown>;
           worldSummaryForPrompt = summarizeWorldContext(campaignContext);
-          dmContextForPrompt = {
-            profile: campaignContext.dmContext.dmBehaviorProfile,
-            narrative_directives: campaignContext.dmContext.narrativeDirectives,
-            tactical_directives: campaignContext.dmContext.tacticalDirectives,
-          };
-          worldSeedForPrompt = {
-            title: campaignContext.title,
-            description: campaignContext.description,
-            seed_number: campaignContext.worldSeed.seedNumber,
-            seed_string: campaignContext.worldSeed.seedString,
-            theme_tags: campaignContext.worldSeed.themeTags,
-            tone_vector: campaignContext.worldSeed.toneVector,
-          };
+          dmContextForPrompt = buildDmContextPayload(campaignContext, {
+            includeProfile: true,
+            narrativeLimit: 12,
+            tacticalLimit: 12,
+          });
+          worldSeedForPrompt = buildWorldSeedPayload(campaignContext, {
+            includeTitleDescription: true,
+            includeThemeTags: true,
+            includeToneVector: true,
+          });
           worldStateForPrompt = campaignContext.worldContext.worldState as unknown as Record<string, unknown>;
         } catch (error) {
           warnings.push(`world_context_coerce_failed:${errMessage(error, "world context reconstruction failed")}`);
@@ -2387,6 +2387,23 @@ export const mythicDungeonMaster: FunctionHandler = {
           "runtime_delta.discovery_flags must set intro_pending=false.",
         ].join("\n")
         : "";
+      const worldPromptBlock = buildPromptWorldContextBlock({
+        worldForgeVersion,
+        worldSeed: worldSeedForPrompt,
+        worldContext: worldSummaryForPrompt,
+        dmContext: dmContextForPrompt,
+        worldState: worldStateForPrompt,
+        campaignContext: campaignContextForPrompt,
+      });
+      if (worldPromptBlock.meta.trimmed) {
+        warnings.push([
+          "world_prompt_budget_trimmed",
+          `raw=${worldPromptBlock.meta.rawChars}`,
+          `final=${worldPromptBlock.meta.finalChars}`,
+          `dropped=${worldPromptBlock.meta.droppedSections.join("|") || "none"}`,
+          `reduced=${worldPromptBlock.meta.reductions.join("|") || "none"}`,
+        ].join(":"));
+      }
 
       const systemPrompt = `
 You are the Mythic Weave Dungeon Master entity.
@@ -2421,14 +2438,7 @@ ${jsonInline(dmWorldTension ?? null, 600)}
 ${jsonInline(compactCompanions, 900)}
 
 - World Forge context:
-${jsonInline({
-  world_forge_version: worldForgeVersion,
-  world_seed: worldSeedForPrompt ?? null,
-  world_context: worldSummaryForPrompt ?? null,
-  dm_context: dmContextForPrompt ?? null,
-  world_state: worldStateForPrompt ?? null,
-  campaign_context: campaignContextForPrompt ?? null,
-}, 2200)}
+${jsonInline(worldPromptBlock.payload, worldPromptBlock.meta.maxChars)}
 
 - Board narrative samples:
 ${jsonInline(boardNarrativeSamples, 900)}
@@ -2475,6 +2485,9 @@ ${jsonOnlyContract()}
         warning_count: warnings.length,
         intro_mode: introMode,
         intro_pending_before: introPendingBefore,
+        world_prompt_chars: worldPromptBlock.meta.finalChars,
+        world_prompt_budget_chars: worldPromptBlock.meta.maxChars,
+        world_prompt_trimmed: worldPromptBlock.meta.trimmed,
         prompt_chars: systemPrompt.length,
       });
       ctx.log.info("dm.intro.mode", {

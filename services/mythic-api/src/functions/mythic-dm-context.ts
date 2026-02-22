@@ -7,6 +7,8 @@ import { enforceRateLimit } from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
 import { RULE_VERSION } from "../lib/rules/version.js";
 import {
+  buildDmContextPayload,
+  buildWorldSeedPayload,
   coerceCampaignContextFromProfile,
   summarizeWorldContext,
   WORLD_FORGE_VERSION,
@@ -552,17 +554,15 @@ export const mythicDmContext: FunctionHandler = {
         worldForgeVersion = campaignContext.worldForgeVersion;
         campaignContextPayload = campaignContext as unknown as Record<string, unknown>;
         worldContextPayload = worldSummary;
-        dmContextPayload = {
-          profile: campaignContext.dmContext.dmBehaviorProfile,
-          narrative_directives: campaignContext.dmContext.narrativeDirectives,
-          tactical_directives: campaignContext.dmContext.tacticalDirectives,
-        };
-        worldSeedPayload = {
-          seed_number: campaignContext.worldSeed.seedNumber,
-          seed_string: campaignContext.worldSeed.seedString,
-          theme_tags: campaignContext.worldSeed.themeTags,
-          tone_vector: campaignContext.worldSeed.toneVector,
-        };
+        dmContextPayload = buildDmContextPayload(campaignContext, {
+          includeProfile: true,
+          narrativeLimit: 12,
+          tacticalLimit: 12,
+        });
+        worldSeedPayload = buildWorldSeedPayload(campaignContext, {
+          includeThemeTags: true,
+          includeToneVector: true,
+        });
       } catch (error) {
         warnings.push(`world_context_coerce_failed:${errMessage(error, "world context reconstruction failed")}`);
       }
