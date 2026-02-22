@@ -112,3 +112,32 @@ This pass upgraded campaign/class forge quality and companion setup:
   - `mythic-dm-context`: `80d511e5-597d-47a8-9d47-f7440b457cfc`
   - `mythic-dungeon-master`: `8ba858ad-bb46-4331-870a-f2d8dedde790`
   - `mythic-combat-start`: `11a33535-fc20-48bb-89a1-ebdd0b8ebe0e`
+
+## User-Scoped Backfill Execution (2026-02-22)
+- Presentation/naming backfill:
+  - Dry run: `npx tsx scripts/backfill-mythic-presentation-wordbank.ts --email=strange-ops@cyber-wizard.com --dry-run`
+    - campaigns scoped: `1`
+    - skills tagged: `8`
+  - Apply: `npx tsx scripts/backfill-mythic-presentation-wordbank.ts --email=strange-ops@cyber-wizard.com --yes`
+    - campaigns scoped: `1`
+    - skills tagged: `8`
+- Worldforge profile backfill:
+  - Dry run: `npx tsx scripts/backfill-worldforge-profiles.ts --campaign-id=a5f06ec5-a7e7-40dd-bf1a-a012820d79e1 --dry-run`
+  - Apply: `npx tsx scripts/backfill-worldforge-profiles.ts --campaign-id=a5f06ec5-a7e7-40dd-bf1a-a012820d79e1 --yes`
+    - updated profiles: `1`
+    - patched runtime rows: `1`
+- Destructive reset not executed in this pass (dry-run only):
+  - `npx tsx scripts/reset-mythic-user-campaigns.ts --email=strange-ops@cyber-wizard.com --dry-run`
+    - scoped campaign: `a5f06ec5-a7e7-40dd-bf1a-a012820d79e1`
+
+## Post-Backfill Smoke (2026-02-22)
+- `npm run smoke:prod` ✅
+- `npm run smoke:board` ✅
+  - `mythic-create-campaign`: `b2da5de5-bc8d-43d3-b662-4a3d7d22cdc9`
+  - `mythic-create-character`: `59d813fd-b4c6-4fe0-91ea-ec96c4fc9cc6`
+  - `mythic-dm-context`: `58a94dc4-a491-48fa-80f9-af7a96ed1154`
+  - `mythic-dungeon-master`: `4b90397f-823f-43fa-a55e-ff145c4c8ffc`
+  - `mythic-runtime-transition:travel`: `3d644f7c-e0c1-43e6-8922-7fc23c23cc71`
+  - `mythic-runtime-transition:dungeon`: `cb0afeb5-c226-45db-8bc7-f23914cbc099`
+  - `mythic-runtime-transition:town`: `1b439ef5-944a-4d2b-963d-38ec9d489554`
+  - `mythic-combat-start`: `4502b303-5560-406e-9979-6c1cc4c696d2`
