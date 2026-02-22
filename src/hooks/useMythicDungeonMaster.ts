@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { callEdgeFunctionRaw } from "@/lib/edge";
 import { parseEdgeError } from "@/lib/edgeError";
@@ -128,6 +128,13 @@ function normalizeNarratorSource(value: unknown): DmNarratorSource | null {
   const key = value.trim().toLowerCase();
   if (key === "ai" || key === "procedural") return key;
   return null;
+}
+
+function readNarratorModePreference(): DmNarratorMode {
+  if (typeof window === "undefined") return "hybrid";
+  const raw = window.localStorage.getItem(DM_NARRATOR_LOCAL_STORAGE_KEY);
+  const normalized = normalizeNarratorMode(raw);
+  return normalized ?? "hybrid";
 }
 
 function dedupeUiActions(actions: MythicUiAction[], maxActions = 8): MythicUiAction[] {
@@ -475,9 +482,15 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
   const [operation, setOperation] = useState<OperationState | null>(null);
   const [lastError, setLastError] = useState<MythicDmErrorInfo | null>(null);
   const [lastResponseMeta, setLastResponseMeta] = useState<MythicDmLastResponseMeta | null>(null);
+  const [narratorMode, setNarratorMode] = useState<DmNarratorMode>(() => readNarratorModePreference());
   const abortRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef(0);
   const activeSeqRef = useRef(0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(DM_NARRATOR_LOCAL_STORAGE_KEY, narratorMode);
+  }, [narratorMode]);
 
   const sendMessage = useCallback(
     async (content: string, options?: SendOptions) => {
@@ -498,10 +511,16 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
       const actionTraceId = typeof options?.actionContext?.action_trace_id === "string"
         ? options.actionContext.action_trace_id
         : null;
+      const requestedNarratorMode = options?.narratorModeOverride ?? narratorMode;
+      const actionContextPayload = {
+        ...(options?.actionContext ?? {}),
+        narrator_mode: requestedNarratorMode,
+      };
       logger.info("mythic.dm.send.start", {
         campaign_id: campaignId,
         action_trace_id: actionTraceId,
         append_user: shouldAppendUser,
+        narrator_mode: requestedNarratorMode,
       });
 
       const shouldAbortPrevious = options?.abortPrevious !== false;
@@ -559,10 +578,11 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
               idempotencyKey: options?.idempotencyKey ?? `${campaignId}:${crypto.randomUUID()}`,
               body: {
                 campaignId,
+                narratorMode: requestedNarratorMode,
                 messages: [...messages, userMessage]
                   .slice(-MAX_HISTORY_MESSAGES)
                   .map((m) => ({ role: m.role, content: trimMessage(m.content) })),
-                actionContext: options?.actionContext ?? null,
+                actionContext: actionContextPayload,
               },
             }),
         });
@@ -650,6 +670,13 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
             recoveryReason: typeof parsedResponse?.meta?.dm_recovery_reason === "string"
               ? parsedResponse.meta.dm_recovery_reason
               : null,
+            narratorSource: normalizeNarratorSource(parsedResponse?.meta?.dm_narrator_source) ?? null,
+            narratorMode: normalizeNarratorMode(parsedResponse?.meta?.dm_narrator_mode) ?? requestedNarratorMode,
+            templateId: typeof parsedResponse?.meta?.dm_template_id === "string" ? parsedResponse.meta.dm_template_id : null,
+            aiModel: typeof parsedResponse?.meta?.dm_ai_model === "string" ? parsedResponse.meta.dm_ai_model : null,
+            latencyMs: Number.isFinite(Number(parsedResponse?.meta?.dm_latency_ms))
+              ? Number(parsedResponse?.meta?.dm_latency_ms)
+              : null,
           });
         } else {
           logger.info("mythic.dm.send.stale_ignored", {
@@ -701,7 +728,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         }
       }
     },
-    [campaignId, messages],
+    [campaignId, messages, narratorMode],
   );
 
   const clearMessages = useCallback(() => {
@@ -725,6 +752,8 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
     operation,
     lastError,
     lastResponseMeta,
+    narratorMode,
+    setNarratorMode,
     sendMessage,
     clearMessages,
     cancelMessage,

@@ -56,7 +56,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 2,
     tags: ["loot", "heroic", "low"],
     render: (vars) =>
-      compactSentence(`${vars.actor} pulls spoils from the wreckage. ${vars.summaryObjective ? `Objective: ${vars.summaryObjective}.` : vars.recoveryBeat}`),
+      compactSentence(`${vars.actor} pulls spoils from the wreckage. ${vars.objective ? `Objective: ${vars.objective}.` : vars.recoveryBeat}`),
   },
   {
     id: "travel_step_01",
@@ -72,7 +72,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 2,
     tags: ["travel", "dark", "low"],
     render: (vars) =>
-      compactSentence(`The route narrows. ${vars.summaryRumor ? `Rumor bite: ${vars.summaryRumor}.` : vars.boardNarration}`),
+      compactSentence(`The route narrows. ${vars.rumor ? `Rumor bite: ${vars.rumor}.` : vars.boardNarration}`),
   },
   {
     id: "dungeon_enter_01",
@@ -96,7 +96,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 3,
     tags: ["town", "comic", "low"],
     render: (vars) =>
-      compactSentence(`A local cuts through the noise with a live lead. ${vars.summaryRumor ? vars.summaryRumor : vars.actionSummary}`),
+      compactSentence(`A local cuts through the noise with a live lead. ${vars.rumor ? vars.rumor : vars.actionSummary}`),
   },
   {
     id: "npc_dialogue_02",
@@ -104,7 +104,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 2,
     tags: ["town", "mischievous", "med"],
     render: (vars) =>
-      compactSentence(`The conversation turns sharp, then useful. ${vars.summaryObjective ? vars.summaryObjective : vars.recoveryBeat}`),
+      compactSentence(`The conversation turns sharp, then useful. ${vars.objective ? vars.objective : vars.recoveryBeat}`),
   },
   {
     id: "level_up_01",
@@ -120,7 +120,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 3,
     tags: ["quest", "tactical", "med"],
     render: (vars) =>
-      compactSentence(`Quest pressure updates in real time. ${vars.summaryObjective ? vars.summaryObjective : vars.actionSummary}`),
+      compactSentence(`Quest pressure updates in real time. ${vars.objective ? vars.objective : vars.actionSummary}`),
   },
   {
     id: "quest_update_02",
@@ -128,7 +128,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 2,
     tags: ["quest", "dark", "low"],
     render: (vars) =>
-      compactSentence(`Threads tighten around ${vars.boardAnchor}. ${vars.summaryRumor ? vars.summaryRumor : vars.recoveryBeat}`),
+      compactSentence(`Threads tighten around ${vars.boardAnchor}. ${vars.rumor ? vars.rumor : vars.recoveryBeat}`),
   },
   {
     id: "board_transition_01",
@@ -198,4 +198,3 @@ export function describeContextClue(biome: string, amount: number): string {
 export function conciseCountLabel(label: string, count: number): string {
   return `${count} ${pluralize(label, count)}`;
 }
-

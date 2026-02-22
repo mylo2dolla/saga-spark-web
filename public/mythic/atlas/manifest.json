@@ -1,0 +1,17 @@
+{
+  "version": "mythic-gba-v1",
+  "entries": [
+    { "alias": "entity:ally:infantry", "url": "/mythic/atlas/entity-ally-infantry.svg" },
+    { "alias": "entity:ally:caster", "url": "/mythic/atlas/entity-ally-caster.svg" },
+    { "alias": "entity:enemy:brute", "url": "/mythic/atlas/entity-enemy-brute.svg" },
+    { "alias": "entity:enemy:caster", "url": "/mythic/atlas/entity-enemy-caster.svg" },
+    { "alias": "entity:enemy:beast", "url": "/mythic/atlas/entity-enemy-beast.svg" },
+    { "alias": "entity:neutral:npc", "url": "/mythic/atlas/entity-neutral-npc.svg" },
+    { "alias": "building:town", "url": "/mythic/atlas/building-town.svg" },
+    { "alias": "building:dungeon", "url": "/mythic/atlas/building-dungeon.svg" },
+    { "alias": "prop:landmark", "url": "/mythic/atlas/prop-landmark.svg" },
+    { "alias": "prop:lantern", "url": "/mythic/atlas/prop-lantern.svg" },
+    { "alias": "prop:tree", "url": "/mythic/atlas/prop-tree.svg" },
+    { "alias": "prop:torch", "url": "/mythic/atlas/prop-torch.svg" }
+  ]
+}

@@ -10,11 +10,13 @@ import {
 } from "@/components/ui/select";
 
 export type MythicAnimationIntensity = "low" | "normal" | "high";
+export type MythicNarratorMode = "ai" | "procedural" | "hybrid";
 
 export interface MythicRuntimeSettings {
   compactNarration: boolean;
   animationIntensity: MythicAnimationIntensity;
   chatAutoFollow: boolean;
+  narratorMode: MythicNarratorMode;
 }
 
 interface SettingsPanelProps {
@@ -28,6 +30,8 @@ interface SettingsPanelProps {
   onVoiceChange: (voice: string) => void;
   onSpeakLatest: () => void;
   onStopVoice: () => void;
+  narratorMode: MythicNarratorMode;
+  onNarratorModeChange: (mode: MythicNarratorMode) => void;
 }
 
 const INTENSITY_TO_STEP: Record<MythicAnimationIntensity, number> = {
@@ -98,6 +102,19 @@ export function SettingsPanel(props: SettingsPanelProps) {
             aria-label="Compact narration mode"
           />
           <span className="text-muted-foreground">Compact narration (server-locked default)</span>
+        </div>
+        <div className="mt-3 grid max-w-[220px] gap-1 text-xs">
+          <span className="text-muted-foreground">Narrator mode</span>
+          <Select value={props.narratorMode} onValueChange={(value) => props.onNarratorModeChange(value as MythicNarratorMode)}>
+            <SelectTrigger className="h-8 border-amber-200/20 bg-background/30 text-xs">
+              <SelectValue placeholder="Choose narrator mode" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="hybrid">Hybrid (Auto)</SelectItem>
+              <SelectItem value="procedural">Procedural Only</SelectItem>
+              <SelectItem value="ai">AI Only</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 

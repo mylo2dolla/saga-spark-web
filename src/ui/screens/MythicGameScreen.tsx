@@ -56,6 +56,7 @@ const DEFAULT_MYTHIC_SETTINGS: MythicRuntimeSettings = {
   compactNarration: true,
   animationIntensity: "normal",
   chatAutoFollow: true,
+  narratorMode: "hybrid",
 };
 
 function summarizeBoardHooks(state: unknown): Array<{ id: string; title: string; detail: string | null }> {
@@ -162,6 +163,9 @@ function loadMythicSettings(): MythicRuntimeSettings {
       compactNarration: parsed.compactNarration !== false,
       animationIntensity,
       chatAutoFollow: parsed.chatAutoFollow !== false,
+      narratorMode: parsed.narratorMode === "ai" || parsed.narratorMode === "procedural" || parsed.narratorMode === "hybrid"
+        ? parsed.narratorMode
+        : DEFAULT_MYTHIC_SETTINGS.narratorMode,
     };
   } catch {
     return DEFAULT_MYTHIC_SETTINGS;
@@ -822,6 +826,11 @@ export default function MythicGameScreen() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(MYTHIC_SETTINGS_STORAGE_KEY, JSON.stringify(runtimeSettings));
   }, [runtimeSettings]);
+
+  useEffect(() => {
+    if (mythicDm.narratorMode === runtimeSettings.narratorMode) return;
+    mythicDm.setNarratorMode(runtimeSettings.narratorMode);
+  }, [mythicDm.narratorMode, mythicDm.setNarratorMode, runtimeSettings.narratorMode]);
 
   const baseProfileDraft = useMemo(
     () => (character ? profileDraftFromCharacter(character) : null),
@@ -3466,6 +3475,9 @@ export default function MythicGameScreen() {
                     dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
                   }}
                   onStopVoice={dmVoice.stop}
+                  narratorMode={runtimeSettings.narratorMode}
+                  onNarratorModeChange={(mode) =>
+                    setRuntimeSettings((prev) => ({ ...prev, narratorMode: mode }))}
                 />
 
                 {devSurfaces.allowed ? (
@@ -3534,6 +3546,8 @@ export default function MythicGameScreen() {
                 <div>dm_last_response_recovery_used: {mythicDm.lastResponseMeta?.recoveryUsed ? "true" : "false"}</div>
                 <div>dm_last_response_recovery_reason: {mythicDm.lastResponseMeta?.recoveryReason ?? "none"}</div>
                 <div>dm_last_response_validation_attempts: {mythicDm.lastResponseMeta?.validationAttempts ?? "none"}</div>
+                <div>dm_narrator_mode: {mythicDm.lastResponseMeta?.narratorMode ?? mythicDm.narratorMode}</div>
+                <div>dm_narrator_source: {mythicDm.lastResponseMeta?.narratorSource ?? "none"}</div>
                 <div>narrated_action_busy: {isNarratedActionBusy ? "true" : "false"}</div>
                 <div>state_refreshing: {isStateRefreshing ? "true" : "false"}</div>
                 <div>board_id: {board.id}</div>

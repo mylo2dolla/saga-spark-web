@@ -55,7 +55,7 @@ function enemyNamePool(themeHint: string): string[] {
     return ["Lantern Wraith", "Moonflare Revenant", "Grave Choir Hound", "Velvet Cryptmimic", "Dusk Bell Specter"];
   }
   if (/(ruin|sci|tech|machine|arc|metal)/.test(lower)) {
-    return ["Arc Golem", "Crystal Spider", "Turbo Rune Drone", "Storm Sprite", "Thunder Drake"];
+    return ["Arc Golem", "Crystal Spider", "Turbo Prism Drone", "Storm Sprite", "Thunder Drake"];
   }
   if (/(forest|wild|road|travel|frontier)/.test(lower)) {
     return ["Thornbound Stalker", "Bubble Wyrm", "Bramble Drake", "Dire Goose", "Storm Kitty"];

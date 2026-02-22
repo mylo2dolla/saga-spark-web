@@ -29,6 +29,10 @@ interface NormalizedEvent {
   threshold: number | null;
 }
 
+function fxImportance(level: "low" | "normal" | "high" | "critical"): "low" | "normal" | "high" | "critical" {
+  return level;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -123,6 +127,7 @@ function movementEventToVisual(event: NormalizedEvent, sequence: number): Visual
     createdAt: event.createdAt,
     sequence,
     seedKey: event.id,
+    fxImportance: fxImportance("low"),
     entityId: event.actorId,
     from: event.from,
     to: event.to,
@@ -157,6 +162,7 @@ function statusEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapsho
         createdAt: first.createdAt,
         sequence,
         seedKey: first.id,
+        fxImportance: fxImportance("normal"),
         targetId: first.targetId ?? first.actorId ?? "unknown",
         tile,
         statusId: first.statusId ?? "status",
@@ -172,6 +178,7 @@ function statusEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapsho
       createdAt: first.createdAt,
       sequence,
       seedKey: rows.map((entry) => entry.id).join("|"),
+      fxImportance: fxImportance("normal"),
       targetId: first.targetId ?? first.actorId ?? "unknown",
       tile,
       statusIds: rows.map((entry) => entry.statusId ?? "status"),
@@ -211,6 +218,7 @@ function damageEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapsho
         createdAt: first.createdAt,
         sequence,
         seedKey: first.id,
+        fxImportance: crit ? fxImportance("high") : fxImportance("normal"),
         attackerId: first.actorId,
         targetTile: tile,
         style: "melee",
@@ -226,6 +234,7 @@ function damageEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapsho
         createdAt: first.createdAt,
         sequence,
         seedKey: rows.map((row) => row.id).join("|"),
+        fxImportance: crit ? fxImportance("critical") : fxImportance("high"),
         attackerId: first.actorId,
         targetId: first.targetId,
         tile,
@@ -243,11 +252,14 @@ function damageEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapsho
         createdAt: first.createdAt,
         sequence,
         seedKey: rows.map((row) => row.id).join("|"),
+        fxImportance: crit ? fxImportance("high") : fxImportance("normal"),
         targetId: first.targetId,
         tile,
         amount: total,
         isCrit: crit,
         hitCount,
+        totalDamage: total,
+        compressed: hitCount > 1,
       });
       sequence += 1;
     }
@@ -270,6 +282,7 @@ function missEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapshot,
       createdAt: event.createdAt,
       sequence,
       seedKey: event.id,
+      fxImportance: fxImportance("normal"),
       attackerId: event.actorId,
       targetId: event.targetId,
       tile,
@@ -296,6 +309,7 @@ function healEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapshot,
       createdAt: event.createdAt,
       sequence,
       seedKey: event.id,
+      fxImportance: fxImportance("normal"),
       sourceId: event.actorId,
       targetId: event.targetId,
       tile,
@@ -309,6 +323,7 @@ function healEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapshot,
       createdAt: event.createdAt,
       sequence,
       seedKey: event.id,
+      fxImportance: fxImportance("normal"),
       targetId: event.targetId,
       tile,
       amount,
@@ -331,6 +346,7 @@ function tickEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapshot,
       createdAt: event.createdAt,
       sequence,
       seedKey: event.id,
+      fxImportance: fxImportance("low"),
       targetId: event.targetId,
       tile,
       statusId: event.statusId ?? "status",
@@ -354,6 +370,7 @@ function barrierEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapsh
       createdAt: event.createdAt,
       sequence,
       seedKey: event.id,
+      fxImportance: event.eventType === "armor_shred" ? fxImportance("high") : fxImportance("normal"),
       targetId: event.targetId,
       tile,
       amount: event.amount ?? undefined,
@@ -376,6 +393,7 @@ function deathEventsToVisual(events: NormalizedEvent[], snapshot: RenderSnapshot
       createdAt: event.createdAt,
       sequence,
       seedKey: event.id,
+      fxImportance: fxImportance("critical"),
       targetId: event.targetId,
       tile,
     });
@@ -412,6 +430,7 @@ export function buildVisualEventQueue(
       createdAt: latest?.createdAt ?? new Date().toISOString(),
       sequence,
       seedKey: `${prevFrameState.boardType}:${options.boardType}`,
+      fxImportance: fxImportance("high"),
       fromBoardType: prevFrameState.boardType,
       toBoardType: options.boardType,
     });
@@ -458,6 +477,7 @@ export function buildVisualEventQueue(
       createdAt: event.createdAt,
       sequence: queue.length + 1,
       seedKey: event.id,
+      fxImportance: event.eventType === "turn_start" ? fxImportance("normal") : fxImportance("low"),
       actorId: event.actorId ?? undefined,
     });
   }

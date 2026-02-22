@@ -1,14 +1,26 @@
 import * as PIXI from "pixi.js";
+import type { BiomeSkinId, RenderEntityVisualClass } from "@/ui/components/mythic/board2/render/types";
 
 export interface SpriteAtlasEntry {
   alias: string;
   url: string;
 }
 
+export interface TextureLookupOptions {
+  biomeId?: BiomeSkinId;
+  visualClass?: RenderEntityVisualClass;
+}
+
+export interface AssetFallbackManifest {
+  classFallbacks?: Partial<Record<RenderEntityVisualClass, string>>;
+  biomeFallbacks?: Partial<Record<BiomeSkinId, string[]>>;
+}
+
 export class AssetManager {
   private renderer: PIXI.Renderer;
   private textures = new Map<string, PIXI.Texture>();
   private fallbackTextures = new Map<string, PIXI.Texture>();
+  private manifestFallbacks: AssetFallbackManifest = {};
 
   constructor(renderer: PIXI.Renderer) {
     this.renderer = renderer;
@@ -37,11 +49,49 @@ export class AssetManager {
     }
   }
 
-  getTextureOrFallback(spriteId: string | undefined, fallbackKind: string, tint: number): PIXI.Texture {
-    if (spriteId) {
-      const texture = this.textures.get(spriteId);
+  setFallbackManifest(manifest: AssetFallbackManifest) {
+    this.manifestFallbacks = manifest;
+  }
+
+  private resolveTextureId(
+    spriteId: string | undefined,
+    fallbackKind: string,
+    options: TextureLookupOptions,
+  ): PIXI.Texture | null {
+    const classFallback = options.visualClass
+      ? this.manifestFallbacks.classFallbacks?.[options.visualClass]
+      : undefined;
+    const biomeFallbacks = options.biomeId
+      ? this.manifestFallbacks.biomeFallbacks?.[options.biomeId] ?? []
+      : [];
+
+    const candidates = [
+      spriteId,
+      spriteId && options.biomeId ? `${options.biomeId}:${spriteId}` : undefined,
+      classFallback,
+      ...biomeFallbacks,
+      `entity:${fallbackKind}`,
+      `prop:${fallbackKind}`,
+      `building:${fallbackKind}`,
+      fallbackKind,
+    ].filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+
+    for (const key of candidates) {
+      const texture = this.textures.get(key);
       if (texture) return texture;
     }
+    return null;
+  }
+
+  getTextureOrFallback(
+    spriteId: string | undefined,
+    fallbackKind: string,
+    tint: number,
+    options: TextureLookupOptions = {},
+  ): PIXI.Texture {
+    const resolvedTexture = this.resolveTextureId(spriteId, fallbackKind, options);
+    if (resolvedTexture) return resolvedTexture;
+
     const key = `${fallbackKind}:${tint.toString(16)}`;
     const cached = this.fallbackTextures.get(key);
     if (cached) return cached;

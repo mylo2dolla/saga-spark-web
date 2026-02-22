@@ -121,6 +121,16 @@ function toCombatTeam(entry: { player_id: string | null; entity_type: string }):
   return "enemy";
 }
 
+function combatVisualClass(args: { entityType: string; name: string; hpMax: number; mpMax: number }): RenderEntity["visualClass"] {
+  if (args.entityType === "player") {
+    return args.mpMax > (args.hpMax * 0.5) ? "caster" : "infantry";
+  }
+  const lowered = args.name.toLowerCase();
+  if (/(hound|wyrm|drake|beast|spider|slime|serpent|treant|mimic|kitty)/.test(lowered)) return "beast";
+  if (args.mpMax > (args.hpMax * 0.55)) return "caster";
+  return "brute";
+}
+
 function buildCombatEntities(scene: NarrativeBoardSceneModel): RenderEntity[] {
   const details = scene.details as CombatSceneData;
   return details.combatants
@@ -132,13 +142,21 @@ function buildCombatEntities(scene: NarrativeBoardSceneModel): RenderEntity[] {
       const intent: RenderEntity["intent"] | undefined = details.activeTurnCombatantId === combatant.id
         ? { type: combatant.player_id ? "support" : "attack", targetId: details.focusedCombatantId ?? undefined }
         : undefined;
+      const visualClass = combatVisualClass({
+        entityType: combatant.entity_type,
+        name: combatant.name,
+        hpMax: Math.max(1, Math.floor(combatant.hp_max)),
+        mpMax: Math.max(1, Math.floor(combatant.power_max)),
+      });
 
       return {
         id: combatant.id,
         kind: combatant.entity_type === "player" ? "player" : "enemy",
         team: toCombatTeam(combatant),
+        visualClass,
         x: Math.max(0, Math.floor(combatant.x)),
         y: Math.max(0, Math.floor(combatant.y)),
+        spriteId: `entity:${combatant.entity_type === "player" ? "ally" : "enemy"}:${visualClass}`,
         displayName,
         fullName,
         hp: Math.max(0, Math.floor(combatant.hp)),
@@ -167,8 +185,10 @@ function buildTownEntities(scene: NarrativeBoardSceneModel): RenderEntity[] {
       id: `building:${spot.id}`,
       kind: "building",
       team: "neutral",
+      visualClass: "structure",
       x: Math.floor(spot.rect.x),
       y: Math.floor(spot.rect.y),
+      spriteId: "building:town",
       displayName: spot.title,
       fullName: spot.subtitle ? `${spot.title} · ${spot.subtitle}` : spot.title,
       markerRole: spot.kind === "vendor" ? "merchant" : spot.kind === "notice_board" ? "quest" : "danger",
@@ -178,8 +198,10 @@ function buildTownEntities(scene: NarrativeBoardSceneModel): RenderEntity[] {
     id: `npc:${npc.id}`,
     kind: "npc",
     team: "neutral",
+    visualClass: "npc",
     x: Math.max(0, Math.floor(npc.locationTile.x)),
     y: Math.max(0, Math.floor(npc.locationTile.y)),
+    spriteId: "entity:neutral:npc",
     displayName: npc.name,
     fullName: `${npc.name} · ${npc.role}`,
     markerRole: npc.role.includes("heal") ? "healer" : npc.role.includes("vendor") ? "merchant" : "quest",
@@ -199,8 +221,10 @@ function buildTravelEntities(scene: NarrativeBoardSceneModel): RenderEntity[] {
       id: `prop:${spot.id}`,
       kind: "prop",
       team: "neutral",
+      visualClass: "structure",
       x: Math.floor(spot.rect.x),
       y: Math.floor(spot.rect.y),
+      spriteId: "prop:landmark",
       displayName: spot.title,
       fullName: spot.subtitle ? `${spot.title} · ${spot.subtitle}` : spot.title,
       markerRole: spot.kind === "dungeon_entry" ? "danger" : "quest",
@@ -213,8 +237,10 @@ function buildDungeonEntities(scene: NarrativeBoardSceneModel): RenderEntity[] {
     id: `room:${room.id}`,
     kind: "building" as const,
     team: "neutral" as const,
+    visualClass: "structure" as const,
     x: index % Math.max(1, Math.floor(scene.grid.cols / 3)),
     y: Math.floor(index / Math.max(1, Math.floor(scene.grid.cols / 3))),
+    spriteId: "building:dungeon",
     displayName: room.name,
     fullName: room.tags.length > 0 ? `${room.name} · ${room.tags.join(", ")}` : room.name,
     markerRole: room.danger > 6 ? "danger" as const : "quest" as const,
@@ -289,6 +315,7 @@ export function buildRenderSnapshot(scene: NarrativeBoardSceneModel, tickHint = 
     biomeId,
     tick: tickHint > 0 ? tickHint : hashString(`${scene.layout.seed}:${scene.mode}:${scene.title}`),
     seed: scene.layout.seed,
+    styleProfile: "gba_tactics_v1" as const,
     lighting: biomeSkinFor(biomeId).lighting,
   } as const;
 

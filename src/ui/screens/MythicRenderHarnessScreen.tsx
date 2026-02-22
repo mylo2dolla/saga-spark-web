@@ -323,6 +323,7 @@ export default function MythicRenderHarnessScreen() {
       cinematicCamera: !fastMode,
       showDevOverlay: showDev,
       reducedMotion: false,
+      qualityMode: fastMode ? "perf" as const : "balanced60" as const,
       uiDensity: "minimal" as const,
       tokenLabelMode: "compact" as const,
       fitMode: "adaptive_contain" as const,

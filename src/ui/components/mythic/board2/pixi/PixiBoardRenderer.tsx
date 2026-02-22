@@ -89,6 +89,7 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
       cinematicCamera: !props.fastMode,
       showDevOverlay: Boolean(props.showDevOverlay),
       reducedMotion,
+      qualityMode: props.fastMode ? "perf" as const : "balanced60" as const,
       uiDensity: "minimal" as const,
       tokenLabelMode: "compact" as const,
       fitMode: "adaptive_contain" as const,

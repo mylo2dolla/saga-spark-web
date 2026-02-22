@@ -9,12 +9,22 @@ function clampPercent(value: number | undefined, max: number | undefined): numbe
 }
 
 function bodyTint(entity: RenderEntity): number {
-  if (entity.kind === "player") return 0x5ce2d8;
+  if (entity.kind === "player") return 0x54d9d0;
+  if (entity.visualClass === "caster") return entity.team === "enemy" ? 0xd85f9a : 0x73a9ff;
+  if (entity.visualClass === "beast") return entity.team === "enemy" ? 0xd06b57 : 0x72c4a4;
+  if (entity.visualClass === "brute") return entity.team === "enemy" ? 0xd25a70 : 0x5b97d7;
   if (entity.team === "ally") return 0x63b7ff;
   if (entity.team === "enemy") return 0xe66b81;
   if (entity.kind === "npc") return 0x93abc7;
   if (entity.kind === "building") return 0xa67b47;
   return 0x708183;
+}
+
+function trimTint(entity: RenderEntity): number {
+  if (entity.team === "enemy") return 0xf6a7b7;
+  if (entity.team === "ally") return 0xb6e8ff;
+  if (entity.kind === "building") return 0xffda9e;
+  return 0xd9deea;
 }
 
 function teamRingColor(entity: RenderEntity, snapshot: RenderSnapshot): number {
@@ -49,6 +59,23 @@ function markerLabel(role: RenderEntity["markerRole"]): string {
   if (role === "danger") return "!";
   if (role === "quest") return "?";
   return "";
+}
+
+function highSignalStatus(statuses: RenderEntity["statuses"]): string | null {
+  const ranked = (statuses ?? [])
+    .map((status) => status.family)
+    .sort((left, right) => {
+      const rank = (family: string) => {
+        if (family === "stunned") return 0;
+        if (family === "vulnerable") return 1;
+        if (family === "guard") return 2;
+        if (family === "barrier") return 3;
+        if (family === "bleed" || family === "poison" || family === "burn") return 4;
+        return 5;
+      };
+      return rank(left) - rank(right);
+    });
+  return ranked[0] ?? null;
 }
 
 function intentSymbol(intent: RenderEntity["intent"] | undefined): string {
@@ -142,6 +169,32 @@ function drawMarkerChip(text: string, fill: number, y: number): PIXI.Container {
   return container;
 }
 
+function drawTokenFrame(tileSize: number, trim: number, fill: number): PIXI.Container {
+  const frame = new PIXI.Container();
+  const cardW = Math.round(tileSize * 0.58);
+  const cardH = Math.round(tileSize * 0.66);
+  const left = -Math.round(cardW / 2);
+  const top = -Math.round(cardH / 2);
+
+  const shadow = new PIXI.Graphics();
+  shadow.roundRect(left + 1, top + 2, cardW, cardH, 8);
+  shadow.fill({ color: 0x000000, alpha: 0.26 });
+  frame.addChild(shadow);
+
+  const body = new PIXI.Graphics();
+  body.roundRect(left, top, cardW, cardH, 8);
+  body.fill({ color: fill, alpha: 0.95 });
+  body.stroke({ color: trim, width: 2, alpha: 0.92 });
+  frame.addChild(body);
+
+  const stripe = new PIXI.Graphics();
+  stripe.roundRect(left + 2, top + 2, cardW - 4, 8, 4);
+  stripe.fill({ color: trim, alpha: 0.35 });
+  frame.addChild(stripe);
+
+  return frame;
+}
+
 export class EntityRenderer {
   readonly container = new PIXI.Container();
   private renderMeta: {
@@ -191,25 +244,41 @@ export class EntityRenderer {
         (entity.y * tileSize) + (tileSize / 2) + offset.dy,
       );
 
-      const texture = assets.getTextureOrFallback(entity.spriteId, entity.kind, bodyTint(entity));
+      const frame = drawTokenFrame(tileSize, trimTint(entity), bodyTint(entity));
+      root.addChild(frame);
+
+      const textureLookupClass = entity.visualClass ?? (
+        entity.kind === "npc"
+          ? "npc"
+          : entity.kind === "building" || entity.kind === "prop"
+            ? "structure"
+            : entity.team === "enemy"
+              ? "brute"
+              : "infantry"
+      );
+      const texture = assets.getTextureOrFallback(entity.spriteId, entity.kind, bodyTint(entity), {
+        biomeId: snapshot.board.biomeId,
+        visualClass: textureLookupClass,
+      });
       const sprite = new PIXI.Sprite(texture);
       sprite.anchor.set(0.5, 0.5);
-      sprite.width = Math.round(tileSize * 0.55);
-      sprite.height = Math.round(tileSize * 0.55);
-      sprite.tint = bodyTint(entity);
+      sprite.width = Math.round(tileSize * 0.48);
+      sprite.height = Math.round(tileSize * 0.48);
+      sprite.tint = 0xffffff;
       sprite.alpha = entity.kind === "building" ? 0.9 : 0.98;
+      sprite.y = -2;
       root.addChild(sprite);
 
       const ring = new PIXI.Graphics();
-      ring.circle(0, 0, Math.round(tileSize * 0.29));
+      ring.circle(0, 0, Math.round(tileSize * 0.31));
       ring.stroke({
         color: teamRingColor(entity, snapshot),
-        width: entity.isFocused ? 3 : 2,
-        alpha: entity.kind === "building" ? 0.36 : 0.82,
+        width: entity.isFocused ? 3.5 : 2.2,
+        alpha: entity.kind === "building" ? 0.42 : 0.9,
       });
       if (entity.isActive) {
         ring.circle(0, 0, Math.round(tileSize * 0.35));
-        ring.stroke({ color: 0xf6fdff, width: 2, alpha: 0.95 });
+        ring.stroke({ color: 0xf6fdff, width: 2.5, alpha: 0.98 });
       }
       root.addChild(ring);
 
@@ -225,18 +294,18 @@ export class EntityRenderer {
 
       if (entity.hpMax && entity.hpMax > 0) {
         const hpBg = new PIXI.Graphics();
-        hpBg.roundRect(-17, 14, 34, 4, 2);
+        hpBg.roundRect(-17, 15, 34, 4, 2);
         hpBg.fill({ color: 0x0f1115, alpha: 0.9 });
         root.addChild(hpBg);
 
         const hpFill = new PIXI.Graphics();
-        hpFill.roundRect(-17, 14, Math.max(1, 34 * hpPct), 4, 2);
+        hpFill.roundRect(-17, 15, Math.max(1, 34 * hpPct), 4, 2);
         hpFill.fill({ color: 0x7ef19b, alpha: 0.95 });
         root.addChild(hpFill);
 
         if ((entity.barrier ?? 0) > 0) {
           const barrierFill = new PIXI.Graphics();
-          barrierFill.roundRect(-17, 19, Math.max(1, 34 * barrierPct), 3, 2);
+          barrierFill.roundRect(-17, 20, Math.max(1, 34 * barrierPct), 3, 2);
           barrierFill.fill({ color: 0x89e8ff, alpha: 0.9 });
           root.addChild(barrierFill);
         }
@@ -245,12 +314,12 @@ export class EntityRenderer {
       if ((entity.mpMax ?? 0) > 0 && entity.kind !== "building") {
         const mpPct = clampPercent(entity.mp, entity.mpMax);
         const mpBg = new PIXI.Graphics();
-        mpBg.roundRect(-17, 23, 34, 3, 2);
+        mpBg.roundRect(-17, 24, 34, 3, 2);
         mpBg.fill({ color: 0x0f1115, alpha: 0.82 });
         root.addChild(mpBg);
 
         const mpFill = new PIXI.Graphics();
-        mpFill.roundRect(-17, 23, Math.max(1, 34 * mpPct), 3, 2);
+        mpFill.roundRect(-17, 24, Math.max(1, 34 * mpPct), 3, 2);
         mpFill.fill({ color: 0x6fd4ff, alpha: 0.9 });
         root.addChild(mpFill);
       }
@@ -265,13 +334,14 @@ export class EntityRenderer {
           : (entity.displayName ?? entity.id),
         style: {
           fontFamily: "Verdana, sans-serif",
-          fontSize: minimalCombatLabels ? 8 : 9,
+          fontSize: minimalCombatLabels ? 8 : 9.5,
           fill: 0xf8fafc,
           fontWeight: "bold",
+          stroke: { color: 0x0d0f13, width: 2 },
         },
       });
       name.anchor.set(0.5, 1);
-      name.y = -14;
+      name.y = -15;
       root.addChild(name);
 
       const statuses = entity.statuses ?? [];
@@ -288,6 +358,14 @@ export class EntityRenderer {
           }
         }
       }
+      if (!showStatusChips && entity.kind !== "building") {
+        const signal = highSignalStatus(statuses);
+        if (signal) {
+          const chip = drawMarkerChip(statusShort(signal), statusColor(signal), -31);
+          chip.x = 16;
+          root.addChild(chip);
+        }
+      }
 
       const roleText = markerLabel(entity.markerRole);
       if (roleText) {
@@ -297,7 +375,7 @@ export class EntityRenderer {
       }
 
       const intentText = intentSymbol(entity.intent);
-      if (showIntentChip && intentText && entity.kind !== "building") {
+      if ((showIntentChip || entity.isActive) && intentText && entity.kind !== "building") {
         const intent = drawMarkerChip(intentText, 0xd4d8ff, -42);
         intent.x = 0;
         root.addChild(intent);
