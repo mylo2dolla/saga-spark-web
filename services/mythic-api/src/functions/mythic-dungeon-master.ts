@@ -92,6 +92,13 @@ function errStatus(error: unknown): number | null {
   return null;
 }
 
+function normalizeNarratorModeToken(value: unknown): "ai" | "procedural" | "hybrid" | null {
+  if (typeof value !== "string") return null;
+  const key = value.trim().toLowerCase();
+  if (key === "ai" || key === "procedural" || key === "hybrid") return key;
+  return null;
+}
+
 function jsonOnlyContract() {
   return `
 OUTPUT CONTRACT (STRICT)
@@ -2125,12 +2132,9 @@ export const mythicDungeonMaster: FunctionHandler = {
       const actionContextRecord = actionContext && typeof actionContext === "object"
         ? actionContext as Record<string, unknown>
         : null;
-      const actionContextNarratorMode = typeof actionContextRecord?.narrator_mode === "string"
-        ? actionContextRecord.narrator_mode.trim().toLowerCase()
-        : null;
-      const requestedNarratorMode = actionContextNarratorMode === "ai" || actionContextNarratorMode === "procedural" || actionContextNarratorMode === "hybrid"
-        ? actionContextNarratorMode
-        : (narratorMode ?? "hybrid");
+      const actionContextNarratorMode = normalizeNarratorModeToken(actionContextRecord?.narrator_mode);
+      const bodyNarratorMode = normalizeNarratorModeToken(narratorMode);
+      const requestedNarratorMode = actionContextNarratorMode ?? bodyNarratorMode ?? config.dmNarratorMode;
       const idempotencyHeader = idempotencyKeyFromRequest(req);
       const idempotencyKey = idempotencyHeader ? `${user.userId}:${idempotencyHeader}` : null;
       if (idempotencyKey) {
@@ -2947,8 +2951,50 @@ ${jsonOnlyContract()}
           proceduralError = errMessage(error, "procedural_narration_failed");
           dmRecoveryUsed = true;
           dmRecoveryReason = `procedural_error:${proceduralError}`;
-          dmParsed = null;
-          dmNarratorSource = "ai";
+          const proceduralEmergencyActions = sanitizeUiActions({
+            actions: buildIntroFallbackActions(),
+            boardType: actionBoardType,
+            boardSummary: boardSummaryRecord,
+          }).slice(0, 4);
+          const proceduralEmergencyNarration = actionContextRecord?.suppress_narration_on_error === true
+            ? "Action blocked by committed rules. Pick a legal move from the board."
+            : actionBoardType === "combat"
+              ? "The exchange holds on a hard edge. Choose one legal action and drive the next beat."
+              : "The scene steadies around you. Pick one concrete move and commit it.";
+          dmParsed = {
+            ok: true,
+            value: applyIntroTurnNormalization({
+              narration: sanitizeNarrationForPlayer(proceduralEmergencyNarration, actionBoardType),
+              scene: {
+                environment: typeof boardSummaryRecord?.weather === "string"
+                  ? boardSummaryRecord.weather
+                  : titleCaseWords(actionBoardType),
+                mood: actionBoardType === "combat" ? "knife-edge pressure" : "forward momentum",
+                focus: actionBoardType === "combat"
+                  ? "Use a legal combat action from committed state."
+                  : "Use a grounded board action tied to current hooks.",
+              },
+              runtime_delta: {
+                discovery_log: [{
+                  kind: "procedural_recovery",
+                  detail: "Procedural narrator recovered locally without AI fallback.",
+                  reason: proceduralError,
+                }],
+                action_chips: proceduralEmergencyActions,
+              },
+              ui_actions: proceduralEmergencyActions.length > 0
+                ? proceduralEmergencyActions
+                : [{
+                  id: "procedural-recovery-followup",
+                  label: "Press The Lead",
+                  intent: "dm_prompt",
+                  prompt: "Give me the best legal move from this exact board state.",
+                  hint_key: "procedural:recovery_followup",
+                }],
+            }),
+          };
+          validationAttempts = 1;
+          dmNarratorSource = "procedural";
         }
       }
 
