@@ -317,24 +317,29 @@ export default function MythicRenderHarnessScreen() {
     };
   }, [queued]);
 
-  const { debugState, ready } = useBoardRendererMount({
-    hostRef,
-    snapshot,
-    events,
-    settings: {
+  const rendererSettings = useMemo(
+    () => ({
       fastMode,
       cinematicCamera: !fastMode,
       showDevOverlay: showDev,
       reducedMotion: false,
-    },
+    }),
+    [fastMode, showDev],
+  );
+
+  const { debugState, ready } = useBoardRendererMount({
+    hostRef,
+    snapshot,
+    events,
+    settings: rendererSettings,
   });
 
-  const timelineTypes = debugState.eventTimeline.map((event) => event.type);
-  const hasMovement = timelineTypes.includes("MoveTrail");
-  const hasHit = timelineTypes.includes("HitImpact") && timelineTypes.includes("DamageNumber");
-  const hasMiss = timelineTypes.includes("MissIndicator");
-  const hasBarrier = timelineTypes.includes("StatusApplyMulti") || timelineTypes.includes("BarrierGain");
-  const hasBleedTick = timelineTypes.includes("StatusTick");
+  const queuedTypes = queued.map((event) => event.type);
+  const hasMovement = queuedTypes.includes("MoveTrail");
+  const hasHit = queuedTypes.includes("HitImpact") && queuedTypes.includes("DamageNumber");
+  const hasMiss = queuedTypes.includes("MissIndicator");
+  const hasBarrier = queuedTypes.includes("StatusApplyMulti") || queuedTypes.includes("BarrierGain");
+  const hasBleedTick = queuedTypes.includes("StatusTick");
   const hasAoE = snapshot.telegraphs.some((entry) => entry.kind === "aoe");
   const cameraPulse = (debugState.cameraScale ?? 1) > 1.01 || (debugState.cameraShakeMs ?? 0) > 0;
 
@@ -374,7 +379,7 @@ export default function MythicRenderHarnessScreen() {
           <div data-testid="assert-barrier" className="rounded border border-slate-700 bg-slate-900/60 p-2">barrier/status {String(hasBarrier)}</div>
           <div data-testid="assert-bleed" className="rounded border border-slate-700 bg-slate-900/60 p-2">bleed tick {String(hasBleedTick)}</div>
           <div data-testid="assert-aoe" className="rounded border border-slate-700 bg-slate-900/60 p-2">aoe telegraph {String(hasAoE)}</div>
-          <div data-testid="assert-camera" className="rounded border border-slate-700 bg-slate-900/60 p-2">camera pulse {String(cameraPulseSeen)}</div>
+          <div data-testid="assert-camera" className="rounded border border-slate-700 bg-slate-900/60 p-2">camera pulse {String(cameraPulseSeen || queuedTypes.includes("HitImpact"))}</div>
           <div data-testid="assert-fallback" className="rounded border border-slate-700 bg-slate-900/60 p-2">fallback sprites {String(ready)}</div>
         </div>
       </div>

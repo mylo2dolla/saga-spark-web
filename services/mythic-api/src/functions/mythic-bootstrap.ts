@@ -5,6 +5,13 @@ import { AuthError, requireUser } from "../shared/auth.js";
 import { AuthzError, assertCampaignAccess } from "../shared/authz.js";
 import { rngInt, rngPick } from "../shared/mythic_rng.js";
 import { buildStarterDirection, mergeStarterDirectionIntoState } from "../shared/intro_seed.js";
+import {
+  buildWorldProfilePayload,
+  coerceCampaignContextFromProfile,
+  summarizeWorldContext,
+  WORLD_FORGE_VERSION,
+  type CampaignContext,
+} from "../lib/worldforge/index.js";
 import { enforceRateLimit } from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
@@ -123,6 +130,7 @@ const makeTownState = (args: {
   factionNames: string[];
   campaignName: string;
   campaignDescription: string;
+  campaignContext: CampaignContext;
 }) => {
   const {
     seed,
@@ -130,7 +138,9 @@ const makeTownState = (args: {
     factionNames,
     campaignName,
     campaignDescription,
+    campaignContext,
   } = args;
+  const worldSummary = summarizeWorldContext(campaignContext);
   const vendorCount = rngInt(seed, "town:vendors", 1, 3);
   const vendors = Array.from({ length: vendorCount }).map((_, idx) => ({
     id: `vendor_${idx + 1}`,
@@ -154,6 +164,19 @@ const makeTownState = (args: {
   return {
     seed,
     template_key: templateKey,
+    world_seed: {
+      title: campaignName,
+      description: campaignDescription,
+      seed,
+      seed_string: campaignContext.worldSeed.seedString,
+    },
+    world_forge_version: WORLD_FORGE_VERSION,
+    campaign_context: campaignContext,
+    world_context: worldSummary,
+    dm_context: {
+      profile: campaignContext.dmContext.dmBehaviorProfile,
+      directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
+    },
     vendors,
     services: ["inn", "healer", "notice_board"],
     gossip: [],
@@ -168,8 +191,30 @@ const makeTownState = (args: {
     room_state: {},
     companion_checkins: [],
     consequence_flags: {},
+    world_state: campaignContext.worldContext.worldState,
+    moral_climate: campaignContext.worldContext.worldBible.moralClimate,
+    core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
+    faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 4),
   };
 };
+
+function hydrateTownStateWithContext(state: Record<string, unknown>, campaignContext: CampaignContext): Record<string, unknown> {
+  const worldSummary = summarizeWorldContext(campaignContext);
+  return {
+    ...state,
+    world_forge_version: WORLD_FORGE_VERSION,
+    campaign_context: campaignContext,
+    world_context: worldSummary,
+    dm_context: {
+      profile: campaignContext.dmContext.dmBehaviorProfile,
+      directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
+    },
+    world_state: campaignContext.worldContext.worldState,
+    moral_climate: campaignContext.worldContext.worldBible.moralClimate,
+    core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
+    faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 4),
+  };
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -223,27 +268,46 @@ export const mythicBootstrap: FunctionHandler = {
 
       const warnings: string[] = [];
       let templateKey: TemplateKey = "custom";
+      let worldProfileJson: Record<string, unknown> = {};
       const profileRow = await svc
         .schema("mythic")
         .from("world_profiles")
-        .select("template_key")
+        .select("template_key, world_profile_json")
         .eq("campaign_id", campaignId)
         .maybeSingle();
       if (!profileRow.error && profileRow.data?.template_key) {
         templateKey = normalizeTemplate(profileRow.data.template_key);
+        worldProfileJson = asRecord(profileRow.data.world_profile_json) ?? {};
       } else {
         const fallbackProfile = await svc
           .schema("mythic")
           .from("campaign_world_profiles")
-          .select("template_key")
+          .select("template_key, world_profile_json")
           .eq("campaign_id", campaignId)
           .maybeSingle();
         if (!fallbackProfile.error && fallbackProfile.data?.template_key) {
           templateKey = normalizeTemplate(fallbackProfile.data.template_key);
+          worldProfileJson = asRecord(fallbackProfile.data.world_profile_json) ?? {};
         }
       }
 
-      const baselineFactions = makeBaselineFactions(templateKey);
+      const campaignContext = coerceCampaignContextFromProfile({
+        seedTitle: campaignName,
+        seedDescription: campaignDescription,
+        templateKey,
+        worldProfileJson,
+      });
+
+      const baselineFactions = campaignContext.worldContext.factionGraph.factions.length > 0
+        ? campaignContext.worldContext.factionGraph.factions.map((faction) => ({
+            name: faction.name,
+            description: `${faction.ideology}. ${faction.goals[0] ?? "Strategic leverage in play."}`,
+            tags: [
+              `region:${faction.homeRegionId}`,
+              ...campaignContext.worldSeed.themeTags.slice(0, 2),
+            ],
+          }))
+        : makeBaselineFactions(templateKey);
       const factionNames = baselineFactions.map((entry) => entry.name);
       const { error: factionSeedError } = await svc.schema("mythic").from("factions").upsert(
         baselineFactions.map((faction) => ({
@@ -272,13 +336,14 @@ export const mythicBootstrap: FunctionHandler = {
       if (runtimeError) throw runtimeError;
 
       if (!activeRuntime) {
-        const seedBase = hashSeed(`bootstrap:${campaignId}`);
+        const seedBase = campaignContext.worldSeed.seedNumber || hashSeed(`bootstrap:${campaignId}`);
         const townState = makeTownState({
           seed: seedBase,
           templateKey,
           factionNames,
           campaignName,
           campaignDescription,
+          campaignContext,
         });
 
         const { error: insertRuntimeError } = await svc.schema("mythic").from("campaign_runtime").insert({
@@ -317,7 +382,7 @@ export const mythicBootstrap: FunctionHandler = {
           if (turnErr) {
             warnings.push(`turn_lookup_warning:${turnErr.message ?? "unknown"}`);
           } else if (!latestTurn) {
-            const seedBase = hashSeed(`bootstrap:${campaignId}`);
+            const seedBase = campaignContext.worldSeed.seedNumber || hashSeed(`bootstrap:${campaignId}`);
             const starter = buildStarterDirection({
               seed: seedBase,
               templateKey,
@@ -327,13 +392,24 @@ export const mythicBootstrap: FunctionHandler = {
               source: "bootstrap",
             });
             const mergedState = mergeStarterDirectionIntoState(activeState, starter);
+            const hydratedState = hydrateTownStateWithContext(mergedState, campaignContext);
             const patchRuntime = await svc
               .schema("mythic")
               .from("campaign_runtime")
-              .update({ state_json: mergedState })
+              .update({ state_json: hydratedState })
               .eq("id", activeRuntime.id);
             if (patchRuntime.error) {
               warnings.push(`intro_seed_patch_warning:${patchRuntime.error.message ?? "unknown"}`);
+            }
+          } else {
+            const hydratedState = hydrateTownStateWithContext(activeState, campaignContext);
+            const patchRuntime = await svc
+              .schema("mythic")
+              .from("campaign_runtime")
+              .update({ state_json: hydratedState })
+              .eq("id", activeRuntime.id);
+            if (patchRuntime.error) {
+              warnings.push(`runtime_context_patch_warning:${patchRuntime.error.message ?? "unknown"}`);
             }
           }
         }
@@ -343,11 +419,11 @@ export const mythicBootstrap: FunctionHandler = {
         seed_title: campaignName,
         seed_description: campaignDescription,
         template_key: templateKey,
-        world_profile_json: {
+        world_profile_json: buildWorldProfilePayload({
           source: "mythic-bootstrap",
-          campaign_name: profileTitle,
-          campaign_description: profileDescription,
-        },
+          campaignContext,
+          templateKey,
+        }),
       };
 
       const { error: profileErr } = await svc
@@ -364,7 +440,15 @@ export const mythicBootstrap: FunctionHandler = {
         .upsert(profilePayload, { onConflict: "campaign_id" });
 
       ctx.log.info("bootstrap.success", { request_id: ctx.requestId, campaign_id: campaignId, warnings: warnings.length });
-      return new Response(JSON.stringify({ ok: true, warnings }), {
+      return new Response(JSON.stringify({
+        ok: true,
+        world_forge_version: WORLD_FORGE_VERSION,
+        world_seed: {
+          seed_number: campaignContext.worldSeed.seedNumber,
+          seed_string: campaignContext.worldSeed.seedString,
+        },
+        warnings,
+      }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       });

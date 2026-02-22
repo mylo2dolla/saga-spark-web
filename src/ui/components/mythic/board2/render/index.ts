@@ -29,16 +29,37 @@ const EMPTY_DEBUG: RendererDebugState = {
 };
 
 export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
+  const [hostNode, setHostNode] = useState<HTMLDivElement | null>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
+  const lastDebugAtRef = useRef<number>(0);
   const [ready, setReady] = useState(false);
   const [debugState, setDebugState] = useState<RendererDebugState>(EMPTY_DEBUG);
 
-  const stableSettings = useMemo(() => args.settings, [args.settings]);
+  const stableSettings = useMemo(
+    () => ({
+      fastMode: args.settings.fastMode,
+      cinematicCamera: args.settings.cinematicCamera,
+      showDevOverlay: args.settings.showDevOverlay,
+      reducedMotion: args.settings.reducedMotion,
+    }),
+    [
+      args.settings.fastMode,
+      args.settings.cinematicCamera,
+      args.settings.showDevOverlay,
+      args.settings.reducedMotion,
+    ],
+  );
 
   useEffect(() => {
-    const host = args.hostRef.current;
+    if (args.hostRef.current && args.hostRef.current !== hostNode) {
+      setHostNode(args.hostRef.current);
+    }
+  }, [args.hostRef, hostNode]);
+
+  useEffect(() => {
+    const host = hostNode;
     if (!host) return;
 
     let disposed = false;
@@ -56,7 +77,8 @@ export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
         const delta = Math.max(1, time - last);
         lastTickRef.current = time;
         rendererRef.current.tick(delta);
-        if ((Math.floor(time) % 180) < 16) {
+        if (time - lastDebugAtRef.current >= 120) {
+          lastDebugAtRef.current = time;
           setDebugState(rendererRef.current.getDebugState());
         }
         rafRef.current = window.requestAnimationFrame(loop);
@@ -82,12 +104,13 @@ export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
         rafRef.current = null;
       }
       lastTickRef.current = null;
+      lastDebugAtRef.current = 0;
       const renderer = rendererRef.current;
       rendererRef.current = null;
       if (renderer) renderer.destroy();
       setReady(false);
     };
-  }, [args.hostRef, stableSettings]);
+  }, [hostNode]);
 
   useEffect(() => {
     const renderer = rendererRef.current;

@@ -21,6 +21,11 @@ import {
 } from "../shared/turn_contract.js";
 import { getConfig } from "../shared/env.js";
 import {
+  coerceCampaignContextFromProfile,
+  summarizeWorldContext,
+  WORLD_FORGE_VERSION,
+} from "../lib/worldforge/index.js";
+import {
   BANNED_PLAYER_PHRASES,
   buildBoardNarration,
   buildNarrativeLinesFromEvents,
@@ -2044,7 +2049,11 @@ export const mythicDungeonMaster: FunctionHandler = {
       const prng = createTurnPrng(turnSeed);
 
       // Canonical rules/script.
-      const [{ data: rulesRow, error: rulesError }, { data: scriptRow, error: scriptError }] = await Promise.all([
+      const [
+        { data: rulesRow, error: rulesError },
+        { data: scriptRow, error: scriptError },
+        { data: worldProfilePrimary, error: worldProfilePrimaryError },
+      ] = await Promise.all([
         svc.schema("mythic").from("game_rules").select("name, version, rules").eq("name", "mythic-weave-rules-v1").maybeSingle(),
         svc
           .schema("mythic")
@@ -2055,10 +2064,19 @@ export const mythicDungeonMaster: FunctionHandler = {
           .order("version", { ascending: false })
           .limit(1)
           .maybeSingle(),
+        svc
+          .schema("mythic")
+          .from("world_profiles")
+          .select("seed_title, seed_description, template_key, world_profile_json")
+          .eq("campaign_id", campaignId)
+          .maybeSingle(),
       ]);
 
       if (rulesError) throw rulesError;
       if (scriptError) throw scriptError;
+      if (worldProfilePrimaryError) {
+        warnings.push(`world_profiles unavailable: ${errMessage(worldProfilePrimaryError, "query failed")}`);
+      }
 
       let board: Record<string, unknown> | null = null;
       {
@@ -2226,6 +2244,76 @@ export const mythicDungeonMaster: FunctionHandler = {
       const boardPayloadRecord = asObject(compactBoard);
       const boardSummaryRecord = asObject(boardPayloadRecord?.state_summary);
       const boardStateRecord = asObject((board as Record<string, unknown> | null)?.state_json);
+      const worldSeedFromBoard = asObject(boardStateRecord?.world_seed ?? boardStateRecord?.worldSeed);
+      const worldSummaryFromBoard = asObject(boardStateRecord?.world_context ?? boardStateRecord?.worldContext);
+      const dmContextFromBoard = asObject(boardStateRecord?.dm_context ?? boardStateRecord?.dmContext);
+      const campaignContextFromBoard = asObject(boardStateRecord?.campaign_context ?? boardStateRecord?.campaignContext);
+      const worldStateFromBoard = asObject(boardStateRecord?.world_state ?? boardStateRecord?.worldState);
+      const worldProfilePrimaryRow = asObject(worldProfilePrimary);
+      let worldProfileJson = asObject(worldProfilePrimaryRow?.world_profile_json);
+      let worldSeedTitle = String(worldProfilePrimaryRow?.seed_title ?? worldSeedFromBoard?.title ?? campaignId).trim();
+      let worldSeedDescription = String(
+        worldProfilePrimaryRow?.seed_description
+          ?? worldSeedFromBoard?.description
+          ?? "World profile reconstructed from runtime state.",
+      ).trim();
+      let worldTemplateKey = typeof worldProfilePrimaryRow?.template_key === "string" && worldProfilePrimaryRow.template_key.trim().length > 0
+        ? worldProfilePrimaryRow.template_key.trim()
+        : "custom";
+      if (!worldProfileJson || Object.keys(worldProfileJson).length === 0) {
+        const fallbackProfile = await svc
+          .schema("mythic")
+          .from("campaign_world_profiles")
+          .select("seed_title, seed_description, template_key, world_profile_json")
+          .eq("campaign_id", campaignId)
+          .maybeSingle();
+        if (!fallbackProfile.error && fallbackProfile.data) {
+          const fallbackRow = asObject(fallbackProfile.data);
+          worldProfileJson = asObject(fallbackRow?.world_profile_json);
+          worldSeedTitle = String(fallbackRow?.seed_title ?? worldSeedTitle).trim() || worldSeedTitle;
+          worldSeedDescription = String(fallbackRow?.seed_description ?? worldSeedDescription).trim() || worldSeedDescription;
+          worldTemplateKey = typeof fallbackRow?.template_key === "string" && fallbackRow.template_key.trim().length > 0
+            ? fallbackRow.template_key.trim()
+            : worldTemplateKey;
+        } else if (fallbackProfile.error) {
+          warnings.push(`campaign_world_profiles unavailable: ${errMessage(fallbackProfile.error, "query failed")}`);
+        }
+      }
+      let worldForgeVersion = WORLD_FORGE_VERSION;
+      let campaignContextForPrompt = campaignContextFromBoard;
+      let worldSummaryForPrompt = worldSummaryFromBoard;
+      let dmContextForPrompt = dmContextFromBoard;
+      let worldSeedForPrompt = worldSeedFromBoard;
+      let worldStateForPrompt = worldStateFromBoard;
+      if (!campaignContextForPrompt || !worldSummaryForPrompt || !dmContextForPrompt || !worldSeedForPrompt) {
+        try {
+          const campaignContext = coerceCampaignContextFromProfile({
+            seedTitle: worldSeedTitle || "Mythic Campaign",
+            seedDescription: worldSeedDescription || "World profile reconstructed from runtime state.",
+            templateKey: worldTemplateKey,
+            worldProfileJson: worldProfileJson ?? {},
+          });
+          worldForgeVersion = campaignContext.worldForgeVersion;
+          campaignContextForPrompt = campaignContext as unknown as Record<string, unknown>;
+          worldSummaryForPrompt = summarizeWorldContext(campaignContext);
+          dmContextForPrompt = {
+            profile: campaignContext.dmContext.dmBehaviorProfile,
+            narrative_directives: campaignContext.dmContext.narrativeDirectives,
+            tactical_directives: campaignContext.dmContext.tacticalDirectives,
+          };
+          worldSeedForPrompt = {
+            title: campaignContext.title,
+            description: campaignContext.description,
+            seed_number: campaignContext.worldSeed.seedNumber,
+            seed_string: campaignContext.worldSeed.seedString,
+            theme_tags: campaignContext.worldSeed.themeTags,
+            tone_vector: campaignContext.worldSeed.toneVector,
+          };
+          worldStateForPrompt = campaignContext.worldContext.worldState as unknown as Record<string, unknown>;
+        } catch (error) {
+          warnings.push(`world_context_coerce_failed:${errMessage(error, "world context reconstruction failed")}`);
+        }
+      }
       const boardDiscoveryFlags = asObject(boardStateRecord?.discovery_flags);
       const introPendingBefore = boardDiscoveryFlags?.intro_pending === true;
       const actionContextPayload = asObject(actionContextRecord?.payload);
@@ -2331,6 +2419,16 @@ ${jsonInline(dmWorldTension ?? null, 600)}
 
 - Campaign companions:
 ${jsonInline(compactCompanions, 900)}
+
+- World Forge context:
+${jsonInline({
+  world_forge_version: worldForgeVersion,
+  world_seed: worldSeedForPrompt ?? null,
+  world_context: worldSummaryForPrompt ?? null,
+  dm_context: dmContextForPrompt ?? null,
+  world_state: worldStateForPrompt ?? null,
+  campaign_context: campaignContextForPrompt ?? null,
+}, 2200)}
 
 - Board narrative samples:
 ${jsonInline(boardNarrativeSamples, 900)}
@@ -3040,6 +3138,12 @@ ${jsonOnlyContract()}
         world_time: commitPayload.world_time ?? null,
         heat: commitPayload.heat ?? null,
         reward_summary: rewardSummary,
+        world_forge_version: worldForgeVersion,
+        world_tick: Number(
+          worldStateForPrompt?.tick
+            ?? asObject(worldSummaryForPrompt?.world_state)?.tick
+            ?? Number.NaN,
+        ),
       };
 
       ctx.log.info("dm.request.completed", {

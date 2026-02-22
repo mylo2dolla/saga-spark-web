@@ -4,6 +4,13 @@ import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { buildStarterDirection } from "../shared/intro_seed.js";
 import {
+  buildWorldProfilePayload,
+  fromTemplateKey,
+  summarizeWorldContext,
+  WORLD_FORGE_VERSION,
+  type CampaignContext,
+} from "../lib/worldforge/index.js";
+import {
   enforceRateLimit,
   getIdempotentResponse,
   idempotencyKeyFromRequest,
@@ -35,6 +42,12 @@ const RequestSchema = z.object({
   description: z.string().trim().min(1).max(1000),
   template_key: z.enum(TEMPLATE_KEYS).default("custom").optional(),
   companion_blueprint: z.array(CompanionBlueprintSchema).max(4).optional(),
+  forge_input: z.record(z.unknown()).optional(),
+  forgeInput: z.record(z.unknown()).optional(),
+  world_seed_override: z.union([
+    z.string().trim().min(1).max(120),
+    z.number().int().min(0).max(2_147_483_647),
+  ]).optional(),
 });
 
 type TemplateKey = typeof TEMPLATE_KEYS[number];
@@ -47,6 +60,24 @@ const hashSeed = (input: string): number => {
   }
   return hash % 2_147_483_647;
 };
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const clean = value.trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(clean);
+  }
+  return out;
+}
 
 function makeInviteCode(): string {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -250,9 +281,11 @@ function makeTownState(args: {
   templateKey: TemplateKey;
   seed: number;
   factionNames: string[];
+  campaignContext: CampaignContext;
 }) {
-  const { campaignId, name, description, templateKey, seed, factionNames } = args;
+  const { campaignId, name, description, templateKey, seed, factionNames, campaignContext } = args;
   const services = makeTemplateServices(templateKey);
+  const worldSummary = summarizeWorldContext(campaignContext);
   const starter = buildStarterDirection({
     seed,
     templateKey,
@@ -268,6 +301,14 @@ function makeTownState(args: {
       title: name,
       description,
       seed,
+      seed_string: campaignContext.worldSeed.seedString,
+    },
+    world_forge_version: WORLD_FORGE_VERSION,
+    campaign_context: campaignContext,
+    world_context: worldSummary,
+    dm_context: {
+      profile: campaignContext.dmContext.dmBehaviorProfile,
+      directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
     },
     vendors: [
       {
@@ -289,6 +330,10 @@ function makeTownState(args: {
     discovery_flags: starter.discovery_flags,
     room_state: {},
     companion_checkins: [],
+    world_state: campaignContext.worldContext.worldState,
+    moral_climate: campaignContext.worldContext.worldBible.moralClimate,
+    core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
+    faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 4),
   };
 }
 
@@ -440,29 +485,35 @@ export const mythicCreateCampaign: FunctionHandler = {
         throw insertErr ?? new Error("Failed to create campaign");
       }
 
-      const seed = hashSeed(`${campaign.id}:${name}:${description}:${templateKey}`);
-      const baselineFactions = makeBaselineFactions(templateKey);
-      const baselineCompanions = makeBaselineCompanions(seed, templateKey, companionBlueprint);
-      const baselineFactionNames = baselineFactions.map((entry) => entry.name);
-      const starterDirection = buildStarterDirection({
-        seed,
-        templateKey,
-        campaignName: name,
-        campaignDescription: description,
-        factionNames: baselineFactionNames,
-        source: "create_campaign",
-      });
-      const worldProfileJson = deriveWorldProfile({
-        name,
+      const forgePatch = {
+        ...asRecord(parsed.data.forge_input),
+        ...asRecord(parsed.data.forgeInput),
+      };
+      const campaignContext = fromTemplateKey({
+        title: name,
         description,
         templateKey,
-        seed,
-        factionNames: baselineFactionNames,
-        starter: starterDirection,
-        companions: baselineCompanions.map((entry) => ({
-          name: entry.name,
-          archetype: entry.archetype,
-        })),
+        manualSeedOverride: parsed.data.world_seed_override,
+        forgePatch,
+      });
+      const seed = campaignContext.worldSeed.seedNumber;
+      const generatedFactions = campaignContext.worldContext.factionGraph.factions.map((faction) => ({
+        name: faction.name,
+        description: `${faction.ideology}. ${faction.goals[0] ?? "Strategic ambitions in motion."}`,
+        tags: uniqueStrings([
+          ...campaignContext.worldSeed.themeTags.slice(0, 2),
+          `region:${faction.homeRegionId}`,
+        ]),
+      }));
+      const baselineFactions = generatedFactions.length > 0
+        ? generatedFactions
+        : makeBaselineFactions(templateKey);
+      const baselineCompanions = makeBaselineCompanions(seed, templateKey, companionBlueprint);
+      const baselineFactionNames = baselineFactions.map((entry) => entry.name);
+      const worldProfileJson = buildWorldProfilePayload({
+        source: "mythic-create-campaign",
+        campaignContext,
+        templateKey,
       });
       const townState = makeTownState({
         campaignId: campaign.id,
@@ -471,6 +522,7 @@ export const mythicCreateCampaign: FunctionHandler = {
         templateKey,
         seed,
         factionNames: baselineFactionNames,
+        campaignContext,
       });
 
       const warnings: string[] = [];
@@ -627,6 +679,13 @@ export const mythicCreateCampaign: FunctionHandler = {
           ok: true,
           campaign,
           template_key: templateKey,
+          world_forge_version: WORLD_FORGE_VERSION,
+          world_seed: {
+            seed_number: campaignContext.worldSeed.seedNumber,
+            seed_string: campaignContext.worldSeed.seedString,
+            theme_tags: campaignContext.worldSeed.themeTags,
+            tone_vector: campaignContext.worldSeed.toneVector,
+          },
           world_seed_status: seedStatus,
           health_status: warnings.length === 0 ? "Mythic Ready" : "Needs Repair",
           warnings,

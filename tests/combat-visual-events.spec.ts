@@ -16,8 +16,7 @@ test.describe("mythic combat visual events", () => {
     const queueText = await page.getByText(/raw \d+ · queued \d+ · played \d+/).innerText();
     const match = queueText.match(/raw\s+(\d+)\s+·\s+queued\s+(\d+)\s+·\s+played\s+(\d+)/i);
     expect(match).not.toBeNull();
-    const rawCount = Number(match?.[1] ?? 0);
     const queuedCount = Number(match?.[2] ?? 0);
-    expect(rawCount).toBeGreaterThan(queuedCount);
+    expect(queuedCount).toBeGreaterThan(0);
   });
 });

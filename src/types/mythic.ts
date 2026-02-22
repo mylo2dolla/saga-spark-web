@@ -173,6 +173,11 @@ export interface MythicDmContextResponse {
   character: MythicDmContextCharacterPayload | null;
   combat: MythicDmContextCombatPayload | null;
   rules: Record<string, unknown> | null;
+  world_forge_version?: string | null;
+  world_seed?: Record<string, unknown> | null;
+  campaign_context?: Record<string, unknown> | null;
+  world_context?: Record<string, unknown> | null;
+  dm_context?: Record<string, unknown> | null;
   script: Record<string, unknown> | null;
   dm_campaign_state: Record<string, unknown> | null;
   dm_world_tension: Record<string, unknown> | null;
@@ -309,6 +314,11 @@ export interface MythicCreateCharacterRequest {
   characterName: string;
   classDescription: string;
   seed?: number;
+  originRegionId?: string;
+  factionAlignmentId?: string;
+  background?: string;
+  personalityTraits?: string[];
+  moralLeaning?: number;
 }
 
 export interface MythicCompanionBlueprint {
@@ -321,6 +331,27 @@ export interface MythicCompanionBlueprint {
 export interface MythicCreateCharacterResponse {
   character_id: string;
   seed: number;
+  world_forge_version?: string;
+  world_seed?: {
+    seed_number: number;
+    seed_string: string;
+    theme_tags: string[];
+    tone_vector: Record<string, number>;
+  };
+  character_forge?: {
+    originRegionId: string;
+    originRegionName: string;
+    factionAlignmentId: string;
+    factionAlignmentName: string;
+    background: string;
+    personalityTraits: string[];
+    moralLeaning: number;
+    startingTown: string;
+    startingNpcRelationships: Record<string, number>;
+    initialFactionTrust: Record<string, number>;
+    startingRumors: string[];
+    startingFlags: string[];
+  };
   class: {
     class_name: string;
     class_description: string;

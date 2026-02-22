@@ -5,6 +5,13 @@ import { AuthError, requireUser } from "../shared/auth.js";
 import { rngInt, rngPick } from "../shared/mythic_rng.js";
 import { buildStarterDirection } from "../shared/intro_seed.js";
 import {
+  buildWorldProfilePayload,
+  coerceCampaignContextFromProfile,
+  summarizeWorldContext,
+  WORLD_FORGE_VERSION,
+  type CampaignContext,
+} from "../lib/worldforge/index.js";
+import {
   enforceRateLimit,
   getIdempotentResponse,
   idempotencyKeyFromRequest,
@@ -32,6 +39,10 @@ const hashSeed = (input: string): number => {
   return hash % 2_147_483_647;
 };
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 const makeName = (seed: number, label: string): string => {
   const a = rngPick(seed, `${label}:a`, syllableA);
   const b = rngPick(seed, `${label}:b`, syllableB);
@@ -42,8 +53,10 @@ const makeTownState = (args: {
   seed: number;
   campaignName: string;
   campaignDescription: string;
+  campaignContext: CampaignContext;
 }) => {
-  const { seed, campaignName, campaignDescription } = args;
+  const { seed, campaignName, campaignDescription, campaignContext } = args;
+  const worldSummary = summarizeWorldContext(campaignContext);
   const vendorCount = rngInt(seed, "town:vendors", 1, 3);
   const vendors = Array.from({ length: vendorCount }).map((_, idx) => ({
     id: `vendor_${idx + 1}`,
@@ -66,6 +79,19 @@ const makeTownState = (args: {
 
   return {
     seed,
+    world_seed: {
+      title: campaignName,
+      description: campaignDescription,
+      seed,
+      seed_string: campaignContext.worldSeed.seedString,
+    },
+    world_forge_version: WORLD_FORGE_VERSION,
+    campaign_context: campaignContext,
+    world_context: worldSummary,
+    dm_context: {
+      profile: campaignContext.dmContext.dmBehaviorProfile,
+      directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
+    },
     vendors,
     services: ["inn", "healer", "notice_board"],
     gossip: [],
@@ -80,6 +106,10 @@ const makeTownState = (args: {
     room_state: {},
     companion_checkins: [],
     consequence_flags: {},
+    world_state: campaignContext.worldContext.worldState,
+    moral_climate: campaignContext.worldContext.worldBible.moralClimate,
+    core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
+    faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 4),
   };
 };
 
@@ -178,7 +208,37 @@ export const mythicJoinCampaign: FunctionHandler = {
       }
 
       // Ensure Mythic runtime artifacts exist so joined campaigns are always actionable.
-      const seedBase = hashSeed(`${campaign.id}:${campaign.name}:${campaign.invite_code}`);
+      const existingProfile = await svc
+        .schema("mythic")
+        .from("world_profiles")
+        .select("template_key, world_profile_json, seed_title, seed_description")
+        .eq("campaign_id", campaign.id)
+        .maybeSingle();
+      const fallbackProfile = (!existingProfile.error && existingProfile.data)
+        ? null
+        : await svc
+          .schema("mythic")
+          .from("campaign_world_profiles")
+          .select("template_key, world_profile_json, seed_title, seed_description")
+          .eq("campaign_id", campaign.id)
+          .maybeSingle();
+
+      const templateKey = String(
+        (existingProfile.data as { template_key?: unknown } | null)?.template_key
+          ?? (fallbackProfile?.data as { template_key?: unknown } | null)?.template_key
+          ?? "custom",
+      );
+      const worldProfileJson = asRecord(
+        (existingProfile.data as { world_profile_json?: unknown } | null)?.world_profile_json
+          ?? (fallbackProfile?.data as { world_profile_json?: unknown } | null)?.world_profile_json,
+      );
+      const campaignContext = coerceCampaignContextFromProfile({
+        seedTitle: String(campaign.name ?? "Mythic Campaign"),
+        seedDescription: String(campaign.description ?? "World seeded from campaign join flow."),
+        templateKey,
+        worldProfileJson,
+      });
+      const seedBase = campaignContext.worldSeed.seedNumber || hashSeed(`${campaign.id}:${campaign.name}:${campaign.invite_code}`);
       const dmStateSeed = await svc
         .schema("mythic")
         .from("dm_campaign_state")
@@ -198,7 +258,7 @@ export const mythicJoinCampaign: FunctionHandler = {
       const { data: activeRuntimeRows, error: activeRuntimeError } = await svc
         .schema("mythic")
         .from("campaign_runtime")
-        .select("id,updated_at")
+        .select("id,mode,state_json,updated_at")
         .eq("campaign_id", campaign.id)
         .eq("status", "active")
         .order("updated_at", { ascending: false })
@@ -230,22 +290,47 @@ export const mythicJoinCampaign: FunctionHandler = {
             seed: seedBase,
             campaignName: String(campaign.name ?? "Mythic Campaign"),
             campaignDescription: String(campaign.description ?? "A dangerous world in motion."),
+            campaignContext,
           }),
           ui_hints_json: { camera: { x: 0, y: 0, zoom: 1.0 } },
         });
         if (runtimeInsertError) throw runtimeInsertError;
+      } else if (activeRuntime.mode === "town") {
+        const activeState = asRecord(activeRuntime.state_json);
+        const patchedState = {
+          ...activeState,
+          world_forge_version: WORLD_FORGE_VERSION,
+          campaign_context: campaignContext,
+          world_context: summarizeWorldContext(campaignContext),
+          dm_context: {
+            profile: campaignContext.dmContext.dmBehaviorProfile,
+            directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
+          },
+          world_state: campaignContext.worldContext.worldState,
+          moral_climate: campaignContext.worldContext.worldBible.moralClimate,
+          core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
+          faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 4),
+        };
+        const patchRuntime = await svc
+          .schema("mythic")
+          .from("campaign_runtime")
+          .update({ state_json: patchedState })
+          .eq("id", activeRuntime.id);
+        if (patchRuntime.error) {
+          warnings.push(`runtime_context_patch:${patchRuntime.error.message ?? "unknown"}`);
+        }
       }
 
       const worldProfilePayload = {
         campaign_id: campaign.id,
         seed_title: campaign.name,
         seed_description: campaign.description ?? "World seeded from campaign join flow.",
-        template_key: "custom",
-        world_profile_json: {
+        template_key: templateKey,
+        world_profile_json: buildWorldProfilePayload({
           source: "mythic-join-campaign",
-          title: campaign.name,
-          description: campaign.description ?? "",
-        },
+          campaignContext,
+          templateKey,
+        }),
       };
 
       const worldProfileResult = await svc
@@ -277,6 +362,11 @@ export const mythicJoinCampaign: FunctionHandler = {
         ok: true,
         campaign,
         already_member: alreadyMember,
+        world_forge_version: WORLD_FORGE_VERSION,
+        world_seed: {
+          seed_number: campaignContext.worldSeed.seedNumber,
+          seed_string: campaignContext.worldSeed.seedString,
+        },
         warnings,
         requestId: ctx.requestId,
       }), {

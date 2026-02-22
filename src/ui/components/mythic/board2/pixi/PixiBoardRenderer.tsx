@@ -81,16 +81,21 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
     setVisualEvents(built.queue);
   }, [engineEvents, snapshot]);
 
-  const { rendererRef, ready, debugState } = useBoardRendererMount({
-    hostRef,
-    snapshot,
-    events: visualEvents,
-    settings: {
+  const rendererSettings = useMemo(
+    () => ({
       fastMode: Boolean(props.fastMode),
       cinematicCamera: !props.fastMode,
       showDevOverlay: Boolean(props.showDevOverlay),
       reducedMotion,
-    },
+    }),
+    [props.fastMode, props.showDevOverlay, reducedMotion],
+  );
+
+  const { rendererRef, ready, debugState } = useBoardRendererMount({
+    hostRef,
+    snapshot,
+    events: visualEvents,
+    settings: rendererSettings,
   });
 
   const onPointer = (event: ReactPointerEvent<HTMLDivElement>) => {

@@ -6,6 +6,13 @@ import { AuthzError, assertCampaignAccess } from "../shared/authz.js";
 import { AiProviderError, mythicOpenAIChatCompletions } from "../shared/ai_provider.js";
 import { assertContentAllowed } from "../shared/content_policy.js";
 import { clampInt, rngInt, rngPick, weightedPick } from "../shared/mythic_rng.js";
+import {
+  applyCharacterForgeToState,
+  buildWorldProfilePayload,
+  coerceCampaignContextFromProfile,
+  forgeCharacterFromWorld,
+  WORLD_FORGE_VERSION,
+} from "../lib/worldforge/index.js";
 import { sanitizeError } from "../shared/redact.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
@@ -74,6 +81,15 @@ const RequestSchema = z.object({
   characterName: z.string().min(2).max(60),
   classDescription: z.string().min(3).max(2000),
   seed: z.number().int().min(0).max(2_147_483_647).optional(),
+  originRegionId: z.string().trim().min(1).max(80).optional(),
+  origin_region_id: z.string().trim().min(1).max(80).optional(),
+  factionAlignmentId: z.string().trim().min(1).max(80).optional(),
+  faction_alignment_id: z.string().trim().min(1).max(80).optional(),
+  background: z.string().trim().min(1).max(160).optional(),
+  personalityTraits: z.array(z.string().trim().min(1).max(80)).max(6).optional(),
+  personality_traits: z.array(z.string().trim().min(1).max(80)).max(6).optional(),
+  moralLeaning: z.number().min(-1).max(1).optional(),
+  moral_leaning: z.number().min(-1).max(1).optional(),
 });
 
 const CLASS_FORGE_REFINEMENT_TIMEOUT_MS = 19_000;
@@ -831,6 +847,66 @@ export const mythicCreateCharacter: FunctionHandler = {
 
       const svc = createServiceClient();
       await assertCampaignAccess(svc, campaignId, user.userId);
+      const warnings: string[] = [];
+
+      const campaignRow = await svc
+        .from("campaigns")
+        .select("name, description")
+        .eq("id", campaignId)
+        .maybeSingle();
+      if (campaignRow.error) {
+        warnings.push(`campaign_lookup:${trimText(campaignRow.error.message ?? "query failed", 180)}`);
+      }
+
+      const worldProfilePrimary = await svc
+        .schema("mythic")
+        .from("world_profiles")
+        .select("seed_title, seed_description, template_key, world_profile_json")
+        .eq("campaign_id", campaignId)
+        .maybeSingle();
+      if (worldProfilePrimary.error) {
+        warnings.push(`world_profiles:${trimText(worldProfilePrimary.error.message ?? "query failed", 180)}`);
+      }
+      const worldProfileFallback = (!worldProfilePrimary.error && worldProfilePrimary.data)
+        ? null
+        : await svc
+          .schema("mythic")
+          .from("campaign_world_profiles")
+          .select("seed_title, seed_description, template_key, world_profile_json")
+          .eq("campaign_id", campaignId)
+          .maybeSingle();
+      if (worldProfileFallback?.error) {
+        warnings.push(`campaign_world_profiles:${trimText(worldProfileFallback.error.message ?? "query failed", 180)}`);
+      }
+
+      const worldProfileRow = asRecord(
+        worldProfilePrimary.data
+          ?? worldProfileFallback?.data
+          ?? {},
+      );
+      const campaignName = String((campaignRow.data as { name?: unknown } | null)?.name ?? "Mythic Campaign").trim() || "Mythic Campaign";
+      const campaignDescription = String((campaignRow.data as { description?: unknown } | null)?.description ?? "A dangerous world in motion.").trim() || "A dangerous world in motion.";
+      const campaignContext = coerceCampaignContextFromProfile({
+        seedTitle: String(worldProfileRow.seed_title ?? campaignName).trim() || campaignName,
+        seedDescription: String(worldProfileRow.seed_description ?? campaignDescription).trim() || campaignDescription,
+        templateKey: typeof worldProfileRow.template_key === "string" && worldProfileRow.template_key.trim().length > 0
+          ? worldProfileRow.template_key
+          : "custom",
+        worldProfileJson: asRecord(worldProfileRow.world_profile_json) ?? {},
+      });
+
+      const characterForgeInput = {
+        characterName,
+        originRegionId: parsedBody.data.originRegionId ?? parsedBody.data.origin_region_id,
+        factionAlignmentId: parsedBody.data.factionAlignmentId ?? parsedBody.data.faction_alignment_id,
+        background: parsedBody.data.background,
+        personalityTraits: parsedBody.data.personalityTraits ?? parsedBody.data.personality_traits,
+        moralLeaning: parsedBody.data.moralLeaning ?? parsedBody.data.moral_leaning,
+      };
+      const forgedCharacter = forgeCharacterFromWorld({
+        campaignContext,
+        input: characterForgeInput,
+      });
 
       const kit = generateMechanicalKit({ seed, classDescription: forgeConcept });
       const deterministicFallback = deterministicRefinement({ classDescription: forgeConcept, kit, seed });
@@ -867,7 +943,6 @@ export const mythicCreateCharacter: FunctionHandler = {
         JSON.stringify(skeleton),
       ].join("\n");
 
-      const warnings: string[] = [];
       const attemptOutcomes: string[] = [];
       let provider = "openai";
       let model = "gpt-4o-mini";
@@ -1015,6 +1090,8 @@ export const mythicCreateCharacter: FunctionHandler = {
         concept: classDescription,
         forge_concept: forgeConcept,
         concept_compaction: conceptCompaction,
+        world_forge_version: WORLD_FORGE_VERSION,
+        character_forge: forgedCharacter,
       };
 
       const normalizeResources = (
@@ -1029,12 +1106,23 @@ export const mythicCreateCharacter: FunctionHandler = {
         return next;
       };
 
+      const normalizeProgression = (existing: Record<string, unknown> | null): Record<string, unknown> => {
+        return {
+          ...(existing ?? {}),
+          world_forge_version: WORLD_FORGE_VERSION,
+          character_forge: forgedCharacter,
+          initial_faction_trust: forgedCharacter.initialFactionTrust,
+          starting_flags: forgedCharacter.startingFlags,
+          updated_at: new Date().toISOString(),
+        };
+      };
+
       const dbWriteStartedAt = Date.now();
 
       const { data: existingChars, error: existingError } = await svc
         .schema("mythic")
         .from("characters")
-        .select("id, resources")
+        .select("id, resources, progression_json")
         .eq("campaign_id", campaignId)
         .eq("player_id", user.userId)
         .eq("name", characterName)
@@ -1050,7 +1138,12 @@ export const mythicCreateCharacter: FunctionHandler = {
           existingChars[0] && typeof (existingChars[0] as { resources?: unknown }).resources === "object"
             ? ((existingChars[0] as { resources?: Record<string, unknown> }).resources ?? null)
             : null;
+        const existingProgression =
+          existingChars[0] && typeof (existingChars[0] as { progression_json?: unknown }).progression_json === "object"
+            ? ((existingChars[0] as { progression_json?: Record<string, unknown> }).progression_json ?? null)
+            : null;
         const mergedResources = normalizeResources(refinedResources, existingResources);
+        const mergedProgression = normalizeProgression(existingProgression);
         finalResources = mergedResources;
         const { error: updErr } = await svc
           .schema("mythic")
@@ -1065,6 +1158,7 @@ export const mythicCreateCharacter: FunctionHandler = {
             utility: refinedData.base_stats.utility,
             class_json: classJson,
             resources: mergedResources,
+            progression_json: mergedProgression,
             updated_at: new Date().toISOString(),
           })
           .eq("id", characterId);
@@ -1078,6 +1172,7 @@ export const mythicCreateCharacter: FunctionHandler = {
         if (delSkillsErr) throw delSkillsErr;
       } else {
         const mergedResources = normalizeResources(refinedResources, null);
+        const mergedProgression = normalizeProgression(null);
         finalResources = mergedResources;
         const { data: inserted, error: insErr } = await svc
           .schema("mythic")
@@ -1096,6 +1191,7 @@ export const mythicCreateCharacter: FunctionHandler = {
             class_json: classJson,
             resources: mergedResources,
             derived_json: {},
+            progression_json: mergedProgression,
           })
           .select("id")
           .single();
@@ -1126,6 +1222,112 @@ export const mythicCreateCharacter: FunctionHandler = {
         .insert(skillRows)
         .select("id");
       if (insSkillsErr) throw insSkillsErr;
+
+      const runtimeRow = await svc
+        .schema("mythic")
+        .from("campaign_runtime")
+        .select("id, state_json")
+        .eq("campaign_id", campaignId)
+        .eq("status", "active")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (runtimeRow.error) {
+        warnings.push(`runtime_lookup:${trimText(runtimeRow.error.message ?? "query failed", 180)}`);
+      } else if (runtimeRow.data) {
+        const runtimeData = runtimeRow.data as Record<string, unknown>;
+        const patchedState = applyCharacterForgeToState(asRecord(runtimeData.state_json), forgedCharacter);
+        const runtimePatch = await svc
+          .schema("mythic")
+          .from("campaign_runtime")
+          .update({ state_json: patchedState })
+          .eq("id", String(runtimeData.id));
+        if (runtimePatch.error) {
+          warnings.push(`runtime_patch:${trimText(runtimePatch.error.message ?? "query failed", 180)}`);
+        }
+      }
+
+      const worldFactionNameById = new Map(
+        campaignContext.worldContext.factionGraph.factions.map((faction) => [faction.id, faction.name.toLowerCase()]),
+      );
+      const dbFactionRows = await svc
+        .schema("mythic")
+        .from("factions")
+        .select("id, name")
+        .eq("campaign_id", campaignId);
+      if (dbFactionRows.error) {
+        warnings.push(`faction_lookup:${trimText(dbFactionRows.error.message ?? "query failed", 180)}`);
+      } else if (Array.isArray(dbFactionRows.data) && dbFactionRows.data.length > 0) {
+        const dbFactionIdByName = new Map(
+          dbFactionRows.data
+            .map((row) => ({
+              id: String((row as { id?: unknown }).id ?? ""),
+              name: String((row as { name?: unknown }).name ?? "").toLowerCase(),
+            }))
+            .filter((row) => row.id.length > 0 && row.name.length > 0)
+            .map((row) => [row.name, row.id]),
+        );
+
+        const factionRepRows = Object.entries(forgedCharacter.initialFactionTrust)
+          .map(([worldFactionId, rep]) => {
+            const factionName = worldFactionNameById.get(worldFactionId) ?? "";
+            const factionId = factionName.length > 0 ? dbFactionIdByName.get(factionName) : undefined;
+            if (!factionId) return null;
+            return {
+              campaign_id: campaignId,
+              faction_id: factionId,
+              player_id: user.userId,
+              rep: clampInt(Number(rep), -1000, 1000),
+              updated_at: new Date().toISOString(),
+            };
+          })
+          .filter((row): row is { campaign_id: string; faction_id: string; player_id: string; rep: number; updated_at: string } => Boolean(row));
+
+        if (factionRepRows.length > 0) {
+          const repUpsert = await svc
+            .schema("mythic")
+            .from("faction_reputation")
+            .upsert(factionRepRows, { onConflict: "campaign_id,faction_id,player_id" });
+          if (repUpsert.error) {
+            warnings.push(`faction_reputation_upsert:${trimText(repUpsert.error.message ?? "query failed", 180)}`);
+          }
+        }
+      }
+
+      const templateKey = typeof worldProfileRow.template_key === "string" && worldProfileRow.template_key.trim().length > 0
+        ? worldProfileRow.template_key
+        : "custom";
+      const worldProfileJson = {
+        ...buildWorldProfilePayload({
+          source: "mythic-create-character",
+          campaignContext,
+          templateKey,
+        }),
+        latest_character_forge: forgedCharacter,
+        latest_character_id: characterId,
+        latest_character_name: characterName,
+      };
+      const worldProfileUpsert = {
+        campaign_id: campaignId,
+        seed_title: campaignContext.title,
+        seed_description: campaignContext.description,
+        template_key: templateKey,
+        world_profile_json: worldProfileJson,
+      };
+      const savePrimaryProfile = await svc
+        .schema("mythic")
+        .from("world_profiles")
+        .upsert(worldProfileUpsert, { onConflict: "campaign_id" });
+      if (savePrimaryProfile.error) {
+        warnings.push(`world_profiles_upsert:${trimText(savePrimaryProfile.error.message ?? "query failed", 180)}`);
+      }
+      const saveFallbackProfile = await svc
+        .schema("mythic")
+        .from("campaign_world_profiles")
+        .upsert(worldProfileUpsert, { onConflict: "campaign_id" });
+      if (saveFallbackProfile.error) {
+        warnings.push(`campaign_world_profiles_upsert:${trimText(saveFallbackProfile.error.message ?? "query failed", 180)}`);
+      }
 
       const dbWriteMs = Date.now() - dbWriteStartedAt;
       const totalMs = Date.now() - totalStartedAt;
@@ -1160,6 +1362,14 @@ export const mythicCreateCharacter: FunctionHandler = {
           },
           skills: refinedData.skills,
           skill_ids: insertedSkills?.map((r) => (r as { id: string }).id) ?? [],
+          world_forge_version: WORLD_FORGE_VERSION,
+          world_seed: {
+            seed_number: campaignContext.worldSeed.seedNumber,
+            seed_string: campaignContext.worldSeed.seedString,
+            theme_tags: campaignContext.worldSeed.themeTags,
+            tone_vector: campaignContext.worldSeed.toneVector,
+          },
+          character_forge: forgedCharacter,
           warnings,
           provider,
           model,

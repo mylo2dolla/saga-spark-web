@@ -4,6 +4,15 @@ import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { AuthzError, assertCampaignAccess } from "../shared/authz.js";
 import { rngInt, rngPick } from "../shared/mythic_rng.js";
+import {
+  applyWorldGrowthToContext,
+  buildWorldProfilePayload,
+  coerceCampaignContextFromProfile,
+  summarizeWorldContext,
+  WORLD_FORGE_VERSION,
+  type CampaignContext,
+  type PlayerWorldAction,
+} from "../lib/worldforge/index.js";
 import { sanitizeError } from "../shared/redact.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
@@ -1184,6 +1193,70 @@ function chooseFactionForOutcome(
   return { id: factions[0]!.id, name: factions[0]!.name };
 }
 
+function clampImpact(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < -1) return -1;
+  if (value > 1) return 1;
+  return Number(value.toFixed(3));
+}
+
+function deriveWorldAction(args: {
+  toMode: "town" | "travel" | "dungeon" | "combat";
+  reasonCode: string;
+  reasonLabel: string;
+  payload: Record<string, unknown>;
+  targetFactionId?: string | null;
+  targetRegionId?: string | null;
+}): PlayerWorldAction {
+  const reason = `${args.reasonCode} ${args.reasonLabel}`.toLowerCase();
+  const payloadMoral = Number(args.payload.moral_impact ?? Number.NaN);
+  const payloadChaos = Number(args.payload.chaos_impact ?? Number.NaN);
+  const payloadGenerosity = Number(args.payload.generosity_impact ?? Number.NaN);
+  const payloadBrutality = Number(args.payload.brutality_impact ?? Number.NaN);
+
+  let moral = args.toMode === "town" ? 0.06 : args.toMode === "dungeon" ? -0.04 : 0;
+  let chaos = args.toMode === "travel" ? 0.08 : args.toMode === "dungeon" ? 0.12 : 0.03;
+  let generosity = args.toMode === "town" ? 0.08 : 0;
+  let brutality = args.toMode === "combat" ? 0.12 : args.toMode === "dungeon" ? 0.08 : 0;
+
+  if (reason.includes("steal") || reason.includes("smuggle")) {
+    moral -= 0.28;
+    chaos += 0.22;
+    brutality += 0.08;
+  }
+  if (reason.includes("help") || reason.includes("rescue") || reason.includes("aid")) {
+    moral += 0.22;
+    generosity += 0.28;
+    chaos -= 0.08;
+  }
+  if (reason.includes("assault") || reason.includes("kill") || reason.includes("execute")) {
+    brutality += 0.22;
+    moral -= 0.1;
+  }
+  if (reason.includes("parley") || reason.includes("negotiate")) {
+    moral += 0.16;
+    generosity += 0.14;
+    chaos -= 0.12;
+  }
+
+  if (Number.isFinite(payloadMoral)) moral = payloadMoral;
+  if (Number.isFinite(payloadChaos)) chaos = payloadChaos;
+  if (Number.isFinite(payloadGenerosity)) generosity = payloadGenerosity;
+  if (Number.isFinite(payloadBrutality)) brutality = payloadBrutality;
+
+  return {
+    actionType: args.reasonCode,
+    summary: args.reasonLabel,
+    targetFactionId: args.targetFactionId ?? undefined,
+    targetRegionId: args.targetRegionId ?? undefined,
+    moralImpact: clampImpact(moral),
+    chaosImpact: clampImpact(chaos),
+    generosityImpact: clampImpact(generosity),
+    brutalityImpact: clampImpact(brutality),
+    tags: [args.toMode, args.reasonCode].filter((entry) => entry.length > 0),
+  };
+}
+
 async function appendMemoryEvent(args: {
   svc: ReturnType<typeof createServiceClient>;
   campaignId: string;
@@ -1289,9 +1362,17 @@ export const mythicRuntimeTransition: FunctionHandler = {
       const warnings: string[] = [];
 
       const world = await loadWorldProfile(svc, campaignId);
+      let campaignContext = coerceCampaignContextFromProfile({
+        seedTitle: world.seed_title,
+        seedDescription: world.seed_description,
+        templateKey: world.template_key,
+        worldProfileJson: world.world_profile_json,
+      });
       const factions = await loadFactions(svc, campaignId);
       const companions = await loadCompanions(svc, campaignId);
-      const factionNames = factions.map((f) => f.name);
+      const factionNames = factions.length > 0
+        ? factions.map((f) => f.name)
+        : campaignContext.worldContext.factionGraph.factions.map((faction) => faction.name);
       const tensionQuery = await svc
         .schema("mythic")
         .from("dm_world_tension")
@@ -1349,6 +1430,19 @@ export const mythicRuntimeTransition: FunctionHandler = {
       const phaseOffset = toMode === "town" ? 1 : toMode === "travel" ? 2 : toMode === "dungeon" ? 3 : 4;
       const variationOffset = hashSeed(`${campaignId}:${reasonCode}:${transitionCount}`) % 5000;
       const seed = seedBase + phaseOffset + variationOffset;
+      const targetedFaction = chooseFactionForOutcome(factions, `${rawReason} ${reasonCode} ${reason}`);
+      const worldAction = deriveWorldAction({
+        toMode,
+        reasonCode,
+        reasonLabel: reason,
+        payload,
+        targetFactionId: targetedFaction?.id ?? null,
+        targetRegionId: typeof payload.region_id === "string" ? payload.region_id : null,
+      });
+      campaignContext = applyWorldGrowthToContext({
+        campaignContext,
+        playerAction: worldAction,
+      });
 
       let nextState: Record<string, unknown>;
       if (toMode === "town") {
@@ -1383,6 +1477,28 @@ export const mythicRuntimeTransition: FunctionHandler = {
           companion_checkins: uniqueUnknownArray([...continuity.companion_checkins, ...asArray(payload.companion_checkins)]).slice(-24),
         };
       }
+      const worldSummary = summarizeWorldContext(campaignContext);
+      nextState = {
+        ...nextState,
+        world_forge_version: WORLD_FORGE_VERSION,
+        campaign_context: campaignContext,
+        world_context: worldSummary,
+        dm_context: {
+          profile: campaignContext.dmContext.dmBehaviorProfile,
+          directives: campaignContext.dmContext.narrativeDirectives.slice(0, 6),
+        },
+        world_state: campaignContext.worldContext.worldState,
+        moral_climate: campaignContext.worldContext.worldBible.moralClimate,
+        core_conflicts: campaignContext.worldContext.worldBible.coreConflicts.slice(0, 4),
+        faction_tensions: campaignContext.worldContext.factionGraph.activeTensions.slice(0, 5),
+        biome_atmosphere: campaignContext.worldContext.biomeMap.regions.slice(0, 6).map((region) => ({
+          id: region.id,
+          name: region.name,
+          biome: region.dominantBiome,
+          corruption: region.corruption,
+          dungeon_density: region.dungeonDensity,
+        })),
+      };
 
       nextState = applyCompanionCommand({
         state: nextState,
@@ -1453,6 +1569,32 @@ export const mythicRuntimeTransition: FunctionHandler = {
           .single();
         if (runtimeInsert.error) throw runtimeInsert.error;
         runtimeId = String((runtimeInsert.data as { id: string }).id);
+      }
+
+      const worldProfilePayload = {
+        campaign_id: campaignId,
+        seed_title: world.seed_title,
+        seed_description: world.seed_description,
+        template_key: world.template_key,
+        world_profile_json: buildWorldProfilePayload({
+          source: "mythic-runtime-transition",
+          campaignContext,
+          templateKey: world.template_key,
+        }),
+      };
+      const worldProfileUpsert = await svc
+        .schema("mythic")
+        .from("world_profiles")
+        .upsert(worldProfilePayload, { onConflict: "campaign_id" });
+      if (worldProfileUpsert.error) {
+        warnings.push(`world_profile_update:${worldProfileUpsert.error.message ?? "unknown"}`);
+      }
+      const legacyProfileUpsert = await svc
+        .schema("mythic")
+        .from("campaign_world_profiles")
+        .upsert(worldProfilePayload, { onConflict: "campaign_id" });
+      if (legacyProfileUpsert.error) {
+        warnings.push(`campaign_world_profile_update:${legacyProfileUpsert.error.message ?? "unknown"}`);
       }
 
       const transitionPayload = {
@@ -1573,7 +1715,7 @@ export const mythicRuntimeTransition: FunctionHandler = {
         }
       }
 
-      const factionTarget = chooseFactionForOutcome(factions, `${rawReason} ${reasonCode} ${reason}`);
+      const factionTarget = targetedFaction ?? chooseFactionForOutcome(factions, `${rawReason} ${reasonCode} ${reason}`);
       if (factionTarget) {
         const lowerReason = `${rawReason} ${reasonCode} ${reason}`.toLowerCase();
         let delta = 0;
@@ -1630,6 +1772,8 @@ export const mythicRuntimeTransition: FunctionHandler = {
           mode: toMode,
           board_type: toMode,
           reason_code: reasonCode,
+          world_forge_version: WORLD_FORGE_VERSION,
+          world_tick: campaignContext.worldContext.worldState.tick,
           travel_goal: (nextState as any).travel_goal ?? null,
           search_target: (nextState as any).search_target ?? null,
           discovery_flags: asRecord((nextState as any).discovery_flags),

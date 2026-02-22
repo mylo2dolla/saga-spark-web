@@ -122,3 +122,11 @@ Two-wave stabilization on one branch:
   - `mythic-runtime-transition:dungeon`: `b740c581-7344-4c66-b7fc-2de045c05a59`
   - `mythic-runtime-transition:town`: `8ba4ebfe-d045-4f12-a3a1-20c390d7e87a`
   - `mythic-combat-start`: `e25eb084-394c-495d-8884-628cad31b96e`
+
+## Pixi Renderer Addendum (2026-02-22)
+- Board renderer cutover details are tracked in:
+  - `/Users/dev/dev-setup/repos/saga-spark-web/docs/BOARD_RENDER_SNAPSHOT_PIXI_LOCK_2026-02-22.md`
+- Renderer rollout remains staged by feature flag:
+  - `VITE_MYTHIC_BOARD_RENDERER_DEFAULT`
+  - `VITE_MYTHIC_PIXI_CANARY_EMAILS`
+  - local override `mythic:board-renderer`

@@ -6,6 +6,11 @@ import { AuthzError, assertCampaignAccess } from "../shared/authz.js";
 import { enforceRateLimit } from "../shared/request_guard.js";
 import { sanitizeError } from "../shared/redact.js";
 import { RULE_VERSION } from "../lib/rules/version.js";
+import {
+  coerceCampaignContextFromProfile,
+  summarizeWorldContext,
+  WORLD_FORGE_VERSION,
+} from "../lib/worldforge/index.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const RequestSchema = z.object({
@@ -41,6 +46,11 @@ function sampleEntries(value: unknown, maxItems = 4): unknown[] {
       return entry;
     })
     .filter(Boolean) as unknown[];
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 function compactSkill(skill: Record<string, unknown>) {
@@ -382,6 +392,13 @@ export const mythicDmContext: FunctionHandler = {
         .eq("campaign_id", campaignId)
         .order("companion_id", { ascending: true });
 
+      const worldProfilePromise = svc
+        .schema("mythic")
+        .from("world_profiles")
+        .select("seed_title, seed_description, template_key, world_profile_json")
+        .eq("campaign_id", campaignId)
+        .maybeSingle();
+
       // Authoritative runtime payload.
       let board: Record<string, unknown> | null = null;
       {
@@ -471,12 +488,13 @@ export const mythicDmContext: FunctionHandler = {
       }
 
       // Canonical rules/script for the DM.
-      const [{ data: rulesRow, error: rulesError }, { data: scriptRow, error: scriptError }, dmState, tension, companions] = await Promise.all([
+      const [{ data: rulesRow, error: rulesError }, { data: scriptRow, error: scriptError }, dmState, tension, companions, worldProfile] = await Promise.all([
         rulesQueryPromise,
         scriptQueryPromise,
         dmStatePromise,
         tensionPromise,
         companionsPromise,
+        worldProfilePromise,
       ]);
       if (rulesError) {
         warnings.push(`game_rules unavailable: ${errMessage(rulesError, "query failed")}`);
@@ -492,6 +510,68 @@ export const mythicDmContext: FunctionHandler = {
       }
       if (companions.error) {
         warnings.push(`campaign_companions unavailable: ${errMessage(companions.error, "query failed")}`);
+      }
+      if (worldProfile.error) {
+        warnings.push(`world_profiles unavailable: ${errMessage(worldProfile.error, "query failed")}`);
+      }
+
+      const worldProfileRow = worldProfile.data && typeof worldProfile.data === "object"
+        ? worldProfile.data as Record<string, unknown>
+        : null;
+      const worldProfileJson = asRecord(worldProfileRow?.world_profile_json);
+      const boardState = asRecord((board as Record<string, unknown> | null)?.state_json);
+      const boardWorldSeed = asRecord(boardState?.world_seed ?? boardState?.worldSeed);
+      const seedTitle = String(
+        worldProfileRow?.seed_title
+          ?? boardWorldSeed?.title
+          ?? "Mythic Campaign",
+      ).trim() || "Mythic Campaign";
+      const seedDescription = String(
+        worldProfileRow?.seed_description
+          ?? boardWorldSeed?.description
+          ?? "World profile reconstructed from active campaign context.",
+      ).trim() || "World profile reconstructed from active campaign context.";
+      const templateKeyRaw = worldProfileRow?.template_key;
+      const templateKey = typeof templateKeyRaw === "string" && templateKeyRaw.trim().length > 0
+        ? templateKeyRaw.trim()
+        : "custom";
+      let worldForgeVersion = WORLD_FORGE_VERSION;
+      let campaignContextPayload: Record<string, unknown> | null = null;
+      let worldContextPayload: Record<string, unknown> | null = null;
+      let dmContextPayload: Record<string, unknown> | null = null;
+      let worldSeedPayload: Record<string, unknown> | null = null;
+
+      try {
+        const campaignContext = coerceCampaignContextFromProfile({
+          seedTitle,
+          seedDescription,
+          templateKey,
+          worldProfileJson: worldProfileJson ?? {},
+        });
+        const worldSummary = summarizeWorldContext(campaignContext);
+        worldForgeVersion = campaignContext.worldForgeVersion;
+        campaignContextPayload = campaignContext as unknown as Record<string, unknown>;
+        worldContextPayload = worldSummary;
+        dmContextPayload = {
+          profile: campaignContext.dmContext.dmBehaviorProfile,
+          narrative_directives: campaignContext.dmContext.narrativeDirectives,
+          tactical_directives: campaignContext.dmContext.tacticalDirectives,
+        };
+        worldSeedPayload = {
+          seed_number: campaignContext.worldSeed.seedNumber,
+          seed_string: campaignContext.worldSeed.seedString,
+          theme_tags: campaignContext.worldSeed.themeTags,
+          tone_vector: campaignContext.worldSeed.toneVector,
+        };
+      } catch (error) {
+        warnings.push(`world_context_coerce_failed:${errMessage(error, "world context reconstruction failed")}`);
+      }
+
+      if (!campaignContextPayload || !worldContextPayload || !dmContextPayload) {
+        campaignContextPayload = campaignContextPayload ?? asRecord(boardState?.campaign_context ?? boardState?.campaignContext);
+        worldContextPayload = worldContextPayload ?? asRecord(boardState?.world_context ?? boardState?.worldContext);
+        dmContextPayload = dmContextPayload ?? asRecord(boardState?.dm_context ?? boardState?.dmContext);
+        worldSeedPayload = worldSeedPayload ?? asRecord(boardState?.world_seed ?? boardState?.worldSeed);
       }
 
       const compactCompanions = Array.isArray(companions.data)
@@ -559,6 +639,11 @@ export const mythicDmContext: FunctionHandler = {
           combat: compactCombatPayload(combat),
           rules: compactRules,
           rule_version: RULE_VERSION,
+          world_forge_version: worldForgeVersion,
+          world_seed: worldSeedPayload,
+          campaign_context: campaignContextPayload,
+          world_context: worldContextPayload,
+          dm_context: dmContextPayload,
           script: compactScript,
           dm_campaign_state: dmState.data ?? null,
           dm_world_tension: tension.data ?? null,

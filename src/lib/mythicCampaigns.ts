@@ -24,11 +24,20 @@ export interface CreateCampaignInput {
   name: string;
   description: string;
   templateKey: string;
+  forgeInput?: Record<string, unknown>;
+  worldSeedOverride?: string | number;
 }
 
 export interface CreateCampaignResult {
   campaign: MythicCampaign;
   warnings: string[];
+  worldSeed?: {
+    seed_number?: number;
+    seed_string?: string;
+    theme_tags?: string[];
+    tone_vector?: Record<string, number>;
+  };
+  worldForgeVersion?: string;
 }
 
 export interface JoinCampaignResult {
@@ -111,7 +120,19 @@ export async function listMythicCampaigns(timeoutMs = DEFAULT_TIMEOUT_MS): Promi
 export async function createMythicCampaign(input: CreateCampaignInput, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<CreateCampaignResult> {
   const { data, error } = await invokeEdgeWithRetry("Campaign create", timeoutMs, () =>
     withAbortTimeout(
-      (signal) => callEdgeFunction<{ ok: boolean; campaign?: MythicCampaign; warnings?: string[]; error?: string }>(
+      (signal) => callEdgeFunction<{
+        ok: boolean;
+        campaign?: MythicCampaign;
+        warnings?: string[];
+        world_seed?: {
+          seed_number?: number;
+          seed_string?: string;
+          theme_tags?: string[];
+          tone_vector?: Record<string, number>;
+        };
+        world_forge_version?: string;
+        error?: string;
+      }>(
       "mythic-create-campaign",
       {
         requireAuth: true,
@@ -121,6 +142,8 @@ export async function createMythicCampaign(input: CreateCampaignInput, timeoutMs
           name: input.name,
           description: input.description,
           templateKey: input.templateKey,
+          forge_input: input.forgeInput,
+          world_seed_override: input.worldSeedOverride,
         },
       },
     ),
@@ -134,6 +157,8 @@ export async function createMythicCampaign(input: CreateCampaignInput, timeoutMs
   return {
     campaign: data.campaign,
     warnings: Array.isArray(data.warnings) ? data.warnings : [],
+    worldSeed: data.world_seed,
+    worldForgeVersion: data.world_forge_version,
   };
 }
 
