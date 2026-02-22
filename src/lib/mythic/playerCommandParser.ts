@@ -144,6 +144,110 @@ function parseSlashCommand(input: string): PlayerCommandParseResult | null {
   return { raw: input, cleaned, explicit: true, intent: "unknown" };
 }
 
+function parseNaturalLanguageCommand(input: string): PlayerCommandParseResult | null {
+  const cleaned = cleanText(input);
+  if (!cleaned) return null;
+  const lower = cleaned.toLowerCase();
+
+  if (/\b(?:start|begin|engage|enter)\b.*\b(?:combat|fight|battle)\b/.test(lower)) {
+    return { raw: input, cleaned, explicit: false, intent: "combat_start" };
+  }
+
+  const panel = panelFromText(lower);
+  if (panel && (/\b(?:open|show|view|inspect|check)\b/.test(lower) || /^menu\b/.test(lower))) {
+    return { raw: input, cleaned, explicit: false, intent: "open_menu", panel };
+  }
+
+  if (/\b(?:go|travel|head|move|run|walk|return)\b.*\b(?:town|inn|city|settlement)\b/.test(lower)
+    || /\b(?:town|inn|city|settlement)\b.*\b(?:go|travel|head|move|run|walk|return)\b/.test(lower)) {
+    return {
+      raw: input,
+      cleaned,
+      explicit: false,
+      intent: "town",
+      boardTarget: "town",
+      travelGoal: "return_town",
+    };
+  }
+
+  if (/\b(?:go|travel|head|move|enter|descend)\b.*\b(?:dungeon|cave|ruin)\b/.test(lower)
+    || /\b(?:dungeon|cave|ruin)\b.*\b(?:go|travel|head|move|enter|descend)\b/.test(lower)) {
+    return {
+      raw: input,
+      cleaned,
+      explicit: false,
+      intent: "dungeon",
+      boardTarget: "dungeon",
+      searchTarget: "dungeon",
+      travelGoal: "enter_dungeon",
+    };
+  }
+
+  if (/\b(?:travel|journey|scout|explore)\b/.test(lower) || /\b(?:route|road|wilds|outskirts)\b/.test(lower)) {
+    return {
+      raw: input,
+      cleaned,
+      explicit: false,
+      intent: "travel",
+      boardTarget: "travel",
+      travelGoal: "explore_wilds",
+    };
+  }
+
+  if (/\b(?:shop|market|vendor|merchant|store)\b/.test(lower)) {
+    return { raw: input, cleaned, explicit: false, intent: "shop" };
+  }
+
+  if (/\b(?:list|show|what|which|check)\b.*\b(?:skills?|abilities)\b/.test(lower)) {
+    return { raw: input, cleaned, explicit: false, intent: "skills_list" };
+  }
+
+  if (/\b(?:status|hp|mp|health|stats?)\b/.test(lower)) {
+    return { raw: input, cleaned, explicit: false, intent: "status_check" };
+  }
+
+  if (/\b(?:steal|pickpocket)\b/.test(lower)) {
+    return { raw: input, cleaned, explicit: false, intent: "steal" };
+  }
+
+  if (/\b(?:loot|forage|search|scout|investigate)\b/.test(lower)) {
+    const probeKind = /\bforage\b/.test(lower)
+      ? "forage"
+      : /\bscout\b/.test(lower)
+        ? "scout"
+        : /\bsearch\b/.test(lower) || /\binvestigate\b/.test(lower)
+          ? "search"
+          : "loot";
+    return {
+      raw: input,
+      cleaned,
+      explicit: false,
+      intent: "loot",
+      probeKind,
+      boardTarget: "travel",
+      travelGoal: "explore_wilds",
+    };
+  }
+
+  const skillMatch = cleaned.match(/\b(?:use|cast)\s+(.+?)(?:\s+(?:on|at|against)\s+(.+))?$/i);
+  if (skillMatch) {
+    const skillQuery = cleanText(skillMatch[1] ?? "");
+    const targetQuery = cleanText(skillMatch[2] ?? "");
+    if (skillQuery.length > 0) {
+      return {
+        raw: input,
+        cleaned,
+        explicit: false,
+        intent: "use_skill",
+        skillQuery,
+        targetQuery: targetQuery || undefined,
+      };
+    }
+  }
+
+  return null;
+}
+
 export function parsePlayerCommand(input: string): PlayerCommandParseResult {
   const slash = parseSlashCommand(input.trim());
   if (slash) return slash;
@@ -153,6 +257,7 @@ export function parsePlayerCommand(input: string): PlayerCommandParseResult {
   if (!cleaned) {
     return { raw: input, cleaned, explicit: false, intent: "unknown" };
   }
-  // Non-slash player text is always freeform narration input.
+  const natural = parseNaturalLanguageCommand(input);
+  if (natural) return natural;
   return { raw: input, cleaned, explicit: false, intent: "dm_prompt" };
 }

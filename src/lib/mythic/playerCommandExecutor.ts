@@ -41,6 +41,7 @@ interface ExecutorArgs {
       | { kind: "tile"; x: number; y: number };
   }) => Promise<{ ok: true; ended: boolean } | { ok: false; error: string }>;
   combatSessionId: string | null;
+  combatResolutionPending: boolean;
   refetchBoard: () => Promise<void>;
   refetchCombat: () => Promise<void>;
   refetchCharacter: () => Promise<void>;
@@ -134,6 +135,18 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
   }
 
   if (command.intent === "town" || command.intent === "travel" || command.intent === "dungeon" || command.intent === "shop") {
+    if (args.boardType === "combat" && !args.combatResolutionPending) {
+      return {
+        handled: true,
+        error: "Combat is active. Finish the encounter before leaving the battlefield.",
+        stateChanges: result.stateChanges,
+        narrationContext: {
+          ...narrativeBase(args),
+          state_changes: result.stateChanges,
+          transition_blocked: true,
+        },
+      };
+    }
     const target =
       command.intent === "shop"
         ? "town"

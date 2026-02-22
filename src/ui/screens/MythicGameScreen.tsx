@@ -398,6 +398,7 @@ function isMechanicalExecutionError(message: string): boolean {
     || normalized.includes("cannot move to selected tile")
     || normalized.includes("no valid target")
     || normalized.includes("no valid targets in area")
+    || normalized.includes("combat is active")
     || normalized.includes("failed (409)")
     || normalized.includes("mythic-combat-use-skill failed")
     || normalized.includes("mythic-combat-tick failed");
@@ -1614,12 +1615,11 @@ export default function MythicGameScreen() {
     setCombatStartError(null);
 
     const command = parsePlayerCommand(rawMessage);
-    const isSlashCommand = rawMessage.startsWith("/");
     const normalizedIntent = command.intent === "unknown" ? "dm_prompt" : command.intent;
-    const isFreeformPrompt = !isSlashCommand || normalizedIntent === "dm_prompt";
-    const commandForExecution = isFreeformPrompt
-      ? { ...command, intent: "dm_prompt" as const, explicit: false, cleaned: rawMessage }
-      : command;
+    const commandForExecution = normalizedIntent === "dm_prompt"
+      ? { ...command, intent: "dm_prompt" as const, explicit: command.explicit, cleaned: rawMessage }
+      : { ...command, intent: normalizedIntent };
+    const isFreeformPrompt = commandForExecution.intent === "dm_prompt";
     await runNarratedAction({
       source: "typed_command",
       intent: normalizedIntent,
@@ -1648,6 +1648,7 @@ export default function MythicGameScreen() {
             startCombat: combat.startCombat,
             useSkill: combat.useSkill,
             combatSessionId,
+            combatResolutionPending: Boolean(combatResolutionPending),
             refetchBoard: refetch,
             refetchCombat: async () => { await refetchCombatState(); },
             refetchCharacter,
@@ -1697,6 +1698,7 @@ export default function MythicGameScreen() {
     combat.startCombat,
     combat.useSkill,
     combatSessionId,
+    combatResolutionPending,
     combatState.activeTurnCombatantId,
     combatState.combatants,
     combatState.session?.current_turn_index,
