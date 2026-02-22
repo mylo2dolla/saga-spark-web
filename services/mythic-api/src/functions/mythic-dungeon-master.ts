@@ -4,6 +4,10 @@ import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { assertCampaignAccess } from "../shared/authz.js";
 import { mythicOpenAIChatCompletionsStream } from "../shared/ai_provider.js";
+import { generateDmNarration } from "../dm/narration/generateDmNarration.js";
+import { resolveDmNarratorMode } from "../dm/narration/mode.js";
+import type { DmNarrationResult } from "../dm/narration/types.js";
+import { generateProceduralNarration } from "../dm/proceduralNarrator/index.js";
 import {
   enforceRateLimit,
   getIdempotentResponse,
@@ -35,7 +39,6 @@ import {
   buildReputationTitle,
   hashLine,
   selectToneMode,
-  toneSeedLine,
   type EnemyPersonalityTraits,
   type PresentationState,
   type ToneMode,
@@ -152,6 +155,11 @@ const DM_STYLE_PROFILE = {
 } as const;
 
 type NarratorUiAction = NonNullable<DmNarratorOutput["ui_actions"]>[number];
+interface RecoverySynthesisResult {
+  payload: DmNarratorOutput;
+  templateId: string | null;
+  debug: Record<string, unknown> | null;
+}
 const NON_PLAYER_NARRATION_PATTERNS: RegExp[] = [
   /\bcommand:unknown\b/gi,
   /\bopening move\b/gi,
@@ -1589,12 +1597,15 @@ async function applyDeterministicStoryReward(args: {
 }
 
 function synthesizeRecoveryPayload(args: {
+  campaignId: string;
+  expectedTurnIndex: number;
+  turnSeed: string;
   boardType: string;
   boardSummary: Record<string, unknown> | null;
   boardState: Record<string, unknown> | null;
   actionContext: Record<string, unknown> | null;
   lastErrors: string[];
-}): DmNarratorOutput {
+}): RecoverySynthesisResult {
   const context = args.actionContext ?? null;
   const boardStatePresentation = readPresentationState(args.boardState);
   const contextCursor = parseEventCursor(context?.combat_event_cursor);
@@ -1718,7 +1729,6 @@ function synthesizeRecoveryPayload(args: {
     })(),
     regionTheme: `${boardType}:${typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : ""}`,
   });
-  const toneLine = toneSeedLine(tone.tone, `${seedKey}:tone-line`);
 
   const hooks = [
     actionSummary,
@@ -1785,30 +1795,28 @@ function synthesizeRecoveryPayload(args: {
         ? "Pick the route segment to pressure next."
         : "Choose the next room edge and force a consequence.";
 
-  const narrativeParts = boardType === "combat"
-    ? (suppressNarrationOnError && executionError
-      ? [
-        `Action blocked: ${compactLabel(executionError, 180)}.`,
-      ]
-      : [
-        middlewareOut.lines[0] ?? toneLine,
-        middlewareOut.lines[1] ?? recoveryBeat,
-        middlewareOut.lines[2] ?? "",
-      ])
-    : introOpening
-      ? [buildIntroRecoveryNarration({
-          boardType,
-          recoveryPressure: boardNarration.text,
-          recoveryBeat,
-          boardAnchor,
-          summaryObjective,
-          summaryRumor,
-        })]
-      : [
-          boardNarration.text,
-          toneLine,
-          companionCheckin ? companionCheckin.line : recoveryBeat,
-        ];
+  const proceduralNarration = generateProceduralNarration({
+    campaignSeed: args.turnSeed,
+    sessionId: typeof context?.action_trace_id === "string" && context.action_trace_id.trim().length > 0
+      ? context.action_trace_id
+      : `${args.campaignId}:${args.expectedTurnIndex}`,
+    eventId: rawActionId ?? `${args.expectedTurnIndex}:${actionIntent}`,
+    boardType,
+    biome: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : null,
+    tone: tone.tone,
+    intensity: boardType === "combat" ? "high" : boardType === "dungeon" ? "med" : "low",
+    actionSummary,
+    recoveryBeat,
+    boardAnchor,
+    summaryObjective,
+    summaryRumor,
+    boardNarration: boardNarration.text,
+    introOpening,
+    suppressNarrationOnError,
+    executionError,
+    stateChanges,
+    events: combatEventBatch,
+  });
 
   const titleInput = buildReputationTitle({
     baseName: typeof contextPayload?.player_name === "string" ? contextPayload.player_name : "Wanderer",
@@ -1824,10 +1832,7 @@ function synthesizeRecoveryPayload(args: {
   });
 
   let cleanNarrative = sanitizeNarrationForPlayer(
-    narrativeParts
-      .filter((entry) => entry && entry.trim().length > 0)
-      .slice(0, 3)
-      .join(" "),
+    proceduralNarration.text,
     boardType,
   );
   if (titleInput.tier >= 3 && titleInput.displayName.trim().length > 0) {
@@ -1841,7 +1846,10 @@ function synthesizeRecoveryPayload(args: {
       ? middlewareOut.lineHashes
       : [hashLine(cleanNarrative)],
     last_verb_keys: middlewareOut.verbKeys,
-    last_template_ids: middlewareOut.templateIds,
+    last_template_ids: [
+      ...middlewareOut.templateIds,
+      ...(proceduralNarration.templateIds ?? []),
+    ].slice(-12),
     last_event_cursor: middlewareOut.lastEventCursor ?? boardStatePresentation.last_event_cursor ?? null,
   });
 
@@ -1925,14 +1933,15 @@ function synthesizeRecoveryPayload(args: {
   );
 
   return {
-    schema_version: "mythic.dm.narrator.v1",
-    narration: cleanNarrative,
-    scene: {
-      environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
-      mood: "dark tactical pressure",
-      focus: actionSummary,
-      travel_goal: typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
-    },
+    payload: {
+      schema_version: "mythic.dm.narrator.v1",
+      narration: cleanNarrative,
+      scene: {
+        environment: typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : boardLabel,
+        mood: "dark tactical pressure",
+        focus: actionSummary,
+        travel_goal: typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
+      },
       ui_actions: sanitizedActions,
       runtime_delta: {
         rumors: [{ title: "Pressure Spike", detail: actionSummary }],
@@ -1958,6 +1967,9 @@ function synthesizeRecoveryPayload(args: {
         },
         action_chips: actionChips,
       },
+    },
+    templateId: proceduralNarration.templateId ?? null,
+    debug: proceduralNarration.debug ? (proceduralNarration.debug as unknown as Record<string, unknown>) : null,
   };
 }
 
@@ -2009,6 +2021,17 @@ export const mythicDungeonMaster: FunctionHandler = {
       await assertCampaignAccess(svc, campaignId, user.userId);
 
       const warnings: string[] = [];
+      const requestUrl = new URL(req.url, "http://localhost");
+      const narratorModeResolution = resolveDmNarratorMode({
+        envMode: config.dmNarratorMode,
+        headerMode: req.headers.get("x-dm-narrator-mode"),
+        queryMode: requestUrl.searchParams.get("dmNarrator"),
+        allowQueryOverride: config.allowDmNarratorQueryOverride,
+      });
+      for (const warning of narratorModeResolution.warnings) {
+        warnings.push(`narrator_mode:${warning}`);
+      }
+      const narratorMode = narratorModeResolution.mode;
 
       // Turn context: compute next turn index and a deterministic seed up-front.
       const { data: latestTurn, error: latestTurnErr } = await svc
@@ -2480,7 +2503,9 @@ ${jsonOnlyContract()}
         has_character: Boolean(compactCharacter),
         has_combat: Boolean(compactCombat),
         model: requestedModel,
-        provider: "openai",
+        provider: narratorMode === "procedural" ? "procedural" : "openai",
+        narrator_mode: narratorMode,
+        narrator_mode_source: narratorModeResolution.source,
         warning_count: warnings.length,
         intro_mode: introMode,
         intro_pending_before: introPendingBefore,
@@ -2501,13 +2526,6 @@ ${jsonOnlyContract()}
       const compactMessages = compactModelMessages(messages);
       const isFreeformNarrationTurn = actionContextRecord?.intent === "dm_prompt";
       const maxAttempts = introMode || isFreeformNarrationTurn ? 3 : 2;
-      let lastErrors: string[] = [];
-      let dmText = "";
-      let dmParsed: ReturnType<typeof parseDmNarratorOutput> | null = null;
-      let validationAttempts = 0;
-      let dmRecoveryUsed = false;
-      let dmRecoveryReason: string | null = null;
-      let dmFastRecovery = false;
       let introCleared = false;
       const actionBoardType = (() => {
         const boardTypeFromPayload = typeof boardPayloadRecord?.board_type === "string"
@@ -2701,227 +2719,330 @@ ${jsonOnlyContract()}
         return false;
       };
 
-      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-        validationAttempts = attempt;
-        const attemptMessages = (() => {
-          if (attempt === 1) {
-            return [{ role: "system" as const, content: systemPrompt }, ...compactMessages];
-          }
-          if (attempt === 2) {
+      type NarrationExecutionPayload = {
+        dmParsed: { ok: true; value: DmNarratorOutput };
+        validationAttempts: number;
+        dmRecoveryUsed: boolean;
+        dmRecoveryReason: string | null;
+        introCleared: boolean;
+      };
+
+      const runProceduralNarration = async (reason: string | null): Promise<DmNarrationResult<NarrationExecutionPayload>> => {
+        const startedAt = Date.now();
+        const synthesized = synthesizeRecoveryPayload({
+          campaignId,
+          expectedTurnIndex,
+          turnSeed: turnSeed.toString(),
+          boardType: actionBoardType,
+          boardSummary: boardSummaryRecord,
+          boardState: boardStateRecord,
+          actionContext: actionContextRecord,
+          lastErrors: reason ? [reason] : [],
+        });
+        const normalized = applyIntroTurnNormalization(synthesized.payload);
+        const recoveryReason = reason ?? `mode:${narratorMode}`;
+        return {
+          source: "procedural",
+          payload: {
+            dmParsed: { ok: true, value: normalized },
+            validationAttempts: 0,
+            dmRecoveryUsed: Boolean(reason),
+            dmRecoveryReason: recoveryReason,
+            introCleared,
+          },
+          text: normalized.narration,
+          aiModel: null,
+          templateId: synthesized.templateId,
+          latencyMs: Date.now() - startedAt,
+          debug: {
+            ...(synthesized.debug ?? {}),
+            fallback_reason: recoveryReason,
+          },
+        };
+      };
+
+      const runAiNarration = async (): Promise<DmNarrationResult<NarrationExecutionPayload>> => {
+        const startedAt = Date.now();
+        let lastErrors: string[] = [];
+        let dmText = "";
+        let dmParsed: ReturnType<typeof parseDmNarratorOutput> | null = null;
+        let validationAttempts = 0;
+        let dmRecoveryUsed = false;
+        let dmRecoveryReason: string | null = null;
+        let dmFastRecovery = false;
+        let aiModel: string | null = null;
+        let templateId: string | null = null;
+        let proceduralDebug: Record<string, unknown> | null = null;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+          validationAttempts = attempt;
+          const attemptMessages = (() => {
+            if (attempt === 1) {
+              return [{ role: "system" as const, content: systemPrompt }, ...compactMessages];
+            }
+            if (attempt === 2) {
+              return [
+                { role: "system" as const, content: systemPrompt },
+                ...compactMessages,
+                {
+                  role: "system" as const,
+                  content: `Validation errors on previous output: ${JSON.stringify(lastErrors).slice(0, 2400)}. Regenerate one valid JSON object that satisfies every contract field.`,
+                },
+              ];
+            }
             return [
               { role: "system" as const, content: systemPrompt },
               ...compactMessages,
               {
                 role: "system" as const,
-                content: `Validation errors on previous output: ${JSON.stringify(lastErrors).slice(0, 2400)}. Regenerate one valid JSON object that satisfies every contract field.`,
+                content: [
+                  "REPAIR PASS REQUIRED.",
+                  `Previous validation errors: ${JSON.stringify(lastErrors).slice(0, 2400)}.`,
+                  "Previous invalid JSON candidate (may be malformed):",
+                  dmText.slice(0, 3200),
+                  "Rewrite from scratch as ONE valid JSON object with scene + runtime_delta + 2-4 ui_actions.",
+                ].join("\n"),
               },
             ];
-          }
-          return [
-            { role: "system" as const, content: systemPrompt },
-            ...compactMessages,
+          })();
+
+          const aiResponse = await mythicOpenAIChatCompletionsStream(
             {
-              role: "system" as const,
-              content: [
-                "REPAIR PASS REQUIRED.",
-                `Previous validation errors: ${JSON.stringify(lastErrors).slice(0, 2400)}.`,
-                "Previous invalid JSON candidate (may be malformed):",
-                dmText.slice(0, 3200),
-                "Rewrite from scratch as ONE valid JSON object with scene + runtime_delta + 2-4 ui_actions.",
-              ].join("\n"),
+              messages: attemptMessages,
+              stream: true,
+              temperature: 0.55,
             },
-          ];
-        })();
+            requestedModel,
+          );
+          aiModel = aiResponse.model;
+          dmText = await readModelStreamText(aiResponse.response);
 
-        const { response, model } = await mythicOpenAIChatCompletionsStream(
-          {
-            messages: attemptMessages,
-            stream: true,
-            temperature: 0.55,
-          },
-          requestedModel,
-        );
-        dmText = await readModelStreamText(response);
-
-        const parsedOut = parseDmNarratorOutput(dmText);
-        if (!parsedOut.ok) {
-          lastErrors = parsedOut.errors;
-          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
-          dmParsed = parsedOut;
-          if (shouldFastRecover(attempt, lastErrors)) {
-            dmFastRecovery = true;
-            break;
+          const parsedOut = parseDmNarratorOutput(dmText);
+          if (!parsedOut.ok) {
+            lastErrors = parsedOut.errors;
+            ctx.log.warn("dm.request.validation_failed", { attempt, model: aiResponse.model, request_id: ctx.requestId, errors: lastErrors });
+            dmParsed = parsedOut;
+            if (shouldFastRecover(attempt, lastErrors)) {
+              dmFastRecovery = true;
+              break;
+            }
+            continue;
           }
-          continue;
-        }
 
-        const narrationWords = countWords(parsedOut.value.narration);
-        if (narrationWords > NARRATION_MAX_WORDS + 34 || narrationWords < Math.max(20, NARRATION_MIN_WORDS - 26)) {
-          lastErrors = [`narration_word_count_out_of_bounds:${narrationWords}:expected_${NARRATION_MIN_WORDS}-${NARRATION_MAX_WORDS}`];
-          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
-          dmParsed = { ok: false, errors: lastErrors };
-          if (shouldFastRecover(attempt, lastErrors)) {
-            dmFastRecovery = true;
-            break;
+          const narrationWords = countWords(parsedOut.value.narration);
+          if (narrationWords > NARRATION_MAX_WORDS + 34 || narrationWords < Math.max(20, NARRATION_MIN_WORDS - 26)) {
+            lastErrors = [`narration_word_count_out_of_bounds:${narrationWords}:expected_${NARRATION_MIN_WORDS}-${NARRATION_MAX_WORDS}`];
+            ctx.log.warn("dm.request.validation_failed", { attempt, model: aiResponse.model, request_id: ctx.requestId, errors: lastErrors });
+            dmParsed = { ok: false, errors: lastErrors };
+            if (shouldFastRecover(attempt, lastErrors)) {
+              dmFastRecovery = true;
+              break;
+            }
+            continue;
           }
-          continue;
-        }
 
-        if (!parsedOut.value.scene || typeof parsedOut.value.scene !== "object") {
-          lastErrors = ["scene_missing_or_invalid"];
-          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
-          dmParsed = { ok: false, errors: lastErrors };
-          if (shouldFastRecover(attempt, lastErrors)) {
-            dmFastRecovery = true;
-            break;
+          if (!parsedOut.value.scene || typeof parsedOut.value.scene !== "object") {
+            lastErrors = ["scene_missing_or_invalid"];
+            ctx.log.warn("dm.request.validation_failed", { attempt, model: aiResponse.model, request_id: ctx.requestId, errors: lastErrors });
+            dmParsed = { ok: false, errors: lastErrors };
+            if (shouldFastRecover(attempt, lastErrors)) {
+              dmFastRecovery = true;
+              break;
+            }
+            continue;
           }
-          continue;
-        }
 
-        const deltaPayload = asObject(parsedOut.value.runtime_delta ?? parsedOut.value.board_delta);
-        if (!deltaPayload) {
-          lastErrors = ["runtime_delta_missing_or_invalid"];
-          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
-          dmParsed = { ok: false, errors: lastErrors };
-          if (shouldFastRecover(attempt, lastErrors)) {
-            dmFastRecovery = true;
-            break;
+          const deltaPayload = asObject(parsedOut.value.runtime_delta ?? parsedOut.value.board_delta);
+          if (!deltaPayload) {
+            lastErrors = ["runtime_delta_missing_or_invalid"];
+            ctx.log.warn("dm.request.validation_failed", { attempt, model: aiResponse.model, request_id: ctx.requestId, errors: lastErrors });
+            dmParsed = { ok: false, errors: lastErrors };
+            if (shouldFastRecover(attempt, lastErrors)) {
+              dmFastRecovery = true;
+              break;
+            }
+            continue;
           }
-          continue;
-        }
 
-        let actions: NarratorUiAction[] = sanitizeUiActions({
-          actions: parsedOut.value.ui_actions ?? [],
-          boardType: actionBoardType,
-          boardSummary: boardSummaryRecord,
-        })
-          .map((action): NarratorUiAction => {
-            if (action.intent !== "shop_action") return action;
-            const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : {};
-            const vendorId = typeof payload.vendorId === "string" ? payload.vendorId : null;
-            if (vendorId && allowedVendorIds.has(vendorId)) return action;
-            if (fallbackVendorId) {
+          let actions: NarratorUiAction[] = sanitizeUiActions({
+            actions: parsedOut.value.ui_actions ?? [],
+            boardType: actionBoardType,
+            boardSummary: boardSummaryRecord,
+          })
+            .map((action): NarratorUiAction => {
+              if (action.intent !== "shop_action") return action;
+              const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : {};
+              const vendorId = typeof payload.vendorId === "string" ? payload.vendorId : null;
+              if (vendorId && allowedVendorIds.has(vendorId)) return action;
+              if (fallbackVendorId) {
+                return {
+                  ...action,
+                  payload: { ...payload, vendorId: fallbackVendorId },
+                } as NarratorUiAction;
+              }
               return {
                 ...action,
-                payload: { ...payload, vendorId: fallbackVendorId },
+                intent: "dm_prompt" as const,
+                label: "Work A Lead",
+                prompt: action.prompt ?? "I press a concrete lead from current runtime hooks and commit the next move.",
+                payload: { ...payload, vendor_unavailable: true },
               } as NarratorUiAction;
+            });
+
+          const checkin = latestCompanionCheckin(boardStateRecord);
+          if (checkin && !isCompanionFollowupResolved(boardStateRecord, checkin)) {
+            const hasCompanionAction = actions.some((action) => {
+              const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : null;
+              return payload?.companion_id === checkin.companion_id && payload?.resolved !== true;
+            });
+            if (!hasCompanionAction && actions.length < 4) {
+              actions = [...actions, buildCompanionFollowupAction(checkin)];
             }
-            return {
-              ...action,
-              intent: "dm_prompt" as const,
-              label: "Work A Lead",
-              prompt: action.prompt ?? "I press a concrete lead from current runtime hooks and commit the next move.",
-              payload: { ...payload, vendor_unavailable: true },
-            } as NarratorUiAction;
+          }
+
+          actions = sanitizeUiActions({
+            actions,
+            boardType: actionBoardType,
+            boardSummary: boardSummaryRecord,
+          }).slice(0, 4);
+
+          if (actions.length < 2 || actions.length > 4) {
+            lastErrors = [`ui_actions_count_out_of_bounds:${actions.length}:expected_2_4`];
+            ctx.log.warn("dm.request.validation_failed", { attempt, model: aiResponse.model, request_id: ctx.requestId, errors: lastErrors });
+            dmParsed = { ok: false, errors: lastErrors };
+            if (shouldFastRecover(attempt, lastErrors)) {
+              dmFastRecovery = true;
+              break;
+            }
+            continue;
+          }
+
+          const badShop = actions.find((action) => {
+            if (action.intent !== "shop_action") return false;
+            const vendorId = (action.payload as Record<string, unknown> | undefined)?.vendorId;
+            return typeof vendorId !== "string" || !allowedVendorIds.has(vendorId);
+          });
+          if (badShop) {
+            const vendorId = (badShop.payload as Record<string, unknown> | undefined)?.vendorId;
+            lastErrors = [`ui_actions.shop.vendorId_invalid:${typeof vendorId === "string" ? vendorId : "missing"}`];
+            ctx.log.warn("dm.request.validation_failed", { attempt, model: aiResponse.model, request_id: ctx.requestId, errors: lastErrors });
+            dmParsed = { ok: false, errors: lastErrors };
+            if (shouldFastRecover(attempt, lastErrors)) {
+              dmFastRecovery = true;
+              break;
+            }
+            continue;
+          }
+
+          let boardDeltaActionChips = sanitizeUiActions({
+            actions: (deltaPayload.action_chips as NarratorUiAction[] | undefined) ?? actions,
+            boardType: actionBoardType,
+            boardSummary: boardSummaryRecord,
           });
 
-        const checkin = latestCompanionCheckin(boardStateRecord);
-        if (checkin && !isCompanionFollowupResolved(boardStateRecord, checkin)) {
-          const hasCompanionAction = actions.some((action) => {
-            const payload = action.payload && typeof action.payload === "object" ? action.payload as Record<string, unknown> : null;
-            return payload?.companion_id === checkin.companion_id && payload?.resolved !== true;
+          const checkinForChips = latestCompanionCheckin(boardStateRecord);
+          if (checkinForChips && !isCompanionFollowupResolved(boardStateRecord, checkinForChips)) {
+            const hasCompanionChip = boardDeltaActionChips.some((chip) => {
+              const payload = chip.payload && typeof chip.payload === "object" ? chip.payload as Record<string, unknown> : null;
+              return payload?.companion_id === checkinForChips.companion_id && payload?.resolved !== true;
+            });
+            if (!hasCompanionChip) {
+              boardDeltaActionChips = [...boardDeltaActionChips.slice(0, 5), buildCompanionFollowupAction(checkinForChips)];
+            }
+          }
+
+          boardDeltaActionChips = appendCompanionResolutionChip({
+            chips: boardDeltaActionChips,
+            actionContext: actionContextRecord,
+          }).slice(-6);
+
+          const runtimeDelta = {
+            ...deltaPayload,
+            action_chips: boardDeltaActionChips,
+          };
+          const normalizedPayload = applyIntroTurnNormalization({
+            ...parsedOut.value,
+            ui_actions: actions,
+            runtime_delta: runtimeDelta,
+            board_delta: runtimeDelta,
           });
-          if (!hasCompanionAction && actions.length < 4) {
-            actions = [...actions, buildCompanionFollowupAction(checkin)];
-          }
+          dmParsed = {
+            ok: true,
+            value: normalizedPayload,
+          };
+          break;
         }
 
-        actions = sanitizeUiActions({
-          actions,
-          boardType: actionBoardType,
-          boardSummary: boardSummaryRecord,
-        }).slice(0, 4);
-
-        if (actions.length < 2 || actions.length > 4) {
-          lastErrors = [`ui_actions_count_out_of_bounds:${actions.length}:expected_2_4`];
-          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
-          dmParsed = { ok: false, errors: lastErrors };
-          if (shouldFastRecover(attempt, lastErrors)) {
-            dmFastRecovery = true;
-            break;
-          }
-          continue;
-        }
-
-        // Additional validation: if suggesting shop actions, vendorId must match board summary.
-        const badShop = actions.find((action) => {
-          if (action.intent !== "shop_action") return false;
-          const vendorId = (action.payload as Record<string, unknown> | undefined)?.vendorId;
-          return typeof vendorId !== "string" || !allowedVendorIds.has(vendorId);
-        });
-        if (badShop) {
-          const vendorId = (badShop.payload as Record<string, unknown> | undefined)?.vendorId;
-          lastErrors = [`ui_actions.shop.vendorId_invalid:${typeof vendorId === "string" ? vendorId : "missing"}`];
-          ctx.log.warn("dm.request.validation_failed", { attempt, model, request_id: ctx.requestId, errors: lastErrors });
-          dmParsed = { ok: false, errors: lastErrors };
-          if (shouldFastRecover(attempt, lastErrors)) {
-            dmFastRecovery = true;
-            break;
-          }
-          continue;
-        }
-
-        let boardDeltaActionChips = sanitizeUiActions({
-          actions: (deltaPayload.action_chips as NarratorUiAction[] | undefined) ?? actions,
-          boardType: actionBoardType,
-          boardSummary: boardSummaryRecord,
-        });
-
-        const checkinForChips = latestCompanionCheckin(boardStateRecord);
-        if (checkinForChips && !isCompanionFollowupResolved(boardStateRecord, checkinForChips)) {
-          const hasCompanionChip = boardDeltaActionChips.some((chip) => {
-            const payload = chip.payload && typeof chip.payload === "object" ? chip.payload as Record<string, unknown> : null;
-            return payload?.companion_id === checkinForChips.companion_id && payload?.resolved !== true;
+        if (!dmParsed || !dmParsed.ok) {
+          dmRecoveryUsed = true;
+          dmRecoveryReason = dmFastRecovery
+            ? `fast_recovery:${lastErrors.join("|").slice(0, 360)}`
+            : lastErrors.join("|").slice(0, 400) || "validation_failed";
+          ctx.log.warn("dm.request.auto_recovery", {
+            request_id: ctx.requestId,
+            validation_attempts: validationAttempts,
+            reason: dmRecoveryReason,
+            fast_recovery: dmFastRecovery,
           });
-          if (!hasCompanionChip) {
-            boardDeltaActionChips = [...boardDeltaActionChips.slice(0, 5), buildCompanionFollowupAction(checkinForChips)];
-          }
-        }
-
-        boardDeltaActionChips = appendCompanionResolutionChip({
-          chips: boardDeltaActionChips,
-          actionContext: actionContextRecord,
-        }).slice(-6);
-
-        const runtimeDelta = {
-          ...deltaPayload,
-          action_chips: boardDeltaActionChips,
-        };
-        const normalizedPayload = applyIntroTurnNormalization({
-          ...parsedOut.value,
-          ui_actions: actions,
-          runtime_delta: runtimeDelta,
-          board_delta: runtimeDelta,
-        });
-        dmParsed = {
-          ok: true,
-          value: normalizedPayload,
-        };
-        break;
-      }
-
-      if (!dmParsed || !dmParsed.ok) {
-        dmRecoveryUsed = true;
-        dmRecoveryReason = dmFastRecovery
-          ? `fast_recovery:${lastErrors.join("|").slice(0, 360)}`
-          : lastErrors.join("|").slice(0, 400) || "validation_failed";
-        ctx.log.warn("dm.request.auto_recovery", {
-          request_id: ctx.requestId,
-          validation_attempts: validationAttempts,
-          reason: dmRecoveryReason,
-          fast_recovery: dmFastRecovery,
-        });
-        dmParsed = {
-          ok: true,
-          value: applyIntroTurnNormalization(synthesizeRecoveryPayload({
+          const synthesized = synthesizeRecoveryPayload({
+            campaignId,
+            expectedTurnIndex,
+            turnSeed: turnSeed.toString(),
             boardType: actionBoardType,
             boardSummary: boardSummaryRecord,
             boardState: boardStateRecord,
             actionContext: actionContextRecord,
             lastErrors,
-          })),
+          });
+          templateId = synthesized.templateId;
+          proceduralDebug = synthesized.debug;
+          dmParsed = {
+            ok: true,
+            value: applyIntroTurnNormalization(synthesized.payload),
+          };
+        }
+
+        return {
+          source: dmRecoveryUsed ? "procedural" : "ai",
+          payload: {
+            dmParsed: dmParsed as { ok: true; value: DmNarratorOutput },
+            validationAttempts,
+            dmRecoveryUsed,
+            dmRecoveryReason,
+            introCleared,
+          },
+          text: dmParsed.value.narration,
+          aiModel,
+          templateId,
+          latencyMs: Date.now() - startedAt,
+          debug: proceduralDebug,
         };
-      }
+      };
+
+      const narrationExecution = await generateDmNarration({
+        input: {
+          requestId: ctx.requestId,
+          campaignId,
+          mode: narratorMode,
+          expectedTurnIndex,
+          turnSeed: turnSeed.toString(),
+        },
+        generateAi: runAiNarration,
+        generateProcedural: runProceduralNarration,
+      });
+
+      let dmParsed = narrationExecution.payload.dmParsed;
+      const validationAttempts = narrationExecution.payload.validationAttempts;
+      const dmRecoveryUsed = narrationExecution.payload.dmRecoveryUsed;
+      const dmRecoveryReason = narrationExecution.payload.dmRecoveryReason;
+      introCleared = narrationExecution.payload.introCleared;
+      const narratorSource = narrationExecution.source;
+      const narratorAiModel = narrationExecution.aiModel ?? null;
+      const narratorTemplateId = narrationExecution.templateId ?? null;
+      const narratorLatencyMs = Number.isFinite(Number(narrationExecution.latencyMs))
+        ? Math.max(0, Math.floor(Number(narrationExecution.latencyMs)))
+        : null;
+      const narratorDebug = narrationExecution.debug ?? null;
 
       if (dmParsed.ok) {
         const suppressNarrationOnError = actionContextRecord?.suppress_narration_on_error === true
@@ -3033,7 +3154,10 @@ ${jsonOnlyContract()}
         board_type: boardType,
         expected_turn_index: expectedTurnIndex,
         turn_seed: turnSeed.toString(),
-        model: requestedModel,
+        model: narratorAiModel ?? requestedModel,
+        narrator_mode: narratorMode,
+        narrator_mode_source: narratorModeResolution.source,
+        narrator_source: narratorSource,
         messages,
         actionContext: actionContextRecord ?? null,
         warnings,
@@ -3046,6 +3170,7 @@ ${jsonOnlyContract()}
           NARRATION_MAX_WORDS,
         ),
         schema_version: dmParsed.value.schema_version ?? "mythic.dm.narrator.v1",
+        narratorSource,
         roll_log: prng.rollLog,
         meta: {
           dm_validation_attempts: validationAttempts,
@@ -3054,6 +3179,12 @@ ${jsonOnlyContract()}
           dm_intro_mode: introMode,
           dm_intro_pending_before: introPendingBefore,
           dm_intro_cleared: introCleared,
+          narrator_source: narratorSource,
+          narrator_mode: narratorMode,
+          template_id: narratorTemplateId,
+          ai_model: narratorAiModel,
+          latency_ms: narratorLatencyMs,
+          narrator_debug: narratorDebug,
         },
         turn: {
           expected_turn_index: expectedTurnIndex,
@@ -3170,6 +3301,11 @@ ${jsonOnlyContract()}
         dm_intro_mode: introMode,
         dm_intro_pending_before: introPendingBefore,
         dm_intro_cleared: introCleared,
+        narrator_mode: narratorMode,
+        narrator_source: narratorSource,
+        narrator_template_id: narratorTemplateId,
+        narrator_ai_model: narratorAiModel,
+        narrator_latency_ms: narratorLatencyMs,
         story_reward_applied: rewardSummary.applied,
         story_reward_xp: rewardSummary.xp_awarded,
         story_reward_loot_item_id: rewardSummary.loot_item_id,
@@ -3192,6 +3328,8 @@ ${jsonOnlyContract()}
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "x-request-id": ctx.requestId,
+          "x-dm-narrator-source": narratorSource,
+          "x-dm-narrator-mode": narratorMode,
         },
       });
       if (idempotencyKey) {

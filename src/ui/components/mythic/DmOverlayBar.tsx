@@ -5,6 +5,7 @@ interface DmOverlayBarProps {
   latestNarration: string;
   phase: MythicDmPhase | null | undefined;
   isBusy: boolean;
+  narratorSource?: "ai" | "procedural" | null;
 }
 
 function phaseLabel(phase: MythicDmPhase | null | undefined): string {
@@ -24,6 +25,11 @@ export function DmOverlayBar(props: DmOverlayBarProps) {
         <div data-testid="dm-overlay-phase" className="inline-flex items-center gap-1.5">
           <span className="rounded border border-amber-200/40 bg-black/35 px-1.5 py-0.5">DM</span>
           <span className="rounded border border-amber-200/35 bg-black/35 px-1.5 py-0.5">{phaseLabel(props.phase)}</span>
+          {props.narratorSource ? (
+            <span className="rounded border border-amber-200/35 bg-black/35 px-1.5 py-0.5">
+              {props.narratorSource}
+            </span>
+          ) : null}
           {props.isBusy ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
         </div>
       </div>

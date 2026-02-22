@@ -7,6 +7,7 @@
     "build": "tsup src/server.ts --format esm --platform node --target node20 --sourcemap --clean --out-dir dist",
     "start": "node dist/server.js",
     "check": "tsc --noEmit",
+    "test:narrator-smoke": "tsx scripts/narrator-smoke-test.ts",
     "test:worldforge": "tsx --test src/lib/worldforge/worldforge.test.ts",
     "test:worldforge:contracts": "tsx --test src/lib/worldforge/worldforge.contracts.test.ts"
   },

@@ -126,6 +126,11 @@ export interface MythicDmResponseMeta {
   dm_validation_attempts?: number;
   dm_recovery_used?: boolean;
   dm_recovery_reason?: string | null;
+  narrator_source?: "ai" | "procedural" | string;
+  narrator_mode?: "ai" | "procedural" | "hybrid" | string;
+  template_id?: string | null;
+  ai_model?: string | null;
+  latency_ms?: number | null;
   reward_summary?: MythicStoryRewardSummary;
   [key: string]: unknown;
 }

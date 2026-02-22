@@ -15,6 +15,7 @@ import MythicGameScreen from "@/ui/screens/MythicGameScreen";
 import ServerAdminScreen from "@/ui/screens/ServerAdminScreen";
 import LandingScreen from "@/ui/screens/LandingScreen";
 import MythicRenderHarnessScreen from "@/ui/screens/MythicRenderHarnessScreen";
+import NarratorTestScreen from "@/ui/screens/NarratorTestScreen";
 import BalancePanel from "@/debug/BalancePanel";
 import GameSessionRoute from "./routes/GameSessionRoute";
 import NotFound from "./pages/NotFound";
@@ -42,6 +43,9 @@ const App = () => (
                     <Route path="/dashboard" element={<DashboardScreen />} />
                     <Route path="/servers" element={<ServerAdminScreen />} />
                     <Route path="/admin" element={<ServerAdminScreen />} />
+                    {import.meta.env.DEV ? (
+                      <Route path="/dev/narrator-test" element={<NarratorTestScreen />} />
+                    ) : null}
                     <Route path="/mythic/:campaignId" element={<GameSessionRoute />}>
                       <Route index element={<MythicGameScreen />} />
                       <Route path="create-character" element={<MythicCharacterScreen />} />

@@ -100,6 +100,22 @@ npm run build
 npm run start
 ```
 
+### DM narrator mode toggle
+
+Server env:
+
+```bash
+DM_NARRATOR_MODE=hybrid   # ai | procedural | hybrid
+```
+
+Per-request overrides:
+- Header: `X-DM-Narrator-Mode: ai|procedural|hybrid`
+- Dev query param: `?dmNarrator=procedural`
+
+A/B harness:
+- Dev UI route: `/dev/narrator-test`
+- Procedural smoke test: `npm run test:narrator:smoke`
+
 ## Supabase migrations (local + remote)
 
 Apply migrations locally:

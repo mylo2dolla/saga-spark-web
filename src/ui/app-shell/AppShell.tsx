@@ -16,6 +16,7 @@ export default function AppShell() {
     { to: "/dashboard#create", label: "Create/Join" },
     { to: "/dashboard#campaigns", label: "Mythic" },
     { to: "/servers", label: "Servers/Admin" },
+    ...(import.meta.env.DEV ? [{ to: "/dev/narrator-test", label: "Narrator Test" }] : []),
   ];
 
   if (isMythicRoute) {

@@ -26,8 +26,8 @@ export interface ProceduralNarratorInput {
   eventId: string;
   boardType: string;
   biome: string | null;
-  tone: ProceduralTone;
-  intensity: ProceduralIntensity;
+  tone: string;
+  intensity: string;
   actionSummary: string;
   recoveryBeat: string;
   boardAnchor: string;
@@ -87,4 +87,3 @@ export interface ProceduralTemplate {
   tags: string[];
   render: (vars: ProceduralTemplateRenderContext) => string;
 }
-
