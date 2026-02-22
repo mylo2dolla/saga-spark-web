@@ -9,6 +9,7 @@ interface EdgeOptions {
   body?: unknown;
   headers?: EdgeHeaders;
   method?: string;
+  query?: Record<string, string | number | boolean | null | undefined>;
   requireAuth?: boolean;
   accessToken?: string | null;
   signal?: AbortSignal;
@@ -241,12 +242,24 @@ const buildHeaders = async (
   };
 };
 
-const buildUrl = (name: string) => {
+const buildUrl = (
+  name: string,
+  query?: Record<string, string | number | boolean | null | undefined>,
+) => {
   ensureEnv();
   const base = FUNCTIONS_BASE_URL.endsWith("/functions/v1")
     ? FUNCTIONS_BASE_URL
     : `${FUNCTIONS_BASE_URL}/functions/v1`;
-  return `${base}/${name}`;
+  const url = new URL(`${base}/${name}`);
+  if (query) {
+    for (const [key, value] of Object.entries(query)) {
+      if (value === null || value === undefined) continue;
+      const normalized = typeof value === "boolean" ? (value ? "true" : "false") : String(value);
+      if (!normalized.trim()) continue;
+      url.searchParams.set(key, normalized);
+    }
+  }
+  return url.toString();
 };
 
 const combineSignals = (a: AbortSignal, b: AbortSignal): AbortSignal => {
@@ -502,7 +515,7 @@ export async function callEdgeFunction<T>(
     const timeoutMs = options?.timeoutMs ?? DEFAULT_EDGE_TIMEOUT_MS;
     const maxRetries = Math.max(0, Math.floor(options?.maxRetries ?? DEFAULT_MAX_RETRIES));
     const retryBaseMs = Math.max(100, Math.floor(options?.retryBaseMs ?? DEFAULT_RETRY_BASE_MS));
-    const url = buildUrl(name);
+    const url = buildUrl(name, options?.query);
     const method = options?.method ?? "POST";
 
     let response: Response | null = null;
@@ -688,7 +701,7 @@ export async function callEdgeFunctionRaw(
 
     for (let attempt = 1; attempt <= maxRetries + 1; attempt += 1) {
       try {
-        const response = await fetchWithTimeout(name, timeoutMs, buildUrl(name), {
+        const response = await fetchWithTimeout(name, timeoutMs, buildUrl(name, options?.query), {
           method: options?.method ?? "POST",
           headers,
           body: options?.body ? JSON.stringify(options.body) : undefined,

@@ -60,6 +60,7 @@ interface SendOptions {
   timeoutMs?: number;
   suppressErrorToast?: boolean;
   abortPrevious?: boolean;
+  narratorModeOverride?: DmNarratorMode | null;
 }
 
 export type MythicDmErrorKind =
@@ -82,13 +83,21 @@ export interface MythicDmLastResponseMeta {
   validationAttempts: number | null;
   recoveryUsed: boolean;
   recoveryReason: string | null;
+  narratorSource: DmNarratorSource | null;
+  narratorMode: DmNarratorMode | null;
+  templateId: string | null;
+  aiModel: string | null;
+  latencyMs: number | null;
 }
 
 export type MythicDmPhase = "assembling_context" | "resolving_narration" | "committing_turn";
+export type DmNarratorMode = "ai" | "procedural" | "hybrid";
+export type DmNarratorSource = "ai" | "procedural";
 
 const MAX_HISTORY_MESSAGES = 16;
 const MAX_MESSAGE_CONTENT = 1800;
 const DEFAULT_DM_TIMEOUT_MS = 95_000;
+const DM_NARRATOR_LOCAL_STORAGE_KEY = "mythic.dm.narrator.mode";
 const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative\s+update)$/i;
 const LOW_SIGNAL_ACTION_TEXT = /^(continue|proceed|next(\s+step|\s+move)?|press\s+on|advance|do\s+that|do\s+this|work\s+a\s+lead|refresh(\s+state)?|check\s+status)$/i;
 const LOW_SIGNAL_ACTION_PROMPT = /^(continue|proceed|advance|refresh|narrate|describe)(\b|[\s.,])/i;
@@ -106,6 +115,20 @@ const trimMessage = (content: string) =>
   content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
 
 const logger = createLogger("mythic-dm-hook");
+
+function normalizeNarratorMode(value: unknown): DmNarratorMode | null {
+  if (typeof value !== "string") return null;
+  const key = value.trim().toLowerCase();
+  if (key === "ai" || key === "procedural" || key === "hybrid") return key;
+  return null;
+}
+
+function normalizeNarratorSource(value: unknown): DmNarratorSource | null {
+  if (typeof value !== "string") return null;
+  const key = value.trim().toLowerCase();
+  if (key === "ai" || key === "procedural") return key;
+  return null;
+}
 
 function dedupeUiActions(actions: MythicUiAction[], maxActions = 8): MythicUiAction[] {
   const seen = new Set<string>();

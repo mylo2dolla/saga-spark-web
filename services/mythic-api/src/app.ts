@@ -54,8 +54,16 @@ export async function buildApp() {
       cb(null, config.allowedOrigins.includes(origin));
     },
     methods: ["POST", "OPTIONS"],
-    allowedHeaders: ["authorization", "x-client-info", "apikey", "content-type", "x-idempotency-key", "x-request-id"],
-    exposedHeaders: ["x-request-id"],
+    allowedHeaders: [
+      "authorization",
+      "x-client-info",
+      "apikey",
+      "content-type",
+      "x-idempotency-key",
+      "x-request-id",
+      "x-dm-narrator-mode",
+    ],
+    exposedHeaders: ["x-request-id", "x-dm-narrator-source", "x-dm-narrator-mode"],
     credentials: false,
   });
 
