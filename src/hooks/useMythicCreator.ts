@@ -55,6 +55,22 @@ export function useMythicCreator() {
   const createCharacter = useCallback(async (req: MythicCreateCharacterRequest, options: CreatorOptions = {}) => {
     const characterName = req.characterName.trim();
     const classDescription = req.classDescription.trim();
+    const originRegionId = req.originRegionId?.trim() || undefined;
+    const factionAlignmentId = req.factionAlignmentId?.trim() || undefined;
+    const background = req.background?.trim() || undefined;
+    const personalityTraits = Array.isArray(req.personalityTraits)
+      ? Array.from(
+          new Set(
+            req.personalityTraits
+              .map((entry) => String(entry ?? "").trim())
+              .filter((entry) => entry.length > 0)
+              .slice(0, 6),
+          ),
+        )
+      : undefined;
+    const moralLeaning = typeof req.moralLeaning === "number"
+      ? Math.max(-1, Math.min(1, Number(req.moralLeaning.toFixed(2))))
+      : undefined;
 
     if (!characterName) {
       toast.error("Enter a character name");
@@ -72,21 +88,37 @@ export function useMythicCreator() {
       toast.error("Class concept must be 2000 characters or fewer.");
       return null;
     }
+    if (background && background.length > 160) {
+      toast.error("Background must be 160 characters or fewer.");
+      return null;
+    }
 
     setIsCreating(true);
     setLastError(null);
     try {
+      const forgeFingerprint = [
+        originRegionId ?? "",
+        factionAlignmentId ?? "",
+        background ?? "",
+        personalityTraits?.join("|") ?? "",
+        moralLeaning == null ? "" : moralLeaning.toFixed(2),
+      ].join(":");
       const { data, error } = await callEdgeFunction<MythicCreateCharacterResponse>("mythic-create-character", {
         requireAuth: true,
         signal: options.signal,
         // SLA target is sub-30s with deterministic fallback, keep client timeout tight.
         timeoutMs: 40_000,
         maxRetries: 0,
-        idempotencyKey: `${req.campaignId}:${characterName}:${classDescription}`,
+        idempotencyKey: `${req.campaignId}:${characterName}:${classDescription}:${forgeFingerprint}`,
         body: {
           ...req,
           characterName,
           classDescription,
+          originRegionId,
+          factionAlignmentId,
+          background,
+          personalityTraits,
+          moralLeaning,
         },
       });
       if (error) throw error;

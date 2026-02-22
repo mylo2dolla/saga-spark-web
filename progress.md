@@ -98,3 +98,53 @@ TODO / next suggested hardening:
 - Replace remaining DB RPC combat calculations (`mythic_compute_damage`, `mythic_status_apply_chance`) with shared TS rules calls for full single-source parity.
 - Add one focused e2e that opens the dev balance panel and verifies tune values reflect in table outputs.
 - Expand status simulation coverage for stacking mode edge cases (`stack` cap pressure and `intensity` overflow behavior).
+
+2026-02-22 (follow-up hardening pass: forge inspector + determinism + DM budget + backfill + CI gate)
+- Added shared worldforge helper modules:
+  - `services/mythic-api/src/lib/worldforge/context_bindings.ts`
+  - `services/mythic-api/src/lib/worldforge/prompt_budget.ts`
+  - exported from `services/mythic-api/src/lib/worldforge/index.ts`
+- Switched backend world-context payload wiring to shared builders in:
+  - `mythic-create-campaign.ts`
+  - `mythic-bootstrap.ts`
+  - `mythic-join-campaign.ts`
+  - `mythic-runtime-transition.ts`
+  - `mythic-dm-context.ts`
+- Added DM prompt budget guardrail in `mythic-dungeon-master.ts`:
+  - deterministic world-context compaction via `buildPromptWorldContextBlock`
+  - budget trim warnings emitted into runtime warnings list
+  - request logs now include world prompt budget/trim metrics
+- Added endpoint/worldforge contract snapshot tests:
+  - `services/mythic-api/src/lib/worldforge/worldforge.contracts.test.ts`
+  - `services/mythic-api/package.json` script: `test:worldforge:contracts`
+- Frontend debug integration:
+  - `useMythicDmContext.ts` now publishes snapshots into `mythicDebugStore`
+  - `BalancePanel.tsx` expanded with:
+    - Forge Inspector (seed/tone/preset trace/forge inputs)
+    - diff vs previous snapshot
+    - world-state timeline/faction/rumor/collapsed dungeon tables
+- Character Forge UX expanded in `MythicCharacterCreator.tsx`:
+  - origin region, faction alignment, background, personality traits, moral leaning
+  - lock toggles + deterministic randomize unlocked fields
+  - values passed into create-character request
+- `useMythicCreator.ts` now normalizes forge fields and includes them in idempotency key fingerprint.
+- Added world profile migration/backfill script:
+  - `scripts/backfill-worldforge-profiles.ts`
+  - updates both profile tables + optional active runtime patch
+  - supports `--campaign-id`/`--all`, dry-run safety, and explicit `--yes`
+- Added balance drift gate:
+  - root script `test:balance:gate`
+  - workflow `.github/workflows/balance-gate.yml`
+
+TODO / verification remaining in this pass:
+- run full typecheck for root + mythic-api
+- run worldforge tests (including new contract snapshots)
+- run balance gate test command
+- resolve any compile/test fallout from new UI + helper wiring
+
+Validation run complete (same pass):
+- `services/mythic-api`: `npm run check` PASS
+- `services/mythic-api`: `npm run test:worldforge && npm run test:worldforge:contracts` PASS
+- repo root: `npm run typecheck` PASS
+- repo root: `npm run test:balance:gate` PASS
+- repo root: `npx tsx scripts/backfill-worldforge-profiles.ts --help` PASS
