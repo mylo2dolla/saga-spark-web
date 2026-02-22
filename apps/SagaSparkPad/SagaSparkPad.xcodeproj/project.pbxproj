@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -12,8 +12,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		1AD2581B512F8075349C5E63 /* SagaSparkPad.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = SagaSparkPad.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		1AD2581B512F8075349C5E63 /* SagaSparkPad.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SagaSparkPad.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2F3F54D58F9A6283DE4A6B84 /* lvlupkit.package */ = {isa = PBXFileReference; lastKnownFileType = folder; name = lvlupkit.package; path = ../../../levelupkit/lvlupkit.package; sourceTree = SOURCE_ROOT; };
+		5A96C8E030F9519CCB89E6B2 /* SagaSparkPad.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = SagaSparkPad.xcconfig; sourceTree = "<group>"; };
 		D17F7651029046E949859A90 /* SagaSparkPadApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SagaSparkPadApp.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -32,6 +33,7 @@
 		1FD93B08BD93FAE837AD62CE = {
 			isa = PBXGroup;
 			children = (
+				E88F3D6AD4912E6346632E76 /* Config */,
 				5928A21C5FAD98E48B149772 /* Packages */,
 				5BE9EF6B92A5E5B9CD349FBB /* Sources */,
 				501EF2DBC48367DB08CC038E /* Products */,
@@ -60,6 +62,14 @@
 				D17F7651029046E949859A90 /* SagaSparkPadApp.swift */,
 			);
 			path = Sources;
+			sourceTree = "<group>";
+		};
+		E88F3D6AD4912E6346632E76 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				5A96C8E030F9519CCB89E6B2 /* SagaSparkPad.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -91,7 +101,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
-				LastUpgradeCheck = 1430;
+				LastUpgradeCheck = 2620;
 			};
 			buildConfigurationList = 12FC85FA9C434DB4F8CC3645 /* Build configuration list for PBXProject "SagaSparkPad" */;
 			compatibilityVersion = "Xcode 14.0";
@@ -106,7 +116,6 @@
 			packageReferences = (
 				F514EE0DDB706D7A60EEFB70 /* XCLocalSwiftPackageReference "../../../levelupkit/lvlupkit.package" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -129,17 +138,25 @@
 /* Begin XCBuildConfiguration section */
 		2D59BA8964F9816E57D8F296 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5A96C8E030F9519CCB89E6B2 /* SagaSparkPad.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				GENERATE_INFOPLIST_FILE = YES;
+				COMPILER_INDEX_STORE_ENABLE = NO;
+				ENABLE_PREVIEWS = NO;
+				INFOPLIST_FILE = "Config/Info-SagaSparkPad.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LEVELUPKIT_ENABLE_ANONYMOUS_AUTH = YES;
+				LEVELUPKIT_ENABLE_DEV_QUICKSTART = YES;
+				LEVELUPKIT_FORCE_DEV_QUICKSTART = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lvlupkit.sagasparkpad;
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
 				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Debug;
@@ -180,8 +197,10 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = BV32V2YQ8R;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
@@ -195,6 +214,7 @@
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.10;
@@ -237,8 +257,10 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = BV32V2YQ8R;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -259,6 +281,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.10;
@@ -267,17 +290,25 @@
 		};
 		E43EBA8C4AF2EE3F61122D26 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5A96C8E030F9519CCB89E6B2 /* SagaSparkPad.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				GENERATE_INFOPLIST_FILE = YES;
+				COMPILER_INDEX_STORE_ENABLE = NO;
+				ENABLE_PREVIEWS = NO;
+				INFOPLIST_FILE = "Config/Info-SagaSparkPad.plist";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				LEVELUPKIT_ENABLE_ANONYMOUS_AUTH = YES;
+				LEVELUPKIT_ENABLE_DEV_QUICKSTART = NO;
+				LEVELUPKIT_FORCE_DEV_QUICKSTART = NO;
 				PRODUCT_BUNDLE_IDENTIFIER = com.lvlupkit.sagasparkpad;
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
 				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Release;

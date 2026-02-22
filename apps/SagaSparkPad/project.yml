@@ -14,6 +14,36 @@ targets:
     type: application
     platform: "iOS"
     deploymentTarget: "17.0"
+    configFiles:
+      Debug: Config/SagaSparkPad.xcconfig
+      Release: Config/SagaSparkPad.xcconfig
+    info:
+      path: Config/Info-SagaSparkPad.plist
+      properties:
+        CFBundleDisplayName: Saga Spark
+        CFBundleName: Saga Spark
+        CFBundleURLTypes:
+          - CFBundleURLName: com.lvlupkit.sagasparkpad.auth
+            CFBundleURLSchemes:
+              - sagasparkpad
+        DEFAULT_CAMPAIGN_ID: $(DEFAULT_CAMPAIGN_ID)
+        LEVELUPKIT_ENABLE_DEV_QUICKSTART: $(LEVELUPKIT_ENABLE_DEV_QUICKSTART)
+        LEVELUPKIT_FORCE_DEV_QUICKSTART: $(LEVELUPKIT_FORCE_DEV_QUICKSTART)
+        LEVELUPKIT_ENABLE_ANONYMOUS_AUTH: $(LEVELUPKIT_ENABLE_ANONYMOUS_AUTH)
+        SUPABASE_ANON_KEY: $(SUPABASE_ANON_KEY)
+        SUPABASE_REDIRECT_URL: $(SUPABASE_REDIRECT_URL)
+        SUPABASE_URL: $(SUPABASE_URL)
+        MYTHIC_FUNCTIONS_BASE_URL: $(MYTHIC_FUNCTIONS_BASE_URL)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
     sources:
       - path: Sources
     dependencies:
@@ -22,8 +52,20 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "com.lvlupkit.sagasparkpad"
-        GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "2"
+        SUPPORTS_MACCATALYST: NO
+        ENABLE_PREVIEWS: NO
+        COMPILER_INDEX_STORE_ENABLE: NO
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+      configs:
+        Debug:
+          LEVELUPKIT_ENABLE_DEV_QUICKSTART: YES
+          LEVELUPKIT_FORCE_DEV_QUICKSTART: NO
+          LEVELUPKIT_ENABLE_ANONYMOUS_AUTH: YES
+        Release:
+          LEVELUPKIT_ENABLE_DEV_QUICKSTART: NO
+          LEVELUPKIT_FORCE_DEV_QUICKSTART: NO
+          LEVELUPKIT_ENABLE_ANONYMOUS_AUTH: YES
 schemes:
   "SagaSparkPad":
     build:

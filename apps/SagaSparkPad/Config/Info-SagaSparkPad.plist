@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>Saga Spark</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Saga Spark</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.lvlupkit.sagasparkpad.auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>sagasparkpad</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>DEFAULT_CAMPAIGN_ID</key>
+	<string>$(DEFAULT_CAMPAIGN_ID)</string>
+	<key>LEVELUPKIT_ENABLE_DEV_QUICKSTART</key>
+	<string>$(LEVELUPKIT_ENABLE_DEV_QUICKSTART)</string>
+	<key>LEVELUPKIT_FORCE_DEV_QUICKSTART</key>
+	<string>$(LEVELUPKIT_FORCE_DEV_QUICKSTART)</string>
+	<key>LEVELUPKIT_ENABLE_ANONYMOUS_AUTH</key>
+	<string>$(LEVELUPKIT_ENABLE_ANONYMOUS_AUTH)</string>
+	<key>MYTHIC_FUNCTIONS_BASE_URL</key>
+	<string>$(MYTHIC_FUNCTIONS_BASE_URL)</string>
+	<key>SUPABASE_ANON_KEY</key>
+	<string>$(SUPABASE_ANON_KEY)</string>
+	<key>SUPABASE_REDIRECT_URL</key>
+	<string>$(SUPABASE_REDIRECT_URL)</string>
+	<key>SUPABASE_URL</key>
+	<string>$(SUPABASE_URL)</string>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+</dict>
+</plist>

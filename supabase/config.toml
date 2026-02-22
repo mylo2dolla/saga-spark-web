@@ -1,5 +1,18 @@
 project_id = "lrjfzhtbpovklmztrmpr"
 
+[auth]
+site_url = "https://mythweaver.online"
+additional_redirect_urls = ["sagasparkpad://auth/callback", "https://mythweaver.online"]
+enable_anonymous_sign_ins = true
+
+[auth.email]
+max_frequency = "1m0s"
+otp_length = 8
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
 [functions.mythic-create-campaign]
 verify_jwt = false
 

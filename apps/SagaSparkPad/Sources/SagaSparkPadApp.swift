@@ -3,14 +3,19 @@ import LvlUpKitSagaSparkPad
 
 @main
 struct SagaSparkPadApp: App {
+    @StateObject private var model = SagaSparkPadAppModel()
+
     var body: some Scene {
         WindowGroup {
-            SagaSparkPadRootView(
-                config: SagaSparkPadConfig(
-                    campaignID: "saga-spark-ipad",
-                    userID: "ipad-local"
-                )
-            )
+            SagaSparkPadRootView(model: model)
+                .task {
+                    await model.start()
+                }
+                .onOpenURL { url in
+                    Task {
+                        await model.handleOpenURL(url)
+                    }
+                }
         }
     }
 }

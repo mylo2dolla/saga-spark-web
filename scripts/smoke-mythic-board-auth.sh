@@ -204,6 +204,53 @@ call_function_json_200() {
   rm -f "${body_file}" "${header_file}"
 }
 
+call_function_expect_status() {
+  local endpoint="$1"
+  local payload="$2"
+  local timeout_s="$3"
+  local label="$4"
+  local expected_status="$5"
+  local expected_code="${6:-}"
+  local body_file header_file status rid code_field error_field
+  body_file="$(mktemp)"
+  header_file="$(mktemp)"
+
+  status="$(curl -sS -m "${timeout_s}" -o "${body_file}" -D "${header_file}" -w "%{http_code}" \
+    -X POST "${FUNCTIONS_BASE}/${endpoint}" \
+    -H "apikey: ${SUPABASE_ANON_KEY}" \
+    -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "${payload}")"
+  rid="$(extract_request_id "${header_file}" "${body_file}")"
+  code_field="$(jq -r '.code // empty' "${body_file}" 2>/dev/null || true)"
+  error_field="$(jq -r '.error // empty' "${body_file}" 2>/dev/null || true)"
+
+  if [[ "${status}" != "${expected_status}" ]]; then
+    echo "FAIL endpoint=${label} status=${status} expected_status=${expected_status} code=${code_field:-n/a} request_id=${rid} error=${error_field:-none}" >&2
+    echo "Response body:" >&2
+    cat "${body_file}" >&2
+    rm -f "${body_file}" "${header_file}"
+    return 1
+  fi
+
+  if [[ -n "${expected_code}" && "${code_field}" != "${expected_code}" ]]; then
+    echo "FAIL endpoint=${label} status=${status} code=${code_field:-n/a} expected_code=${expected_code} request_id=${rid} error=${error_field:-none}" >&2
+    echo "Response body:" >&2
+    cat "${body_file}" >&2
+    rm -f "${body_file}" "${header_file}"
+    return 1
+  fi
+
+  LAST_JSON="$(cat "${body_file}")"
+  LAST_REQ_ID="${rid}"
+  REQUEST_ID_KEYS+=("${label}")
+  REQUEST_ID_VALUES+=("${rid}")
+  SUMMARY_LINES+=("PASS endpoint=${label} status=${status} code=${code_field:-n/a} request_id=${rid}")
+  echo "PASS endpoint=${label} status=${status} code=${code_field:-n/a} request_id=${rid}"
+
+  rm -f "${body_file}" "${header_file}"
+}
+
 call_function_sse_200() {
   local endpoint="$1"
   local payload="$2"
@@ -333,6 +380,16 @@ call_function_json_200 "mythic-create-campaign" "${create_campaign_payload}" 90
 TEMP_CAMPAIGN_ID="$(printf '%s' "${LAST_JSON}" | jq -r '.campaign.id // empty')"
 if [[ -z "${TEMP_CAMPAIGN_ID}" ]]; then
   echo "Campaign creation did not return campaign id." >&2
+  exit 1
+fi
+
+invalid_character_payload="$(jq -cn --arg campaignId "not-a-uuid" --arg characterName "Invalid Campaign Probe ${stamp}" --arg classDescription "Negative-path validation for campaign id parsing." '{campaignId:$campaignId,characterName:$characterName,classDescription:$classDescription}')"
+call_function_expect_status "mythic-create-character" "${invalid_character_payload}" 90 "mythic-create-character:invalid-campaign" "400" "invalid_request"
+invalid_campaign_reason="$(printf '%s' "${LAST_JSON}" | jq -r '.details.fieldErrors.campaignId[0] // empty' 2>/dev/null || true)"
+if [[ -z "${invalid_campaign_reason}" ]]; then
+  echo "Invalid campaign forge check missing details.fieldErrors.campaignId." >&2
+  echo "Response body:" >&2
+  printf '%s\n' "${LAST_JSON}" >&2
   exit 1
 fi
 
