@@ -323,6 +323,11 @@ export default function MythicRenderHarnessScreen() {
       cinematicCamera: !fastMode,
       showDevOverlay: showDev,
       reducedMotion: false,
+      fitMode: "adaptive_contain" as const,
+      edgePaddingPx: 12,
+      safeInsetTopPx: 0,
+      safeInsetBottomPx: 0,
+      backgroundFill: 0x120f12,
     }),
     [fastMode, showDev],
   );

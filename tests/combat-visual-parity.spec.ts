@@ -9,6 +9,8 @@ test.describe("mythic combat visual parity", () => {
     await page.goto(`/mythic/${campaignId}`);
     await expect(page).toHaveURL(new RegExp(`/mythic/${campaignId}$`));
     await expect(page.getByTestId("narrative-board-page")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("dm-overlay-bar")).toBeVisible();
+    await expect(page.getByTestId("mythic-command-bar")).toBeVisible();
 
     const combatRail = page.getByTestId("board-combat-rail");
     if (await combatRail.count()) {
@@ -27,6 +29,12 @@ test.describe("mythic combat visual parity", () => {
       const impactFeed = page.getByTestId("combat-impact-feed");
       if (await impactFeed.count()) {
         await expect(impactFeed).toContainText(/Feed/i);
+      }
+
+      const railBox = await combatRail.boundingBox();
+      const commandBox = await page.getByTestId("mythic-command-bar").boundingBox();
+      if (railBox && commandBox) {
+        expect(railBox.y + railBox.height).toBeLessThanOrEqual(commandBox.y + 2);
       }
     }
 

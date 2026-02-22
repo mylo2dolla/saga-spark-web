@@ -155,3 +155,25 @@ Added tests:
   - `mythic-runtime-transition:dungeon`: `293cc64b-c22a-4726-bf40-0e8d35c92e68`
   - `mythic-runtime-transition:town`: `558bc567-4737-4999-a7e6-6d91dda430a1`
   - `mythic-combat-start`: `11a33535-fc20-48bb-89a1-ebdd0b8ebe0e`
+
+## One-Panel UX Lock-In Update (2026-02-22)
+- Mythic gameplay shell moved from split-book layout to one-panel board-first layout.
+- Added compact top DM overlay (latest line only) + expandable transcript drawer.
+- Added sticky bottom command bar (typed-first path unchanged, slash support unchanged).
+- Renderer fit/camera now uses adaptive contain with safe top/bottom insets and themed backdrop fill.
+- Validation:
+  - `npm run typecheck` ✅
+  - `npm run build` ✅
+  - `npx playwright test tests/game-smoke.spec.ts tests/right-panel-cards.spec.ts tests/combat-visual-parity.spec.ts tests/mythic-one-panel-layout.spec.ts` ✅
+  - `./scripts/smoke-vm-functions.sh` ✅
+  - `npm run smoke:board` ✅
+  - `npm run smoke:prod` ✅
+- Latest auth board smoke request IDs:
+  - `mythic-create-campaign`: `32663d13-94f9-4285-a833-82a59fb54002`
+  - `mythic-create-character`: `18ca2b72-ead4-49f2-952a-94aecc7241b1`
+  - `mythic-dm-context`: `044ae600-af98-4b92-8cb1-01923beb8748`
+  - `mythic-dungeon-master`: `abaf07b1-84b3-4035-a661-971db16dcfc5`
+  - `mythic-runtime-transition:travel`: `467bb3e0-12d3-4c44-b102-30e9f256a909`
+  - `mythic-runtime-transition:dungeon`: `3080fc4b-8968-4dfe-8181-272331b2ad21`
+  - `mythic-runtime-transition:town`: `b56afde7-825d-46f3-af78-4e8859f8e05f`
+  - `mythic-combat-start`: `2585ed46-ccee-4865-acd9-380387134797`

@@ -11,6 +11,11 @@ test("mythic game route renders without crashing", async ({ page }) => {
 
   await expect(page).toHaveURL(new RegExp(`/mythic/${campaignId}$`));
   await expect(page.locator("body")).toContainText(/No active Mythic board found\.|Mythic Weave/);
+  const boardCount = await page.getByTestId("narrative-board-page").count();
+  if (boardCount > 0) {
+    await expect(page.getByTestId("narrative-board-page").first()).toBeVisible();
+    await expect(page.getByTestId("mythic-command-bar")).toBeVisible();
+  }
 
   expect(pageError).toBeNull();
 });

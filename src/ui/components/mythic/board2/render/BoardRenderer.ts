@@ -27,6 +27,11 @@ function defaultSettings(): RendererSettings {
     cinematicCamera: true,
     showDevOverlay: false,
     reducedMotion: false,
+    fitMode: "adaptive_contain",
+    edgePaddingPx: 10,
+    safeInsetTopPx: 0,
+    safeInsetBottomPx: 0,
+    backgroundFill: 0x181111,
   };
 }
 
@@ -50,6 +55,7 @@ export class BoardRenderer {
   readonly canvas: HTMLCanvasElement;
 
   private root = new PIXI.Container();
+  private backdropLayer = new PIXI.Graphics();
   private world = new PIXI.Container();
 
   private tilesLayer = new PIXI.Container();
@@ -96,6 +102,7 @@ export class BoardRenderer {
     this.assetManager = new AssetManager(app.renderer);
 
     this.root.eventMode = "none";
+    this.backdropLayer.eventMode = "none";
     this.world.eventMode = "none";
     this.tilesLayer.eventMode = "none";
     this.terrainLayer.eventMode = "none";
@@ -113,6 +120,7 @@ export class BoardRenderer {
     this.world.addChild(this.floatingText.container);
     this.world.addChild(this.uiLayer);
 
+    this.root.addChild(this.backdropLayer);
     this.root.addChild(this.world);
     this.root.addChild(this.transitionLayer);
     this.root.addChild(this.devOverlay.container);
@@ -232,6 +240,27 @@ export class BoardRenderer {
       cell.rect(x, y, tileSize, tileSize);
       cell.stroke({ color: skin.grid, width: 1, alpha: 0.18 });
       this.tilesLayer.addChild(cell);
+    }
+  }
+
+  private drawBackdrop(snapshot: RenderSnapshot) {
+    const lightingTint = snapshot.board.lighting?.tint ?? this.settings.backgroundFill;
+    const fogAlpha = snapshot.board.lighting?.fogAlpha ?? 0.08;
+    const vignetteAlpha = snapshot.board.lighting?.vignetteAlpha ?? 0.16;
+    const width = this.app.renderer.width;
+    const height = this.app.renderer.height;
+
+    this.backdropLayer.clear();
+    this.backdropLayer.rect(0, 0, width, height);
+    this.backdropLayer.fill({ color: lightingTint, alpha: 0.17 + Math.min(0.18, fogAlpha) });
+    this.backdropLayer.rect(0, 0, width, height);
+    this.backdropLayer.fill({ color: this.settings.backgroundFill, alpha: 0.28 });
+    if (vignetteAlpha > 0) {
+      const edgeAlpha = Math.min(0.36, vignetteAlpha + 0.08);
+      this.backdropLayer.rect(0, 0, width, 24).fill({ color: 0x000000, alpha: edgeAlpha });
+      this.backdropLayer.rect(0, height - 24, width, 24).fill({ color: 0x000000, alpha: edgeAlpha });
+      this.backdropLayer.rect(0, 0, 24, height).fill({ color: 0x000000, alpha: edgeAlpha });
+      this.backdropLayer.rect(width - 24, 0, 24, height).fill({ color: 0x000000, alpha: edgeAlpha });
     }
   }
 
@@ -385,6 +414,7 @@ export class BoardRenderer {
     this.debugState.fps = avgMs > 0 ? 1000 / avgMs : 0;
 
     this.camera.setViewport(this.app.renderer.width, this.app.renderer.height);
+    this.drawBackdrop(this.snapshot);
 
     if (this.needsStaticRedraw) {
       this.drawTilesAndTerrain(this.snapshot);

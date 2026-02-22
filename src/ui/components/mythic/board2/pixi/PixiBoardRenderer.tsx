@@ -13,6 +13,8 @@ interface PixiBoardRendererProps {
   isActing: boolean;
   fastMode?: boolean;
   showDevOverlay?: boolean;
+  safeInsetTopPx?: number;
+  safeInsetBottomPx?: number;
   onSelectHotspot: (hotspot: NarrativeHotspot, point: { x: number; y: number }) => void;
   onSelectMiss: (point: { x: number; y: number }) => void;
 }
@@ -87,8 +89,13 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
       cinematicCamera: !props.fastMode,
       showDevOverlay: Boolean(props.showDevOverlay),
       reducedMotion,
+      fitMode: "adaptive_contain" as const,
+      edgePaddingPx: 10,
+      safeInsetTopPx: Math.max(0, Math.floor(props.safeInsetTopPx ?? 0)),
+      safeInsetBottomPx: Math.max(0, Math.floor(props.safeInsetBottomPx ?? 0)),
+      backgroundFill: 0x120f12,
     }),
-    [props.fastMode, props.showDevOverlay, reducedMotion],
+    [props.fastMode, props.safeInsetBottomPx, props.safeInsetTopPx, props.showDevOverlay, reducedMotion],
   );
 
   const { rendererRef, ready, debugState } = useBoardRendererMount({
@@ -116,7 +123,7 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
   return (
     <div
       data-testid="board-pixi-renderer"
-      className="relative h-full min-h-[280px] w-full overflow-hidden rounded-lg border border-amber-200/30 bg-black/20"
+      className="relative h-full min-h-[280px] w-full overflow-hidden rounded-lg bg-transparent"
       aria-busy={props.isActing}
     >
       <div

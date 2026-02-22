@@ -234,6 +234,11 @@ export interface RendererSettings {
   cinematicCamera: boolean;
   showDevOverlay: boolean;
   reducedMotion: boolean;
+  fitMode: "adaptive_contain" | "contain" | "cover";
+  edgePaddingPx: number;
+  safeInsetTopPx: number;
+  safeInsetBottomPx: number;
+  backgroundFill: number;
 }
 
 export interface RendererDebugState {

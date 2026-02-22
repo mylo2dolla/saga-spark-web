@@ -11,6 +11,8 @@ interface NarrativeBoardViewportProps {
   renderer: "dom" | "pixi";
   fastMode?: boolean;
   showDevOverlay?: boolean;
+  safeInsetTopPx?: number;
+  safeInsetBottomPx?: number;
   onSelectHotspot: (hotspot: NarrativeHotspot, point: { x: number; y: number }) => void;
   onSelectMiss: (point: { x: number; y: number }) => void;
 }
@@ -23,6 +25,8 @@ export function NarrativeBoardViewport(props: NarrativeBoardViewportProps) {
         isActing={props.isActing}
         fastMode={props.fastMode}
         showDevOverlay={props.showDevOverlay}
+        safeInsetTopPx={props.safeInsetTopPx}
+        safeInsetBottomPx={props.safeInsetBottomPx}
         onSelectHotspot={props.onSelectHotspot}
         onSelectMiss={props.onSelectMiss}
       />

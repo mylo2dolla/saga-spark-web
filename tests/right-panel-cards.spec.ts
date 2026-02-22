@@ -5,10 +5,12 @@ const campaignId = process.env.PLAYWRIGHT_MYTHIC_CAMPAIGN_ID;
 test.describe("mythic right-panel popup interactions", () => {
   test.skip(!campaignId, "Set PLAYWRIGHT_MYTHIC_CAMPAIGN_ID to enable right-panel interaction smoke.");
 
-  test("board clicks open inspect popups in player mode", async ({ page }) => {
+  test("one-panel board keeps inspect-first interactions", async ({ page }) => {
     await page.goto(`/mythic/${campaignId}`);
     await expect(page).toHaveURL(new RegExp(`/mythic/${campaignId}$`));
     await expect(page.getByTestId("narrative-board-page")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("dm-overlay-bar")).toBeVisible();
+    await expect(page.getByTestId("mythic-command-bar")).toBeVisible();
 
     const boardGrid = page.getByTestId("board-grid-layer").first();
     await expect(boardGrid).toBeVisible();

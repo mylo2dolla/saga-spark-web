@@ -19,6 +19,7 @@ interface Props {
   onStopVoice?: () => void;
   autoFollow?: boolean;
   error?: string | null;
+  hideComposer?: boolean;
 }
 
 export function MythicDMChat({
@@ -34,6 +35,7 @@ export function MythicDMChat({
   onStopVoice,
   autoFollow = true,
   error,
+  hideComposer = false,
 }: Props) {
   const [input, setInput] = useState("");
   const scrollRootRef = useRef<HTMLDivElement>(null);
@@ -177,7 +179,8 @@ export function MythicDMChat({
         ) : null}
       </div>
 
-      <div className="border-t border-border p-3">
+      {!hideComposer ? (
+        <div className="border-t border-border p-3">
         {typeof voiceEnabled === "boolean" ? (
           <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
             <Button
@@ -232,7 +235,8 @@ export function MythicDMChat({
         <div className="mt-2 text-[11px] text-muted-foreground">
           DB is truth: the DM must narrate from mythic state and events.
         </div>
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }

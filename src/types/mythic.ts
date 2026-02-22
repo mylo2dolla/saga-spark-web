@@ -92,6 +92,11 @@ export interface MythicBoardState {
   [key: string]: unknown;
 }
 
+export interface MythicUiOverlayState {
+  dmOverlayExpanded: boolean;
+  commandBarFocused: boolean;
+}
+
 export interface MythicCombatResolutionState {
   pending: boolean;
   combat_session_id: string;

@@ -7,8 +7,8 @@ interface CameraState {
   centerY: number;
   targetX: number;
   targetY: number;
-  zoom: number;
-  targetZoom: number;
+  zoomFactor: number;
+  targetZoomFactor: number;
   shakeMs: number;
   shakePower: number;
   shakeSeed: string;
@@ -24,8 +24,8 @@ export class CameraDirector {
     centerY: 0,
     targetX: 0,
     targetY: 0,
-    zoom: 1,
-    targetZoom: 1,
+    zoomFactor: 1,
+    targetZoomFactor: 1,
     shakeMs: 0,
     shakePower: 0,
     shakeSeed: "camera",
@@ -55,7 +55,7 @@ export class CameraDirector {
   onHitImpact(intensity: number, seed: string, settings: RendererSettings) {
     if (!settings.cinematicCamera || settings.fastMode || settings.reducedMotion) return;
     const clamped = Math.max(0, Math.min(1, intensity));
-    this.state.targetZoom = 1 + (clamped * 0.08);
+    this.state.targetZoomFactor = 1 + (clamped * 0.08);
     this.state.shakeMs = 180 + Math.round(clamped * 220);
     this.state.shakePower = 2 + (clamped * 5);
     this.state.shakeSeed = seed;
@@ -64,7 +64,7 @@ export class CameraDirector {
   onHealImpact(intensity: number, settings: RendererSettings) {
     if (!settings.cinematicCamera || settings.fastMode || settings.reducedMotion) return;
     const clamped = Math.max(0, Math.min(1, intensity));
-    this.state.targetZoom = 1 + (clamped * 0.04);
+    this.state.targetZoomFactor = 1 + (clamped * 0.04);
   }
 
   update(deltaMs: number, settings: RendererSettings): { offsetX: number; offsetY: number; scale: number } {
@@ -75,8 +75,21 @@ export class CameraDirector {
     this.state.centerY += (this.state.targetY - this.state.centerY) * Math.min(1, damping * dt);
 
     const zoomDamping = settings.fastMode ? 16 : 9;
-    this.state.zoom += (this.state.targetZoom - this.state.zoom) * Math.min(1, zoomDamping * dt);
-    this.state.targetZoom += (1 - this.state.targetZoom) * Math.min(1, 4 * dt);
+    this.state.zoomFactor += (this.state.targetZoomFactor - this.state.zoomFactor) * Math.min(1, zoomDamping * dt);
+    this.state.targetZoomFactor += (1 - this.state.targetZoomFactor) * Math.min(1, 4 * dt);
+
+    const safeTop = Math.max(0, Math.floor(settings.safeInsetTopPx));
+    const safeBottom = Math.max(0, Math.floor(settings.safeInsetBottomPx));
+    const edgePadding = Math.max(0, settings.edgePaddingPx);
+    const availableW = Math.max(1, this.viewportW - (edgePadding * 2));
+    const availableH = Math.max(1, this.viewportH - safeTop - safeBottom - (edgePadding * 2));
+
+    const containScale = Math.min(availableW / this.worldW, availableH / this.worldH);
+    const coverScale = Math.max(availableW / this.worldW, availableH / this.worldH);
+    const baseScale = settings.fitMode === "cover"
+      ? coverScale
+      : containScale;
+    const scale = Math.max(0.2, Math.min(3.5, baseScale * this.state.zoomFactor));
 
     let shakeX = 0;
     let shakeY = 0;
@@ -88,20 +101,37 @@ export class CameraDirector {
       shakeY = seededRange(this.state.shakeSeed, -amp, amp, `${this.state.shakeMs}:y`);
     }
 
-    const scaledW = this.worldW * this.state.zoom;
-    const scaledH = this.worldH * this.state.zoom;
-    const desiredX = (this.viewportW / 2) - (this.state.centerX * this.state.zoom);
-    const desiredY = (this.viewportH / 2) - (this.state.centerY * this.state.zoom);
+    const scaledW = this.worldW * scale;
+    const scaledH = this.worldH * scale;
+    const innerW = Math.max(1, this.viewportW - (edgePadding * 2));
+    const innerH = Math.max(1, this.viewportH - safeTop - safeBottom - (edgePadding * 2));
 
-    const minX = Math.min(0, this.viewportW - scaledW);
-    const minY = Math.min(0, this.viewportH - scaledH);
-    const offsetX = Math.min(0, Math.max(minX, desiredX + shakeX));
-    const offsetY = Math.min(0, Math.max(minY, desiredY + shakeY));
+    const viewportCenterX = edgePadding + (innerW / 2);
+    const viewportCenterY = safeTop + edgePadding + (innerH / 2);
+    const desiredX = viewportCenterX - (this.state.centerX * scale);
+    const desiredY = viewportCenterY - (this.state.centerY * scale);
+
+    const offsetX = (() => {
+      if (scaledW <= innerW) {
+        return edgePadding + ((innerW - scaledW) / 2) + shakeX;
+      }
+      const maxX = edgePadding;
+      const minX = edgePadding + innerW - scaledW;
+      return Math.min(maxX, Math.max(minX, desiredX + shakeX));
+    })();
+    const offsetY = (() => {
+      if (scaledH <= innerH) {
+        return safeTop + edgePadding + ((innerH - scaledH) / 2) + shakeY;
+      }
+      const maxY = safeTop + edgePadding;
+      const minY = safeTop + edgePadding + innerH - scaledH;
+      return Math.min(maxY, Math.max(minY, desiredY + shakeY));
+    })();
 
     return {
       offsetX,
       offsetY,
-      scale: this.state.zoom,
+      scale,
     };
   }
 
@@ -112,7 +142,7 @@ export class CameraDirector {
 
   debugState() {
     return {
-      scale: this.state.zoom,
+      scale: this.state.zoomFactor,
       shakeMs: this.state.shakeMs,
     };
   }

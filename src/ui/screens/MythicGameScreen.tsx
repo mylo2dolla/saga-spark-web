@@ -32,8 +32,9 @@ import { createLogger } from "@/lib/observability/logger";
 import { parseEdgeError } from "@/lib/edgeError";
 import { RULE_VERSION } from "@/rules/constants";
 import { toast } from "sonner";
-import { BookShell } from "@/ui/components/mythic/BookShell";
-import { NarrativePage } from "@/ui/components/mythic/NarrativePage";
+import { DmOverlayBar } from "@/ui/components/mythic/DmOverlayBar";
+import { DmTranscriptDrawer } from "@/ui/components/mythic/DmTranscriptDrawer";
+import { MythicCommandBar } from "@/ui/components/mythic/MythicCommandBar";
 import { ShopDialog } from "@/ui/components/mythic/ShopDialog";
 import { SettingsPanel, type MythicRuntimeSettings } from "@/ui/components/mythic/SettingsPanel";
 import { actionSignature as boardActionSignature } from "@/ui/components/mythic/board2/actionBuilders";
@@ -793,6 +794,8 @@ export default function MythicGameScreen() {
   const [activePanel, setActivePanel] = useState<MythicPanelTab>("status");
   const [utilityDrawerOpen, setUtilityDrawerOpen] = useState(false);
   const [utilityTab, setUtilityTab] = useState<MythicUtilityTab>("settings");
+  const [dmOverlayExpanded, setDmOverlayExpanded] = useState(false);
+  const [commandBarFocused, setCommandBarFocused] = useState(false);
   const devSurfaces = useMythicDevSurfaces();
   const boardRenderer = useMythicBoardRenderer(user?.email ?? null);
   const [focusedCombatantId, setFocusedCombatantId] = useState<string | null>(null);
@@ -3281,81 +3284,126 @@ export default function MythicGameScreen() {
     </div>
   );
 
+  const isBoardBusy = mythicDm.isLoading || isNarratedActionBusy || combat.isActing || combat.isTicking;
+
   return (
     <>
-      <BookShell
-        title="Mythic Weave"
-        subtitle={(
-          <>
-            Mode: <span className="font-medium capitalize">{board.board_type}</span>
-            <span className="ml-2 text-amber-100/70">Campaign: {campaignId.slice(0, 8)}...</span>
-            {isStateRefreshing ? (
-              <span className="ml-3 inline-flex items-center gap-1 text-amber-100/75">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Syncing state
-              </span>
-            ) : null}
-          </>
-        )}
-        actions={(
-          <Button
-            size="sm"
-            onClick={() => openUtility("panels")}
-            className="border border-amber-200/40 bg-amber-300/20 text-amber-50 hover:bg-amber-300/30"
-          >
-            Menu
-          </Button>
-        )}
-        leftPage={(
-          <NarrativePage
-            messages={mythicDm.messages}
-            isDmLoading={mythicDm.isLoading || isNarratedActionBusy}
-            currentResponse={mythicDm.currentResponse}
-            dmPhase={mythicDm.phase}
-            operationAttempt={mythicDm.operation?.attempt}
-            operationNextRetryAt={mythicDm.operation?.next_retry_at}
-            actionError={actionError}
-            voiceEnabled={dmVoice.enabled}
-            voiceSupported={dmVoice.supported}
-            voiceBlocked={dmVoice.blocked}
-            onToggleVoice={dmVoice.setEnabled}
-            onSpeakLatest={() => {
-              if (!latestAssistantNarration) return;
-              if (dmVoice.blocked && dmVoice.hasPreparedAudio) {
-                void dmVoice.resumeLatest();
-                return;
-              }
-              dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
-            }}
-            onStopVoice={dmVoice.stop}
-            autoFollow={runtimeSettings.chatAutoFollow}
-            onRetryAction={retryLastAction}
-            onSendMessage={(message) => void handlePlayerInput(message)}
-            onCancelMessage={() => mythicDm.cancelMessage()}
-          />
-        )}
-        rightPage={(
-          <div className="flex h-full min-h-0 flex-col gap-2 p-2">
-            <div className="min-h-0 flex-1">
-              <NarrativeBoardPage
-                scene={boardScene}
-                renderer={boardRenderer.effective}
-                fastMode={runtimeSettings.animationIntensity === "low"}
-                baseActions={boardStripBaseActions}
-                isBusy={mythicDm.isLoading || isNarratedActionBusy || combat.isActing || combat.isTicking}
-                isStateRefreshing={isStateRefreshing}
-                transitionError={transitionError}
-                combatStartError={combatStartError}
-                dmContextError={mythicDmContext.error}
-                showDevDetails={devSurfaces.enabled}
-                onRetryCombatStart={() => void retryCombatStart()}
-                onQuickCast={(skillId, targeting) => void triggerQuickCast(skillId, targeting)}
-                onContinueCombatResolution={() => void continueAfterCombatResolution()}
-                onAction={(action, source) => triggerConsoleAction(action, source === "board_hotspot" ? "board_hotspot" : "console_action")}
-              />
+      <div className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_20%_10%,rgba(250,204,21,0.08),transparent_35%),radial-gradient(circle_at_80%_90%,rgba(56,189,248,0.08),transparent_40%),linear-gradient(180deg,#06070c,#05060a)] px-2 py-3 sm:px-4 sm:py-4">
+        <div className="mx-auto flex h-[calc(100vh-1.5rem)] max-w-[1760px] flex-col overflow-hidden rounded-2xl border border-amber-200/20 bg-[linear-gradient(180deg,rgba(26,17,8,0.88),rgba(9,10,18,0.96))] shadow-[0_20px_90px_rgba(0,0,0,0.5)] sm:h-[calc(100vh-2rem)]">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-amber-200/15 px-4 py-3">
+            <div>
+              <div className="font-display text-2xl tracking-wide text-amber-100">Mythic Weave</div>
+              <div className="text-xs text-amber-100/75">
+                Mode: <span className="font-medium capitalize">{board.board_type}</span>
+                <span className="ml-2 text-amber-100/70">Campaign: {campaignId.slice(0, 8)}...</span>
+                {isStateRefreshing ? (
+                  <span className="ml-3 inline-flex items-center gap-1 text-amber-100/75">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Syncing state
+                  </span>
+                ) : null}
+              </div>
             </div>
+            <Button
+              size="sm"
+              onClick={() => openUtility("panels")}
+              className="border border-amber-200/40 bg-amber-300/20 text-amber-50 hover:bg-amber-300/30"
+            >
+              Menu
+            </Button>
           </div>
-        )}
+
+          <div className="relative min-h-0 flex-1 overflow-hidden p-2 sm:p-3">
+            <div className="pointer-events-none absolute inset-0 opacity-20 [background-image:linear-gradient(45deg,rgba(255,255,255,0.03)_25%,transparent_25%,transparent_50%,rgba(255,255,255,0.03)_50%,rgba(255,255,255,0.03)_75%,transparent_75%,transparent)] [background-size:6px_6px]" />
+            <section className={`relative h-full min-h-0 overflow-hidden rounded-xl border bg-[linear-gradient(180deg,rgba(17,14,10,0.88),rgba(8,10,16,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${commandBarFocused ? "border-amber-200/35" : "border-amber-200/20"}`}>
+              <div className="pointer-events-none absolute inset-0 opacity-25 [background-image:radial-gradient(circle_at_50%_20%,rgba(255,255,255,0.06),transparent_45%)]" />
+
+              <div className="absolute inset-x-2 top-2 z-40">
+                <DmOverlayBar
+                  latestNarration={latestAssistantNarration}
+                  phase={mythicDm.phase}
+                  isBusy={isBoardBusy}
+                  isVoiceEnabled={dmVoice.enabled}
+                  onToggleVoice={() => dmVoice.setEnabled(!dmVoice.enabled)}
+                  onOpenTranscript={() => setDmOverlayExpanded(true)}
+                />
+              </div>
+
+              <div className="absolute inset-0 z-10">
+                <NarrativeBoardPage
+                  scene={boardScene}
+                  renderer={boardRenderer.effective}
+                  fastMode={runtimeSettings.animationIntensity === "low"}
+                  topSafeInsetPx={56}
+                  bottomSafeInsetPx={108}
+                  baseActions={boardStripBaseActions}
+                  isBusy={isBoardBusy}
+                  isStateRefreshing={isStateRefreshing}
+                  transitionError={transitionError}
+                  combatStartError={combatStartError}
+                  dmContextError={mythicDmContext.error}
+                  showDevDetails={devSurfaces.enabled}
+                  onRetryCombatStart={() => void retryCombatStart()}
+                  onQuickCast={(skillId, targeting) => void triggerQuickCast(skillId, targeting)}
+                  onContinueCombatResolution={() => void continueAfterCombatResolution()}
+                  onAction={(action, source) => triggerConsoleAction(action, source === "board_hotspot" ? "board_hotspot" : "console_action")}
+                />
+              </div>
+
+              <div className="absolute inset-x-2 bottom-2 z-40">
+                <MythicCommandBar
+                  disabled={isBoardBusy}
+                  isDmLoading={mythicDm.isLoading || isNarratedActionBusy}
+                  actionError={actionError}
+                  voiceEnabled={dmVoice.enabled}
+                  voiceSupported={dmVoice.supported}
+                  voiceBlocked={dmVoice.blocked}
+                  onToggleVoice={dmVoice.setEnabled}
+                  onSpeakLatest={() => {
+                    if (!latestAssistantNarration) return;
+                    if (dmVoice.blocked && dmVoice.hasPreparedAudio) {
+                      void dmVoice.resumeLatest();
+                      return;
+                    }
+                    dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
+                  }}
+                  onStopVoice={dmVoice.stop}
+                  onRetryAction={retryLastAction}
+                  onCancelMessage={() => mythicDm.cancelMessage()}
+                  onSendMessage={(message) => { void handlePlayerInput(message); }}
+                  onOpenTranscript={() => setDmOverlayExpanded(true)}
+                  onFocusChange={setCommandBarFocused}
+                />
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      <DmTranscriptDrawer
+        open={dmOverlayExpanded}
+        onOpenChange={setDmOverlayExpanded}
+        messages={mythicDm.messages}
+        isDmLoading={mythicDm.isLoading || isNarratedActionBusy}
+        currentResponse={mythicDm.currentResponse}
+        dmPhase={mythicDm.phase}
+        operationAttempt={mythicDm.operation?.attempt}
+        operationNextRetryAt={mythicDm.operation?.next_retry_at}
+        voiceEnabled={dmVoice.enabled}
+        voiceSupported={dmVoice.supported}
+        voiceBlocked={dmVoice.blocked}
+        onToggleVoice={dmVoice.setEnabled}
+        onSpeakLatest={() => {
+          if (!latestAssistantNarration) return;
+          if (dmVoice.blocked && dmVoice.hasPreparedAudio) {
+            void dmVoice.resumeLatest();
+            return;
+          }
+          dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
+        }}
+        onStopVoice={dmVoice.stop}
+        autoFollow={runtimeSettings.chatAutoFollow}
+        onSendMessage={(message) => { void handlePlayerInput(message); }}
       />
 
       {characterSheetModel && profileDraft ? (

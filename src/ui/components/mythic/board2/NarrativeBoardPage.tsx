@@ -21,6 +21,8 @@ interface NarrativeBoardPageProps {
   scene: NarrativeBoardSceneModel;
   renderer: "dom" | "pixi";
   fastMode?: boolean;
+  topSafeInsetPx?: number;
+  bottomSafeInsetPx?: number;
   baseActions: MythicUiAction[];
   isBusy: boolean;
   isStateRefreshing: boolean;
@@ -69,6 +71,8 @@ function primaryWarning(args: {
 export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
   const [inspectTarget, setInspectTarget] = useState<NarrativeInspectTarget | null>(null);
   const [skillsExpanded, setSkillsExpanded] = useState(false);
+  const topSafeInsetPx = Math.max(0, Math.floor(props.topSafeInsetPx ?? 58));
+  const bottomSafeInsetPx = Math.max(0, Math.floor(props.bottomSafeInsetPx ?? 92));
 
   useEffect(() => {
     setInspectTarget(null);
@@ -116,8 +120,8 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
   const popupModel = props.scene.popup;
   const syncActive = props.isBusy || props.isStateRefreshing;
   const inspectBottomOffsetClass = combatDetails
-    ? (skillsExpanded ? "bottom-[248px]" : "bottom-[132px]")
-    : "bottom-2";
+    ? (skillsExpanded ? "bottom-[332px]" : "bottom-[216px]")
+    : "bottom-[100px]";
 
   return (
     <div data-testid="narrative-board-page" className="relative h-full min-h-0 overflow-hidden rounded-lg border border-amber-200/20 bg-black/10">
@@ -127,6 +131,8 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
         renderer={props.renderer}
         fastMode={props.fastMode}
         showDevOverlay={props.showDevDetails}
+        safeInsetTopPx={topSafeInsetPx}
+        safeInsetBottomPx={bottomSafeInsetPx}
         onSelectHotspot={(hotspot, point) => {
           setInspectTarget(buildInspectTargetFromHotspot({ hotspot, x: point.x, y: point.y }));
         }}
@@ -146,7 +152,8 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
 
       <div
         data-testid="board-mode-strip"
-        className="pointer-events-none absolute left-2 right-2 top-2 z-20 flex flex-wrap items-center gap-1 rounded border border-amber-200/35 bg-black/55 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-100/85"
+        className="pointer-events-none absolute left-2 right-2 z-20 flex flex-wrap items-center gap-1 rounded border border-amber-200/30 bg-black/35 px-2 py-1 text-[10px] uppercase tracking-wide text-amber-100/80"
+        style={{ top: `${topSafeInsetPx + 4}px` }}
       >
         <span className="rounded border border-amber-200/40 bg-black/40 px-1.5 py-0.5">{props.scene.modeStrip.modeLabel}</span>
         <span className="rounded border border-amber-200/35 bg-black/35 px-1.5 py-0.5">
@@ -171,7 +178,8 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
       {warning ? (
         <div
           data-testid="board-warning-line"
-          className="pointer-events-none absolute left-2 right-2 top-[44px] z-20 truncate rounded border border-amber-200/35 bg-black/55 px-2 py-1 text-[11px] text-amber-100/85"
+          className="pointer-events-none absolute left-2 right-2 z-20 truncate rounded border border-amber-200/30 bg-black/35 px-2 py-1 text-[11px] text-amber-100/80"
+          style={{ top: `${topSafeInsetPx + 36}px` }}
         >
           {warning}
         </div>
@@ -181,6 +189,7 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
         <div
           data-testid="board-combat-rail"
           className="absolute inset-x-2 bottom-2 z-20 rounded-lg border border-red-200/30 bg-[linear-gradient(170deg,rgba(44,17,18,0.94),rgba(8,10,16,0.96))] p-2 shadow-xl"
+          style={{ bottom: `${bottomSafeInsetPx + 8}px` }}
         >
           {resolutionPending ? (
             <div className="mb-2 rounded border border-emerald-200/35 bg-emerald-500/10 px-2 py-1.5 text-[11px] text-emerald-100">
@@ -267,7 +276,11 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
       ) : null}
 
       {inspectTarget ? (
-        <div data-testid="board-inspect-popup" className={`absolute inset-x-2 z-30 ${inspectBottomOffsetClass}`}>
+        <div
+          data-testid="board-inspect-popup"
+          className={`absolute inset-x-2 z-30 ${inspectBottomOffsetClass}`}
+          style={{ bottom: `${bottomSafeInsetPx + (combatDetails ? (skillsExpanded ? 240 : 126) : 8)}px` }}
+        >
           <BoardInspectCard
             target={inspectTarget}
             title={popupModel.title}

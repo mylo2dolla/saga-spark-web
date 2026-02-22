@@ -43,12 +43,22 @@ export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
       cinematicCamera: args.settings.cinematicCamera,
       showDevOverlay: args.settings.showDevOverlay,
       reducedMotion: args.settings.reducedMotion,
+      fitMode: args.settings.fitMode,
+      edgePaddingPx: args.settings.edgePaddingPx,
+      safeInsetTopPx: args.settings.safeInsetTopPx,
+      safeInsetBottomPx: args.settings.safeInsetBottomPx,
+      backgroundFill: args.settings.backgroundFill,
     }),
     [
       args.settings.fastMode,
       args.settings.cinematicCamera,
       args.settings.showDevOverlay,
       args.settings.reducedMotion,
+      args.settings.fitMode,
+      args.settings.edgePaddingPx,
+      args.settings.safeInsetTopPx,
+      args.settings.safeInsetBottomPx,
+      args.settings.backgroundFill,
     ],
   );
 
@@ -94,11 +104,17 @@ export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
       if (!renderer || !target) return;
       renderer.resize(target.clientWidth, target.clientHeight);
     };
+    onResize();
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(() => onResize())
+      : null;
+    observer?.observe(host);
     window.addEventListener("resize", onResize);
 
     return () => {
       disposed = true;
       window.removeEventListener("resize", onResize);
+      observer?.disconnect();
       if (rafRef.current !== null) {
         window.cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
