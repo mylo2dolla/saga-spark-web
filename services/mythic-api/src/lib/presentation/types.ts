@@ -25,8 +25,11 @@ export interface EnemyPersonalityTraits {
 
 export interface PresentationState {
   last_tone?: ToneMode | null;
+  last_voice_mode?: string | null;
   last_board_opener_id?: string | null;
   recent_line_hashes?: string[];
+  recent_lines?: string[];
+  recent_fragments?: string[];
   last_verb_keys?: string[];
   last_template_ids?: string[];
   last_event_cursor?: string | null;

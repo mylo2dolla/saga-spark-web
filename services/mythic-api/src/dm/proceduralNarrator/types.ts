@@ -11,6 +11,16 @@ export type ProceduralEventType =
 
 export type ProceduralTone = "dark" | "comic" | "heroic" | "grim" | "mischievous" | "tactical";
 export type ProceduralIntensity = "low" | "med" | "high";
+export type ProceduralVoiceMode =
+  | "tactical"
+  | "brutal"
+  | "mischievous"
+  | "dark"
+  | "whimsical"
+  | "blessing"
+  | "punishment"
+  | "mythic"
+  | "minimalist";
 
 export interface ProceduralNarrationEvent {
   type: ProceduralEventType;
@@ -39,6 +49,48 @@ export interface ProceduralNarratorInput {
   executionError: string | null;
   stateChanges: string[];
   events: Array<Record<string, unknown>>;
+  activeHooks?: string[];
+  factionTension?: string | null;
+  playerHpPct?: number | null;
+  enemyThreatLevel?: number | null;
+  playerReputationTags?: string[];
+  worldToneVector?: Record<string, number> | null;
+  lineHistory?: string[];
+  fragmentHistory?: string[];
+  lineHistorySize?: number;
+  similarityThreshold?: number;
+  lastVoiceMode?: string | null;
+}
+
+export interface DmVoiceProfile {
+  sarcasmLevel: number;
+  crueltyLevel: number;
+  humorLevel: number;
+  verbosityLevel: number;
+  mythicIntensity: number;
+  absurdityLevel: number;
+  favoritismBias: number;
+  memoryRecallBias: number;
+}
+
+export interface DmNarrationContext {
+  boardType: string;
+  biome: string;
+  activeHooks: string[];
+  factionTension: string;
+  playerHpPct: number;
+  enemyThreatLevel: number;
+  recentEvents: ProceduralNarrationEvent[];
+  playerReputationTags: string[];
+  worldToneVector: Record<string, number>;
+  dmVoiceProfile: DmVoiceProfile;
+}
+
+export interface DmLineHistoryBuffer {
+  maxLines: number;
+  similarityThreshold: number;
+  lines: string[];
+  fragments: string[];
 }
 
 export interface ProceduralNarratorDebug {
@@ -47,6 +99,8 @@ export interface ProceduralNarratorDebug {
   template_id: string;
   template_tags: string[];
   tone: ProceduralTone;
+  voice_mode: ProceduralVoiceMode;
+  voice_profile: DmVoiceProfile;
   biome: string;
   intensity: ProceduralIntensity;
   aside_used: boolean;
@@ -54,6 +108,9 @@ export interface ProceduralNarratorDebug {
   event_ids: string[];
   event_types: ProceduralEventType[];
   mapped_events: ProceduralNarrationEvent[];
+  line_history_before: string[];
+  line_history_after: string[];
+  fragment_history_after: string[];
 }
 
 export interface ProceduralNarratorResult {

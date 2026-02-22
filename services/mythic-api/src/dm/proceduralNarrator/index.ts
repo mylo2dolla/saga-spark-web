@@ -11,7 +11,15 @@ import {
   conciseCountLabel,
   describeContextClue,
 } from "./templates.js";
+import {
+  buildDmVoiceProfile,
+  buildVoiceNarrationBundle,
+  createDmLineHistoryBuffer,
+  pushDmLineHistory,
+  shouldRejectLine,
+} from "./voiceEngine.js";
 import type {
+  DmNarrationContext,
   ProceduralIntensity,
   ProceduralNarrationEvent,
   ProceduralNarratorDebug,
@@ -123,6 +131,75 @@ function cleanupNarration(text: string): string {
     .trim();
 }
 
+function clamp01(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
+}
+
+function toToneVector(value: Record<string, number> | null | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!value) return out;
+  for (const [key, raw] of Object.entries(value)) {
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) continue;
+    out[key.trim().toLowerCase()] = parsed;
+  }
+  return out;
+}
+
+function inferEnemyThreat(events: ProceduralNarrationEvent[]): number {
+  if (events.length === 0) return 0.45;
+  let threatScore = 0;
+  for (const event of events) {
+    if (event.type === "COMBAT_ATTACK_RESOLVED") threatScore += 0.12;
+    if (event.type === "STATUS_TICK") threatScore += 0.08;
+    if (event.type === "BOARD_TRANSITION") threatScore += 0.04;
+    const amount = Number(event.context.amount);
+    if (Number.isFinite(amount) && amount > 0) {
+      threatScore += Math.min(0.18, amount / 200);
+    }
+  }
+  return clamp01(0.3 + threatScore, 0.52);
+}
+
+function buildNarrationContext(args: {
+  input: ProceduralNarratorInput;
+  mappedEvents: ProceduralNarrationEvent[];
+  biome: string;
+  voiceProfile: DmNarrationContext["dmVoiceProfile"];
+}): DmNarrationContext {
+  const hooks = [
+    ...(Array.isArray(args.input.activeHooks) ? args.input.activeHooks : []),
+    args.input.summaryObjective,
+    args.input.summaryRumor,
+    args.input.actionSummary,
+    args.input.boardAnchor,
+  ]
+    .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+    .filter((entry) => entry.length > 0)
+    .slice(0, 5);
+  const reputation = [
+    ...(Array.isArray(args.input.playerReputationTags) ? args.input.playerReputationTags : []),
+  ]
+    .map((entry) => String(entry).trim())
+    .filter((entry) => entry.length > 0)
+    .slice(0, 8);
+  const hpPct = clamp01(Number(args.input.playerHpPct), 0.65);
+  const threatLevel = clamp01(Number(args.input.enemyThreatLevel), inferEnemyThreat(args.mappedEvents));
+  return {
+    boardType: asText(args.input.boardType, "combat"),
+    biome: asText(args.input.biome, args.biome),
+    activeHooks: hooks,
+    factionTension: asText(args.input.factionTension, "moderate"),
+    playerHpPct: hpPct,
+    enemyThreatLevel: threatLevel,
+    recentEvents: args.mappedEvents.slice(-12),
+    playerReputationTags: reputation,
+    worldToneVector: toToneVector(args.input.worldToneVector),
+    dmVoiceProfile: args.voiceProfile,
+  };
+}
+
 export function generateProceduralNarration(input: ProceduralNarratorInput): ProceduralNarratorResult {
   const seed = buildNarrationSeed({
     campaignSeed: input.campaignSeed,
@@ -149,6 +226,23 @@ export function generateProceduralNarration(input: ProceduralNarratorInput): Pro
   });
   const primaryEvent = mappedEvents[mappedEvents.length - 1]!;
   const secondaryEvent = mappedEvents.length > 1 ? mappedEvents[mappedEvents.length - 2]! : null;
+  const voiceProfile = buildDmVoiceProfile({
+    seedKey: `${seed}:voice-profile`,
+    worldToneVector: input.worldToneVector ?? null,
+  });
+  const narrationContext = buildNarrationContext({
+    input,
+    mappedEvents,
+    biome,
+    voiceProfile,
+  });
+  const historyBuffer = createDmLineHistoryBuffer({
+    lines: input.lineHistory,
+    fragments: input.fragmentHistory,
+    maxLines: input.lineHistorySize,
+    similarityThreshold: input.similarityThreshold,
+  });
+  const lineHistoryBefore = [...historyBuffer.lines];
 
   const excludedTemplateIds = new Set<string>();
   let selectedTemplate = chooseTemplate({
@@ -182,10 +276,10 @@ export function generateProceduralNarration(input: ProceduralNarratorInput): Pro
   };
 
   const secondaryLine = secondaryEvent
-    ? `${conciseCountLabel("event", mappedEvents.length)} in motion. ${asText(secondaryEvent.context.actor, "The board")} keeps pressure on ${asText(secondaryEvent.context.target, "the seam")}.`
+    ? `${conciseCountLabel("event", mappedEvents.length)} unfolding. ${asText(secondaryEvent.context.actor, "The board")} pressures ${asText(secondaryEvent.context.target, "the seam")}.`
     : `${input.boardNarration} ${input.summaryObjective ?? input.summaryRumor ?? input.recoveryBeat}`;
   const introLine = input.introOpening
-    ? `Opening pressure locks in around ${input.boardAnchor}.`
+    ? `Opening move locks around ${input.boardAnchor}.`
     : "";
   const errorLine = input.suppressNarrationOnError && input.executionError
     ? `Action blocked: ${input.executionError}.`
@@ -198,17 +292,39 @@ export function generateProceduralNarration(input: ProceduralNarratorInput): Pro
         return rng.pick(ASIDE_LINES);
       })()
     : "";
+  const voiceBundle = buildVoiceNarrationBundle({
+    seedKey: `${seed}:voice-bundle`,
+    context: narrationContext,
+    history: historyBuffer,
+    lastVoiceMode: input.lastVoiceMode ?? null,
+  });
+
+  const composedLines: string[] = [];
+  const candidateLineCount = voiceProfile.verbosityLevel >= 0.68 ? 3 : voiceProfile.verbosityLevel >= 0.35 ? 2 : 1;
+  const pushCandidate = (value: string) => {
+    const clean = cleanupNarration(value);
+    if (!clean) return;
+    if (shouldRejectLine(historyBuffer, clean)) return;
+    composedLines.push(clean);
+    pushDmLineHistory(historyBuffer, clean);
+  };
+  if (errorLine) pushCandidate(errorLine);
+  if (introLine) pushCandidate(introLine);
+  pushCandidate(selectedTemplate.render(baseContext));
+  for (const line of voiceBundle.lines) {
+    const clean = cleanupNarration(line);
+    if (clean.length > 0 && !composedLines.includes(clean)) {
+      composedLines.push(clean);
+    }
+    if (composedLines.length >= candidateLineCount + (errorLine ? 1 : 0)) break;
+  }
+  if (next01() <= 0.58) pushCandidate(secondaryLine);
+  if (next01() <= 0.12) pushCandidate(asideLine);
 
   let rendered = cleanupNarration(
-    [
-      errorLine,
-      introLine,
-      selectedTemplate.render(baseContext),
-      next01() <= 0.55 ? secondaryLine : input.recoveryBeat,
-      asideLine,
-    ]
+    composedLines
       .filter((entry) => entry.trim().length > 0)
-      .slice(0, 3)
+      .slice(0, Math.max(1, candidateLineCount + (errorLine ? 1 : 0)))
       .join(" "),
   );
 
@@ -223,18 +339,44 @@ export function generateProceduralNarration(input: ProceduralNarratorInput): Pro
       rng,
       excludedTemplateIds,
     });
+    const retryLines: string[] = [];
+    const pushRetry = (value: string) => {
+      const clean = cleanupNarration(value);
+      if (!clean) return;
+      if (shouldRejectLine(historyBuffer, clean)) return;
+      retryLines.push(clean);
+      pushDmLineHistory(historyBuffer, clean);
+    };
+    if (errorLine) pushRetry(errorLine);
+    pushRetry(selectedTemplate.render(baseContext));
+    const retryBundle = buildVoiceNarrationBundle({
+      seedKey: `${seed}:voice-retry:${attempts}`,
+      context: narrationContext,
+      history: historyBuffer,
+      lastVoiceMode: voiceBundle.mode,
+    });
+    for (const line of retryBundle.lines) {
+      const clean = cleanupNarration(line);
+      if (clean.length > 0 && !retryLines.includes(clean)) {
+        retryLines.push(clean);
+      }
+    }
+    pushRetry(input.recoveryBeat);
     rendered = cleanupNarration(
-      [
-        errorLine,
-        selectedTemplate.render(baseContext),
-        input.recoveryBeat,
-      ].filter((entry) => entry.trim().length > 0).join(" "),
+      retryLines
+        .filter((entry) => entry.trim().length > 0)
+        .slice(0, Math.max(1, candidateLineCount + (errorLine ? 1 : 0)))
+        .join(" "),
     );
     attempts += 1;
   }
 
   if (!rendered || hasForbiddenNarrationContent(rendered)) {
-    rendered = cleanupNarration(`Pressure climbs around ${input.boardAnchor}. ${input.recoveryBeat}`);
+    rendered = cleanupNarration(`${voiceBundle.lines[0] ?? `Hold ${input.boardAnchor}.`} ${input.recoveryBeat}`);
+    if (shouldRejectLine(historyBuffer, rendered)) {
+      rendered = cleanupNarration(`Board state shifts around ${input.boardAnchor}. ${input.recoveryBeat}`);
+    }
+    pushDmLineHistory(historyBuffer, rendered);
   }
 
   const debug: ProceduralNarratorDebug = {
@@ -243,6 +385,8 @@ export function generateProceduralNarration(input: ProceduralNarratorInput): Pro
     template_id: selectedTemplate.id,
     template_tags: selectedTemplate.tags,
     tone,
+    voice_mode: voiceBundle.mode,
+    voice_profile: voiceProfile,
     biome,
     intensity,
     aside_used: asideUsed,
@@ -250,6 +394,9 @@ export function generateProceduralNarration(input: ProceduralNarratorInput): Pro
     event_ids: mappedEvents.map((entry) => entry.id),
     event_types: mappedEvents.map((entry) => entry.type),
     mapped_events: mappedEvents,
+    line_history_before: lineHistoryBefore,
+    line_history_after: [...historyBuffer.lines],
+    fragment_history_after: [...historyBuffer.fragments],
   };
 
   return {
@@ -268,4 +415,3 @@ export type {
   ProceduralNarratorResult,
   ProceduralTone,
 } from "./types.js";
-

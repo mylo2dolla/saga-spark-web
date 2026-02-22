@@ -40,6 +40,8 @@ import {
   type PresentationState,
   type ToneMode,
 } from "../lib/presentation/index.js";
+import { generateProceduralNarration } from "../dm/proceduralNarrator/index.js";
+import { buildAiVoicePromptTemplate, buildDmVoiceProfile } from "../dm/proceduralNarrator/voiceEngine.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const MessageSchema = z.object({
@@ -239,10 +241,28 @@ function readPresentationState(boardState: Record<string, unknown> | null): Pres
   const lastEventCursor = typeof row?.last_event_cursor === "string" && row.last_event_cursor.trim().length > 0
     ? row.last_event_cursor.trim()
     : null;
+  const lastVoiceMode = typeof row?.last_voice_mode === "string" && row.last_voice_mode.trim().length > 0
+    ? row.last_voice_mode.trim().toLowerCase()
+    : null;
+  const recentLines = Array.isArray(row?.recent_lines)
+    ? row.recent_lines
+      .map((entry) => String(entry).trim())
+      .filter((entry) => entry.length > 0)
+      .slice(-20)
+    : [];
+  const recentFragments = Array.isArray(row?.recent_fragments)
+    ? row.recent_fragments
+      .map((entry) => String(entry).trim().toLowerCase())
+      .filter((entry) => entry.length > 0)
+      .slice(-64)
+    : [];
   return {
     last_tone: lastTone,
+    last_voice_mode: lastVoiceMode,
     last_board_opener_id: lastOpenerId,
     recent_line_hashes: lineHashes,
+    recent_lines: recentLines,
+    recent_fragments: recentFragments,
     last_verb_keys: verbKeys,
     last_template_ids: templateIds,
     last_event_cursor: lastEventCursor,
@@ -274,10 +294,27 @@ function mergePresentationState(
     .map((entry) => entry.trim())
     .filter((entry) => entry.length > 0)
     .slice(-12);
+  const recentLines = [
+    ...(current.recent_lines ?? []),
+    ...(next.recent_lines ?? []),
+  ]
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .slice(-20);
+  const recentFragments = [
+    ...(current.recent_fragments ?? []),
+    ...(next.recent_fragments ?? []),
+  ]
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0)
+    .slice(-64);
   return {
     last_tone: next.last_tone ?? current.last_tone ?? null,
+    last_voice_mode: next.last_voice_mode ?? current.last_voice_mode ?? null,
     last_board_opener_id: next.last_board_opener_id ?? current.last_board_opener_id ?? null,
     recent_line_hashes: lineHashes,
+    recent_lines: recentLines,
+    recent_fragments: recentFragments,
     last_verb_keys: verbKeys,
     last_template_ids: templateIds,
     last_event_cursor: next.last_event_cursor ?? current.last_event_cursor ?? null,
@@ -1685,6 +1722,69 @@ function synthesizeRecoveryPayload(args: {
     }
     return null;
   })();
+  const playerHpPct = (() => {
+    const payload = asObject(contextPayload);
+    const hp = Number(payload?.player_hp ?? payload?.hp ?? Number.NaN);
+    const hpMax = Number(payload?.player_hp_max ?? payload?.hp_max ?? Number.NaN);
+    if (!Number.isFinite(hp) || !Number.isFinite(hpMax) || hpMax <= 0) return 0.65;
+    return Math.max(0, Math.min(1, hp / hpMax));
+  })();
+  const enemyThreatLevel = (() => {
+    if (combatEventBatch.length === 0) return 0.45;
+    let threat = 0.32;
+    for (const event of combatEventBatch) {
+      const payload = asObject(event.payload) ?? {};
+      const eventType = typeof event.event_type === "string" ? event.event_type.toLowerCase() : "";
+      if (eventType === "damage") {
+        const amount = Number(payload.damage_to_hp ?? payload.amount ?? payload.final_damage ?? 0);
+        if (Number.isFinite(amount) && amount > 0) {
+          threat += Math.min(0.14, amount / 240);
+        }
+      } else if (eventType === "status_applied" || eventType === "status_tick") {
+        threat += 0.06;
+      } else if (eventType === "death") {
+        threat += 0.1;
+      } else if (eventType === "miss") {
+        threat += 0.02;
+      }
+    }
+    return Math.max(0, Math.min(1, threat));
+  })();
+  const activeHooks = [
+    actionSummary,
+    summaryObjective,
+    summaryRumor,
+    typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
+    typeof args.boardSummary?.search_target === "string" ? args.boardSummary.search_target : null,
+  ]
+    .filter((entry): entry is string => Boolean(entry && entry.trim().length > 0))
+    .map((entry) => compactLabel(entry, 88))
+    .slice(0, 5);
+  const worldToneVector = (() => {
+    const boardStateTone = asObject(asObject(args.boardState?.world_seed)?.tone_vector);
+    const summaryTone = asObject(args.boardSummary?.tone_vector);
+    return {
+      ...asNumberRecord(summaryTone),
+      ...asNumberRecord(boardStateTone),
+    };
+  })();
+  const playerReputationTags = (() => {
+    const tags: string[] = [];
+    const behaviorFlags = Array.isArray(contextPayload?.behavior_flags)
+      ? contextPayload.behavior_flags
+      : [];
+    const notableKills = Array.isArray(contextPayload?.notable_kills)
+      ? contextPayload.notable_kills
+      : [];
+    for (const value of [...behaviorFlags, ...notableKills]) {
+      if (typeof value !== "string") continue;
+      const clean = value.trim();
+      if (!clean) continue;
+      tags.push(clean);
+      if (tags.length >= 10) break;
+    }
+    return tags;
+  })();
 
   const seedKey = [
     boardType,
@@ -1710,34 +1810,17 @@ function synthesizeRecoveryPayload(args: {
       const payload = asObject(entry.payload);
       return payload?.boss === true || payload?.is_boss === true;
     }),
-    playerHpPct: (() => {
-      const payload = asObject(contextPayload);
-      const hp = Number(payload?.player_hp ?? payload?.hp ?? Number.NaN);
-      const hpMax = Number(payload?.player_hp_max ?? payload?.hp_max ?? Number.NaN);
-      if (!Number.isFinite(hp) || !Number.isFinite(hpMax) || hpMax <= 0) return 0.65;
-      return Math.max(0, Math.min(1, hp / hpMax));
-    })(),
+    playerHpPct,
     regionTheme: `${boardType}:${typeof args.boardSummary?.weather === "string" ? args.boardSummary.weather : ""}`,
   });
   const toneLine = toneSeedLine(tone.tone, `${seedKey}:tone-line`);
-
-  const hooks = [
-    actionSummary,
-    summaryObjective,
-    summaryRumor,
-    typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
-    typeof args.boardSummary?.search_target === "string" ? args.boardSummary.search_target : null,
-  ]
-    .filter((entry): entry is string => Boolean(entry && entry.trim().length > 0))
-    .map((entry) => compactLabel(entry, 88))
-    .slice(0, 4);
 
   const boardNarration = buildBoardNarration({
     seedKey,
     boardType: boardType === "town" || boardType === "travel" || boardType === "dungeon" || boardType === "combat"
       ? boardType
       : "town",
-    hooks,
+    hooks: activeHooks,
     timePressure: typeof args.boardSummary?.travel_goal === "string" ? args.boardSummary.travel_goal : null,
     factionTension: typeof args.boardSummary?.faction_count === "number"
       ? `${args.boardSummary.faction_count} factions in play`
@@ -1777,6 +1860,51 @@ function synthesizeRecoveryPayload(args: {
     enemyTraitsByCombatantId,
     maxLines: 4,
   });
+  const proceduralNarration = generateProceduralNarration({
+    campaignSeed: seedKey,
+    sessionId: `${boardType}:${typeof context?.action_trace_id === "string" ? context.action_trace_id : "recovery"}`,
+    eventId: `${typeof context?.action_id === "string" ? context.action_id : actionIntent}:${combatEventBatch.length}`,
+    boardType,
+    biome: typeof args.boardSummary?.weather === "string"
+      ? args.boardSummary.weather
+      : typeof args.boardSummary?.world_title === "string"
+        ? args.boardSummary.world_title
+        : null,
+    tone: tone.tone,
+    intensity: enemyThreatLevel >= 0.72 ? "high" : enemyThreatLevel <= 0.38 ? "low" : "med",
+    actionSummary,
+    recoveryBeat: boardType === "combat"
+      ? "Take the next exchange before they reset."
+      : boardType === "town"
+        ? "Choose a contact and press it."
+        : boardType === "travel"
+          ? "Pick a route and commit."
+          : "Take the next room edge and force consequence.",
+    boardAnchor,
+    summaryObjective,
+    summaryRumor,
+    boardNarration: boardNarration.text,
+    introOpening,
+    suppressNarrationOnError,
+    executionError,
+    stateChanges,
+    events: combatEventBatch,
+    activeHooks,
+    factionTension: typeof args.boardSummary?.faction_count === "number"
+      ? `${args.boardSummary.faction_count} factions in play`
+      : typeof args.boardSummary?.guard_alertness === "number"
+        ? `guard alertness ${Math.round(args.boardSummary.guard_alertness * 100)}%`
+        : "moderate",
+    playerHpPct,
+    enemyThreatLevel,
+    playerReputationTags,
+    worldToneVector,
+    lineHistory: boardStatePresentation.recent_lines ?? [],
+    fragmentHistory: boardStatePresentation.recent_fragments ?? [],
+    lineHistorySize: 20,
+    similarityThreshold: 0.76,
+    lastVoiceMode: boardStatePresentation.last_voice_mode ?? null,
+  });
 
   const recoveryBeat = boardType === "combat"
     ? "Pick the next target and keep tempo."
@@ -1792,7 +1920,8 @@ function synthesizeRecoveryPayload(args: {
         `Action blocked: ${compactLabel(executionError, 180)}.`,
       ]
       : [
-        middlewareOut.lines[0] ?? toneLine,
+        proceduralNarration.text,
+        middlewareOut.lines[0] ?? "",
         middlewareOut.lines[1] ?? recoveryBeat,
         middlewareOut.lines[2] ?? "",
       ])
@@ -1806,6 +1935,7 @@ function synthesizeRecoveryPayload(args: {
           summaryRumor,
         })]
       : [
+          proceduralNarration.text,
           boardNarration.text,
           toneLine,
           companionCheckin ? companionCheckin.line : recoveryBeat,
@@ -1837,12 +1967,15 @@ function synthesizeRecoveryPayload(args: {
 
   const nextPresentationState = mergePresentationState(boardStatePresentation, {
     last_tone: tone.tone,
+    last_voice_mode: proceduralNarration.debug.voice_mode,
     last_board_opener_id: boardNarration.openerId,
     recent_line_hashes: boardType === "combat"
       ? middlewareOut.lineHashes
       : [hashLine(cleanNarrative)],
+    recent_lines: proceduralNarration.debug.line_history_after,
+    recent_fragments: proceduralNarration.debug.fragment_history_after,
     last_verb_keys: middlewareOut.verbKeys,
-    last_template_ids: middlewareOut.templateIds,
+    last_template_ids: [...middlewareOut.templateIds, ...proceduralNarration.templateIds].slice(-12),
     last_event_cursor: middlewareOut.lastEventCursor ?? boardStatePresentation.last_event_cursor ?? null,
   });
 
@@ -2410,6 +2543,92 @@ export const mythicDungeonMaster: FunctionHandler = {
           `reduced=${worldPromptBlock.meta.reductions.join("|") || "none"}`,
         ].join(":"));
       }
+      const promptPresentationState = readPresentationState(boardStateRecord);
+      const promptBoardRow = asObject(compactBoard);
+      const promptBoardType = typeof promptBoardRow?.board_type === "string" ? promptBoardRow.board_type : "town";
+      const promptHooks = [
+        typeof boardSummaryRecord?.travel_goal === "string" ? boardSummaryRecord.travel_goal : null,
+        typeof boardSummaryRecord?.search_target === "string" ? boardSummaryRecord.search_target : null,
+        ...(Array.isArray(boardSummaryRecord?.objective_samples) ? boardSummaryRecord.objective_samples : []),
+        ...(Array.isArray(boardSummaryRecord?.rumor_samples) ? boardSummaryRecord.rumor_samples : []),
+      ]
+        .map((entry) => {
+          if (!entry) return "";
+          if (typeof entry === "string") return entry.trim();
+          if (typeof entry === "object") {
+            const row = entry as Record<string, unknown>;
+            const title = typeof row.title === "string" ? row.title : "";
+            const detail = typeof row.detail === "string" ? row.detail : "";
+            return `${title} ${detail}`.trim();
+          }
+          return "";
+        })
+        .filter((entry) => entry.length > 0)
+        .slice(0, 5);
+      const promptToneVector = (() => {
+        const worldSeed = asObject(worldSeedForPrompt) ?? {};
+        const vector = asObject(worldSeed.tone_vector ?? worldSeed.toneVector) ?? {};
+        return asNumberRecord(vector);
+      })();
+      const promptVoiceProfile = buildDmVoiceProfile({
+        seedKey: `${campaignId}:${expectedTurnIndex}:ai-voice`,
+        worldToneVector: promptToneVector,
+      });
+      const promptPlayerHpPct = (() => {
+        const resources = asObject(asObject(compactCharacter)?.resources) ?? {};
+        const bars = Array.isArray(resources.bars) ? resources.bars : [];
+        const firstBar = bars.find((entry) => entry && typeof entry === "object") as Record<string, unknown> | undefined;
+        const current = Number(firstBar?.current ?? Number.NaN);
+        const max = Number(firstBar?.max ?? Number.NaN);
+        if (!Number.isFinite(current) || !Number.isFinite(max) || max <= 0) return 0.65;
+        return Math.max(0, Math.min(1, current / max));
+      })();
+      const promptThreatLevel = (() => {
+        const combatRow = asObject(compactCombat) ?? {};
+        const events = Array.isArray(combatRow?.recent_events) ? combatRow.recent_events : [];
+        if (events.length === 0) return 0.45;
+        let score = 0.3;
+        for (const entry of events) {
+          const row = asObject(entry) ?? {};
+          const amount = Number(row.amount ?? Number.NaN);
+          if (Number.isFinite(amount) && amount > 0) {
+            score += Math.min(0.15, amount / 250);
+          } else {
+            score += 0.03;
+          }
+        }
+        return Math.max(0, Math.min(1, score));
+      })();
+      const promptReputationTags = (() => {
+        const tags: string[] = [];
+        const behavior = asObject(asObject(dmCampaignState)?.behavior_flags) ?? {};
+        for (const [key, value] of Object.entries(behavior)) {
+          if (value === true) tags.push(key);
+        }
+        return tags.slice(0, 8);
+      })();
+      const aiVoicePromptTemplate = buildAiVoicePromptTemplate({
+        context: {
+          boardType: promptBoardType,
+          biome: typeof boardSummaryRecord?.weather === "string"
+            ? boardSummaryRecord.weather
+            : promptBoardType,
+          activeHooks: promptHooks,
+          factionTension: typeof boardSummaryRecord?.faction_count === "number"
+            ? `${boardSummaryRecord.faction_count} factions active`
+            : typeof boardSummaryRecord?.guard_alertness === "number"
+              ? `guard alertness ${Math.round(boardSummaryRecord.guard_alertness * 100)}%`
+              : "moderate",
+          playerHpPct: promptPlayerHpPct,
+          enemyThreatLevel: promptThreatLevel,
+          recentEvents: [],
+          playerReputationTags: promptReputationTags,
+          worldToneVector: promptToneVector,
+          dmVoiceProfile: promptVoiceProfile,
+        },
+        recentLines: promptPresentationState.recent_lines ?? [],
+        recentFragments: promptPresentationState.recent_fragments ?? [],
+      });
 
       const systemPrompt = `
 You are the Mythic Weave Dungeon Master entity.
@@ -2456,6 +2675,7 @@ ${jsonInline(actionContextRecord ?? null, 700)}
 ${jsonInline(warnings, 500)}
 
 ${styleProfilePrompt()}
+${aiVoicePromptTemplate}
 
 RULES YOU MUST OBEY
 - Grid is truth. Never invent positions, HP, items, skills.
