@@ -141,3 +141,17 @@ This pass upgraded campaign/class forge quality and companion setup:
   - `mythic-runtime-transition:dungeon`: `cb0afeb5-c226-45db-8bc7-f23914cbc099`
   - `mythic-runtime-transition:town`: `1b439ef5-944a-4d2b-963d-38ec9d489554`
   - `mythic-combat-start`: `4502b303-5560-406e-9979-6c1cc4c696d2`
+
+## Post-Reset Seed Re-Run (After Local Disk Cleanup, 2026-02-22)
+- Issue encountered before re-run: local temp-space exhaustion during `mktemp` in post-reset seed smoke.
+- Local remediation applied: cleared stale temp/cache artifacts and restored working space.
+- Re-ran: `bash scripts/smoke-mythic-board-auth.sh --post-reset-seed` ✅
+- Request IDs:
+  - `mythic-create-campaign`: `9110d66b-5c74-4410-a014-c26cf1233a7f`
+  - `mythic-create-character`: `f791ce51-2801-48db-96f1-79081cb7b8d4`
+  - `mythic-dm-context`: `08ee7fa2-193e-45c6-af9e-5e35a46643c6`
+  - `mythic-dungeon-master`: `503cf6f5-a8dc-493f-a7dc-d250f09fc99f`
+  - `mythic-runtime-transition:travel`: `e7c15746-eec9-4508-8d28-05dd6921ec49`
+  - `mythic-runtime-transition:dungeon`: `fbb70f15-0bb3-4653-9518-01748f422dd9`
+  - `mythic-runtime-transition:town`: `0e41c56e-7c7e-443a-ae7a-a06a12a23d39`
+  - `mythic-combat-start`: `a8538308-6102-473d-a578-ab6ee3263de9`
