@@ -7,18 +7,25 @@ interface FloatingTextNode {
   ageMs: number;
   lifeMs: number;
   vy: number;
+  pulse: boolean;
+  bounce: boolean;
 }
 
 const MAX_FLOATING_TEXT = 48;
 
-function styleForEvent(event: VisualEvent): { text: string; fill: number; size: number; lifeMs: number; weight: "normal" | "bold" } | null {
+function styleForEvent(event: VisualEvent): { text: string; fill: number; size: number; lifeMs: number; weight: "normal" | "bold"; pulse: boolean; bounce: boolean } | null {
   if (event.type === "DamageNumber") {
+    const compact = (event.compressed || (event.hitCount ?? 1) > 1)
+      ? `x${Math.max(2, event.hitCount ?? 2)} -${Math.max(0, Math.floor(event.totalDamage ?? event.amount))}`
+      : `-${Math.max(0, Math.floor(event.amount))}`;
     return {
-      text: `-${Math.max(0, Math.floor(event.amount))}`,
+      text: compact,
       fill: event.isCrit ? 0xfff39a : 0xffb4a4,
       size: event.isCrit ? 18 : 14,
       lifeMs: event.isCrit ? 920 : 760,
       weight: "bold",
+      pulse: false,
+      bounce: event.isCrit === true,
     };
   }
   if (event.type === "HealNumber") {
@@ -28,6 +35,8 @@ function styleForEvent(event: VisualEvent): { text: string; fill: number; size: 
       size: 14,
       lifeMs: 920,
       weight: "bold",
+      pulse: true,
+      bounce: false,
     };
   }
   if (event.type === "MissIndicator") {
@@ -37,6 +46,8 @@ function styleForEvent(event: VisualEvent): { text: string; fill: number; size: 
       size: 13,
       lifeMs: 760,
       weight: "bold",
+      pulse: false,
+      bounce: false,
     };
   }
   if (event.type === "BarrierBreak") {
@@ -46,6 +57,8 @@ function styleForEvent(event: VisualEvent): { text: string; fill: number; size: 
       size: 12,
       lifeMs: 700,
       weight: "bold",
+      pulse: false,
+      bounce: false,
     };
   }
   if (event.type === "StatusTick") {
@@ -56,6 +69,8 @@ function styleForEvent(event: VisualEvent): { text: string; fill: number; size: 
       size: 11,
       lifeMs: 680,
       weight: "normal",
+      pulse: false,
+      bounce: false,
     };
   }
   return null;
@@ -119,7 +134,9 @@ export class FloatingTextSystem {
       text,
       ageMs: 0,
       lifeMs: settings.fastMode ? Math.min(style.lifeMs, 500) : style.lifeMs,
-      vy: event.type === "HealNumber" ? 18 : 28,
+      vy: event.type === "HealNumber" ? 18 : event.type === "MissIndicator" ? 14 : 28,
+      pulse: style.pulse,
+      bounce: style.bounce,
     });
   }
 
@@ -135,10 +152,18 @@ export class FloatingTextSystem {
       }
 
       node.text.y -= node.vy * dt;
-      if (node.ageMs < 140) {
+      if (node.ageMs < 140 && node.bounce) {
+        node.text.y -= 12 * dt;
+      } else if (node.ageMs < 140) {
         node.text.y -= 6 * dt;
       }
       const t = node.ageMs / node.lifeMs;
+      if (node.pulse && t < 0.25) {
+        const scale = 1 + (0.14 * (1 - (t / 0.25)));
+        node.text.scale.set(scale, scale);
+      } else if (!node.bounce || t > 0.25) {
+        node.text.scale.set(Math.max(1, 1.06 - (t * 0.08)));
+      }
       node.text.alpha = Math.max(0, 1 - t);
       keep.push(node);
     }

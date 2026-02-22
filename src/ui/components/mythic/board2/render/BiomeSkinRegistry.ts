@@ -19,6 +19,10 @@ export interface AmbientEmitterPreset {
 export interface BiomeSkin {
   id: BiomeSkinId;
   label: string;
+  styleProfile: "gba_tactics_v1";
+  tilePatternAlpha: number;
+  propDensityScale: number;
+  ambientIntensity: number;
   tileBase: number;
   tileAlt: number;
   road: number;
@@ -40,6 +44,10 @@ const SKINS: Record<BiomeSkinId, BiomeSkin> = {
   town_cobble_lantern: {
     id: "town_cobble_lantern",
     label: "Town",
+    styleProfile: "gba_tactics_v1",
+    tilePatternAlpha: 0.16,
+    propDensityScale: 1.1,
+    ambientIntensity: 0.45,
     tileBase: 0x5b4630,
     tileAlt: 0x694f35,
     road: 0x8f7a5d,
@@ -63,6 +71,10 @@ const SKINS: Record<BiomeSkinId, BiomeSkin> = {
   forest_green_fireflies: {
     id: "forest_green_fireflies",
     label: "Forest",
+    styleProfile: "gba_tactics_v1",
+    tilePatternAlpha: 0.14,
+    propDensityScale: 1.22,
+    ambientIntensity: 0.72,
     tileBase: 0x1f4630,
     tileAlt: 0x28563a,
     road: 0x6d5a3a,
@@ -86,6 +98,10 @@ const SKINS: Record<BiomeSkinId, BiomeSkin> = {
   dungeon_stone_torch: {
     id: "dungeon_stone_torch",
     label: "Dungeon",
+    styleProfile: "gba_tactics_v1",
+    tilePatternAlpha: 0.1,
+    propDensityScale: 0.95,
+    ambientIntensity: 0.5,
     tileBase: 0x2c313a,
     tileAlt: 0x353b45,
     road: 0x4b4f59,
@@ -109,6 +125,10 @@ const SKINS: Record<BiomeSkinId, BiomeSkin> = {
   plains_road_dust: {
     id: "plains_road_dust",
     label: "Plains",
+    styleProfile: "gba_tactics_v1",
+    tilePatternAlpha: 0.12,
+    propDensityScale: 1,
+    ambientIntensity: 0.4,
     tileBase: 0x59613a,
     tileAlt: 0x646e42,
     road: 0x85754d,
@@ -132,6 +152,10 @@ const SKINS: Record<BiomeSkinId, BiomeSkin> = {
   snow_frost_mist: {
     id: "snow_frost_mist",
     label: "Snow",
+    styleProfile: "gba_tactics_v1",
+    tilePatternAlpha: 0.09,
+    propDensityScale: 0.92,
+    ambientIntensity: 0.66,
     tileBase: 0x9eb2c2,
     tileAlt: 0xafc1cf,
     road: 0x9f9d9a,
@@ -158,6 +182,10 @@ const SKINS: Record<BiomeSkinId, BiomeSkin> = {
   desert_heat_shimmer: {
     id: "desert_heat_shimmer",
     label: "Desert",
+    styleProfile: "gba_tactics_v1",
+    tilePatternAlpha: 0.11,
+    propDensityScale: 1.08,
+    ambientIntensity: 0.58,
     tileBase: 0x8c6a34,
     tileAlt: 0x9a763d,
     road: 0xb18e51,
@@ -206,7 +234,7 @@ export function pickBiomeProps(snapshot: RenderSnapshot): Array<{ id: string; x:
         if (!passTag) continue;
 
         const chance = seededFloat(snapshot.board.seed, `${prop.id}:${x}:${y}`);
-        if (chance > prop.chance) continue;
+        if (chance > (prop.chance * skin.propDensityScale)) continue;
 
         let blockedBySpacing = false;
         for (let oy = -prop.minSpacing; oy <= prop.minSpacing && !blockedBySpacing; oy += 1) {

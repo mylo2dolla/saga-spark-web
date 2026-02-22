@@ -17,7 +17,6 @@ import { useMythicCharacter } from "@/hooks/useMythicCharacter";
 import { useMythicDmContext } from "@/hooks/useMythicDmContext";
 import {
   useMythicDungeonMaster,
-  type DmNarratorMode,
   type MythicUiAction,
 } from "@/hooks/useMythicDungeonMaster";
 import { useMythicDmVoice } from "@/hooks/useMythicDmVoice";
@@ -57,12 +56,8 @@ const DEFAULT_MYTHIC_SETTINGS: MythicRuntimeSettings = {
   compactNarration: true,
   animationIntensity: "normal",
   chatAutoFollow: true,
+  narratorMode: "hybrid",
 };
-const DM_NARRATOR_MODE_OPTIONS: Array<{ mode: DmNarratorMode; label: string }> = [
-  { mode: "hybrid", label: "Hybrid" },
-  { mode: "procedural", label: "Procedural" },
-  { mode: "ai", label: "AI" },
-];
 
 function summarizeBoardHooks(state: unknown): Array<{ id: string; title: string; detail: string | null }> {
   const payload = state && typeof state === "object" ? (state as Record<string, unknown>) : {};
@@ -168,6 +163,9 @@ function loadMythicSettings(): MythicRuntimeSettings {
       compactNarration: parsed.compactNarration !== false,
       animationIntensity,
       chatAutoFollow: parsed.chatAutoFollow !== false,
+      narratorMode: parsed.narratorMode === "ai" || parsed.narratorMode === "procedural" || parsed.narratorMode === "hybrid"
+        ? parsed.narratorMode
+        : DEFAULT_MYTHIC_SETTINGS.narratorMode,
     };
   } catch {
     return DEFAULT_MYTHIC_SETTINGS;
@@ -829,6 +827,11 @@ export default function MythicGameScreen() {
     window.localStorage.setItem(MYTHIC_SETTINGS_STORAGE_KEY, JSON.stringify(runtimeSettings));
   }, [runtimeSettings]);
 
+  useEffect(() => {
+    if (mythicDm.narratorMode === runtimeSettings.narratorMode) return;
+    mythicDm.setNarratorMode(runtimeSettings.narratorMode);
+  }, [mythicDm.narratorMode, mythicDm.setNarratorMode, runtimeSettings.narratorMode]);
+
   const baseProfileDraft = useMemo(
     () => (character ? profileDraftFromCharacter(character) : null),
     [character?.class_json, character?.id, character?.name, character?.updated_at],
@@ -1304,18 +1307,6 @@ export default function MythicGameScreen() {
     const parsedNarration = latestAssistantMessage.parsed?.narration?.trim();
     if (parsedNarration) return parsedNarration;
     return latestAssistantMessage.content.trim();
-  }, [latestAssistantMessage]);
-
-  const latestNarratorSource = useMemo<"ai" | "procedural" | null>(() => {
-    const meta = latestAssistantMessage?.parsed?.meta as Record<string, unknown> | undefined;
-    if (!meta) return null;
-    const raw = typeof meta.narrator_source === "string"
-      ? meta.narrator_source
-      : typeof meta.narratorSource === "string"
-        ? meta.narratorSource
-        : "";
-    const normalized = raw.trim().toLowerCase();
-    return normalized === "ai" || normalized === "procedural" ? normalized : null;
   }, [latestAssistantMessage]);
 
   const speakDmNarration = dmVoice.speak;
@@ -3341,7 +3332,6 @@ export default function MythicGameScreen() {
                   latestNarration={latestAssistantNarration}
                   phase={mythicDm.phase}
                   isBusy={isBoardBusy}
-                  narratorSource={latestNarratorSource}
                 />
               </div>
 
@@ -3485,6 +3475,9 @@ export default function MythicGameScreen() {
                     dmVoice.speak(latestAssistantNarration, latestAssistantMessage?.id ?? null, { force: true });
                   }}
                   onStopVoice={dmVoice.stop}
+                  narratorMode={runtimeSettings.narratorMode}
+                  onNarratorModeChange={(mode) =>
+                    setRuntimeSettings((prev) => ({ ...prev, narratorMode: mode }))}
                 />
 
                 {devSurfaces.allowed ? (
@@ -3501,39 +3494,6 @@ export default function MythicGameScreen() {
                           ? "Logs, diagnostics, and technical detail are visible."
                           : "Player-facing mode is active. Developer panels are hidden."}
                       </span>
-                    </div>
-                  </div>
-                ) : null}
-
-                {devSurfaces.enabled ? (
-                  <div className="rounded-lg border border-border bg-background/30 p-3">
-                    <div className="mb-1 text-sm font-semibold">DM Narrator Mode</div>
-                    <div className="mb-2 text-xs text-muted-foreground">
-                      Quick A/B toggle for narrator source selection.
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {DM_NARRATOR_MODE_OPTIONS.map((option) => (
-                        <Button
-                          key={option.mode}
-                          size="sm"
-                          variant={mythicDm.narratorModeOverride === option.mode ? "default" : "secondary"}
-                          onClick={() => mythicDm.setNarratorModeOverride(option.mode)}
-                        >
-                          {option.label}
-                        </Button>
-                      ))}
-                      <Button
-                        size="sm"
-                        variant={mythicDm.narratorModeOverride === null ? "default" : "outline"}
-                        onClick={() => mythicDm.setNarratorModeOverride(null)}
-                      >
-                        Auto
-                      </Button>
-                    </div>
-                    <div className="mt-2 text-xs text-muted-foreground">
-                      Active override: {mythicDm.narratorModeOverride ?? "none"}
-                      {" · "}
-                      last source: {mythicDm.lastResponseMeta?.narratorSource ?? "unknown"}
                     </div>
                   </div>
                 ) : null}
@@ -3560,14 +3520,7 @@ export default function MythicGameScreen() {
                     <div className="space-y-2">
                       {mythicDm.messages.slice(-8).reverse().map((message) => (
                         <div key={`log-${message.id}`} className="rounded border border-amber-200/15 bg-background/20 px-2 py-2 text-xs">
-                          <div className="font-medium uppercase tracking-wide text-amber-100/80">
-                            {message.role}
-                            {message.role === "assistant" ? (
-                              <> · {((message.parsed?.meta as Record<string, unknown> | undefined)?.narrator_source as string | undefined)
-                                ?? ((message.parsed?.meta as Record<string, unknown> | undefined)?.narratorSource as string | undefined)
-                                ?? "unknown"}</>
-                            ) : null}
-                          </div>
+                          <div className="font-medium uppercase tracking-wide text-amber-100/80">{message.role}</div>
                           <div className="mt-1 whitespace-pre-wrap text-amber-100/80">
                             {(message.role === "assistant" ? (message.parsed?.narration ?? message.content) : message.content).slice(0, 280)}
                           </div>
@@ -3593,11 +3546,8 @@ export default function MythicGameScreen() {
                 <div>dm_last_response_recovery_used: {mythicDm.lastResponseMeta?.recoveryUsed ? "true" : "false"}</div>
                 <div>dm_last_response_recovery_reason: {mythicDm.lastResponseMeta?.recoveryReason ?? "none"}</div>
                 <div>dm_last_response_validation_attempts: {mythicDm.lastResponseMeta?.validationAttempts ?? "none"}</div>
-                <div>dm_last_response_narrator_source: {mythicDm.lastResponseMeta?.narratorSource ?? "none"}</div>
-                <div>dm_last_response_narrator_mode: {mythicDm.lastResponseMeta?.narratorMode ?? "none"}</div>
-                <div>dm_last_response_template_id: {mythicDm.lastResponseMeta?.templateId ?? "none"}</div>
-                <div>dm_last_response_ai_model: {mythicDm.lastResponseMeta?.aiModel ?? "none"}</div>
-                <div>dm_last_response_latency_ms: {mythicDm.lastResponseMeta?.latencyMs ?? "none"}</div>
+                <div>dm_narrator_mode: {mythicDm.lastResponseMeta?.narratorMode ?? mythicDm.narratorMode}</div>
+                <div>dm_narrator_source: {mythicDm.lastResponseMeta?.narratorSource ?? "none"}</div>
                 <div>narrated_action_busy: {isNarratedActionBusy ? "true" : "false"}</div>
                 <div>state_refreshing: {isStateRefreshing ? "true" : "false"}</div>
                 <div>board_id: {board.id}</div>

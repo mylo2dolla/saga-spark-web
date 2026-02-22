@@ -14,11 +14,19 @@ import { FloatingTextSystem } from "@/ui/components/mythic/board2/render/Floatin
 import { CameraDirector } from "@/ui/components/mythic/board2/render/CameraDirector";
 import { TransitionDirector } from "@/ui/components/mythic/board2/render/TransitionDirector";
 import { DevOverlay } from "@/ui/components/mythic/board2/render/DevOverlay";
+import { MYTHIC_ASSET_FALLBACKS, MYTHIC_ATLAS_ENTRIES } from "@/ui/components/mythic/board2/render/assetManifest";
 
 interface TimedDisplay {
   display: PIXI.Container;
   ageMs: number;
   lifeMs: number;
+}
+
+function importanceScale(level: VisualEvent["fxImportance"]): number {
+  if (level === "critical") return 1.35;
+  if (level === "high") return 1.15;
+  if (level === "low") return 0.78;
+  return 1;
 }
 
 function defaultSettings(): RendererSettings {
@@ -27,6 +35,7 @@ function defaultSettings(): RendererSettings {
     cinematicCamera: true,
     showDevOverlay: false,
     reducedMotion: false,
+    qualityMode: "balanced60",
     uiDensity: "minimal",
     tokenLabelMode: "compact",
     fitMode: "adaptive_contain",
@@ -106,6 +115,8 @@ export class BoardRenderer {
     this.canvas = canvas;
     this.settings = { ...defaultSettings(), ...(settings ?? {}) };
     this.assetManager = new AssetManager(app.renderer);
+    this.assetManager.setFallbackManifest(MYTHIC_ASSET_FALLBACKS);
+    void this.assetManager.loadAtlas(MYTHIC_ATLAS_ENTRIES);
 
     this.root.eventMode = "none";
     this.backdropLayer.eventMode = "none";
@@ -227,6 +238,13 @@ export class BoardRenderer {
       const cell = new PIXI.Graphics();
       cell.rect(x, y, tileSize, tileSize);
       cell.fill({ color: base, alpha: 0.95 });
+      if (skin.tilePatternAlpha > 0) {
+        const stripeAlpha = skin.tilePatternAlpha * (tile.biomeVariant === "alt" ? 0.9 : 0.65);
+        cell.roundRect(x + 2, y + 2, tileSize - 4, 6, 2);
+        cell.fill({ color: 0xffffff, alpha: stripeAlpha * 0.22 });
+        cell.roundRect(x + 2, y + tileSize - 8, tileSize - 4, 5, 2);
+        cell.fill({ color: 0x000000, alpha: stripeAlpha * 0.2 });
+      }
 
       if (tile.overlays?.includes("water")) {
         cell.roundRect(x + 4, y + 4, tileSize - 8, tileSize - 8, 4);
@@ -274,15 +292,31 @@ export class BoardRenderer {
     this.propsLayer.removeChildren();
     const tileSize = snapshot.board.tileSize;
 
-    const biomeProps = pickBiomeProps(snapshot);
+    const biomeProps = pickBiomeProps(snapshot).sort((left, right) => left.y - right.y);
     for (const prop of biomeProps) {
-      const g = new PIXI.Graphics();
       const px = (prop.x * tileSize) + (tileSize / 2);
       const py = (prop.y * tileSize) + (tileSize / 2);
-      g.circle(px, py, tileSize * 0.16);
-      g.fill({ color: prop.tint, alpha: 0.28 });
-      g.stroke({ color: 0xfaf6e0, width: 1, alpha: 0.25 });
-      this.propsLayer.addChild(g);
+      const root = new PIXI.Container();
+      root.position.set(px, py);
+
+      const shadow = new PIXI.Graphics();
+      shadow.ellipse(0, 9, tileSize * 0.14, tileSize * 0.08);
+      shadow.fill({ color: 0x000000, alpha: 0.18 });
+      root.addChild(shadow);
+
+      const texture = this.assetManager.getTextureOrFallback(`prop:${prop.id}`, "prop", prop.tint, {
+        biomeId: snapshot.board.biomeId,
+        visualClass: "structure",
+      });
+      const sprite = new PIXI.Sprite(texture);
+      sprite.anchor.set(0.5, 0.8);
+      sprite.width = Math.round(tileSize * 0.42);
+      sprite.height = Math.round(tileSize * 0.42);
+      sprite.tint = prop.tint;
+      sprite.alpha = 0.8;
+      root.addChild(sprite);
+
+      this.propsLayer.addChild(root);
     }
   }
 
@@ -355,6 +389,7 @@ export class BoardRenderer {
       this.particles.emitFromEvent(event, anchor, this.settings);
       this.floatingText.emit(event, anchor, this.settings);
     }
+    const intensity = importanceScale(event.fxImportance);
 
     if (event.type === "MoveTrail") {
       const line = new PIXI.Graphics();
@@ -362,8 +397,8 @@ export class BoardRenderer {
       const to = tileCenter(this.snapshot, event.to);
       line.moveTo(from.x, from.y);
       line.lineTo(to.x, to.y);
-      line.stroke({ color: 0x9be5ff, width: 2, alpha: 0.8 });
-      this.addTimedDisplay(line, Math.min(900, Math.max(520, event.durationMs)));
+      line.stroke({ color: 0x9be5ff, width: 2.2, alpha: 0.85 });
+      this.addTimedDisplay(line, Math.min(900, Math.max(520, event.durationMs * intensity)));
     }
 
     if (event.type === "AttackWindup") {
@@ -373,17 +408,22 @@ export class BoardRenderer {
         const line = new PIXI.Graphics();
         line.moveTo(source.x, source.y);
         line.lineTo(target.x, target.y);
-        line.stroke({ color: 0xf6e2b8, width: 1.6, alpha: 0.72 });
-        this.addTimedDisplay(line, 260);
+        line.stroke({ color: 0xf6e2b8, width: 2.2, alpha: 0.8 });
+        const tip = new PIXI.Graphics();
+        tip.circle(target.x, target.y, 4);
+        tip.fill({ color: 0xffe4b5, alpha: 0.8 });
+        this.addTimedDisplay(line, Math.floor(260 * intensity));
+        this.addTimedDisplay(tip, Math.floor(220 * intensity));
       }
     }
 
     if (event.type === "HitImpact") {
       this.camera.onHitImpact(Math.min(1, Math.max(0, event.damage / 120)), event.seedKey, this.settings);
       const flash = new PIXI.Graphics();
-      flash.circle(anchor?.x ?? 0, anchor?.y ?? 0, 10);
-      flash.fill({ color: 0xffb09c, alpha: 0.4 });
-      this.addTimedDisplay(flash, 280);
+      flash.circle(anchor?.x ?? 0, anchor?.y ?? 0, 11 + (3 * intensity));
+      flash.fill({ color: 0xffb09c, alpha: 0.44 });
+      flash.stroke({ color: 0xfff4d8, width: 1.5, alpha: 0.5 });
+      this.addTimedDisplay(flash, Math.floor(300 * intensity));
     }
 
     if (event.type === "HealImpact") {
@@ -391,21 +431,21 @@ export class BoardRenderer {
       const pulse = new PIXI.Graphics();
       pulse.circle(anchor?.x ?? 0, anchor?.y ?? 0, 11);
       pulse.fill({ color: 0x9afab6, alpha: 0.34 });
-      this.addTimedDisplay(pulse, 340);
+      this.addTimedDisplay(pulse, Math.floor(340 * intensity));
     }
 
     if (event.type === "MissIndicator") {
       const miss = new PIXI.Graphics();
-      miss.rect((anchor?.x ?? 0) - 8, (anchor?.y ?? 0) - 1, 16, 2);
+      miss.rect((anchor?.x ?? 0) - 9, (anchor?.y ?? 0) - 1, 18, 2);
       miss.fill({ color: 0xe9eef7, alpha: 0.7 });
-      this.addTimedDisplay(miss, 360);
+      this.addTimedDisplay(miss, Math.floor(360 * intensity));
     }
 
     if (event.type === "DeathBurst" || event.type === "Downed") {
       const burst = new PIXI.Graphics();
-      burst.circle(anchor?.x ?? 0, anchor?.y ?? 0, 14);
+      burst.circle(anchor?.x ?? 0, anchor?.y ?? 0, 14 + (4 * intensity));
       burst.stroke({ color: 0xff8ca6, width: 2, alpha: 0.9 });
-      this.addTimedDisplay(burst, 700);
+      this.addTimedDisplay(burst, Math.floor(720 * intensity));
     }
 
     if (event.type === "TurnStart" || event.type === "TurnEnd") {
@@ -414,7 +454,7 @@ export class BoardRenderer {
         boardPulse.rect(0, 0, this.snapshot.board.width * this.snapshot.board.tileSize, this.snapshot.board.height * this.snapshot.board.tileSize);
       }
       boardPulse.fill({ color: event.type === "TurnStart" ? 0x8be5ff : 0xfad28c, alpha: 0.08 });
-      this.addTimedDisplay(boardPulse, 240);
+      this.addTimedDisplay(boardPulse, Math.floor(240 * intensity));
     }
   }
 
@@ -441,7 +481,13 @@ export class BoardRenderer {
     this.telegraphRenderer.render(this.snapshot);
     this.drawUiMarkers(this.snapshot);
 
-    const cadence = this.settings.fastMode ? 44 : 110;
+    const cadence = this.settings.fastMode
+      ? 44
+      : this.settings.qualityMode === "max"
+        ? 84
+        : this.settings.qualityMode === "perf"
+          ? 130
+          : 104;
     this.eventAccumulatorMs += frameMs;
     while (this.eventAccumulatorMs >= cadence && this.pendingEvents.length > 0) {
       this.eventAccumulatorMs -= cadence;

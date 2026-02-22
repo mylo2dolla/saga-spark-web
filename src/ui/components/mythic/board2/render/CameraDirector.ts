@@ -55,16 +55,18 @@ export class CameraDirector {
   onHitImpact(intensity: number, seed: string, settings: RendererSettings) {
     if (!settings.cinematicCamera || settings.fastMode || settings.reducedMotion) return;
     const clamped = Math.max(0, Math.min(1, intensity));
-    this.state.targetZoomFactor = 1 + (clamped * 0.08);
-    this.state.shakeMs = 180 + Math.round(clamped * 220);
-    this.state.shakePower = 2 + (clamped * 5);
+    const qualityScale = settings.qualityMode === "max" ? 1 : settings.qualityMode === "perf" ? 0.65 : 0.82;
+    this.state.targetZoomFactor = 1 + (clamped * 0.08 * qualityScale);
+    this.state.shakeMs = 140 + Math.round(clamped * 190 * qualityScale);
+    this.state.shakePower = 1.5 + (clamped * 4.2 * qualityScale);
     this.state.shakeSeed = seed;
   }
 
   onHealImpact(intensity: number, settings: RendererSettings) {
     if (!settings.cinematicCamera || settings.fastMode || settings.reducedMotion) return;
     const clamped = Math.max(0, Math.min(1, intensity));
-    this.state.targetZoomFactor = 1 + (clamped * 0.04);
+    const qualityScale = settings.qualityMode === "max" ? 1 : settings.qualityMode === "perf" ? 0.72 : 0.86;
+    this.state.targetZoomFactor = 1 + (clamped * 0.04 * qualityScale);
   }
 
   update(deltaMs: number, settings: RendererSettings): { offsetX: number; offsetY: number; scale: number } {

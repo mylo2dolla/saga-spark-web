@@ -13,9 +13,9 @@ function entityCenter(snapshot: RenderSnapshot, id: string | undefined): { x: nu
 }
 
 function styleColor(style: "imminent" | "queued" | "preview"): { line: number; fill: number; alpha: number } {
-  if (style === "imminent") return { line: 0xff8ea1, fill: 0xff718d, alpha: 0.26 };
-  if (style === "queued") return { line: 0xffd789, fill: 0xffd389, alpha: 0.22 };
-  return { line: 0x8fd9ff, fill: 0x8bcdf4, alpha: 0.18 };
+  if (style === "imminent") return { line: 0xff8ea1, fill: 0xff718d, alpha: 0.3 };
+  if (style === "queued") return { line: 0xffd789, fill: 0xffd389, alpha: 0.24 };
+  return { line: 0x8fd9ff, fill: 0x8bcdf4, alpha: 0.2 };
 }
 
 export class TelegraphRenderer {
@@ -41,12 +41,16 @@ export class TelegraphRenderer {
         const line = new PIXI.Graphics();
         line.moveTo(source.x, source.y);
         line.lineTo(target.x, target.y);
-        line.stroke({ color: style.line, width: 2, alpha: 0.8 });
+        line.stroke({ color: style.line, width: telegraph.style === "imminent" ? 2.5 : 2, alpha: 0.85 });
         this.container.addChild(line);
 
         const tip = new PIXI.Graphics();
         tip.circle(target.x, target.y, 3.5);
         tip.fill({ color: style.line, alpha: 0.9 });
+        if (telegraph.style === "imminent") {
+          tip.circle(target.x, target.y, 7);
+          tip.stroke({ color: style.line, width: 1.5, alpha: 0.5 });
+        }
         this.container.addChild(tip);
         continue;
       }

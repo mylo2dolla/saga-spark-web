@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { callEdgeFunctionRaw } from "@/lib/edge";
 import { parseEdgeError } from "@/lib/edgeError";
@@ -128,6 +128,13 @@ function normalizeNarratorSource(value: unknown): DmNarratorSource | null {
   const key = value.trim().toLowerCase();
   if (key === "ai" || key === "procedural") return key;
   return null;
+}
+
+function readNarratorModePreference(): DmNarratorMode {
+  if (typeof window === "undefined") return "hybrid";
+  const raw = window.localStorage.getItem(DM_NARRATOR_LOCAL_STORAGE_KEY);
+  const normalized = normalizeNarratorMode(raw);
+  return normalized ?? "hybrid";
 }
 
 function dedupeUiActions(actions: MythicUiAction[], maxActions = 8): MythicUiAction[] {
@@ -475,32 +482,15 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
   const [operation, setOperation] = useState<OperationState | null>(null);
   const [lastError, setLastError] = useState<MythicDmErrorInfo | null>(null);
   const [lastResponseMeta, setLastResponseMeta] = useState<MythicDmLastResponseMeta | null>(null);
-  const [narratorModeOverride, setNarratorModeOverride] = useState<DmNarratorMode | null>(() => {
-    if (typeof window === "undefined") return null;
-    const persisted = normalizeNarratorMode(window.localStorage.getItem(DM_NARRATOR_LOCAL_STORAGE_KEY));
-    if (persisted) return persisted;
-    if (!import.meta.env.DEV) return null;
-    const fromQuery = normalizeNarratorMode(new URLSearchParams(window.location.search).get("dmNarrator"));
-    return fromQuery;
-  });
+  const [narratorMode, setNarratorMode] = useState<DmNarratorMode>(() => readNarratorModePreference());
   const abortRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef(0);
   const activeSeqRef = useRef(0);
 
-  const devQueryNarratorMode = useCallback((): DmNarratorMode | null => {
-    if (typeof window === "undefined" || !import.meta.env.DEV) return null;
-    return normalizeNarratorMode(new URLSearchParams(window.location.search).get("dmNarrator"));
-  }, []);
-
-  const persistNarratorModeOverride = useCallback((nextMode: DmNarratorMode | null) => {
-    setNarratorModeOverride(nextMode);
+  useEffect(() => {
     if (typeof window === "undefined") return;
-    if (!nextMode) {
-      window.localStorage.removeItem(DM_NARRATOR_LOCAL_STORAGE_KEY);
-      return;
-    }
-    window.localStorage.setItem(DM_NARRATOR_LOCAL_STORAGE_KEY, nextMode);
-  }, []);
+    window.localStorage.setItem(DM_NARRATOR_LOCAL_STORAGE_KEY, narratorMode);
+  }, [narratorMode]);
 
   const sendMessage = useCallback(
     async (content: string, options?: SendOptions) => {
@@ -521,10 +511,16 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
       const actionTraceId = typeof options?.actionContext?.action_trace_id === "string"
         ? options.actionContext.action_trace_id
         : null;
+      const requestedNarratorMode = options?.narratorModeOverride ?? narratorMode;
+      const actionContextPayload = {
+        ...(options?.actionContext ?? {}),
+        narrator_mode: requestedNarratorMode,
+      };
       logger.info("mythic.dm.send.start", {
         campaign_id: campaignId,
         action_trace_id: actionTraceId,
         append_user: shouldAppendUser,
+        narrator_mode: requestedNarratorMode,
       });
 
       const shouldAbortPrevious = options?.abortPrevious !== false;
@@ -564,11 +560,6 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
 
       let assistantContent = "";
       try {
-        const requestedMode = options?.narratorModeOverride
-          ?? narratorModeOverride
-          ?? devQueryNarratorMode();
-        const narratorModeHeader = requestedMode ? { "X-DM-Narrator-Mode": requestedMode } : undefined;
-        const narratorQueryMode = (options?.narratorModeOverride ?? narratorModeOverride) ? null : devQueryNarratorMode();
         const { result: response } = await runOperation({
           name: "mythic.dm.send",
           signal: controller.signal,
@@ -585,14 +576,13 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
               timeoutMs: Math.max(30_000, Math.min(120_000, options?.timeoutMs ?? DEFAULT_DM_TIMEOUT_MS)),
               maxRetries: 0,
               idempotencyKey: options?.idempotencyKey ?? `${campaignId}:${crypto.randomUUID()}`,
-              headers: narratorModeHeader,
-              query: narratorQueryMode ? { dmNarrator: narratorQueryMode } : undefined,
               body: {
                 campaignId,
+                narratorMode: requestedNarratorMode,
                 messages: [...messages, userMessage]
                   .slice(-MAX_HISTORY_MESSAGES)
                   .map((m) => ({ role: m.role, content: trimMessage(m.content) })),
-                actionContext: options?.actionContext ?? null,
+                actionContext: actionContextPayload,
               },
             }),
         });
@@ -612,8 +602,6 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
 
         if (!response.body) throw new Error("No response body");
         const requestId = response.headers.get("x-request-id");
-        const narratorSourceHeader = normalizeNarratorSource(response.headers.get("x-dm-narrator-source"));
-        const narratorModeHeaderValue = normalizeNarratorMode(response.headers.get("x-dm-narrator-mode"));
         if (requestSeq === activeSeqRef.current) {
           setPhase("resolving_narration");
         }
@@ -670,32 +658,6 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         };
 
         if (requestSeq === activeSeqRef.current) {
-          const parsedMeta = parsedResponse?.meta;
-          const narratorSourceMeta = normalizeNarratorSource(
-            typeof parsedMeta?.narrator_source === "string"
-              ? parsedMeta.narrator_source
-              : (parsedMeta as Record<string, unknown> | undefined)?.narratorSource,
-          );
-          const narratorModeMeta = normalizeNarratorMode(
-            typeof parsedMeta?.narrator_mode === "string"
-              ? parsedMeta.narrator_mode
-              : (parsedMeta as Record<string, unknown> | undefined)?.narratorMode,
-          );
-          const templateIdMeta = typeof parsedMeta?.template_id === "string"
-            ? parsedMeta.template_id
-            : typeof (parsedMeta as Record<string, unknown> | undefined)?.templateId === "string"
-              ? String((parsedMeta as Record<string, unknown>).templateId)
-              : null;
-          const aiModelMeta = typeof parsedMeta?.ai_model === "string"
-            ? parsedMeta.ai_model
-            : typeof (parsedMeta as Record<string, unknown> | undefined)?.aiModel === "string"
-              ? String((parsedMeta as Record<string, unknown>).aiModel)
-              : null;
-          const latencyMeta = Number(
-            parsedMeta?.latency_ms
-              ?? (parsedMeta as Record<string, unknown> | undefined)?.latencyMs
-              ?? Number.NaN,
-          );
           setPhase("committing_turn");
           setMessages((prev) => [...prev, assistantMessage]);
           setCurrentResponse("");
@@ -708,11 +670,13 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
             recoveryReason: typeof parsedResponse?.meta?.dm_recovery_reason === "string"
               ? parsedResponse.meta.dm_recovery_reason
               : null,
-            narratorSource: narratorSourceHeader ?? narratorSourceMeta,
-            narratorMode: narratorModeHeaderValue ?? narratorModeMeta,
-            templateId: templateIdMeta,
-            aiModel: aiModelMeta,
-            latencyMs: Number.isFinite(latencyMeta) ? Math.max(0, Math.floor(latencyMeta)) : null,
+            narratorSource: normalizeNarratorSource(parsedResponse?.meta?.dm_narrator_source) ?? null,
+            narratorMode: normalizeNarratorMode(parsedResponse?.meta?.dm_narrator_mode) ?? requestedNarratorMode,
+            templateId: typeof parsedResponse?.meta?.dm_template_id === "string" ? parsedResponse.meta.dm_template_id : null,
+            aiModel: typeof parsedResponse?.meta?.dm_ai_model === "string" ? parsedResponse.meta.dm_ai_model : null,
+            latencyMs: Number.isFinite(Number(parsedResponse?.meta?.dm_latency_ms))
+              ? Number(parsedResponse?.meta?.dm_latency_ms)
+              : null,
           });
         } else {
           logger.info("mythic.dm.send.stale_ignored", {
@@ -764,7 +728,7 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
         }
       }
     },
-    [campaignId, devQueryNarratorMode, messages, narratorModeOverride],
+    [campaignId, messages, narratorMode],
   );
 
   const clearMessages = useCallback(() => {
@@ -788,8 +752,8 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
     operation,
     lastError,
     lastResponseMeta,
-    narratorModeOverride,
-    setNarratorModeOverride: persistNarratorModeOverride,
+    narratorMode,
+    setNarratorMode,
     sendMessage,
     clearMessages,
     cancelMessage,
