@@ -61,10 +61,22 @@ function intentSymbol(intent: RenderEntity["intent"] | undefined): string {
   return "IDLE";
 }
 
-function compactTokenLabel(value: string, fallback: string): string {
+function compactTokenBase(value: string, fallback: string): string {
   const raw = (value.trim().length > 0 ? value : fallback).replace(/[^a-z0-9]/gi, "");
   if (!raw) return "UNIT";
   return raw.slice(0, 4).toUpperCase();
+}
+
+function compactTokenLabel(args: {
+  base: string;
+  entityId: string;
+  duplicateCount: number;
+}): string {
+  if (args.duplicateCount <= 1) return args.base;
+  const cleanId = args.entityId.replace(/[^a-z0-9]/gi, "").toUpperCase();
+  const suffix = cleanId.slice(-2).padStart(2, "X");
+  const prefix = args.base.slice(0, 2).padEnd(2, "U");
+  return `${prefix}${suffix}`;
 }
 
 function tileOffsets(entities: RenderEntity[], tileSize: number): Map<string, { dx: number; dy: number }> {
@@ -153,6 +165,13 @@ export class EntityRenderer {
     const tileSize = snapshot.board.tileSize;
     const live = snapshot.entities.filter((entity) => entity.kind === "building" || entity.kind === "prop" || (entity.hp ?? 1) > 0);
     const offsets = tileOffsets(live, tileSize);
+    const compactLabelCounts = new Map<string, number>();
+    const compactLabels = new Map<string, string>();
+    for (const entity of live) {
+      const base = compactTokenBase(entity.displayName ?? "", entity.id);
+      compactLabels.set(entity.id, base);
+      compactLabelCounts.set(base, (compactLabelCounts.get(base) ?? 0) + 1);
+    }
     const compactCombatLabels = snapshot.board.type === "combat" && settings.tokenLabelMode === "compact";
     const minimalCombatLabels = snapshot.board.type === "combat" && settings.uiDensity === "minimal";
     const showStatusChips = settings.uiDensity === "balanced";
@@ -238,7 +257,11 @@ export class EntityRenderer {
 
       const name = new PIXI.Text({
         text: (minimalCombatLabels || compactCombatLabels)
-          ? compactTokenLabel(entity.displayName ?? "", entity.id)
+          ? compactTokenLabel({
+            base: compactLabels.get(entity.id) ?? compactTokenBase(entity.displayName ?? "", entity.id),
+            entityId: entity.id,
+            duplicateCount: compactLabelCounts.get(compactLabels.get(entity.id) ?? "") ?? 1,
+          })
           : (entity.displayName ?? entity.id),
         style: {
           fontFamily: "Verdana, sans-serif",

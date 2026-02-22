@@ -1789,7 +1789,6 @@ function synthesizeRecoveryPayload(args: {
     ? (suppressNarrationOnError && executionError
       ? [
         `Action blocked: ${compactLabel(executionError, 180)}.`,
-        "Choose a legal target, move, or timing window and try again.",
       ]
       : [
         middlewareOut.lines[0] ?? toneLine,
@@ -2930,9 +2929,10 @@ ${jsonOnlyContract()}
           && actionContextRecord.execution_error.trim().length > 0;
         if (suppressNarrationOnError) {
           dmParsed.value.narration = sanitizeNarrationForPlayer(
-            `Action blocked: ${compactLabel(String(actionContextRecord.execution_error), 180)}. Choose a legal move and try again.`,
+            `Action blocked: ${compactLabel(String(actionContextRecord.execution_error), 180)}.`,
             String(actionBoardType || "combat"),
           );
+          dmParsed.value.ui_actions = [];
         }
 
         const contextCursor = parseEventCursor(actionContextRecord?.combat_event_cursor);
@@ -2962,7 +2962,7 @@ ${jsonOnlyContract()}
             })
             .slice(-10)
           : [];
-        if (combatBatch.length > 0) {
+        if (!suppressNarrationOnError && combatBatch.length > 0) {
           const tone = selectToneMode({
             seedKey: `${campaignId}:${expectedTurnIndex}:combat-step`,
             lastTone: presentationCurrent.last_tone ?? null,

@@ -17,8 +17,8 @@ const RequestSchema = z.object({
 type Rarity = "common" | "magical" | "unique" | "legendary" | "mythic" | "unhinged";
 const SLOT_POOL = ["weapon", "armor", "helm", "gloves", "boots", "belt", "amulet", "ring", "trinket"] as const;
 const ITEM_TYPES = ["gear", "artifact", "relic"] as const;
-const PREFIXES = ["Rust", "Blood", "Ash", "Night", "Storm", "Iron", "Obsidian", "Void", "Saint", "Cursed"];
-const SUFFIXES = ["Bite", "Ward", "Edge", "Pulse", "Lash", "Sigil", "Breaker", "Halo", "Howl", "Spite"];
+const PREFIXES = ["Spark", "Moon", "Storm", "Lantern", "Star", "Frost", "Ember", "Clover", "Sun", "Rainbow"];
+const SUFFIXES = ["Burst", "Ward", "Lance", "Nova", "Bloom", "Breaker", "Halo", "Howl", "Glint", "Arc"];
 const WEAPON_FAMILIES = ["blades", "axes", "blunt", "polearms", "ranged", "focus", "body", "absurd"] as const;
 
 const BUDGETS: Record<Rarity, number> = {
