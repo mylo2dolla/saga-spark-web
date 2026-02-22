@@ -1,6 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export type MythicAnimationIntensity = "low" | "normal" | "high";
 
@@ -14,9 +21,11 @@ interface SettingsPanelProps {
   settings: MythicRuntimeSettings;
   onSettingsChange: (next: MythicRuntimeSettings) => void;
   voiceEnabled: boolean;
+  voiceValue: string;
   voiceSupported: boolean;
   voiceBlocked: boolean;
   onToggleVoice: (enabled: boolean) => void;
+  onVoiceChange: (voice: string) => void;
   onSpeakLatest: () => void;
   onStopVoice: () => void;
 }
@@ -56,6 +65,20 @@ export function SettingsPanel(props: SettingsPanelProps) {
           <Button size="sm" variant="outline" onClick={props.onStopVoice} disabled={!props.voiceSupported}>
             Stop
           </Button>
+        </div>
+        <div className="mb-2 grid max-w-[220px] gap-1 text-xs">
+          <span className="text-muted-foreground">Voice profile</span>
+          <Select value={props.voiceValue} onValueChange={props.onVoiceChange} disabled={!props.voiceSupported}>
+            <SelectTrigger className="h-8 border-amber-200/20 bg-background/30 text-xs">
+              <SelectValue placeholder="Choose voice" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="alloy">Alloy (Male)</SelectItem>
+              <SelectItem value="verse">Verse (Male Alt)</SelectItem>
+              <SelectItem value="nova">Nova</SelectItem>
+              <SelectItem value="aria">Aria</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         {!props.voiceSupported ? (
           <div className="text-xs text-muted-foreground">Voice is unavailable in this browser/runtime.</div>
@@ -123,4 +146,3 @@ export function SettingsPanel(props: SettingsPanelProps) {
     </div>
   );
 }
-

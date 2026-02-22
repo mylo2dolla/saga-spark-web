@@ -405,20 +405,25 @@ function isMechanicalExecutionError(message: string): boolean {
 
 function enrichCombatEventBatchForNarration(
   events: unknown,
-  combatants: Array<{ id: string; name: string }>,
+  combatants: Array<{ id: string; name: string; isAlive: boolean; hp: number }>,
 ): Array<Record<string, unknown>> {
   if (!Array.isArray(events) || events.length === 0) return [];
-  const combatantNames = new Map<string, string>();
+  const combatantState = new Map<string, { name: string; isAlive: boolean; hp: number }>();
   combatants.forEach((entry) => {
     const id = entry.id.trim();
     const name = entry.name.trim();
     if (!id || !name) return;
-    combatantNames.set(id, name);
+    combatantState.set(id, {
+      name,
+      isAlive: entry.isAlive,
+      hp: Math.floor(entry.hp),
+    });
   });
   return events
     .map((entry) => {
       const row = asRecord(entry);
       if (!row) return null;
+      const eventType = typeof row.event_type === "string" ? row.event_type : "";
       const payload = asRecord(row.payload) ?? {};
       const actorId = (
         typeof payload.source_combatant_id === "string" && payload.source_combatant_id.trim().length > 0
@@ -439,13 +444,27 @@ function enrichCombatEventBatchForNarration(
           ? payload.source_name.trim()
           : typeof payload.actor_name === "string" && payload.actor_name.trim().length > 0
             ? payload.actor_name.trim()
-            : (actorId ? (combatantNames.get(actorId) ?? null) : null)
+            : (actorId ? (combatantState.get(actorId)?.name ?? null) : null)
       );
       const targetName = (
         typeof payload.target_name === "string" && payload.target_name.trim().length > 0
           ? payload.target_name.trim()
-          : (targetId ? (combatantNames.get(targetId) ?? null) : null)
+          : (targetId ? (combatantState.get(targetId)?.name ?? null) : null)
       );
+      const actorAlive = typeof payload.actor_alive === "boolean"
+        ? payload.actor_alive
+        : typeof payload.source_alive === "boolean"
+          ? payload.source_alive
+          : (actorId ? (combatantState.get(actorId)?.isAlive ?? null) : null);
+      const targetAlive = typeof payload.target_alive === "boolean"
+        ? payload.target_alive
+        : (targetId ? (combatantState.get(targetId)?.isAlive ?? null) : null);
+      const targetHp = Number.isFinite(Number(payload.target_hp))
+        ? Number(payload.target_hp)
+        : (targetId ? (combatantState.get(targetId)?.hp ?? null) : null);
+      if (eventType !== "death" && actorAlive === false) {
+        return null;
+      }
       return {
         ...row,
         payload: {
@@ -456,6 +475,10 @@ function enrichCombatEventBatchForNarration(
           source_name: actorName ?? null,
           actor_name: actorName ?? null,
           target_name: targetName ?? null,
+          actor_alive: actorAlive,
+          source_alive: actorAlive,
+          target_alive: targetAlive,
+          target_hp: targetHp,
         },
       };
     })
@@ -1482,7 +1505,12 @@ export default function MythicGameScreen() {
             ...context,
             combat_event_batch: enrichCombatEventBatchForNarration(
               context.combat_event_batch,
-              combatState.combatants.map((entry) => ({ id: entry.id, name: entry.name })),
+              combatState.combatants.map((entry) => ({
+                id: entry.id,
+                name: entry.name,
+                isAlive: entry.is_alive,
+                hp: Number(entry.hp ?? 0),
+              })),
             ),
           }
         : context;
@@ -1586,14 +1614,22 @@ export default function MythicGameScreen() {
     setCombatStartError(null);
 
     const command = parsePlayerCommand(rawMessage);
+    const isSlashCommand = rawMessage.startsWith("/");
+    const normalizedIntent = command.intent === "unknown" ? "dm_prompt" : command.intent;
+    const isFreeformPrompt = !isSlashCommand || normalizedIntent === "dm_prompt";
+    const commandForExecution = isFreeformPrompt
+      ? { ...command, intent: "dm_prompt" as const, explicit: false, cleaned: rawMessage }
+      : command;
     await runNarratedAction({
       source: "typed_command",
-      intent: command.intent,
-      actionId: `command:${command.intent}`,
+      intent: normalizedIntent,
+      actionId: isFreeformPrompt ? "typed-freeform" : `command:${normalizedIntent}`,
       payload: {
         command: rawMessage,
-        parsed_intent: command.intent,
-        explicit: command.explicit,
+        parsed_intent: normalizedIntent,
+        parser_intent: command.intent,
+        explicit: commandForExecution.explicit,
+        freeform: isFreeformPrompt,
       },
       prompt: rawMessage,
       execute: async () => {
@@ -1601,7 +1637,7 @@ export default function MythicGameScreen() {
           const resolution = await executePlayerCommand({
             campaignId,
             boardType: board?.board_type ?? "town",
-            command,
+            command: commandForExecution,
             skills,
             combatants: combatState.combatants,
             currentTurnIndex: Number(combatState.session?.current_turn_index ?? 0),
@@ -1634,8 +1670,9 @@ export default function MythicGameScreen() {
             stateChanges: resolution.stateChanges,
             context: resolution.narrationContext ?? {
               command: rawMessage,
-              intent: command.intent,
+              intent: normalizedIntent,
               handled: resolution.handled,
+              freeform: isFreeformPrompt,
             },
             error: resolution.error ?? null,
           };
@@ -1645,8 +1682,9 @@ export default function MythicGameScreen() {
             stateChanges: [],
             context: {
               command: rawMessage,
-              intent: command.intent,
+              intent: normalizedIntent,
               handled: false,
+              freeform: isFreeformPrompt,
             },
             error: messageText,
           };
@@ -2184,6 +2222,27 @@ export default function MythicGameScreen() {
     try {
       const activeName = activeTurnCombatant?.name ?? "enemy";
       const beforeTurnIndex = Number(combatState.session?.current_turn_index ?? 0);
+      const activeActorCannotAct = !activeTurnCombatant || !activeTurnCombatant.is_alive || Number(activeTurnCombatant.hp ?? 0) <= 0;
+      if (activeActorCannotAct) {
+        const silentTick = await tickCombat({
+          campaignId,
+          combatSessionId,
+          maxSteps: AUTO_TICK_MAX_STEPS,
+          currentTurnIndex: beforeTurnIndex,
+        });
+        if (!silentTick.ok) {
+          setCombatAutoPacePhase("idle");
+          autoTickKeyRef.current = null;
+          voiceGateDeadlineRef.current = null;
+          voiceGateBaselineEndedAtRef.current = null;
+          nextAutoTickReadyAtRef.current = null;
+          return;
+        }
+        await Promise.all([refetchCombatState(), refetch()]);
+        setCombatAutoPacePhase("next_step_ready");
+        nextAutoTickReadyAtRef.current = Date.now() + 320;
+        return;
+      }
       await runNarratedAction({
         source: "combat_enemy_tick",
         intent: "dm_prompt",
@@ -3227,9 +3286,11 @@ export default function MythicGameScreen() {
                   settings={runtimeSettings}
                   onSettingsChange={setRuntimeSettings}
                   voiceEnabled={dmVoice.enabled}
+                  voiceValue={dmVoice.voice}
                   voiceSupported={dmVoice.supported}
                   voiceBlocked={dmVoice.blocked}
                   onToggleVoice={dmVoice.setEnabled}
+                  onVoiceChange={dmVoice.setVoice}
                   onSpeakLatest={() => {
                     if (!latestAssistantNarration) return;
                     if (dmVoice.blocked && dmVoice.hasPreparedAudio) {
@@ -3266,7 +3327,7 @@ export default function MythicGameScreen() {
                 <div className="rounded-lg border border-amber-200/20 bg-background/20 p-3">
                   <div className="mb-1 text-sm font-semibold">Command Reference</div>
                   <div className="grid gap-1 text-xs text-amber-100/80">
-                    <div><span className="font-medium text-amber-100">Natural:</span> "go to town", "travel to dungeon", "start combat", "use fireball on raider"</div>
+                    <div><span className="font-medium text-amber-100">Freeform:</span> Any normal text goes straight to DM narration/context.</div>
                     <div><span className="font-medium text-amber-100">Slash:</span> <code>/travel town|travel|dungeon</code></div>
                     <div><span className="font-medium text-amber-100">Slash:</span> <code>/combat start</code></div>
                     <div><span className="font-medium text-amber-100">Slash:</span> <code>/skills</code> <code>/status</code> <code>/menu skills</code></div>

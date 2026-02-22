@@ -9,14 +9,36 @@ interface MythicDmVoiceSettings {
   voice: string;
 }
 
-const STORAGE_KEY = "mythic:dm-voice:v1";
+const STORAGE_KEY = "mythic:dm-voice:v2";
 const DEFAULT_SETTINGS: MythicDmVoiceSettings = {
   enabled: true,
   rate: 1,
   pitch: 1,
   volume: 0.85,
-  voice: "nova",
+  voice: "alloy",
 };
+
+function pickBrowserVoice(preferredVoice: string): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!Array.isArray(voices) || voices.length === 0) return null;
+  const preferred = preferredVoice.trim().toLowerCase();
+  const wantsMale = preferred === "alloy" || preferred === "verse";
+  const wantsFemale = preferred === "nova" || preferred === "aria";
+  const maleHint = /(male|man|david|daniel|thomas|michael|alex|tom|en-us|english us)/i;
+  const femaleHint = /(female|woman|samantha|victoria|karen|zira|ava|aria)/i;
+
+  const preferredPool = wantsMale
+    ? voices.filter((voice) => maleHint.test(`${voice.name} ${voice.voiceURI}`))
+    : wantsFemale
+      ? voices.filter((voice) => femaleHint.test(`${voice.name} ${voice.voiceURI}`))
+      : voices;
+
+  const englishPool = preferredPool.filter((voice) => /^en/i.test(voice.lang));
+  if (englishPool[0]) return englishPool[0];
+  if (preferredPool[0]) return preferredPool[0];
+  return voices[0] ?? null;
+}
 
 function loadSettings(): MythicDmVoiceSettings {
   if (typeof window === "undefined") return DEFAULT_SETTINGS;
@@ -176,6 +198,11 @@ export function useMythicDmVoice(campaignId?: string) {
     utterance.rate = settings.rate;
     utterance.pitch = settings.pitch;
     utterance.volume = settings.volume;
+    const selectedVoice = pickBrowserVoice(settings.voice);
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+      utterance.lang = selectedVoice.lang || utterance.lang;
+    }
     utterance.onstart = () => {
       setBlocked(false);
       markSpeechStart(effectiveMessageId);

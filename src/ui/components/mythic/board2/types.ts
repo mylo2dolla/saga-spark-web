@@ -161,6 +161,11 @@ export interface TownSceneData {
   relationshipPressure: number;
   grudgePressure: number;
   activityLog: string[];
+  layoutHints?: {
+    displayDensity?: "clean_sparse" | "balanced" | "dense";
+    reservedTiles?: Array<{ x: number; y: number }>;
+    npcPlacements?: Record<string, { x: number; y: number }>;
+  };
 }
 
 export interface TravelSceneData {

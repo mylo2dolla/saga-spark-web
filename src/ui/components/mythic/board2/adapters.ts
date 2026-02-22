@@ -1088,6 +1088,79 @@ function buildMoreCard(args: {
   });
 }
 
+function townTileKey(x: number, y: number): string {
+  return `${x}:${y}`;
+}
+
+function reserveTownRectTiles(args: {
+  reserved: Set<string>;
+  rect: { x: number; y: number; w: number; h: number };
+  cols: number;
+  rows: number;
+  pad?: number;
+}) {
+  const pad = Math.max(0, Math.floor(args.pad ?? 0));
+  const minX = Math.max(0, Math.floor(args.rect.x) - pad);
+  const maxX = Math.min(args.cols - 1, Math.floor(args.rect.x + args.rect.w - 1) + pad);
+  const minY = Math.max(0, Math.floor(args.rect.y) - pad);
+  const maxY = Math.min(args.rows - 1, Math.floor(args.rect.y + args.rect.h - 1) + pad);
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      args.reserved.add(townTileKey(x, y));
+    }
+  }
+}
+
+function findNearestTownTile(args: {
+  start: { x: number; y: number };
+  cols: number;
+  rows: number;
+  reserved: Set<string>;
+}): { x: number; y: number } {
+  const startX = Math.max(0, Math.min(args.cols - 1, Math.floor(args.start.x)));
+  const startY = Math.max(0, Math.min(args.rows - 1, Math.floor(args.start.y)));
+  const maxRadius = Math.max(args.cols, args.rows);
+  for (let radius = 0; radius <= maxRadius; radius += 1) {
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.abs(dx) + Math.abs(dy) !== radius) continue;
+        const x = startX + dx;
+        const y = startY + dy;
+        if (x < 0 || y < 0 || x >= args.cols || y >= args.rows) continue;
+        if (args.reserved.has(townTileKey(x, y))) continue;
+        return { x, y };
+      }
+    }
+  }
+  return { x: startX, y: startY };
+}
+
+function formatTownServiceLabel(raw: string): string {
+  const key = raw.trim().toLowerCase().replace(/\s+/g, "_");
+  if (!key) return "";
+  if (key === "notice_board" || key === "job_board" || key === "bounty_board") return "contracts";
+  if (key === "healer") return "healer";
+  if (key === "inn") return "inn";
+  if (key === "smith" || key === "blacksmith") return "forge";
+  if (key === "alchemist") return "alchemy";
+  if (key === "supply" || key === "supplies") return "supplies";
+  if (key === "rumor" || key === "rumors") return "rumors";
+  return key.replace(/_/g, " ");
+}
+
+function formatVendorSubtitle(services: string[]): string {
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const service of services) {
+    const label = formatTownServiceLabel(service);
+    if (!label || seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+    if (labels.length >= 2) break;
+  }
+  return labels.length > 0 ? labels.join(" • ") : "merchant";
+}
+
 function buildTownScene(args: {
   boardState: Record<string, unknown>;
   summary: Record<string, unknown>;
@@ -1095,20 +1168,65 @@ function buildTownScene(args: {
   contextSource: "runtime_only" | "runtime_and_dm_context";
 }): NarrativeBoardSceneModel {
   const data = parseTownData({ boardState: args.boardState, summary: args.summary });
+  const cols = 12;
+  const rows = 8;
   const vendorSpots = [
     { x: 1, y: 1, w: 3, h: 2 },
     { x: 4, y: 1, w: 3, h: 2 },
     { x: 7, y: 1, w: 3, h: 2 },
     { x: 1, y: 3, w: 3, h: 2 },
   ];
+  const noticeBoardRect = { x: 4, y: 4, w: 4, h: 2 };
+  const gateRect = { x: 10, y: 3, w: 2, h: 3 };
+  const hasNoticeBoard = data.jobPostings.length > 0 || data.services.some((entry) => /board|notice|job|bounty|contract/.test(entry.toLowerCase()));
+
+  const reservedTiles = new Set<string>();
+  data.vendors.slice(0, vendorSpots.length).forEach((_, index) => {
+    const rect = vendorSpots[index];
+    if (!rect) return;
+    reserveTownRectTiles({ reserved: reservedTiles, rect, cols, rows, pad: 0 });
+  });
+  if (hasNoticeBoard) {
+    reserveTownRectTiles({ reserved: reservedTiles, rect: noticeBoardRect, cols, rows, pad: 0 });
+  }
+  reserveTownRectTiles({ reserved: reservedTiles, rect: gateRect, cols, rows, pad: 0 });
+
+  const placedNpcs = data.npcs.slice(0, 10).map((npc) => {
+    const placed = findNearestTownTile({
+      start: npc.locationTile,
+      cols,
+      rows,
+      reserved: reservedTiles,
+    });
+    reservedTiles.add(townTileKey(placed.x, placed.y));
+    return {
+      ...npc,
+      locationTile: placed,
+    };
+  });
+  const npcPlacements = Object.fromEntries(
+    placedNpcs.map((entry) => [entry.id, { x: entry.locationTile.x, y: entry.locationTile.y }]),
+  );
+  const townData: TownSceneData = {
+    ...data,
+    npcs: placedNpcs,
+    layoutHints: {
+      displayDensity: "clean_sparse",
+      reservedTiles: Array.from(reservedTiles.values()).map((entry) => {
+        const [xPart, yPart] = entry.split(":");
+        return { x: Number(xPart), y: Number(yPart) };
+      }),
+      npcPlacements,
+    },
+  };
 
   const hotspots: NarrativeHotspot[] = [];
-  data.vendors.slice(0, vendorSpots.length).forEach((vendor, index) => {
+  townData.vendors.slice(0, vendorSpots.length).forEach((vendor, index) => {
     hotspots.push({
       id: `town-vendor-${vendor.id}`,
       kind: "vendor",
       title: vendor.name,
-      subtitle: vendor.services.slice(0, 2).join(" • ") || "merchant",
+      subtitle: formatVendorSubtitle(vendor.services),
       description: "Trade, rumor pressure, and contract leads.",
       rect: vendorSpots[index] ?? { x: 1, y: 1, w: 3, h: 2 },
       actions: buildTownVendorActions(vendor),
@@ -1123,17 +1241,17 @@ function buildTownScene(args: {
     });
   });
 
-  if (data.jobPostings.length > 0 || data.services.some((entry) => /board|notice|job|bounty|contract/.test(entry.toLowerCase()))) {
+  if (hasNoticeBoard) {
     hotspots.push({
       id: "town-notice-board",
       kind: "notice_board",
       title: "Notice Board",
-      subtitle: `${data.jobPostings.length} tracked postings`,
+      subtitle: `${townData.jobPostings.length} active postings`,
       description: "Public contracts, bounty chatter, and leverage points.",
-      rect: { x: 4, y: 4, w: 4, h: 2 },
-      actions: buildTownNoticeBoardActions(data.jobPostings.map((row) => ({ id: row.id, title: row.title, status: row.status }))),
+      rect: noticeBoardRect,
+      actions: buildTownNoticeBoardActions(townData.jobPostings.map((row) => ({ id: row.id, title: row.title, status: row.status }))),
       meta: {
-        open_jobs: data.jobPostings.filter((row) => row.status === "open").length,
+        open_jobs: townData.jobPostings.filter((row) => row.status === "open").length,
       },
       visual: {
         tier: "secondary",
@@ -1148,7 +1266,7 @@ function buildTownScene(args: {
     title: "Town Gate",
     subtitle: "Road control",
     description: "Leave the square and project force into the wilds.",
-    rect: { x: 10, y: 3, w: 2, h: 3 },
+    rect: gateRect,
     actions: buildTownGateActions(),
     visual: {
       tier: "primary",
@@ -1156,7 +1274,7 @@ function buildTownScene(args: {
     },
   });
 
-  data.npcs.slice(0, 10).forEach((npc) => {
+  townData.npcs.forEach((npc) => {
     hotspots.push({
       id: `town-npc-${npc.id}`,
       kind: "hotspot",
@@ -1195,18 +1313,18 @@ function buildTownScene(args: {
     });
   });
 
-  const openJobs = data.jobPostings.filter((entry) => entry.status === "open").length;
+  const openJobs = townData.jobPostings.filter((entry) => entry.status === "open").length;
   const metrics: NarrativeSceneMetric[] = [
-    { id: "vendors", label: "Vendors", value: String(data.vendors.length) },
+    { id: "vendors", label: "Vendors", value: String(townData.vendors.length) },
     { id: "jobs", label: "Open Jobs", value: String(openJobs), tone: openJobs > 0 ? "good" : "neutral" },
-    { id: "factions", label: "Factions", value: String(data.factionsPresent.length) },
-    { id: "rumors", label: "Rumors", value: String(data.rumors.length) },
-    { id: "locals", label: "Locals", value: String(data.npcs.length) },
+    { id: "factions", label: "Factions", value: String(townData.factionsPresent.length) },
+    { id: "rumors", label: "Rumors", value: String(townData.rumors.length) },
+    { id: "locals", label: "Locals", value: String(townData.npcs.length) },
     {
       id: "pressure",
       label: "Grudge",
-      value: String(data.grudgePressure),
-      tone: data.grudgePressure >= 100 ? "warn" : "neutral",
+      value: String(townData.grudgePressure),
+      tone: townData.grudgePressure >= 100 ? "warn" : "neutral",
     },
   ];
   const legend: NarrativeSceneLegendItem[] = [
@@ -1216,7 +1334,7 @@ function buildTownScene(args: {
     { id: "legend-town-npc", label: "N Local", detail: "relationships and grudges", tone: "neutral" },
   ];
   const feed = [
-    ...data.activityLog.slice(-3).reverse().map((line, index) => ({
+    ...townData.activityLog.slice(-3).reverse().map((line, index) => ({
       id: `town-activity-${index + 1}`,
       label: line,
       tone: "neutral" as const,
@@ -1224,7 +1342,7 @@ function buildTownScene(args: {
     ...buildAmbientFeed({ mode: "town", warnings: args.warnings, metrics }),
   ].slice(0, 8);
   const cards: NarrativeDockCardModel[] = [
-    buildSceneSummaryCard({ mode: "town", details: data, metrics }),
+    buildSceneSummaryCard({ mode: "town", details: townData, metrics }),
     buildFeedCard(feed),
     buildMoreCard({
       metrics,
@@ -1234,12 +1352,13 @@ function buildTownScene(args: {
     }),
   ];
 
-  const fallbackActions = buildModeFallbackActions({ mode: "town", town: data });
+  const fallbackActions = buildModeFallbackActions({ mode: "town", town: townData });
   const worldTitle = asString(asRecord(args.boardState.world_seed).title, "Town Square");
   const layoutSeed = buildLayoutSeed("town", [
     worldTitle,
-    ...data.vendors.map((vendor) => vendor.id),
-    ...data.jobPostings.map((job) => job.id),
+    ...townData.vendors.map((vendor) => vendor.id),
+    ...townData.jobPostings.map((job) => job.id),
+    ...townData.npcs.map((npc) => `${npc.id}:${npc.locationTile.x},${npc.locationTile.y}`),
   ]);
   return {
     mode: "town",
@@ -1249,8 +1368,8 @@ function buildTownScene(args: {
     warnings: args.warnings,
     metrics,
     legend,
-    hero: buildHero({ mode: "town", details: data, metrics, contextSource: args.contextSource }),
-    modeStrip: buildModeStrip({ mode: "town", details: data, contextSource: args.contextSource }),
+    hero: buildHero({ mode: "town", details: townData, metrics, contextSource: args.contextSource }),
+    modeStrip: buildModeStrip({ mode: "town", details: townData, contextSource: args.contextSource }),
     cards,
     feed,
     hotspots,
@@ -1275,11 +1394,11 @@ function buildTownScene(args: {
       skillsLabel: "Skills",
     },
     grid: {
-      cols: 12,
-      rows: 8,
+      cols,
+      rows,
       blockedTiles: [],
     },
-    details: data,
+    details: townData,
   };
 }
 

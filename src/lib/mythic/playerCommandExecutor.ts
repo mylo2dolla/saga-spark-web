@@ -68,6 +68,17 @@ export async function executePlayerCommand(args: ExecutorArgs): Promise<PlayerCo
     return result;
   }
 
+  if (command.intent === "dm_prompt") {
+    result.handled = true;
+    result.narrationContext = {
+      ...narrativeBase(args),
+      state_changes: [],
+      freeform_prompt: command.cleaned,
+      freeform_only: true,
+    };
+    return result;
+  }
+
   if (command.intent === "open_menu") {
     args.openMenu(command.panel ?? "character");
     result.handled = true;

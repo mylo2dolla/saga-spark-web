@@ -52,6 +52,7 @@ export function TownScene(props: TownSceneProps) {
       {details.npcs.map((npc) => {
         const hotspot = props.scene.hotspots.find((entry) => entry.id === `town-npc-${npc.id}`) ?? null;
         const danger = npc.grudge >= 35;
+        const shortName = npc.name.trim().length > 11 ? `${npc.name.trim().slice(0, 11)}...` : npc.name.trim();
         return (
           <button
             key={`town-npc-token-${npc.id}`}
@@ -65,7 +66,7 @@ export function TownScene(props: TownSceneProps) {
             style={{
               left: `${((npc.locationTile.x + 0.05) / cols) * 100}%`,
               top: `${((npc.locationTile.y + 0.12) / rows) * 100}%`,
-              minWidth: "44px",
+              minWidth: "52px",
             }}
             onClick={(event) => {
               event.stopPropagation();
@@ -73,8 +74,7 @@ export function TownScene(props: TownSceneProps) {
               props.onSelectHotspot(hotspot, readGridPointFromEvent(event, cols, rows));
             }}
           >
-            <div className="truncate font-semibold leading-tight">{npc.name}</div>
-            <div className="truncate text-[8px] opacity-85">{npc.mood}</div>
+            <div className="truncate font-semibold leading-tight">{shortName}</div>
           </button>
         );
       })}

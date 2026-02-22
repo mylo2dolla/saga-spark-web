@@ -92,6 +92,13 @@ const DEFAULT_DM_TIMEOUT_MS = 95_000;
 const LOW_SIGNAL_ACTION_LABEL = /^(action\s+\d+|narrative\s+update)$/i;
 const LOW_SIGNAL_ACTION_TEXT = /^(continue|proceed|next(\s+step|\s+move)?|press\s+on|advance|do\s+that|do\s+this|work\s+a\s+lead|refresh(\s+state)?|check\s+status)$/i;
 const LOW_SIGNAL_ACTION_PROMPT = /^(continue|proceed|advance|refresh|narrate|describe)(\b|[\s.,])/i;
+const NON_PLAYER_NARRATION_PATTERNS: RegExp[] = [
+  /\bcommand:unknown\b/gi,
+  /\bopening move\b/gi,
+  /\bthe\s+[a-z ]*board answers with hard state, not fog:[^.]*\.?/gi,
+  /\b(board already committed|committed the pressure lines)[^.]*\.?/gi,
+  /\bcommit one decisive move and keep pressure on the nearest fault line\.?/gi,
+];
 
 const trimMessage = (content: string) =>
   content.length <= MAX_MESSAGE_CONTENT ? content : `${content.slice(0, MAX_MESSAGE_CONTENT)}...`;
@@ -161,6 +168,15 @@ function compactLabel(input: string, maxLen = 42): string {
   const clean = input.trim().replace(/\s+/g, " ");
   if (!clean) return "";
   return clean.length > maxLen ? `${clean.slice(0, maxLen).trim()}...` : clean;
+}
+
+function sanitizeNarrationText(input: string): string {
+  let text = input.trim();
+  for (const pattern of NON_PLAYER_NARRATION_PATTERNS) {
+    text = text.replace(pattern, " ");
+  }
+  text = text.replace(/\s+/g, " ").trim();
+  return text.length > 0 ? text : "The scene shifts. Describe your next move.";
 }
 
 function normalizeActionLabel(args: {
@@ -365,9 +381,11 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
       const parsed = JSON.parse(jsonText);
       const raw = asRecord(parsed);
       if (raw) {
-        const narration = typeof raw.narration === "string" && raw.narration.trim()
-          ? raw.narration.trim()
-          : trimmed;
+        const narration = sanitizeNarrationText(
+          typeof raw.narration === "string" && raw.narration.trim()
+            ? raw.narration.trim()
+            : trimmed,
+        );
         const actions = Array.isArray(raw.ui_actions)
           ? raw.ui_actions
             .map((entry, index) => normalizeUiAction(entry, index))
@@ -407,7 +425,7 @@ function parseAssistantPayload(text: string): MythicDmParsedPayload {
     .filter((entry) => !isLowSignalAction(entry))
     .slice(0, 8);
   return {
-    narration: trimmed || "The scene shifts. Describe your next move.",
+    narration: sanitizeNarrationText(trimmed || "The scene shifts. Describe your next move."),
     ui_actions: fallbackActions.length > 0
       ? dedupeUiActions(fallbackActions, 6)
       : [buildDeterministicFallbackAction({ narration: trimmed || "The scene shifts." })],

@@ -259,6 +259,10 @@ export interface MythicCharacterProfile {
   origin_note?: string;
 }
 
+export interface MythicVoicePreference {
+  dm_voice: "alloy" | "verse" | "nova" | "aria";
+}
+
 export interface MythicCharacterClassJson extends Record<string, unknown> {
   class_name?: string;
   role?: string;

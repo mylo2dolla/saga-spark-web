@@ -10,6 +10,7 @@ export type PlayerCommandIntent =
   | "skills_list"
   | "status_check"
   | "open_menu"
+  | "dm_prompt"
   | "unknown";
 
 export type PlayerCommandPanel =
@@ -148,124 +149,10 @@ export function parsePlayerCommand(input: string): PlayerCommandParseResult {
   if (slash) return slash;
 
   const cleaned = cleanText(input);
-  const lower = cleaned.toLowerCase();
 
   if (!cleaned) {
     return { raw: input, cleaned, explicit: false, intent: "unknown" };
   }
-
-  const wantsDungeonSearch = /\b(find|locate|hunt|track|seek|search(?:ing)?|look(?:ing)?\s+for)\b/.test(lower) &&
-    /\b(dungeon|cave|ruin|crypt|catacomb|lair)\b/.test(lower);
-  const wantsDungeonEnter = /\b(enter|descend|delve|go inside|step into|breach|push into)\b/.test(lower) &&
-    /\b(dungeon|cave|ruin|crypt|catacomb|lair)\b/.test(lower);
-
-  if (wantsDungeonSearch) {
-    return {
-      raw: input,
-      cleaned,
-      explicit: false,
-      intent: "travel",
-      boardTarget: "travel",
-      probeKind: "search",
-      searchTarget: "dungeon",
-      travelGoal: "find_dungeon",
-    };
-  }
-  if (wantsDungeonEnter) {
-    return {
-      raw: input,
-      cleaned,
-      explicit: false,
-      intent: "dungeon",
-      boardTarget: "dungeon",
-      searchTarget: "dungeon",
-      travelGoal: "enter_dungeon",
-    };
-  }
-
-  const useMatch = cleaned.match(/\b(?:use|cast|fire|activate|trigger)\s+(.+?)(?:\s+(?:on|at|against)\s+(.+))?$/i);
-  if (useMatch) {
-    const skillQuery = cleanText(useMatch[1] ?? "");
-    const targetQuery = cleanText(useMatch[2] ?? "");
-    if (skillQuery) {
-      return {
-        raw: input,
-        cleaned,
-        explicit: false,
-        intent: "use_skill",
-        skillQuery,
-        targetQuery: targetQuery || undefined,
-      };
-    }
-  }
-
-  if (/\b(start|begin|initiate|enter)\b.*\b(combat|fight|battle)\b/.test(lower) || /\b(combat|fight|battle)\b.*\b(start|now)\b/.test(lower)) {
-    return { raw: input, cleaned, explicit: false, intent: "combat_start" };
-  }
-  if (/\b(shop|market|vendor|buy|trade|store)\b/.test(lower)) {
-    return { raw: input, cleaned, explicit: false, intent: "shop" };
-  }
-  if (/\b(steal|pickpocket|snatch|rob)\b/.test(lower)) {
-    return { raw: input, cleaned, explicit: false, intent: "steal" };
-  }
-  if (/\b(scout|search|forage)\b/.test(lower)) {
-    const probeKind: PlayerCommandParseResult["probeKind"] =
-      /\bscout\b/.test(lower) ? "scout" : /\bforage\b/.test(lower) ? "forage" : "search";
-    return { raw: input, cleaned, explicit: false, intent: "loot", probeKind };
-  }
-  if (/\b(loot|lose|loose|treasure|stash|chest)\b/.test(lower)) {
-    return { raw: input, cleaned, explicit: false, intent: "loot", probeKind: "loot" };
-  }
-  if (/\b(travel|journey|depart|move out|head out|go on)\b/.test(lower)) {
-    if (/\btown\b/.test(lower)) {
-      return {
-        raw: input,
-        cleaned,
-        explicit: false,
-        intent: "town",
-        boardTarget: "town",
-        travelGoal: "return_town",
-      };
-    }
-    if (/\b(dungeon|cave|ruin|crypt|catacomb|lair)\b/.test(lower)) {
-      return {
-        raw: input,
-        cleaned,
-        explicit: false,
-        intent: "travel",
-        boardTarget: "travel",
-        probeKind: "search",
-        searchTarget: "dungeon",
-        travelGoal: "find_dungeon",
-      };
-    }
-    return { raw: input, cleaned, explicit: false, intent: "travel", boardTarget: "travel", travelGoal: "explore_wilds" };
-  }
-  if (/\b(dungeon|cave|ruin|crypt|catacomb|lair)\b/.test(lower) && /\b(enter|descend|delve|push|breach)\b/.test(lower)) {
-    return {
-      raw: input,
-      cleaned,
-      explicit: false,
-      intent: "dungeon",
-      boardTarget: "dungeon",
-      searchTarget: "dungeon",
-      travelGoal: "enter_dungeon",
-    };
-  }
-  if (/\btown\b/.test(lower) && /\b(go|move|return|back)\b/.test(lower)) {
-    return { raw: input, cleaned, explicit: false, intent: "town", boardTarget: "town", travelGoal: "return_town" };
-  }
-  if (/\b(list|show|what)\b.*\b(skill|skills|ability|abilities)\b/.test(lower) || /\bskill list\b/.test(lower)) {
-    return { raw: input, cleaned, explicit: false, intent: "skills_list" };
-  }
-  if (/\b(status|cooldown|cooldowns|hp|health|condition|conditions)\b/.test(lower)) {
-    return { raw: input, cleaned, explicit: false, intent: "status_check" };
-  }
-
-  const panel = panelFromText(cleaned);
-  if (panel && /\b(open|show|view|check|inspect)\b/.test(lower)) {
-    return { raw: input, cleaned, explicit: false, intent: "open_menu", panel };
-  }
-
-  return { raw: input, cleaned, explicit: false, intent: "unknown" };
+  // Non-slash player text is always freeform narration input.
+  return { raw: input, cleaned, explicit: false, intent: "dm_prompt" };
 }

@@ -132,6 +132,13 @@ const DM_STYLE_PROFILE = {
 } as const;
 
 type NarratorUiAction = NonNullable<DmNarratorOutput["ui_actions"]>[number];
+const NON_PLAYER_NARRATION_PATTERNS: RegExp[] = [
+  /\bcommand:unknown\b/gi,
+  /\bopening move\b/gi,
+  /\bthe\s+[a-z ]*board answers with hard state, not fog:[^.]*\.?/gi,
+  /\b(board already committed|committed the pressure lines)[^.]*\.?/gi,
+  /\bcommit one decisive move and keep pressure on the nearest fault line\.?/gi,
+];
 
 function countWords(text: string): number {
   return text
@@ -155,21 +162,50 @@ function sanitizeNarrationForPlayer(text: string, boardType: string): string {
     .filter((line) => line.length > 0);
   const sanitizedLines = lines
     .filter((line) => !/^\s*resolved\s+\d+\s+non-player turn steps\b/i.test(line))
-    .map((line) => line
-      .replace(/\bcampaign_[a-z0-9_]+\b/gi, "opening move")
-      .replace(/\b[a-z0-9]+(?:_[a-z0-9]+){2,}_v\d+\b/gi, "opening move")
-      .replace(/\bA combatant\b/gi, "A fighter")
-      .replace(/\btags?\s+the\s+line\b/gi, "presses the line")
-      .replace(/\s+/g, " ")
-      .trim())
+    .map((line) => {
+      let clean = line
+        .replace(/\bcampaign_[a-z0-9_]+\b/gi, "")
+        .replace(/\b[a-z0-9]+(?:_[a-z0-9]+){2,}_v\d+\b/gi, "")
+        .replace(/\bA combatant\b/gi, "A fighter")
+        .replace(/\btags?\s+the\s+line\b/gi, "presses the line");
+      for (const pattern of NON_PLAYER_NARRATION_PATTERNS) {
+        clean = clean.replace(pattern, " ");
+      }
+      return clean.replace(/\s+/g, " ").trim();
+    })
     .filter((line) => line.length > 0);
   const joined = sanitizedLines.join(" ");
   if (!joined) {
     return normalizedBoard === "combat"
       ? "Steel and spellfire collide. Pick a target and force the next exchange."
-      : "The board holds steady pressure. Commit your next move.";
+      : "Tension coils around you. Choose the next move and press it.";
   }
   return joined;
+}
+
+function buildIntroRecoveryNarration(args: {
+  boardType: string;
+  recoveryPressure: string;
+  recoveryBeat: string;
+  boardAnchor: string;
+  summaryObjective: string | null;
+  summaryRumor: string | null;
+}): string {
+  const introHook = args.summaryObjective
+    ? `Your first leverage point is clear: ${args.summaryObjective}.`
+    : args.summaryRumor
+      ? `A live rumor is already drawing blood: ${args.summaryRumor}.`
+      : `The first hinge is visible: ${args.boardAnchor}.`;
+  if (args.boardType === "town") {
+    return [args.recoveryPressure, introHook, args.recoveryBeat].join(" ");
+  }
+  if (args.boardType === "travel") {
+    return [args.recoveryPressure, introHook, "The route will punish drift, so choose a lane and commit."].join(" ");
+  }
+  if (args.boardType === "dungeon") {
+    return [args.recoveryPressure, introHook, "Stone remembers hesitation. Pick a room edge and force it."].join(" ");
+  }
+  return [args.recoveryPressure, introHook, args.recoveryBeat].join(" ");
 }
 
 function compactPromptMessage(content: string): string {
@@ -1376,12 +1412,17 @@ function synthesizeRecoveryPayload(args: {
     ? String((context.payload as Record<string, unknown>).prompt)
     : null;
   const rawActionId = typeof context?.action_id === "string" ? String(context.action_id) : null;
+  const contextPayload = asObject(context?.payload);
+  const introOpening = context?.source === "campaign_intro_auto"
+    || contextPayload?.intro_opening === true;
   const actionPrompt = (() => {
     const source = rawActionPrompt && rawActionPrompt.trim().length > 0 ? rawActionPrompt : rawActionId;
     if (!source) return null;
     const clean = source
       .trim()
-      .replace(/\b[a-z0-9]+(?:_[a-z0-9]+){2,}_v\d+\b/gi, "opening move")
+      .replace(/\bcampaign_[a-z0-9_]+\b/gi, " ")
+      .replace(/\b[a-z0-9]+(?:_[a-z0-9]+){2,}_v\d+\b/gi, " ")
+      .replace(/\bcommand:unknown\b/gi, " ")
       .replace(/\b[a-z0-9]+(?:_[a-z0-9]+){2,}\b/gi, (token) => token.includes("_") ? token.replace(/_/g, " ") : token)
       .replace(/\s+/g, " ");
     return clean.length > 0 ? clean : null;
@@ -1394,6 +1435,8 @@ function synthesizeRecoveryPayload(args: {
     .map((entry) => {
       const eventType = typeof entry.event_type === "string" ? entry.event_type : "";
       const payload = asObject(entry.payload);
+      const actorAlive = payload?.actor_alive !== false && payload?.source_alive !== false;
+      if (eventType !== "death" && !actorAlive) return null;
       const actorId = typeof entry.actor_combatant_id === "string" && entry.actor_combatant_id.trim().length > 0
         ? entry.actor_combatant_id
         : typeof payload?.actor_combatant_id === "string" && payload.actor_combatant_id.trim().length > 0
@@ -1507,39 +1550,68 @@ function synthesizeRecoveryPayload(args: {
     : typeof args.boardSummary?.search_target === "string"
       ? args.boardSummary.search_target
       : boardLabel;
+  const summaryObjective = (() => {
+    const samples = Array.isArray(args.boardSummary?.objective_samples) ? args.boardSummary.objective_samples : [];
+    for (const sample of samples) {
+      const row = asObject(sample);
+      const value = typeof row?.title === "string" ? row.title : typeof row?.detail === "string" ? row.detail : null;
+      if (value && value.trim().length > 0) return value.trim();
+    }
+    return null;
+  })();
+  const summaryRumor = (() => {
+    const samples = Array.isArray(args.boardSummary?.rumor_samples) ? args.boardSummary.rumor_samples : [];
+    for (const sample of samples) {
+      const row = asObject(sample);
+      const value = typeof row?.title === "string" ? row.title : typeof row?.detail === "string" ? row.detail : null;
+      if (value && value.trim().length > 0) return value.trim();
+    }
+    return null;
+  })();
 
   const recoveryPressure = boardType === "town"
-    ? "The square feels like a trap wrapped in lantern light."
+    ? "Lantern light turns every bargain into a wager."
     : boardType === "travel"
-      ? "The route narrows and every step can spring an ambush."
+      ? "The route narrows and the next mile can spring an ambush."
       : boardType === "dungeon"
         ? "Stone corridors hold their breath and punish hesitation."
         : "Steel and spellfire keep the floor in constant motion.";
   const recoveryBeat = boardType === "combat"
-    ? "Pick a target, force tempo, and make the next exchange hurt."
-    : "Commit one decisive move and keep pressure on the nearest fault line.";
+    ? "Pick a target and make the next exchange hurt."
+    : boardType === "town"
+      ? "Choose your next push: a contact, a contract, or the gate."
+      : boardType === "travel"
+        ? "Pick the segment you want to pressure next."
+        : "Choose the next room, door, or hazard and force a consequence.";
   const narrative = boardType === "combat"
     ? [
       combatLines[0] ?? `${actionSummary} ${recoveryPressure}`,
       combatLines[1] ?? (companionCheckin
-        ? `${companionCheckin.line} ${boardAnchor} pressure is committed.`
-        : `${boardLabel} pressure is already committed this turn.`),
+        ? `${companionCheckin.line} ${boardAnchor} is where the next clash breaks.`
+        : `${boardLabel} tempo is still live. Keep the next exchange sharp.`),
       combatLines[2] ?? `${recoveryBeat}`,
     ].join(" ")
+    : introOpening
+      ? buildIntroRecoveryNarration({
+        boardType,
+        recoveryPressure,
+        recoveryBeat,
+        boardAnchor,
+        summaryObjective,
+        summaryRumor,
+      })
     : [
       `${actionSummary} ${recoveryPressure}`,
       companionCheckin
-        ? `${companionCheckin.line} The ${boardAnchor} hook is hot and the board already committed the pressure lines for this turn.`
-        : `The ${boardLabel} board answers with hard state, not fog: positions, hooks, and pressure are already committed for this turn.`,
+        ? `${companionCheckin.line} ${boardAnchor} is where the next consequence breaks.`
+        : summaryObjective
+          ? `Current leverage: ${summaryObjective}.`
+          : summaryRumor
+            ? `Latest rumor under tension: ${summaryRumor}.`
+            : `${boardLabel} stays volatile. One move now will tilt the square.`,
       `${recoveryBeat}`,
     ].join(" ");
-  const cleanNarrative = narrative
-    .replace(/\bcampaign_[a-z0-9_]+\b/gi, "opening move")
-    .replace(/\bresolved\s+\d+\s+non-player turn steps\b/gi, "Enemy pressure keeps moving")
-    .replace(/\bA combatant\b/gi, "A fighter")
-    .replace(/\btags?\s+the\s+line\b/gi, "presses the line")
-    .replace(/\s+/g, " ")
-    .trim();
+  const cleanNarrative = sanitizeNarrationForPlayer(narrative, boardType);
 
   const vendors = extractVendorsFromBoardSummary(args.boardSummary);
   const baseActions: NarratorUiAction[] = boardType === "town"
@@ -2090,7 +2162,8 @@ ${jsonOnlyContract()}
       });
 
       const compactMessages = compactModelMessages(messages);
-      const maxAttempts = 2;
+      const isFreeformNarrationTurn = actionContextRecord?.intent === "dm_prompt";
+      const maxAttempts = introMode || isFreeformNarrationTurn ? 3 : 2;
       let lastErrors: string[] = [];
       let dmText = "";
       let dmParsed: ReturnType<typeof parseDmNarratorOutput> | null = null;
@@ -2274,7 +2347,8 @@ ${jsonOnlyContract()}
       };
 
       const shouldFastRecover = (attempt: number, errors: string[]) => {
-        if (attempt < 1) return false;
+        const minAttemptForRecovery = introMode || isFreeformNarrationTurn ? 3 : 2;
+        if (attempt < minAttemptForRecovery) return false;
         const critical = errors.some((entry) =>
           entry.includes("runtime_delta_missing_or_invalid")
           || entry.includes("scene_missing_or_invalid")
@@ -2284,7 +2358,7 @@ ${jsonOnlyContract()}
           || entry.includes("invalid_json"),
         );
         if (critical) return true;
-        if (attempt >= 2) {
+        if (attempt >= minAttemptForRecovery) {
           return errors.some((entry) => entry.includes("narration_word_count_out_of_bounds"));
         }
         return false;

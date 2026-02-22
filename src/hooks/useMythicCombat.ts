@@ -27,8 +27,27 @@ export interface MythicCombatMutationSnapshot {
   activeTurnCombatantId: string | null;
 }
 
-function extractRecentEventBatch(events: MythicActionEventRow[], maxItems = 12): MythicActionEventRow[] {
-  return events.slice(-Math.max(1, maxItems));
+interface MythicEventCursor {
+  id: string;
+  createdAt: string;
+}
+
+function extractRecentEventBatch(
+  events: MythicActionEventRow[],
+  maxItems = 12,
+  cursor?: MythicEventCursor | null,
+): MythicActionEventRow[] {
+  const boundedMax = Math.max(1, maxItems);
+  if (!cursor) return events.slice(-boundedMax);
+  const delta = events.filter((event) => {
+    const createdAt = String(event.created_at ?? "");
+    if (!createdAt) return false;
+    if (createdAt > cursor.createdAt) return true;
+    if (createdAt < cursor.createdAt) return false;
+    return String(event.id ?? "") !== cursor.id;
+  });
+  if (delta.length > 0) return delta.slice(-boundedMax);
+  return [];
 }
 
 export function useMythicCombat() {
@@ -38,6 +57,31 @@ export function useMythicCombat() {
   const [startOperation, setStartOperation] = useState<OperationState | null>(null);
   const [actionOperation, setActionOperation] = useState<OperationState | null>(null);
   const [tickOperation, setTickOperation] = useState<OperationState | null>(null);
+
+  const readLatestEventCursor = useCallback(async (
+    combatSessionId: string,
+  ): Promise<MythicEventCursor | null> => {
+    const { data, error } = await supabase
+      .schema("mythic")
+      .from("action_events")
+      .select("id,created_at")
+      .eq("combat_session_id", combatSessionId)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      logger.warn("combat.cursor.read_failed", { combat_session_id: combatSessionId, error: error.message });
+      return null;
+    }
+    if (!data || typeof (data as Record<string, unknown>).id !== "string" || typeof (data as Record<string, unknown>).created_at !== "string") {
+      return null;
+    }
+    return {
+      id: String((data as Record<string, unknown>).id),
+      createdAt: String((data as Record<string, unknown>).created_at),
+    };
+  }, []);
 
   const loadSnapshot = useCallback(async (
     campaignId: string,
@@ -121,7 +165,7 @@ export function useMythicCombat() {
     } finally {
       setIsStarting(false);
     }
-  }, [loadSnapshot]);
+  }, []);
 
   const useSkill = useCallback(async (args: {
     campaignId: string;
@@ -136,6 +180,10 @@ export function useMythicCombat() {
   }) => {
     setIsActing(true);
     try {
+      const eventCursor = await readLatestEventCursor(args.combatSessionId).catch((error) => {
+        logger.warn("combat.use_skill.cursor_failed", { error: error instanceof Error ? error.message : String(error) });
+        return null;
+      });
       const { result: data } = await runOperation({
         name: "combat.use_skill",
         timeoutMs: 15_000,
@@ -173,7 +221,7 @@ export function useMythicCombat() {
         ended: Boolean(data.ended),
         data,
         snapshot,
-        eventBatch: snapshot ? extractRecentEventBatch(snapshot.events) : [],
+        eventBatch: snapshot ? extractRecentEventBatch(snapshot.events, 12, eventCursor) : [],
       };
     } catch (e) {
       const parsed = parseEdgeError(e, "Failed to use skill");
@@ -186,7 +234,7 @@ export function useMythicCombat() {
     } finally {
       setIsActing(false);
     }
-  }, []);
+  }, [loadSnapshot, readLatestEventCursor]);
 
   const tickCombat = useCallback(async (args: {
     campaignId: string;
@@ -196,6 +244,10 @@ export function useMythicCombat() {
   }) => {
     setIsTicking(true);
     try {
+      const eventCursor = await readLatestEventCursor(args.combatSessionId).catch((error) => {
+        logger.warn("combat.tick.cursor_failed", { error: error instanceof Error ? error.message : String(error) });
+        return null;
+      });
       const { result: data } = await runOperation({
         name: "combat.tick",
         timeoutMs: 15_000,
@@ -238,7 +290,7 @@ export function useMythicCombat() {
         ok: true as const,
         data,
         snapshot,
-        eventBatch: snapshot ? extractRecentEventBatch(snapshot.events) : [],
+        eventBatch: snapshot ? extractRecentEventBatch(snapshot.events, 12, eventCursor) : [],
       };
     } catch (e) {
       const parsed = parseEdgeError(e, "Failed to advance combat");
@@ -249,7 +301,7 @@ export function useMythicCombat() {
     } finally {
       setIsTicking(false);
     }
-  }, [loadSnapshot]);
+  }, [loadSnapshot, readLatestEventCursor]);
 
   return {
     isStarting,
