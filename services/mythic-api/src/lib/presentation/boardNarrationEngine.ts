@@ -39,7 +39,7 @@ export function buildBoardNarration(input: BoardNarrationInput): BoardNarrationR
     const hook = hooks[0] ?? null;
     const second = [
       hook ? `Lead: ${hook}.` : null,
-      faction ? `Faction pressure: ${faction}.` : null,
+      faction ? `Faction friction: ${faction}.` : null,
       input.timePressure ? `Clock: ${compactText(input.timePressure, 52)}.` : null,
       `District: ${district}.`,
     ].filter((entry): entry is string => Boolean(entry))[0] ?? `District: ${district}.`;

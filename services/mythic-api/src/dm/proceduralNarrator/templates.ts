@@ -16,7 +16,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 3,
     tags: ["combat", "dark", "med"],
     render: (vars) =>
-      compactSentence(`${vars.actor} drives ${articleFor(vars.flavorNoun)} ${vars.flavorNoun} into ${vars.target}. Pressure stays on: ${vars.actionSummary}`),
+      compactSentence(`${vars.actor} drives ${articleFor(vars.flavorNoun)} ${vars.flavorNoun} into ${vars.target}. The lane stays contested: ${vars.actionSummary}`),
   },
   {
     id: "combat_hit_03",
@@ -32,7 +32,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 3,
     tags: ["combat", "grim", "med"],
     render: (vars) =>
-      compactSentence(`${vars.target} eats another tick of ${vars.status ?? "pressure"} while ${vars.actor} keeps the lane sealed.`),
+      compactSentence(`${vars.target} eats another tick of ${vars.status ?? "strain"} while ${vars.actor} keeps the lane sealed.`),
   },
   {
     id: "combat_status_02",
@@ -120,7 +120,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 3,
     tags: ["quest", "tactical", "med"],
     render: (vars) =>
-      compactSentence(`Quest pressure updates in real time. ${vars.objective ? vars.objective : vars.actionSummary}`),
+      compactSentence(`Quest state updates in real time. ${vars.objective ? vars.objective : vars.actionSummary}`),
   },
   {
     id: "quest_update_02",
@@ -136,7 +136,7 @@ export const PROCEDURAL_TEMPLATES: readonly ProceduralTemplate[] = [
     weight: 2,
     tags: ["transition", "tactical", "low"],
     render: (vars) =>
-      compactSentence(`State shifts cleanly. ${vars.actor} ${thirdPerson(vars.motionVerb)} into the next pressure window.`),
+      compactSentence(`State shifts cleanly. ${vars.actor} ${thirdPerson(vars.motionVerb)} into the next opening.`),
   },
 ];
 
@@ -185,12 +185,12 @@ export const BIOME_HINTS: Record<string, string[]> = {
   arctic: ["frost crack", "ice glare", "white hush"],
   city: ["iron alleys", "chimney smoke", "market noise"],
   dungeon: ["cold masonry", "rust damp", "torch soot"],
-  default: ["dust", "stone", "pressure"],
+  default: ["dust", "stone", "reckoning"],
 };
 
 export function describeContextClue(biome: string, amount: number): string {
   const pool = BIOME_HINTS[biome] ?? BIOME_HINTS.default;
-  if (!pool || pool.length === 0) return "pressure";
+  if (!pool || pool.length === 0) return "reckoning";
   const index = Math.max(0, amount % pool.length);
   return pool[index]!;
 }

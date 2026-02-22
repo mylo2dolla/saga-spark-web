@@ -279,7 +279,7 @@ export function generateProceduralNarration(input: ProceduralNarratorInput): Pro
     ? `${conciseCountLabel("event", mappedEvents.length)} unfolding. ${asText(secondaryEvent.context.actor, "The board")} pressures ${asText(secondaryEvent.context.target, "the seam")}.`
     : `${input.boardNarration} ${input.summaryObjective ?? input.summaryRumor ?? input.recoveryBeat}`;
   const introLine = input.introOpening
-    ? `Opening move locks around ${input.boardAnchor}.`
+    ? `Opening scene locks around ${input.boardAnchor}.`
     : "";
   const errorLine = input.suppressNarrationOnError && input.executionError
     ? `Action blocked: ${input.executionError}.`

@@ -164,7 +164,7 @@ export const MONSTER_ENHANCER = [
 ] as const;
 
 export const BOARD_OPENERS = [
-  "The hook is hot.",
+  "The contract is live.",
   "Someone is watching.",
   "Lanternlight hides teeth.",
   "The square smells like trouble.",

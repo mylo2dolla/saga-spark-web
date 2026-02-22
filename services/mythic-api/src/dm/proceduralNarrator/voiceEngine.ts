@@ -76,7 +76,7 @@ const MISCHIEVOUS_POOL = [
   "You keep improvising in dangerous ways.",
   "Somebody is going to write songs about that mistake.",
   "That was illegal in three kingdoms and still efficient.",
-  "You just turned panic into pressure.",
+  "You just turned panic into leverage.",
   "Unhinged, but tactical enough.",
   "That was rude. I approve.",
   "A little chaos goes a long way.",
@@ -219,7 +219,7 @@ const MODE_POOL: Record<ProceduralVoiceMode, readonly string[]> = {
   minimalist: MINIMALIST_POOL,
 };
 
-const AGGRESSIVE_PERSONA = ["It commits. Too close. Claws everywhere.", "No hesitation. It is all forward pressure.", "It lunges again before breathing."];
+const AGGRESSIVE_PERSONA = ["It commits. Too close. Claws everywhere.", "No hesitation. It is all forward momentum.", "It lunges again before breathing."];
 const CUNNING_PERSONA = ["It waits, then feints left.", "It reads your weight shift before striking.", "That one hunts mistakes, not openings."];
 const CHAOTIC_PERSONA = ["It thrashes wildly and overextends.", "The pattern is chaos, which is still dangerous.", "It wobbles into violence and somehow connects."];
 const BRUTAL_PERSONA = ["It hits hard and keeps hitting.", "It is here to break armor, then nerve.", "Bone-first tactics. No subtlety."];
@@ -324,7 +324,7 @@ function contextualAnchor(context: DmNarrationContext, seedKey: string): string 
     anchors.push(`Hook: ${hook}.`);
   }
   anchors.push(`Board: ${context.boardType} in ${context.biome}.`);
-  if (context.factionTension.trim().length > 0) anchors.push(`Faction pressure: ${context.factionTension}.`);
+  if (context.factionTension.trim().length > 0) anchors.push(`Faction friction: ${context.factionTension}.`);
   anchors.push(`HP ${Math.round(context.playerHpPct * 100)}%, threat ${Math.round(context.enemyThreatLevel * 100)}%.`);
   if (context.playerReputationTags.length > 0) {
     const tag = context.playerReputationTags[Math.floor(rng.next01() * context.playerReputationTags.length)] ?? context.playerReputationTags[0]!;
