@@ -1,5 +1,19 @@
 export type RenderBoardType = "town" | "travel" | "combat" | "dungeon";
 
+export type RenderEntityVisualClass =
+  | "infantry"
+  | "caster"
+  | "brute"
+  | "beast"
+  | "npc"
+  | "structure";
+
+export type RenderStyleProfile = "gba_tactics_v1";
+
+export type RenderFxImportance = "low" | "normal" | "high" | "critical";
+
+export type RenderQualityMode = "balanced60" | "max" | "perf";
+
 export type BiomeSkinId =
   | "town_cobble_lantern"
   | "forest_green_fireflies"
@@ -24,6 +38,7 @@ export interface RenderBoardMeta {
   biomeId: BiomeSkinId;
   tick: number;
   seed: string;
+  styleProfile?: RenderStyleProfile;
   lighting?: RenderLighting;
 }
 
@@ -71,6 +86,7 @@ export interface RenderEntity {
   id: string;
   kind: RenderEntityKind;
   team: RenderEntityTeam;
+  visualClass?: RenderEntityVisualClass;
   x: number;
   y: number;
   facing?: "n" | "s" | "e" | "w";
@@ -114,6 +130,7 @@ interface VisualEventBase {
   createdAt: string;
   sequence: number;
   seedKey: string;
+  fxImportance?: RenderFxImportance;
 }
 
 export type VisualEvent =
@@ -162,6 +179,8 @@ export type VisualEvent =
       amount: number;
       isCrit?: boolean;
       hitCount?: number;
+      totalDamage?: number;
+      compressed?: boolean;
     })
   | (VisualEventBase & {
       type: "HealNumber";
@@ -234,6 +253,7 @@ export interface RendererSettings {
   cinematicCamera: boolean;
   showDevOverlay: boolean;
   reducedMotion: boolean;
+  qualityMode: RenderQualityMode;
   uiDensity: "minimal" | "balanced";
   tokenLabelMode: "compact" | "full";
   fitMode: "adaptive_contain" | "contain" | "cover";
