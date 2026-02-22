@@ -123,3 +123,22 @@ Added tests:
 - `mythic-runtime-transition:dungeon`: `8db69fd3-ad41-4ed4-b39f-f78cfe3f1607`
 - `mythic-runtime-transition:town`: `2b3071bd-d71d-4e4e-a230-4ac651a3fb40`
 - `mythic-combat-start`: `0a874837-edd6-4580-aaf4-5942b42b110b`
+
+### Lock-In Verification Update (2026-02-22)
+- Renderer default flip completed: fallback renderer now defaults to Pixi while preserving env/canary/local override controls.
+- Full validation rerun after flip:
+  - `npm run typecheck` ✅
+  - `npm run build` ✅
+  - Playwright matrix in plan scope ✅
+  - `./scripts/smoke-vm-functions.sh` ✅
+  - `npm run smoke:board` ✅
+  - `npm run smoke:prod` ✅
+- Latest auth board smoke request IDs:
+  - `mythic-create-campaign`: `80b48289-1e5a-4df2-a599-f8c64237b2be`
+  - `mythic-create-character`: `f4223898-c1cb-4d5e-8fe5-5e4a1a01b8a7`
+  - `mythic-dm-context`: `43bbc5c0-33d9-4164-898a-c207ccbd460f`
+  - `mythic-dungeon-master`: `2934a239-dc89-4566-a425-91b14462d4af`
+  - `mythic-runtime-transition:travel`: `9343518e-f49b-47ec-bc28-a90028650275`
+  - `mythic-runtime-transition:dungeon`: `d277ed8c-d5f2-4938-b3d7-fc48b98a826b`
+  - `mythic-runtime-transition:town`: `6dbeeb44-c127-4efe-9e1b-65d624c07728`
+  - `mythic-combat-start`: `a8856eec-ed79-4c39-a3bf-e8fabfab1967`

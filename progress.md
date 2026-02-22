@@ -142,6 +142,21 @@ TODO / verification remaining in this pass:
 - run balance gate test command
 - resolve any compile/test fallout from new UI + helper wiring
 
+2026-02-22 (3-phase lock-in execution pass)
+- Stability gate rerun complete and green:
+  - root `typecheck` + `build`
+  - mythic-api `check`, `test:worldforge`, `test:worldforge:contracts`
+  - root `test:balance:gate`
+- Gameplay QoL lock:
+  - confirmed mechanical-failure narration suppression and dead-actor parity paths remain active.
+  - Stage B renderer rollout completed by switching default fallback to Pixi in `featureFlags.ts` while preserving env/canary/local override behavior.
+- Forge/Naming polish:
+  - tuned deterministic class fallback naming pools in `mythic-create-character.ts` to reduce low-signal repetitive wording.
+  - updated refinement style instruction to mythic + whimsical tactical tone (non dark-only).
+- Re-ran full plan validation matrix:
+  - Playwright matrix in plan scope (8 passed, 11 env-gated skips)
+  - `smoke-vm-functions`, `smoke:board`, `smoke:prod` all pass.
+
 Validation run complete (same pass):
 - `services/mythic-api`: `npm run check` PASS
 - `services/mythic-api`: `npm run test:worldforge && npm run test:worldforge:contracts` PASS

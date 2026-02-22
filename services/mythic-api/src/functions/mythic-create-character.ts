@@ -378,7 +378,7 @@ function deterministicRefinement(input: {
 
   const className = trimText(`${conceptTitle} ${roleTitles[input.kit.role]}`, 60);
   const classDescription = trimText(
-    `A ${input.kit.role} forged from "${trimText(input.classDescription, 180)}". This kit leans into ${roleLine[input.kit.role]}, weaponizes ${String(input.kit.resources.primary_id).toUpperCase()}, and dares enemies to punish your risk windows before you cash out.`,
+    `A ${input.kit.role} forged from "${trimText(input.classDescription, 180)}". This kit leans into ${roleLine[input.kit.role]}, turns ${String(input.kit.resources.primary_id).toUpperCase()} into decisive tempo, and invites bold plays with clear counter windows.`,
     2000,
   );
 
@@ -386,9 +386,9 @@ function deterministicRefinement(input: {
     tank: ["Sunwall", "Ironhaven", "Moonshield", "Granite Crown", "Wardkeep", "Clover Bastion"],
     dps: ["Starfang", "Thunderedge", "Emberclaw", "Stormlash", "Skypiercer", "Dawnreaver"],
     support: ["Honeylight", "Lantern Grace", "Lifebloom", "Willow Mercy", "Moonward", "Sparkheal"],
-    controller: ["Prismlock", "Starbind", "Glacier Sigil", "Tempest Latch", "Runegrasp", "Nulltide"],
+    controller: ["Prismlock", "Starbind", "Glacier Latch", "Tempest Clamp", "Echogrip", "Nulltide"],
     skirmisher: ["Windstep", "Ghostlance", "Riftdash", "Swiftflare", "Shadowskip", "Mistral"],
-    hybrid: ["Spellfire", "Skyforge", "Runeblade", "Astral", "Tempest", "Fate"],
+    hybrid: ["Spellfire", "Skyflare", "Prismblade", "Astral", "Tempest", "Fate"],
   };
 
   const weaponWordBank: Record<z.infer<typeof ResponseSchema>["weapon_identity"]["family"], string[]> = {
@@ -410,7 +410,7 @@ function deterministicRefinement(input: {
     control: ["Snare", "Bind", "Clamp", "Pin", "Hex"],
     utility: ["Feint", "Shift", "Pivot", "Weave", "Sleight"],
     damage: ["Strike", "Slash", "Crack", "Impact", "Volley"],
-    ultimate: ["Cataclysm", "Finale", "Doomfall", "Judgment", "Starbreak"],
+    ultimate: ["Cataclysm", "Finale", "Sunburst", "Moonflare", "Heavenfall", "Starbreak"],
   };
 
   const resource = String(input.kit.resources.primary_id ?? "resource").toUpperCase();
@@ -916,7 +916,7 @@ export const mythicCreateCharacter: FunctionHandler = {
         "Do not alter numeric mechanics, targeting, cooldowns, costs, scaling, or effect payloads.",
         "Only improve class_name, class_description, weapon_identity.notes, weakness description/counterplay, and each skill name/description.",
         "Return only valid JSON matching the provided skeleton schema.",
-        "Style: living comic-book dark fantasy with tactical clarity.",
+        "Style: mythic fantasy with tactical clarity and occasional whimsical flair.",
         "No markdown.",
       ].join("\n");
 

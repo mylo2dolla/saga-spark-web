@@ -89,3 +89,17 @@ This pass upgraded campaign/class forge quality and companion setup:
   - `mythic-runtime-transition:dungeon`: `f94a08c3-8a50-4b42-bc36-46bb6233c2a5`
   - `mythic-runtime-transition:town`: `6045c477-7a35-4895-b082-2cee09c5f13d`
   - `mythic-combat-start`: `40d8a942-4713-42a6-907f-5ba5c0961c99`
+
+## Naming/Forge Polish Lock-In (2026-02-22)
+- Deterministic fallback naming pools were tuned to reduce low-signal/repetitive lexicon:
+  - reduced `sigil/rune` style overuse in controller/hybrid banks,
+  - improved ultimate label pool variety (`sunburst/moonflare/heavenfall` tiering),
+  - class description fallback copy shifted to player-facing mythic language.
+- LLM refinement style guard updated from dark-only bias to mixed mythic + whimsical tactical tone.
+- Validation after polish:
+  - `npm run typecheck` ✅
+  - `npm run build` ✅
+  - `cd services/mythic-api && npm run check` ✅
+  - `cd services/mythic-api && npm run test:worldforge` ✅
+  - `cd services/mythic-api && npm run test:worldforge:contracts` ✅
+  - `npm run test:balance:gate` ✅

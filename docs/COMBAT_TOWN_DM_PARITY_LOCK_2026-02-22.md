@@ -150,3 +150,27 @@ Two-wave stabilization on one branch:
   - `mythic-runtime-transition:dungeon`: `8db69fd3-ad41-4ed4-b39f-f78cfe3f1607`
   - `mythic-runtime-transition:town`: `2b3071bd-d71d-4e4e-a230-4ac651a3fb40`
   - `mythic-combat-start`: `0a874837-edd6-4580-aaf4-5942b42b110b`
+
+## 3-Phase Lock-In Verification (2026-02-22)
+- Stability gates:
+  - `npm run typecheck` ✅
+  - `npm run build` ✅
+  - `cd services/mythic-api && npm run check` ✅
+  - `cd services/mythic-api && npm run test:worldforge` ✅
+  - `cd services/mythic-api && npm run test:worldforge:contracts` ✅
+  - `npm run test:balance:gate` ✅
+- Gameplay gates:
+  - full Playwright matrix in plan scope ✅ (8 passed, 11 env-gated skips)
+  - dead-actor suppression + mechanical-error narration suppression paths remained green.
+- Renderer rollout:
+  - Stage A kept canary/override path intact.
+  - Stage B complete: default renderer fallback now resolves to Pixi (`VITE_MYTHIC_BOARD_RENDERER_DEFAULT` fallback = `pixi`) with local/env override support unchanged.
+- Latest board smoke request IDs:
+  - `mythic-create-campaign`: `80b48289-1e5a-4df2-a599-f8c64237b2be`
+  - `mythic-create-character`: `f4223898-c1cb-4d5e-8fe5-5e4a1a01b8a7`
+  - `mythic-dm-context`: `43bbc5c0-33d9-4164-898a-c207ccbd460f`
+  - `mythic-dungeon-master`: `2934a239-dc89-4566-a425-91b14462d4af`
+  - `mythic-runtime-transition:travel`: `9343518e-f49b-47ec-bc28-a90028650275`
+  - `mythic-runtime-transition:dungeon`: `d277ed8c-d5f2-4938-b3d7-fc48b98a826b`
+  - `mythic-runtime-transition:town`: `6dbeeb44-c127-4efe-9e1b-65d624c07728`
+  - `mythic-combat-start`: `a8856eec-ed79-4c39-a3bf-e8fabfab1967`
