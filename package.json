@@ -22,7 +22,8 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:install": "playwright install --with-deps",
     "test:e2e:deps": "bash scripts/install-playwright-deps.sh",
-    "verify:groq": "node scripts/verify-groq.mjs"
+    "verify:groq": "node scripts/verify-groq.mjs",
+    "api:start:keychain": "bash scripts/start-mythic-api-keychain.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

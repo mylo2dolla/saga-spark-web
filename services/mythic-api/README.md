@@ -98,6 +98,29 @@ Allow your app origin through CORS (wildcards supported):
 MYTHIC_ALLOWED_ORIGINS=http://localhost:8080,https://*.ts.net
 ```
 
+### macOS Keychain launcher
+
+Run Mythic API with keychain-backed AI token (no plaintext token in `.env`):
+
+```bash
+../../scripts/keychain-upsert-secret.sh com.letsdev.studiolite api_key_tailscale-remote "<your-key>"
+npm run start:keychain
+```
+
+Defaults used by `start:keychain`:
+- keychain service: `com.letsdev.studiolite`
+- keychain account: `api_key_tailscale-remote`
+- AI base URL fallback: `http://mac16.tail265d30.ts.net:8090`
+
+Override at runtime if needed:
+
+```bash
+KEYCHAIN_SERVICE=com.letsdev.studiolite \
+KEYCHAIN_ACCOUNT=api_key_tailscale-remote \
+TAILSCALE_SERVER_URL=http://<your-node>.<your-tailnet>.ts.net:8090 \
+npm run start:keychain
+```
+
 ## DM narrator mode
 
 - `DM_NARRATOR_MODE=ai`: always use the LLM narrator path.
