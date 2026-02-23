@@ -8,7 +8,7 @@ import {
   dedupeBoardActions,
 } from "@/ui/components/mythic/board2/actionBuilders";
 import { BoardInspectCard } from "@/ui/components/mythic/board2/BoardInspectCard";
-import { NarrativeBoardViewport } from "@/ui/components/mythic/board2/NarrativeBoardViewport";
+import { NarrativeBoardViewport, type NarrativeBoardRendererDiagnostics } from "@/ui/components/mythic/board2/NarrativeBoardViewport";
 import type {
   CombatSceneData,
   DungeonSceneData,
@@ -30,6 +30,8 @@ interface NarrativeBoardPageProps {
   combatStartError: { message: string; code: string | null; requestId: string | null } | null;
   dmContextError: string | null;
   showDevDetails: boolean;
+  onRendererDiagnostics?: (diagnostics: NarrativeBoardRendererDiagnostics) => void;
+  onRendererFallback?: (diagnostics: NarrativeBoardRendererDiagnostics) => void;
   onRetryCombatStart: () => void;
   onQuickCast: (skillId: string, targeting: string) => void;
   onContinueCombatResolution: () => void;
@@ -133,6 +135,8 @@ export function NarrativeBoardPage(props: NarrativeBoardPageProps) {
         showDevOverlay={props.showDevDetails}
         safeInsetTopPx={topSafeInsetPx}
         safeInsetBottomPx={bottomSafeInsetPx}
+        onRendererDiagnostics={props.onRendererDiagnostics}
+        onRendererFallback={props.onRendererFallback}
         onSelectHotspot={(hotspot, point) => {
           setInspectTarget(buildInspectTargetFromHotspot({ hotspot, x: point.x, y: point.y }));
         }}

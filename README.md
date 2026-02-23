@@ -116,6 +116,26 @@ A/B harness:
 - Dev UI route: `/dev/narrator-test`
 - Procedural smoke test: `npm run test:narrator:smoke`
 
+### Local LM Studio / Studio Light (web runtime)
+
+Use your local API runtime as the web functions target and point Mythic API at your local OpenAI-compatible server:
+
+```bash
+# web app (.env / .env.local)
+VITE_MYTHIC_FUNCTIONS_BASE_URL=http://127.0.0.1:3001
+```
+
+```bash
+# services/mythic-api/.env
+DM_NARRATOR_MODE=hybrid
+OPENAI_BASE_URL=http://127.0.0.1:1234        # or http://127.0.0.1:1234/v1
+OPENAI_MODEL=<your-local-model>
+```
+
+Notes:
+- Loopback OpenAI-compatible hosts allow missing `OPENAI_API_KEY` (the runtime uses a local placeholder bearer).
+- Non-local OpenAI hosts still require `OPENAI_API_KEY`.
+
 ## Supabase migrations (local + remote)
 
 Apply migrations locally:

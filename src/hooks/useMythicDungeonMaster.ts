@@ -576,6 +576,9 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
               timeoutMs: Math.max(30_000, Math.min(120_000, options?.timeoutMs ?? DEFAULT_DM_TIMEOUT_MS)),
               maxRetries: 0,
               idempotencyKey: options?.idempotencyKey ?? `${campaignId}:${crypto.randomUUID()}`,
+              headers: {
+                "X-DM-Narrator-Mode": requestedNarratorMode,
+              },
               body: {
                 campaignId,
                 narratorMode: requestedNarratorMode,
@@ -602,6 +605,8 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
 
         if (!response.body) throw new Error("No response body");
         const requestId = response.headers.get("x-request-id");
+        const narratorSourceHeader = normalizeNarratorSource(response.headers.get("x-dm-narrator-source"));
+        const narratorModeHeader = normalizeNarratorMode(response.headers.get("x-dm-narrator-mode"));
         if (requestSeq === activeSeqRef.current) {
           setPhase("resolving_narration");
         }
@@ -670,8 +675,8 @@ export function useMythicDungeonMaster(campaignId: string | undefined) {
             recoveryReason: typeof parsedResponse?.meta?.dm_recovery_reason === "string"
               ? parsedResponse.meta.dm_recovery_reason
               : null,
-            narratorSource: normalizeNarratorSource(parsedResponse?.meta?.dm_narrator_source) ?? null,
-            narratorMode: normalizeNarratorMode(parsedResponse?.meta?.dm_narrator_mode) ?? requestedNarratorMode,
+            narratorSource: narratorSourceHeader ?? normalizeNarratorSource(parsedResponse?.meta?.dm_narrator_source) ?? null,
+            narratorMode: narratorModeHeader ?? normalizeNarratorMode(parsedResponse?.meta?.dm_narrator_mode) ?? requestedNarratorMode,
             templateId: typeof parsedResponse?.meta?.dm_template_id === "string" ? parsedResponse.meta.dm_template_id : null,
             aiModel: typeof parsedResponse?.meta?.dm_ai_model === "string" ? parsedResponse.meta.dm_ai_model : null,
             latencyMs: Number.isFinite(Number(parsedResponse?.meta?.dm_latency_ms))

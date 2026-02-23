@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { Button } from "@/components/ui/button";
 import type { CombatSceneData, NarrativeBoardSceneModel, NarrativeHotspot } from "@/ui/components/mythic/board2/types";
 import {
   buildRenderSnapshot,
   buildVisualEventQueue,
   useBoardRendererMount,
+  type BoardRendererFailure,
   type RenderFrameState,
   type VisualEvent,
 } from "@/ui/components/mythic/board2/render";
@@ -15,6 +17,8 @@ interface PixiBoardRendererProps {
   showDevOverlay?: boolean;
   safeInsetTopPx?: number;
   safeInsetBottomPx?: number;
+  onRendererFailure?: (failure: BoardRendererFailure) => void;
+  onRequestDomFallback?: () => void;
   onSelectHotspot: (hotspot: NarrativeHotspot, point: { x: number; y: number }) => void;
   onSelectMiss: (point: { x: number; y: number }) => void;
 }
@@ -46,6 +50,7 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
   const frameStateRef = useRef<RenderFrameState | null>(null);
   const [reducedMotion, setReducedMotion] = useState(false);
   const [visualEvents, setVisualEvents] = useState<VisualEvent[]>([]);
+  const [lastRendererFailure, setLastRendererFailure] = useState<BoardRendererFailure | null>(null);
 
   const snapshot = useMemo(() => buildRenderSnapshot(props.scene), [props.scene]);
 
@@ -80,8 +85,16 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
       },
     );
     frameStateRef.current = built.frameState;
-    setVisualEvents(built.queue);
+    setVisualEvents((previous) => {
+      if (previous.length === 0 && built.queue.length === 0) return previous;
+      return built.queue;
+    });
   }, [engineEvents, snapshot]);
+
+  const handleRendererFailure = useCallback((failure: BoardRendererFailure) => {
+    setLastRendererFailure(failure);
+    props.onRendererFailure?.(failure);
+  }, [props.onRendererFailure]);
 
   const rendererSettings = useMemo(
     () => ({
@@ -106,7 +119,14 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
     snapshot,
     events: visualEvents,
     settings: rendererSettings,
+    onFailure: handleRendererFailure,
   });
+
+  useEffect(() => {
+    if (ready && lastRendererFailure) {
+      setLastRendererFailure(null);
+    }
+  }, [lastRendererFailure, ready]);
 
   const onPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
     const host = hostRef.current;
@@ -137,8 +157,25 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
       />
 
       {!ready ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-amber-100/70">
-          Loading renderer...
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="rounded border border-amber-200/30 bg-black/55 px-3 py-2 text-center text-xs text-amber-100/80">
+            {lastRendererFailure ? (
+              <>
+                <div>Renderer fault detected ({lastRendererFailure.phase}).</div>
+                <div className="mt-1 text-[11px] text-amber-100/70">Switch to compatibility mode to keep the turn moving.</div>
+                {props.onRequestDomFallback ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="mt-2 h-7 text-[11px]"
+                    onClick={props.onRequestDomFallback}
+                  >
+                    Use Compatibility Renderer
+                  </Button>
+                ) : null}
+              </>
+            ) : "Loading renderer..."}
+          </div>
         </div>
       ) : null}
 
@@ -148,6 +185,7 @@ export function PixiBoardRenderer(props: PixiBoardRendererProps) {
           className="pointer-events-none absolute bottom-1 left-1 rounded border border-cyan-200/35 bg-black/55 px-2 py-1 text-[10px] text-cyan-100/85"
         >
           fps {debugState.fps.toFixed(1)} · draw {debugState.drawCalls} · queue {debugState.queueDepth}
+          {lastRendererFailure ? ` · fault ${lastRendererFailure.signature}` : ""}
         </div>
       ) : null}
 

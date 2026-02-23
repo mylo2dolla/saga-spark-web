@@ -1,9 +1,43 @@
-function splitCsv(value: string | undefined): string[] {
+function normalizeOriginToken(value: string): string | null {
+  let token = value.trim();
+  if (!token) return null;
+
+  if (/^https\/\//i.test(token)) {
+    token = token.replace(/^https\/\//i, "https://");
+  } else if (/^http\/\//i.test(token)) {
+    token = token.replace(/^http\/\//i, "http://");
+  }
+
+  try {
+    const parsed = new URL(token);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function parseAllowedOrigins(value: string | undefined): string[] {
   if (!value) return [];
-  return value
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+  const unique = new Set<string>();
+  const out: string[] = [];
+  for (const entry of value.split(",")) {
+    const normalized = normalizeOriginToken(entry);
+    if (!normalized) {
+      const trimmed = entry.trim();
+      if (trimmed.length > 0) {
+        // Keep startup non-fatal; skip malformed values so CORS stays sane.
+        console.warn(`[mythic-api] Ignoring invalid MYTHIC_ALLOWED_ORIGINS entry: "${trimmed}"`);
+      }
+      continue;
+    }
+    if (unique.has(normalized)) continue;
+    unique.add(normalized);
+    out.push(normalized);
+  }
+  return out;
 }
 
 export type DmNarratorMode = "ai" | "procedural" | "hybrid";
@@ -47,7 +81,7 @@ export function getConfig(): MythicApiConfig {
   const host = (process.env.HOST ?? "0.0.0.0").trim();
   const nodeEnv = (process.env.NODE_ENV ?? "development").trim().toLowerCase() || "development";
 
-  const allowedOrigins = splitCsv(process.env.MYTHIC_ALLOWED_ORIGINS);
+  const allowedOrigins = parseAllowedOrigins(process.env.MYTHIC_ALLOWED_ORIGINS);
 
   const supabaseJwtIssuer = `${supabaseUrl.replace(/\/$/, "")}/auth/v1`;
   const supabaseJwksUrl = `${supabaseUrl.replace(/\/$/, "")}/auth/v1/.well-known/jwks.json`;

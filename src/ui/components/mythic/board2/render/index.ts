@@ -17,6 +17,14 @@ interface UseBoardRendererMountArgs {
   snapshot: RenderSnapshot | null;
   events: VisualEvent[];
   settings: RendererSettings;
+  onFailure?: (failure: BoardRendererFailure) => void;
+}
+
+export interface BoardRendererFailure {
+  phase: "mount" | "tick" | "resize";
+  count: number;
+  message: string;
+  signature: string;
 }
 
 const EMPTY_DEBUG: RendererDebugState = {
@@ -32,12 +40,36 @@ const EMPTY_DEBUG: RendererDebugState = {
   intentChipMode: "none",
 };
 
+function failureMessage(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim().length > 0) {
+      return message.trim();
+    }
+  }
+  return "renderer_failure";
+}
+
+function failureSignature(phase: BoardRendererFailure["phase"], message: string): string {
+  const normalized = message.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return `${phase}:${normalized || "unknown"}`;
+}
+
 export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
   const [hostNode, setHostNode] = useState<HTMLDivElement | null>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastTickRef = useRef<number | null>(null);
   const lastDebugAtRef = useRef<number>(0);
+  const failureCountsRef = useRef<Record<BoardRendererFailure["phase"], number>>({
+    mount: 0,
+    tick: 0,
+    resize: 0,
+  });
+  const onFailureRef = useRef<UseBoardRendererMountArgs["onFailure"]>(args.onFailure);
   const [ready, setReady] = useState(false);
   const [debugState, setDebugState] = useState<RendererDebugState>(EMPTY_DEBUG);
 
@@ -79,10 +111,44 @@ export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
   }, [args.hostRef, hostNode]);
 
   useEffect(() => {
+    onFailureRef.current = args.onFailure;
+  }, [args.onFailure]);
+
+  useEffect(() => {
     const host = hostNode;
     if (!host) return;
 
     let disposed = false;
+    const teardownRenderer = () => {
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      lastTickRef.current = null;
+      lastDebugAtRef.current = 0;
+      const renderer = rendererRef.current;
+      rendererRef.current = null;
+      if (renderer) renderer.destroy();
+      if (!disposed) {
+        setReady(false);
+        setDebugState(EMPTY_DEBUG);
+      }
+    };
+    const reportFailure = (phase: BoardRendererFailure["phase"], error: unknown) => {
+      failureCountsRef.current[phase] = (failureCountsRef.current[phase] ?? 0) + 1;
+      const count = failureCountsRef.current[phase];
+      const message = failureMessage(error);
+      onFailureRef.current?.({
+        phase,
+        count,
+        message,
+        signature: failureSignature(phase, message),
+      });
+      return count;
+    };
+
+    failureCountsRef.current = { mount: 0, tick: 0, resize: 0 };
+
     void BoardRenderer.mount(host, stableSettings).then((renderer) => {
       if (disposed) {
         renderer.destroy();
@@ -94,9 +160,17 @@ export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
       const loop = (time: number) => {
         if (!rendererRef.current) return;
         const last = lastTickRef.current ?? time;
-        const delta = Math.max(1, time - last);
+        const delta = Math.max(1, Math.min(50, time - last));
         lastTickRef.current = time;
-        rendererRef.current.tick(delta);
+        try {
+          rendererRef.current.tick(delta);
+        } catch (error) {
+          const count = reportFailure("tick", error);
+          if (count >= 2) {
+            teardownRenderer();
+            return;
+          }
+        }
         if (time - lastDebugAtRef.current >= 120) {
           lastDebugAtRef.current = time;
           setDebugState(rendererRef.current.getDebugState());
@@ -104,37 +178,48 @@ export function useBoardRendererMount(args: UseBoardRendererMountArgs) {
         rafRef.current = window.requestAnimationFrame(loop);
       };
       rafRef.current = window.requestAnimationFrame(loop);
-    }).catch(() => {
-      setReady(false);
+    }).catch((error) => {
+      reportFailure("mount", error);
+      teardownRenderer();
     });
 
-    const onResize = () => {
+    let resizeRaf: number | null = null;
+    const applyResize = () => {
+      resizeRaf = null;
       const renderer = rendererRef.current;
       const target = args.hostRef.current;
       if (!renderer || !target) return;
-      renderer.resize(target.clientWidth, target.clientHeight);
+      try {
+        renderer.resize(target.clientWidth, target.clientHeight);
+      } catch (error) {
+        const count = reportFailure("resize", error);
+        if (count >= 2) {
+          teardownRenderer();
+        }
+      }
     };
-    onResize();
+    const scheduleResize = () => {
+      if (resizeRaf !== null) {
+        window.cancelAnimationFrame(resizeRaf);
+      }
+      resizeRaf = window.requestAnimationFrame(applyResize);
+    };
+    scheduleResize();
     const observer = typeof ResizeObserver !== "undefined"
-      ? new ResizeObserver(() => onResize())
+      ? new ResizeObserver(() => scheduleResize())
       : null;
     observer?.observe(host);
-    window.addEventListener("resize", onResize);
+    window.addEventListener("resize", scheduleResize);
 
     return () => {
       disposed = true;
-      window.removeEventListener("resize", onResize);
+      window.removeEventListener("resize", scheduleResize);
       observer?.disconnect();
-      if (rafRef.current !== null) {
-        window.cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
+      if (resizeRaf !== null) {
+        window.cancelAnimationFrame(resizeRaf);
+        resizeRaf = null;
       }
-      lastTickRef.current = null;
-      lastDebugAtRef.current = 0;
-      const renderer = rendererRef.current;
-      rendererRef.current = null;
-      if (renderer) renderer.destroy();
-      setReady(false);
+      teardownRenderer();
     };
   }, [hostNode]);
 

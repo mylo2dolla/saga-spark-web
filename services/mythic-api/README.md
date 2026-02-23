@@ -72,8 +72,10 @@ journalctl -u mythic-api -f
 - `SUPABASE_PROJECT_REF`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `MYTHIC_ALLOWED_ORIGINS`
-- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL` (default `https://api.openai.com`)
+- `OPENAI_API_KEY` (required for non-local hosts; optional for loopback local providers)
 - `DM_NARRATOR_MODE` (`ai` | `procedural` | `hybrid`, default `hybrid`)
+- `OPENAI_MODEL` (optional, defaults by route)
 
 ## DM narrator mode
 
@@ -85,14 +87,31 @@ Per-request overrides:
 - Header: `X-DM-Narrator-Mode: ai|procedural|hybrid`
 - Query param (dev only): `?dmNarrator=procedural`
 
+Mode precedence:
+1) query `dmNarrator` (dev only)
+2) header `X-DM-Narrator-Mode`
+3) request body `narratorMode`
+4) legacy `actionContext.narrator_mode`
+5) env `DM_NARRATOR_MODE`
+6) default `hybrid`
+
 Development harness:
 - UI route: `/dev/narrator-test`
 - API endpoint: `POST /functions/v1/mythic-narrator-test`
 - Smoke test: `npm run test:narrator-smoke`
 
+Local LM Studio / Studio Light example:
+
+```bash
+DM_NARRATOR_MODE=hybrid
+OPENAI_BASE_URL=http://127.0.0.1:1234        # also accepts http://127.0.0.1:1234/v1
+OPENAI_MODEL=<your-local-model>
+```
+
 ## Notes
 
 - All handlers validate JWT from `Authorization: Bearer <supabase access token>`.
 - Responses include `x-request-id`.
+- DM responses expose `x-dm-narrator-mode` and `x-dm-narrator-source`.
 - Keep endpoint names stable; clients expect `/functions/v1/<name>`.
 - Supabase Edge Functions are rollback-only; active runtime is this VM API.

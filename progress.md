@@ -163,3 +163,63 @@ Validation run complete (same pass):
 - repo root: `npm run typecheck` PASS
 - repo root: `npm run test:balance:gate` PASS
 - repo root: `npx tsx scripts/backfill-worldforge-profiles.ts --help` PASS
+
+2026-02-23 (web-only LM Studio compatibility + DM stability pass)
+- Scope lock honored: no edits under `apps/SagaSparkPad`.
+- API runtime hardening for local OpenAI-compatible providers:
+  - `services/mythic-api/src/shared/openai.ts`
+    - `OPENAI_BASE_URL` now accepts both root and `/v1` forms without `.../v1/v1/...` duplication.
+    - loopback hosts allow missing `OPENAI_API_KEY` via local placeholder bearer (`lm-studio`).
+  - `services/mythic-api/src/shared/ai_provider.ts`
+    - openai provider resolution/config checks now accept loopback `OPENAI_BASE_URL` even without key.
+- DM handler resilience + mode precedence:
+  - `services/mythic-api/src/functions/mythic-dungeon-master.ts`
+    - narrator mode precedence now: query(dev) > header > body > actionContext > env > default.
+    - added `dm_narrator_mode_source` to logs/meta/request payload.
+    - hybrid mode now catches AI provider/timeout/stream failures and deterministically falls back procedural instead of hard-failing.
+    - stream handling supports SSE and JSON/plain compatibility; includes non-stream retry path for stream-incompatible providers.
+    - response headers now include:
+      - `x-dm-narrator-mode`
+      - `x-dm-narrator-source`
+- TTS local-provider behavior:
+  - `services/mythic-api/src/functions/mythic-tts.ts`
+    - removed strict pre-check for `OPENAI_API_KEY`.
+    - unsupported local TTS endpoints now return explicit `tts_not_supported` (501) instead of generic crashes.
+- CORS/origin parsing hardening:
+  - `services/mythic-api/src/shared/env.ts`
+    - repairs obvious malformed tokens (`https//` -> `https://`) and ignores invalid entries with startup warnings.
+- Docs updated:
+  - `README.md`
+  - `services/mythic-api/README.md`
+  - `services/mythic-api/.env.example`
+  - includes local Studio Light/LM Studio setup examples for web runtime.
+
+Validation run:
+- `services/mythic-api`: `npm run check` PASS
+- `services/mythic-api`: `npm run test:narrator-smoke` PASS
+- repo root: `npm run typecheck` PASS
+- repo root: `npm run build` PASS
+- `services/mythic-api`: `npm run build` PASS
+- repo root: `npm run test:e2e` PASS (16 passed, 17 skipped)
+- repo root: `bash scripts/smoke-vm-functions.sh` PASS
+
+2026-02-23 (web board hardening + renderer failover stabilization)
+- Branch: `codex/feature-procedural-narrator`.
+- Fresh baseline rerun and captured logs:
+  - `/tmp/saga-web-baseline-typecheck.log`
+  - `/tmp/saga-web-baseline-build.log`
+  - `/tmp/saga-web-baseline-test-e2e.log`
+  - `/tmp/saga-api-baseline-check.log`
+  - `/tmp/saga-api-baseline-narrator-smoke.log`
+- DM call-chain references verified:
+  - `services/mythic-api/src/functions/mythic-dungeon-master.ts`
+  - `services/mythic-api/src/shared/openai.ts`
+  - `services/mythic-api/src/shared/ai_provider.ts`
+- Board runtime stabilization pass:
+  - Pixi mount/tick/resize failures now surfaced with structured failure callbacks.
+  - RAF tick loop now clamps delta and traps repeated runtime errors.
+  - Runtime viewport auto-failover from pixi to dom after repeated/fatal faults.
+  - Added board crash boundary in `MythicGameScreen` to prevent full-screen crashes.
+  - Added persistent 24h pixi recovery sentinel (auto mode biases to dom after pixi faults).
+  - Added settings toggle for board renderer mode (`auto` / `dom` / `pixi`) and recovery status.
+  - Added diagnostics surfacing for requested/effective renderer and last failure signature.

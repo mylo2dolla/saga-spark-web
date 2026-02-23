@@ -1,6 +1,7 @@
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com";
 const DEFAULT_OPENAI_CHAT_TIMEOUT_MS = 45_000;
 const DEFAULT_OPENAI_TTS_TIMEOUT_MS = 30_000;
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 
 const clampTimeoutMs = (value: string | null | undefined, fallback: number) => {
   const raw = (value ?? "").trim();
@@ -26,13 +27,49 @@ async function readErrorSnippet(response: Response) {
   }
 }
 
-function getOpenAiConfig() {
-  const apiKey = (process.env.OPENAI_API_KEY ?? "").trim();
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.trim().toLowerCase();
+  if (!host) return false;
+  return LOOPBACK_HOSTS.has(host) || host.endsWith(".localhost");
+}
+
+function normalizeOpenAiBaseUrl(value: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error("OPENAI_BASE_URL must be a valid absolute URL.");
   }
-  const baseUrl = (process.env.OPENAI_BASE_URL ?? DEFAULT_OPENAI_BASE_URL).trim() || DEFAULT_OPENAI_BASE_URL;
-  return { apiKey, baseUrl: baseUrl.replace(/\/$/, "") };
+
+  const pathname = parsed.pathname.replace(/\/+$/, "");
+  if (pathname === "/v1") {
+    parsed.pathname = "/";
+  } else if (pathname.endsWith("/v1")) {
+    parsed.pathname = pathname.slice(0, -3) || "/";
+  }
+
+  return parsed.toString().replace(/\/+$/, "");
+}
+
+function openAiPath(baseUrl: string, path: "/v1/chat/completions" | "/v1/audio/speech"): string {
+  return `${baseUrl}${path}`;
+}
+
+function getOpenAiConfig() {
+  const rawBaseUrl = (process.env.OPENAI_BASE_URL ?? DEFAULT_OPENAI_BASE_URL).trim() || DEFAULT_OPENAI_BASE_URL;
+  const baseUrl = normalizeOpenAiBaseUrl(rawBaseUrl);
+  const hostname = new URL(baseUrl).hostname;
+  const localLoopback = isLoopbackHost(hostname);
+
+  let apiKey = (process.env.OPENAI_API_KEY ?? "").trim();
+  if (!apiKey && localLoopback) {
+    // LM Studio and compatible local providers commonly ignore bearer validation.
+    apiKey = "lm-studio";
+  }
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required for non-local OPENAI_BASE_URL hosts");
+  }
+  return { apiKey, baseUrl };
 }
 
 export async function openaiChatCompletions(
@@ -49,7 +86,7 @@ export async function openaiChatCompletions(
   try {
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      response = await fetch(openAiPath(baseUrl, "/v1/chat/completions"), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -90,7 +127,7 @@ export async function openaiChatCompletionsStream(
   try {
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      response = await fetch(openAiPath(baseUrl, "/v1/chat/completions"), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -130,7 +167,7 @@ export async function openaiTextToSpeech(payload: {
   try {
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/v1/audio/speech`, {
+      response = await fetch(openAiPath(baseUrl, "/v1/audio/speech"), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,

@@ -2,6 +2,7 @@ import { groqChatCompletions, groqChatCompletionsStream } from "./groq.js";
 import { openaiChatCompletions, openaiChatCompletionsStream } from "./openai.js";
 
 export type LlmProvider = "openai" | "groq";
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 
 export class AiProviderError extends Error {
   code: string;
@@ -33,10 +34,27 @@ const normalizeProvider = (value: string | null | undefined): LlmProvider | null
   return null;
 };
 
+const isLoopbackHost = (hostname: string): boolean => {
+  const host = hostname.trim().toLowerCase();
+  if (!host) return false;
+  return LOOPBACK_HOSTS.has(host) || host.endsWith(".localhost");
+};
+
+const hasLocalOpenAiBaseConfigured = (): boolean => {
+  const rawBase = (process.env.OPENAI_BASE_URL ?? "").trim();
+  if (!rawBase) return false;
+  try {
+    const parsed = new URL(rawBase);
+    return isLoopbackHost(parsed.hostname);
+  } catch {
+    return false;
+  }
+};
+
 export const resolveProvider = (): LlmProvider => {
   const explicit = normalizeProvider(process.env.LLM_PROVIDER);
   if (explicit) return explicit;
-  if ((process.env.OPENAI_API_KEY ?? "").trim()) return "openai";
+  if ((process.env.OPENAI_API_KEY ?? "").trim() || hasLocalOpenAiBaseConfigured()) return "openai";
   if ((process.env.GROQ_API_KEY ?? "").trim()) return "groq";
   throw new Error("No LLM provider configured. Set OPENAI_API_KEY or GROQ_API_KEY.");
 };
@@ -68,10 +86,10 @@ export async function aiChatCompletionsStream(payload: unknown) {
 }
 
 function ensureOpenAiConfigured() {
-  if ((process.env.OPENAI_API_KEY ?? "").trim().length > 0) return;
+  if ((process.env.OPENAI_API_KEY ?? "").trim().length > 0 || hasLocalOpenAiBaseConfigured()) return;
   throw new AiProviderError(
     "openai_not_configured",
-    "OPENAI_API_KEY is not configured for Mythic runtime.",
+    "OPENAI_API_KEY is not configured for Mythic runtime (or OPENAI_BASE_URL is not local loopback).",
     503,
   );
 }

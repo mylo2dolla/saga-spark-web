@@ -3,7 +3,7 @@ import { z } from "zod";
 import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { assertCampaignAccess } from "../shared/authz.js";
-import { mythicOpenAIChatCompletionsStream } from "../shared/ai_provider.js";
+import { mythicOpenAIChatCompletions, mythicOpenAIChatCompletionsStream } from "../shared/ai_provider.js";
 import {
   enforceRateLimit,
   getIdempotentResponse,
@@ -42,6 +42,7 @@ import {
 } from "../lib/presentation/index.js";
 import { generateProceduralNarration } from "../dm/proceduralNarrator/index.js";
 import { buildAiVoicePromptTemplate, buildDmVoiceProfile } from "../dm/proceduralNarrator/voiceEngine.js";
+import { resolveDmNarratorMode } from "../dm/narration/mode.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
 const MessageSchema = z.object({
@@ -825,47 +826,96 @@ function streamOpenAiDelta(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-async function readModelStreamText(response: Response): Promise<string> {
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let out = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let splitIndex = buffer.indexOf("\n");
-    while (splitIndex >= 0) {
-      const rawLine = buffer.slice(0, splitIndex).replace(/\r$/, "");
-      buffer = buffer.slice(splitIndex + 1);
-      if (!rawLine.startsWith("data:")) {
-        splitIndex = buffer.indexOf("\n");
-        continue;
-      }
-      const payload = rawLine.slice(5).trim();
-      if (!payload || payload === "[DONE]") {
-        splitIndex = buffer.indexOf("\n");
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(payload) as Record<string, unknown>;
-        const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
-        const first = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : null;
-        const delta = first && typeof first.delta === "object" ? first.delta as Record<string, unknown> : null;
-        const message = first && typeof first.message === "object" ? first.message as Record<string, unknown> : null;
-        if (typeof delta?.content === "string") {
-          out += delta.content;
-        } else if (typeof message?.content === "string") {
-          out += message.content;
-        }
-      } catch {
-        // Ignore malformed event fragments.
-      }
-      splitIndex = buffer.indexOf("\n");
+function appendCompletionValue(value: unknown, sink: string[]) {
+  if (typeof value === "string") {
+    if (value.trim().length > 0) sink.push(value);
+    return;
+  }
+  if (!Array.isArray(value)) return;
+  for (const entry of value) {
+    if (typeof entry === "string") {
+      if (entry.trim().length > 0) sink.push(entry);
+      continue;
+    }
+    const row = asObject(entry);
+    if (!row) continue;
+    const text = row.text;
+    if (typeof text === "string" && text.trim().length > 0) {
+      sink.push(text);
+      continue;
+    }
+    const nested = row.content;
+    if (typeof nested === "string" && nested.trim().length > 0) {
+      sink.push(nested);
     }
   }
-  return out.trim();
+}
+
+function extractCompletionText(payload: unknown): string {
+  const root = asObject(payload);
+  if (!root) return "";
+  const out: string[] = [];
+
+  const choices = Array.isArray(root.choices) ? root.choices : [];
+  const firstChoice = asObject(choices[0]);
+  if (firstChoice) {
+    const delta = asObject(firstChoice.delta);
+    const message = asObject(firstChoice.message);
+    appendCompletionValue(delta?.content ?? null, out);
+    appendCompletionValue(message?.content ?? null, out);
+    appendCompletionValue(firstChoice.text ?? null, out);
+  }
+
+  appendCompletionValue(root.output_text ?? null, out);
+  const outputItems = Array.isArray(root.output) ? root.output : [];
+  const firstOutput = asObject(outputItems[0]);
+  if (firstOutput) {
+    appendCompletionValue(firstOutput.content ?? null, out);
+  }
+
+  return out.join("").trim();
+}
+
+function parseStreamDataLines(text: string): string {
+  const out: string[] = [];
+  const lines = text.split(/\r?\n/);
+  for (const rawLine of lines) {
+    if (!rawLine.startsWith("data:")) continue;
+    const payload = rawLine.slice(5).trim();
+    if (!payload || payload === "[DONE]") continue;
+    try {
+      const parsed = JSON.parse(payload);
+      const extracted = extractCompletionText(parsed);
+      if (extracted.length > 0) out.push(extracted);
+    } catch {
+      // Ignore malformed event fragments.
+    }
+  }
+  return out.join("").trim();
+}
+
+async function readModelStreamText(response: Response): Promise<string> {
+  const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+  const rawText = (await response.text()).trim();
+  if (!rawText) return "";
+
+  const looksLikeSse = contentType.includes("text/event-stream")
+    || rawText.startsWith("data:")
+    || rawText.includes("\ndata:");
+  if (looksLikeSse) {
+    const parsedSse = parseStreamDataLines(rawText);
+    if (parsedSse.length > 0) return parsedSse;
+  }
+
+  try {
+    const parsed = JSON.parse(rawText);
+    const extracted = extractCompletionText(parsed);
+    if (extracted.length > 0) return extracted;
+  } catch {
+    // Non-JSON payload (some local providers can return plain text).
+  }
+
+  return rawText;
 }
 
 function shortText(value: unknown, maxLen = MAX_TEXT_FIELD_LEN): string | null {
@@ -2132,9 +2182,36 @@ export const mythicDungeonMaster: FunctionHandler = {
       const actionContextRecord = actionContext && typeof actionContext === "object"
         ? actionContext as Record<string, unknown>
         : null;
+      const requestUrl = new URL(req.url);
+      const modeResolution = resolveDmNarratorMode({
+        envMode: config.dmNarratorMode,
+        headerMode: req.headers.get("x-dm-narrator-mode"),
+        queryMode: requestUrl.searchParams.get("dmNarrator"),
+        allowQueryOverride: config.allowDmNarratorQueryOverride,
+      });
+      const warnings: string[] = [...modeResolution.warnings];
       const actionContextNarratorMode = normalizeNarratorModeToken(actionContextRecord?.narrator_mode);
       const bodyNarratorMode = normalizeNarratorModeToken(narratorMode);
-      const requestedNarratorMode = actionContextNarratorMode ?? bodyNarratorMode ?? config.dmNarratorMode;
+      if (actionContextRecord?.narrator_mode && !actionContextNarratorMode) {
+        warnings.push(`invalid_action_context_mode:${String(actionContextRecord.narrator_mode).trim()}`);
+      }
+
+      let requestedNarratorMode: "ai" | "procedural" | "hybrid" = modeResolution.mode;
+      let requestedNarratorModeSource: "query" | "header" | "body" | "action_context" | "env" | "default" = modeResolution.source;
+
+      if (actionContextNarratorMode) {
+        requestedNarratorMode = actionContextNarratorMode;
+        requestedNarratorModeSource = "action_context";
+      }
+      if (bodyNarratorMode) {
+        requestedNarratorMode = bodyNarratorMode;
+        requestedNarratorModeSource = "body";
+      }
+      if (modeResolution.source === "header" || modeResolution.source === "query") {
+        requestedNarratorMode = modeResolution.mode;
+        requestedNarratorModeSource = modeResolution.source;
+      }
+
       const idempotencyHeader = idempotencyKeyFromRequest(req);
       const idempotencyKey = idempotencyHeader ? `${user.userId}:${idempotencyHeader}` : null;
       if (idempotencyKey) {
@@ -2151,8 +2228,6 @@ export const mythicDungeonMaster: FunctionHandler = {
       const svc = createServiceClient();
 
       await assertCampaignAccess(svc, campaignId, user.userId);
-
-      const warnings: string[] = [];
 
       // Turn context: compute next turn index and a deterministic seed up-front.
       const { data: latestTurn, error: latestTurnErr } = await svc
@@ -2720,6 +2795,7 @@ ${jsonOnlyContract()}
         world_prompt_trimmed: worldPromptBlock.meta.trimmed,
         prompt_chars: systemPrompt.length,
         narrator_mode: requestedNarratorMode,
+        narrator_mode_source: requestedNarratorModeSource,
       });
       ctx.log.info("dm.intro.mode", {
         request_id: ctx.requestId,
@@ -2741,6 +2817,8 @@ ${jsonOnlyContract()}
       let dmRecoveryReason: string | null = null;
       let dmFastRecovery = false;
       let dmNarratorSource: "ai" | "procedural" = requestedNarratorMode === "procedural" ? "procedural" : "ai";
+      let dmAiModel: string | null = requestedNarratorMode === "procedural" ? null : requestedModel;
+      let dmAiTransport: "stream" | "json_fallback" | null = null;
       let proceduralError: string | null = null;
       let introCleared = false;
       const actionBoardType = (() => {
@@ -3031,15 +3109,70 @@ ${jsonOnlyContract()}
           ];
         })();
 
-          const { response, model } = await mythicOpenAIChatCompletionsStream(
-            {
-              messages: attemptMessages,
-              stream: true,
-              temperature: 0.55,
-            },
-            requestedModel,
-          );
-          dmText = await readModelStreamText(response);
+          let model = requestedModel;
+          try {
+            const { response, model: streamModel } = await mythicOpenAIChatCompletionsStream(
+              {
+                messages: attemptMessages,
+                stream: true,
+                temperature: 0.55,
+              },
+              requestedModel,
+            );
+            model = streamModel;
+            dmText = await readModelStreamText(response);
+            dmAiTransport = "stream";
+
+            if (!dmText) {
+              const { data, model: fallbackModel } = await mythicOpenAIChatCompletions(
+                {
+                  messages: attemptMessages,
+                  temperature: 0.55,
+                },
+                requestedModel,
+              );
+              model = fallbackModel;
+              dmText = extractCompletionText(data);
+              dmAiTransport = "json_fallback";
+            }
+
+            if (!dmText) {
+              throw new Error("LLM response did not include narration text.");
+            }
+          } catch (streamError) {
+            try {
+              const { data, model: fallbackModel } = await mythicOpenAIChatCompletions(
+                {
+                  messages: attemptMessages,
+                  temperature: 0.55,
+                },
+                requestedModel,
+              );
+              model = fallbackModel;
+              dmText = extractCompletionText(data);
+              dmAiTransport = "json_fallback";
+              if (!dmText) {
+                throw new Error("LLM response did not include narration text.");
+              }
+            } catch (error) {
+              const aiErrorMessage = errMessage(error, errMessage(streamError, "ai_request_failed"));
+              ctx.log.warn("dm.request.ai_failed", {
+                request_id: ctx.requestId,
+                campaign_id: campaignId,
+                attempt,
+                narrator_mode: requestedNarratorMode,
+                error: aiErrorMessage,
+              });
+              if (requestedNarratorMode === "hybrid") {
+                lastErrors = [`ai_request_failed:${aiErrorMessage.slice(0, 220)}`];
+                dmParsed = { ok: false, errors: lastErrors };
+                dmFastRecovery = true;
+                break;
+              }
+              throw error;
+            }
+          }
+          dmAiModel = model;
 
           const parsedOut = parseDmNarratorOutput(dmText);
           if (!parsedOut.ok) {
@@ -3336,6 +3469,7 @@ ${jsonOnlyContract()}
         turn_seed: turnSeed.toString(),
         model: requestedModel,
         narrator_mode: requestedNarratorMode,
+        narrator_mode_source: requestedNarratorModeSource,
         messages,
         actionContext: actionContextRecord ?? null,
         warnings,
@@ -3354,9 +3488,11 @@ ${jsonOnlyContract()}
           dm_recovery_used: dmRecoveryUsed,
           dm_recovery_reason: dmRecoveryReason,
           dm_narrator_mode: requestedNarratorMode,
+          dm_narrator_mode_source: requestedNarratorModeSource,
           dm_narrator_source: dmNarratorSource,
           dm_procedural_error: proceduralError,
-          dm_ai_model: dmNarratorSource === "ai" ? requestedModel : null,
+          dm_ai_model: dmNarratorSource === "ai" ? dmAiModel : null,
+          dm_ai_transport: dmNarratorSource === "ai" ? dmAiTransport : null,
           dm_intro_mode: introMode,
           dm_intro_pending_before: introPendingBefore,
           dm_intro_cleared: introCleared,
@@ -3474,9 +3610,11 @@ ${jsonOnlyContract()}
         dm_recovery_used: dmRecoveryUsed,
         dm_recovery_reason: dmRecoveryReason,
         dm_narrator_mode: requestedNarratorMode,
+        dm_narrator_mode_source: requestedNarratorModeSource,
         dm_narrator_source: dmNarratorSource,
         dm_procedural_error: proceduralError,
-        dm_ai_model: dmNarratorSource === "ai" ? requestedModel : null,
+        dm_ai_model: dmNarratorSource === "ai" ? dmAiModel : null,
+        dm_ai_transport: dmNarratorSource === "ai" ? dmAiTransport : null,
         dm_intro_mode: introMode,
         dm_intro_pending_before: introPendingBefore,
         dm_intro_cleared: introCleared,
@@ -3502,6 +3640,8 @@ ${jsonOnlyContract()}
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "x-request-id": ctx.requestId,
+          "x-dm-narrator-mode": requestedNarratorMode,
+          "x-dm-narrator-source": dmNarratorSource,
         },
       });
       if (idempotencyKey) {

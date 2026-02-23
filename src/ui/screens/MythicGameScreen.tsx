@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,10 +36,11 @@ import { DmOverlayBar } from "@/ui/components/mythic/DmOverlayBar";
 import { DmTranscriptDrawer } from "@/ui/components/mythic/DmTranscriptDrawer";
 import { MythicCommandBar } from "@/ui/components/mythic/MythicCommandBar";
 import { ShopDialog } from "@/ui/components/mythic/ShopDialog";
-import { SettingsPanel, type MythicRuntimeSettings } from "@/ui/components/mythic/SettingsPanel";
+import { SettingsPanel, type MythicBoardRendererMode, type MythicRuntimeSettings } from "@/ui/components/mythic/SettingsPanel";
 import { actionSignature as boardActionSignature } from "@/ui/components/mythic/board2/actionBuilders";
 import { buildNarrativeBoardScene } from "@/ui/components/mythic/board2/adapters";
 import { NarrativeBoardPage } from "@/ui/components/mythic/board2/NarrativeBoardPage";
+import type { NarrativeBoardRendererDiagnostics } from "@/ui/components/mythic/board2/NarrativeBoardViewport";
 import type { CombatPaceStateModel, CombatRewardSummaryModel } from "@/ui/components/mythic/board2/types";
 import { CharacterSheetSurface } from "@/ui/components/mythic/character2/CharacterSheetSurface";
 import { buildCharacterProfilePatch, buildCharacterSheetViewModel } from "@/ui/components/mythic/character2/adapters";
@@ -52,12 +53,73 @@ import type {
 type MythicPanelTab = "status" | "skills" | "combat" | "quests" | "companions" | "shop";
 type MythicUtilityTab = "panels" | "settings" | "logs" | "diagnostics";
 const MYTHIC_SETTINGS_STORAGE_KEY = "mythic:settings:v1";
+const PIXI_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MYTHIC_SETTINGS: MythicRuntimeSettings = {
   compactNarration: true,
   animationIntensity: "normal",
   chatAutoFollow: true,
   narratorMode: "hybrid",
 };
+
+interface BoardRuntimeFault {
+  signature: string;
+  message: string;
+  atMs: number;
+  requestedRenderer: "dom" | "pixi";
+  activeRenderer: "dom" | "pixi";
+}
+
+interface BoardErrorBoundaryProps {
+  resetKey: string;
+  onError: (error: Error, info: ErrorInfo) => void;
+  children: ReactNode;
+}
+
+interface BoardErrorBoundaryState {
+  hasError: boolean;
+  message: string | null;
+}
+
+class BoardErrorBoundary extends Component<BoardErrorBoundaryProps, BoardErrorBoundaryState> {
+  state: BoardErrorBoundaryState = {
+    hasError: false,
+    message: null,
+  };
+
+  static getDerivedStateFromError(error: Error): BoardErrorBoundaryState {
+    return {
+      hasError: true,
+      message: error.message || "Board renderer crashed",
+    };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    this.props.onError(error, info);
+  }
+
+  componentDidUpdate(previousProps: BoardErrorBoundaryProps) {
+    if (previousProps.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false, message: null });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div
+          data-testid="board-render-crash-fallback"
+          className="flex h-full min-h-[280px] w-full items-center justify-center rounded-lg border border-amber-200/30 bg-black/45 p-4 text-center"
+        >
+          <div className="space-y-1 text-xs text-amber-100/85">
+            <div className="font-semibold">Board renderer recovered to compatibility mode.</div>
+            <div className="text-amber-100/70">{this.state.message ?? "Renderer fault."}</div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function summarizeBoardHooks(state: unknown): Array<{ id: string; title: string; detail: string | null }> {
   const payload = state && typeof state === "object" ? (state as Record<string, unknown>) : {};
@@ -802,6 +864,9 @@ export default function MythicGameScreen() {
   const [commandBarFocused, setCommandBarFocused] = useState(false);
   const devSurfaces = useMythicDevSurfaces();
   const boardRenderer = useMythicBoardRenderer(user?.email ?? null);
+  const [boardRendererDiagnostics, setBoardRendererDiagnostics] = useState<NarrativeBoardRendererDiagnostics | null>(null);
+  const [boardRuntimeFault, setBoardRuntimeFault] = useState<BoardRuntimeFault | null>(null);
+  const lastBoardFaultSignatureRef = useRef<string | null>(null);
   const [focusedCombatantId, setFocusedCombatantId] = useState<string | null>(null);
   const [runtimeSettings, setRuntimeSettings] = useState<MythicRuntimeSettings>(() => loadMythicSettings());
   const [characterSheetOpen, setCharacterSheetOpen] = useState(false);
@@ -831,6 +896,83 @@ export default function MythicGameScreen() {
     if (mythicDm.narratorMode === runtimeSettings.narratorMode) return;
     mythicDm.setNarratorMode(runtimeSettings.narratorMode);
   }, [mythicDm.narratorMode, mythicDm.setNarratorMode, runtimeSettings.narratorMode]);
+
+  const boardRendererMode = useMemo<MythicBoardRendererMode>(
+    () => (boardRenderer.override ?? "auto"),
+    [boardRenderer.override],
+  );
+
+  const recordBoardRuntimeFault = useCallback((fault: BoardRuntimeFault) => {
+    setBoardRuntimeFault(fault);
+    if (lastBoardFaultSignatureRef.current === fault.signature) return;
+    lastBoardFaultSignatureRef.current = fault.signature;
+    toast.error("Board renderer fault recovered in compatibility mode.");
+  }, []);
+
+  const applyBoardDomRecovery = useCallback((fault: BoardRuntimeFault) => {
+    recordBoardRuntimeFault(fault);
+    boardRenderer.markPixiRuntimeFailure(PIXI_RECOVERY_TTL_MS);
+    if (boardRenderer.override === "pixi") {
+      boardRenderer.setRenderer("dom");
+      return;
+    }
+    if (boardRenderer.override !== "dom") {
+      boardRenderer.setRenderer(null);
+    }
+  }, [boardRenderer, recordBoardRuntimeFault]);
+
+  const handleRendererDiagnostics = useCallback((diagnostics: NarrativeBoardRendererDiagnostics) => {
+    setBoardRendererDiagnostics(diagnostics);
+  }, []);
+
+  const handleRendererFallback = useCallback((diagnostics: NarrativeBoardRendererDiagnostics) => {
+    if (diagnostics.requestedRenderer !== "pixi") return;
+    applyBoardDomRecovery({
+      signature: diagnostics.failureSignature ?? "pixi_runtime_fallback",
+      message: diagnostics.failureMessage ?? "Pixi runtime failure",
+      atMs: Date.now(),
+      requestedRenderer: diagnostics.requestedRenderer,
+      activeRenderer: diagnostics.activeRenderer,
+    });
+  }, [applyBoardDomRecovery]);
+
+  const handleBoardBoundaryError = useCallback((error: Error, info: ErrorInfo) => {
+    if (boardRenderer.effective === "pixi") {
+      applyBoardDomRecovery({
+        signature: `boundary:${error.name || "error"}`,
+        message: error.message || "Board component crashed",
+        atMs: Date.now(),
+        requestedRenderer: "pixi",
+        activeRenderer: "dom",
+      });
+      screenLogger.warn("board.renderer.boundary", {
+        campaign_id: campaignId,
+        error: error.message,
+        component_stack: info.componentStack?.slice(0, 500) ?? null,
+      });
+      return;
+    }
+    screenLogger.warn("board.renderer.boundary.dom", {
+      campaign_id: campaignId,
+      error: error.message,
+      component_stack: info.componentStack?.slice(0, 500) ?? null,
+    });
+  }, [applyBoardDomRecovery, boardRenderer.effective, campaignId]);
+
+  const handleBoardRendererModeChange = useCallback((mode: MythicBoardRendererMode) => {
+    if (mode === "auto") {
+      boardRenderer.setRenderer(null);
+      return;
+    }
+    if (mode === "pixi") {
+      boardRenderer.clearPixiRuntimeFailure();
+      lastBoardFaultSignatureRef.current = null;
+      setBoardRuntimeFault(null);
+    }
+    boardRenderer.setRenderer(mode);
+  }, [boardRenderer]);
+
+  const boardBoundaryResetKey = `${campaignId}:${boardRenderer.effective}:${boardRenderer.pixiRecoveryActive ? "recovery" : "live"}`;
 
   const baseProfileDraft = useMemo(
     () => (character ? profileDraftFromCharacter(character) : null),
@@ -3336,24 +3478,28 @@ export default function MythicGameScreen() {
               </div>
 
               <div className="absolute inset-0 z-10">
-                <NarrativeBoardPage
-                  scene={boardScene}
-                  renderer={boardRenderer.effective}
-                  fastMode={runtimeSettings.animationIntensity === "low"}
-                  topSafeInsetPx={56}
-                  bottomSafeInsetPx={108}
-                  baseActions={boardStripBaseActions}
-                  isBusy={isBoardBusy}
-                  isStateRefreshing={isStateRefreshing}
-                  transitionError={transitionError}
-                  combatStartError={combatStartError}
-                  dmContextError={mythicDmContext.error}
-                  showDevDetails={devSurfaces.enabled}
-                  onRetryCombatStart={() => void retryCombatStart()}
-                  onQuickCast={(skillId, targeting) => void triggerQuickCast(skillId, targeting)}
-                  onContinueCombatResolution={() => void continueAfterCombatResolution()}
-                  onAction={(action, source) => triggerConsoleAction(action, source === "board_hotspot" ? "board_hotspot" : "console_action")}
-                />
+                <BoardErrorBoundary resetKey={boardBoundaryResetKey} onError={handleBoardBoundaryError}>
+                  <NarrativeBoardPage
+                    scene={boardScene}
+                    renderer={boardRenderer.effective}
+                    fastMode={runtimeSettings.animationIntensity === "low"}
+                    topSafeInsetPx={56}
+                    bottomSafeInsetPx={108}
+                    baseActions={boardStripBaseActions}
+                    isBusy={isBoardBusy}
+                    isStateRefreshing={isStateRefreshing}
+                    transitionError={transitionError}
+                    combatStartError={combatStartError}
+                    dmContextError={mythicDmContext.error}
+                    showDevDetails={devSurfaces.enabled}
+                    onRendererDiagnostics={handleRendererDiagnostics}
+                    onRendererFallback={handleRendererFallback}
+                    onRetryCombatStart={() => void retryCombatStart()}
+                    onQuickCast={(skillId, targeting) => void triggerQuickCast(skillId, targeting)}
+                    onContinueCombatResolution={() => void continueAfterCombatResolution()}
+                    onAction={(action, source) => triggerConsoleAction(action, source === "board_hotspot" ? "board_hotspot" : "console_action")}
+                  />
+                </BoardErrorBoundary>
               </div>
 
               <div className="absolute inset-x-2 bottom-2 z-40">
@@ -3478,6 +3624,10 @@ export default function MythicGameScreen() {
                   narratorMode={runtimeSettings.narratorMode}
                   onNarratorModeChange={(mode) =>
                     setRuntimeSettings((prev) => ({ ...prev, narratorMode: mode }))}
+                  boardRendererMode={boardRendererMode}
+                  boardRendererEffective={boardRenderer.effective}
+                  boardRendererRecoveryActive={boardRenderer.pixiRecoveryActive}
+                  onBoardRendererModeChange={handleBoardRendererModeChange}
                 />
 
                 {devSurfaces.allowed ? (
@@ -3550,6 +3700,15 @@ export default function MythicGameScreen() {
                 <div>dm_narrator_source: {mythicDm.lastResponseMeta?.narratorSource ?? "none"}</div>
                 <div>narrated_action_busy: {isNarratedActionBusy ? "true" : "false"}</div>
                 <div>state_refreshing: {isStateRefreshing ? "true" : "false"}</div>
+                <div>board_renderer_mode: {boardRendererMode}</div>
+                <div>board_renderer_override: {boardRenderer.override ?? "none"}</div>
+                <div>board_renderer_effective: {boardRenderer.effective}</div>
+                <div>board_renderer_recovery_active: {boardRenderer.pixiRecoveryActive ? "true" : "false"}</div>
+                <div>board_renderer_requested: {boardRendererDiagnostics?.requestedRenderer ?? "none"}</div>
+                <div>board_renderer_active: {boardRendererDiagnostics?.activeRenderer ?? "none"}</div>
+                <div>board_renderer_fallback_active: {boardRendererDiagnostics?.fallbackActive ? "true" : "false"}</div>
+                <div>board_renderer_failure_signature: {boardRendererDiagnostics?.failureSignature ?? "none"}</div>
+                <div>board_runtime_fault_signature: {boardRuntimeFault?.signature ?? "none"}</div>
                 <div>board_id: {board.id}</div>
                 <div>combat_session_id: {combatSessionId ?? "none"}</div>
                 <div>active_panel: {activePanel}</div>
@@ -3565,6 +3724,7 @@ export default function MythicGameScreen() {
                 {transitionError ? <div className="mt-2 text-destructive">transition_error: {transitionError}</div> : null}
                 {actionError ? <div className="mt-1 text-destructive">action_error: {actionError}</div> : null}
                 {mythicDmContext.error ? <div className="mt-1 text-amber-200">dm_context_error: {mythicDmContext.error}</div> : null}
+                {boardRuntimeFault ? <div className="mt-1 text-amber-200">board_runtime_fault: {boardRuntimeFault.message}</div> : null}
               </div>
             ) : null}
           </div>

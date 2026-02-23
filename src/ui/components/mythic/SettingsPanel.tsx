@@ -11,6 +11,7 @@ import {
 
 export type MythicAnimationIntensity = "low" | "normal" | "high";
 export type MythicNarratorMode = "ai" | "procedural" | "hybrid";
+export type MythicBoardRendererMode = "auto" | "pixi" | "dom";
 
 export interface MythicRuntimeSettings {
   compactNarration: boolean;
@@ -32,6 +33,10 @@ interface SettingsPanelProps {
   onStopVoice: () => void;
   narratorMode: MythicNarratorMode;
   onNarratorModeChange: (mode: MythicNarratorMode) => void;
+  boardRendererMode: MythicBoardRendererMode;
+  boardRendererEffective: "dom" | "pixi";
+  boardRendererRecoveryActive: boolean;
+  onBoardRendererModeChange: (mode: MythicBoardRendererMode) => void;
 }
 
 const INTENSITY_TO_STEP: Record<MythicAnimationIntensity, number> = {
@@ -139,6 +144,31 @@ export function SettingsPanel(props: SettingsPanelProps) {
             }}
           />
         </div>
+      </div>
+
+      <div className="rounded-lg border border-border bg-background/30 p-3">
+        <div className="mb-2 text-sm font-semibold">Board Renderer</div>
+        <div className="grid max-w-[220px] gap-1 text-xs">
+          <span className="text-muted-foreground">Renderer mode</span>
+          <Select value={props.boardRendererMode} onValueChange={(value) => props.onBoardRendererModeChange(value as MythicBoardRendererMode)}>
+            <SelectTrigger className="h-8 border-amber-200/20 bg-background/30 text-xs">
+              <SelectValue placeholder="Choose renderer mode" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto (Recommended)</SelectItem>
+              <SelectItem value="dom">DOM (Compatibility)</SelectItem>
+              <SelectItem value="pixi">Pixi (High Fidelity)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="mt-2 text-xs text-muted-foreground">
+          Active renderer: <span className="font-medium uppercase">{props.boardRendererEffective}</span>
+        </div>
+        {props.boardRendererRecoveryActive ? (
+          <div className="mt-1 text-xs text-amber-200">
+            Pixi recently faulted. Auto mode is temporarily pinned to DOM recovery.
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-lg border border-border bg-background/30 p-3">

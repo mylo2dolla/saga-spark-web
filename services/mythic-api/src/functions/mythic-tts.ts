@@ -63,13 +63,6 @@ export const mythicTts: FunctionHandler = {
         });
       }
 
-      if ((process.env.OPENAI_API_KEY ?? "").trim().length === 0) {
-        return new Response(JSON.stringify({ error: "OPENAI_API_KEY is not configured for Mythic voice.", code: "openai_not_configured", requestId: ctx.requestId }), {
-          status: 503,
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-
       const svc = createServiceClient();
       await assertCampaignAccess(svc, campaignId, user.userId);
 
@@ -119,14 +112,21 @@ export const mythicTts: FunctionHandler = {
         });
       }
       const normalized = sanitizeError(error);
+      const message = normalized.message || "Failed to generate narration audio";
+      const lower = message.toLowerCase();
+      const ttsUnsupported = lower.includes("openai tts error 404")
+        || lower.includes("openai tts error 405")
+        || lower.includes("openai tts error 501")
+        || lower.includes("audio/speech")
+        || lower.includes("not found");
       ctx.log.error("tts.request.failed", { request_id: ctx.requestId, error: normalized.message, code: normalized.code });
       return new Response(
         JSON.stringify({
-          error: normalized.message || "Failed to generate narration audio",
-          code: normalized.code ?? "openai_request_failed",
+          error: message,
+          code: ttsUnsupported ? "tts_not_supported" : (normalized.code ?? "openai_request_failed"),
           requestId: ctx.requestId,
         }),
-        { status: 502, headers: { "Content-Type": "application/json" } },
+        { status: ttsUnsupported ? 501 : 502, headers: { "Content-Type": "application/json" } },
       );
     }
   },
