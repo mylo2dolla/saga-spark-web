@@ -188,7 +188,9 @@ export default function ServerAdminScreen() {
         runtime: {
           functions_base_url:
             import.meta.env.VITE_MYTHIC_FUNCTIONS_BASE_URL
+            ?? import.meta.env.VITE_TAILSCALE_FUNCTIONS_BASE_URL
             ?? import.meta.env.NEXT_PUBLIC_MYTHIC_FUNCTIONS_BASE_URL
+            ?? import.meta.env.NEXT_PUBLIC_TAILSCALE_FUNCTIONS_BASE_URL
             ?? null,
           supabase_url:
             import.meta.env.VITE_SUPABASE_URL

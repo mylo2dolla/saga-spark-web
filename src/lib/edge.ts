@@ -30,9 +30,12 @@ interface AuthContext {
 
 const logger = createLogger("edge");
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.NEXT_PUBLIC_SUPABASE_URL;
+const FUNCTIONS_BASE_URL_ENV_HINT = "VITE_MYTHIC_FUNCTIONS_BASE_URL (or VITE_TAILSCALE_FUNCTIONS_BASE_URL)";
 const RAW_FUNCTIONS_BASE_URL = (
   import.meta.env.VITE_MYTHIC_FUNCTIONS_BASE_URL
+  ?? import.meta.env.VITE_TAILSCALE_FUNCTIONS_BASE_URL
   ?? import.meta.env.NEXT_PUBLIC_MYTHIC_FUNCTIONS_BASE_URL
+  ?? import.meta.env.NEXT_PUBLIC_TAILSCALE_FUNCTIONS_BASE_URL
   ?? ""
 ).trim();
 const FUNCTIONS_BASE_URL = RAW_FUNCTIONS_BASE_URL.replace(/\/+$/, "");
@@ -100,7 +103,7 @@ const normalizeIdempotencyKey = (value?: string): string | null => {
 const ensureEnv = () => {
   if (!SUPABASE_URL || !SUPABASE_API_KEY || !FUNCTIONS_BASE_URL) {
     throw new Error(
-      "Missing required env. Set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY), and VITE_MYTHIC_FUNCTIONS_BASE_URL.",
+      `Missing required env. Set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (or VITE_SUPABASE_PUBLISHABLE_KEY), and ${FUNCTIONS_BASE_URL_ENV_HINT}.`,
     );
   }
 
@@ -108,14 +111,14 @@ const ensureEnv = () => {
     const url = new URL(FUNCTIONS_BASE_URL);
     if (url.hostname.endsWith(".supabase.co")) {
       throw new Error(
-        "VITE_MYTHIC_FUNCTIONS_BASE_URL must point to your VM runtime, not Supabase Edge Functions.",
+        `${FUNCTIONS_BASE_URL_ENV_HINT} must point to your VM runtime, not Supabase Edge Functions.`,
       );
     }
   } catch (error) {
     if (error instanceof Error && error.message.includes("must point to your VM runtime")) {
       throw error;
     }
-    throw new Error("VITE_MYTHIC_FUNCTIONS_BASE_URL must be a valid absolute URL.");
+    throw new Error(`${FUNCTIONS_BASE_URL_ENV_HINT} must be a valid absolute URL.`);
   }
 };
 

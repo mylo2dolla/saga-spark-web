@@ -7,7 +7,7 @@ const PIXI_CANARY_EMAILS = String(import.meta.env.VITE_MYTHIC_PIXI_CANARY_EMAILS
   .map((entry) => entry.trim().toLowerCase())
   .filter((entry) => entry.length > 0);
 const BOARD_RENDERER_DEFAULT = (() => {
-  const env = String(import.meta.env.VITE_MYTHIC_BOARD_RENDERER_DEFAULT ?? "pixi")
+  const env = String(import.meta.env.VITE_MYTHIC_BOARD_RENDERER_DEFAULT ?? "dom")
     .trim()
     .toLowerCase();
   return env === "pixi" ? "pixi" : "dom";

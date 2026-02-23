@@ -1,5 +1,9 @@
 import { groqChatCompletions, groqChatCompletionsStream } from "./groq.ts";
-import { openaiChatCompletions, openaiChatCompletionsStream } from "./openai.ts";
+import {
+  isOpenAiRuntimeConfigured,
+  openaiChatCompletions,
+  openaiChatCompletionsStream,
+} from "./openai.ts";
 
 export type LlmProvider = "openai" | "groq";
 
@@ -12,10 +16,21 @@ const normalizeProvider = (value: string | null | undefined): LlmProvider | null
 
 export const resolveProvider = (): LlmProvider => {
   const explicit = normalizeProvider(Deno.env.get("LLM_PROVIDER"));
-  if (explicit) return explicit;
-  if (Deno.env.get("OPENAI_API_KEY")) return "openai";
+  if (explicit === "openai") {
+    if (!isOpenAiRuntimeConfigured()) {
+      throw new Error(
+        "LLM_PROVIDER=openai is set, but OpenAI runtime is not configured. Set OPENAI_API_KEY for api.openai.com or set OPENAI_BASE_URL to a reachable OpenAI-compatible endpoint.",
+      );
+    }
+    return "openai";
+  }
+  if (explicit === "groq") return "groq";
+
+  if (isOpenAiRuntimeConfigured()) return "openai";
   if (Deno.env.get("GROQ_API_KEY")) return "groq";
-  throw new Error("No LLM provider configured. Set OPENAI_API_KEY or GROQ_API_KEY.");
+  throw new Error(
+    "No LLM provider configured. Set OPENAI_API_KEY (or OPENAI_BASE_URL for a local/Tailscale OpenAI-compatible endpoint) or GROQ_API_KEY.",
+  );
 };
 
 export const resolveModel = (defaults: { openai: string; groq: string }): string => {

@@ -6,6 +6,16 @@ function splitCsv(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com";
+
+function readFirstSet(keys: string[]): string | null {
+  for (const key of keys) {
+    const value = (process.env[key] ?? "").trim();
+    if (value.length > 0) return value;
+  }
+  return null;
+}
+
 export type DmNarratorMode = "ai" | "procedural" | "hybrid";
 
 function parseDmNarratorMode(value: string | undefined): DmNarratorMode | null {
@@ -54,8 +64,13 @@ export function getConfig(): MythicApiConfig {
 
   const mythicTurnSalt = (process.env.MYTHIC_TURN_SALT ?? "").trim();
   const dmNarratorMode = parseDmNarratorMode(process.env.DM_NARRATOR_MODE) ?? "hybrid";
-  const openaiApiKey = (process.env.OPENAI_API_KEY ?? "").trim() || null;
-  const openaiBaseUrl = (process.env.OPENAI_BASE_URL ?? "https://api.openai.com").trim();
+  const openaiApiKey = readFirstSet(["OPENAI_API_KEY", "TAILSCALE_OPENAI_API_KEY", "LLM_API_KEY"]);
+  const openaiBaseUrl = readFirstSet([
+    "OPENAI_BASE_URL",
+    "TAILSCALE_OPENAI_BASE_URL",
+    "TAILSCALE_AI_BASE_URL",
+    "LLM_BASE_URL",
+  ]) ?? DEFAULT_OPENAI_BASE_URL;
 
   return {
     port: Number.isFinite(port) ? port : 3001,

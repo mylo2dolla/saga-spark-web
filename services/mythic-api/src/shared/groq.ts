@@ -1,13 +1,35 @@
 const DEFAULT_GROQ_BASE_URL = "https://api.groq.com/openai";
 const DEFAULT_GROQ_TIMEOUT_MS = 25_000;
 
+function normalizeGroqBaseUrl(raw: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("GROQ_BASE_URL must be a valid absolute URL");
+  }
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString().replace(/\/+$/, "");
+}
+
+function buildGroqEndpointUrl(baseUrl: string, endpointPath: string): string {
+  const parsed = new URL(baseUrl);
+  const rawPath = parsed.pathname.replace(/\/+$/, "");
+  const versionedBasePath = rawPath.endsWith("/v1") ? rawPath : `${rawPath || ""}/v1`;
+  const normalizedBasePath = versionedBasePath.startsWith("/") ? versionedBasePath : `/${versionedBasePath}`;
+  const normalizedEndpoint = endpointPath.replace(/^\/+/, "");
+  parsed.pathname = `${normalizedBasePath}/${normalizedEndpoint}`.replace(/\/{2,}/g, "/");
+  return parsed.toString();
+}
+
 function getGroqConfig() {
   const apiKey = (process.env.GROQ_API_KEY ?? "").trim();
   if (!apiKey) {
     throw new Error("GROQ_API_KEY is not configured");
   }
-  const baseUrl = (process.env.GROQ_BASE_URL ?? DEFAULT_GROQ_BASE_URL).trim() || DEFAULT_GROQ_BASE_URL;
-  return { apiKey, baseUrl: baseUrl.replace(/\/$/, "") };
+  const rawBaseUrl = (process.env.GROQ_BASE_URL ?? DEFAULT_GROQ_BASE_URL).trim() || DEFAULT_GROQ_BASE_URL;
+  return { apiKey, baseUrl: normalizeGroqBaseUrl(rawBaseUrl) };
 }
 
 function withTimeout(timeoutMs: number) {
@@ -39,7 +61,7 @@ export async function groqChatCompletions(payload: unknown) {
   try {
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      response = await fetch(buildGroqEndpointUrl(baseUrl, "chat/completions"), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -74,7 +96,7 @@ export async function groqChatCompletionsStream(payload: unknown) {
   try {
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/v1/chat/completions`, {
+      response = await fetch(buildGroqEndpointUrl(baseUrl, "chat/completions"), {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,

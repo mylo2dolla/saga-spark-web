@@ -17,7 +17,7 @@ export default function MythicCharacterScreen() {
   const { toast } = useToast();
   const { setLastError } = useDiagnostics();
   const { user, isLoading: authLoading } = useAuth();
-  const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
+  const E2E_BYPASS_AUTH = import.meta.env.DEV && import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 
   const [showCreator, setShowCreator] = useState(false);
   const [lastAction, setLastAction] = useState<string | null>(null);

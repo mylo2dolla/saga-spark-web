@@ -19,6 +19,21 @@ function isLocalDevOrigin(origin: string): boolean {
   }
 }
 
+function isAllowedOrigin(origin: string, allowedOrigins: string[]): boolean {
+  const normalizedOrigin = origin.trim().toLowerCase();
+  return allowedOrigins.some((allowed) => {
+    const normalizedAllowed = allowed.trim().toLowerCase();
+    if (!normalizedAllowed) return false;
+    if (!normalizedAllowed.includes("*")) {
+      return normalizedOrigin === normalizedAllowed;
+    }
+    const regexSource = normalizedAllowed
+      .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*/g, ".*");
+    return new RegExp(`^${regexSource}$`).test(normalizedOrigin);
+  });
+}
+
 export async function buildApp() {
   const config = getConfig();
 
@@ -51,7 +66,7 @@ export async function buildApp() {
       if (!origin) return cb(null, true);
       if (isLocalDevOrigin(origin)) return cb(null, true);
       if (config.allowedOrigins.length === 0) return cb(null, true);
-      cb(null, config.allowedOrigins.includes(origin));
+      cb(null, isAllowedOrigin(origin, config.allowedOrigins));
     },
     methods: ["POST", "OPTIONS"],
     allowedHeaders: [

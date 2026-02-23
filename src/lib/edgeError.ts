@@ -84,7 +84,7 @@ export function toFriendlyEdgeError(error: unknown, fallback = "Request failed")
     return {
       ...parsed,
       title: "Network/CORS blocked",
-      description: "Browser could not reach the VM API. Check VITE_MYTHIC_FUNCTIONS_BASE_URL, VM availability, and allowed CORS origins.",
+      description: "Browser could not reach the VM API. Check VITE_MYTHIC_FUNCTIONS_BASE_URL (or VITE_TAILSCALE_FUNCTIONS_BASE_URL), VM availability, and allowed CORS origins.",
       code: parsed.code ?? "network_unreachable",
     };
   }
@@ -93,7 +93,7 @@ export function toFriendlyEdgeError(error: unknown, fallback = "Request failed")
     return {
       ...parsed,
       title: "Functions API unreachable",
-      description: "Could not reach the VM functions API. Check VITE_MYTHIC_FUNCTIONS_BASE_URL and VM/Caddy health.",
+      description: "Could not reach the VM functions API. Check VITE_MYTHIC_FUNCTIONS_BASE_URL (or VITE_TAILSCALE_FUNCTIONS_BASE_URL) and VM/Caddy health.",
     };
   }
 

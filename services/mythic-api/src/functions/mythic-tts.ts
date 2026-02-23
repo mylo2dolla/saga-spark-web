@@ -4,7 +4,7 @@ import { createServiceClient } from "../shared/supabase.js";
 import { AuthError, requireUser } from "../shared/auth.js";
 import { AuthzError, assertCampaignAccess } from "../shared/authz.js";
 import { enforceRateLimit } from "../shared/request_guard.js";
-import { openaiTextToSpeech } from "../shared/openai.js";
+import { isOpenAiRuntimeConfigured, openaiTextToSpeech } from "../shared/openai.js";
 import { sanitizeError } from "../shared/redact.js";
 import type { FunctionContext, FunctionHandler } from "./types.js";
 
@@ -63,8 +63,12 @@ export const mythicTts: FunctionHandler = {
         });
       }
 
-      if ((process.env.OPENAI_API_KEY ?? "").trim().length === 0) {
-        return new Response(JSON.stringify({ error: "OPENAI_API_KEY is not configured for Mythic voice.", code: "openai_not_configured", requestId: ctx.requestId }), {
+      if (!isOpenAiRuntimeConfigured()) {
+        return new Response(JSON.stringify({
+          error: "OpenAI runtime is not configured for Mythic voice.",
+          code: "openai_not_configured",
+          requestId: ctx.requestId,
+        }), {
           status: 503,
           headers: { "Content-Type": "application/json" },
         });

@@ -11,6 +11,11 @@ npm install
 npm run dev
 ```
 
+Board renderer defaults:
+- Default gameplay renderer is `dom` for stability.
+- Pixi is opt-in via `VITE_MYTHIC_BOARD_RENDERER_DEFAULT=pixi`.
+- A local override can be set with the `mythic:board-renderer` key (`dom` or `pixi`).
+
 ## Vault source-of-truth sync
 
 This repo is configured so `vault/main` is the canonical upstream.
@@ -84,8 +89,26 @@ All function calls from the client are routed to:
 VITE_MYTHIC_FUNCTIONS_BASE_URL
 ```
 
+Optional alias (same behavior):
+
+```bash
+VITE_TAILSCALE_FUNCTIONS_BASE_URL
+```
+
 The client appends `/functions/v1/<function-name>` automatically (or uses it directly if your base already ends with `/functions/v1`).
-If `VITE_MYTHIC_FUNCTIONS_BASE_URL` is set to `*.supabase.co`, runtime calls are rejected by the client guard.
+If either functions base var is set to `*.supabase.co`, runtime calls are rejected by the client guard.
+
+For Tailscale-hosted local runtime, point either variable at your tailnet API origin:
+
+```bash
+VITE_TAILSCALE_FUNCTIONS_BASE_URL=https://<your-node>.<your-tailnet>.ts.net
+```
+
+On the VM API side, allow your app origin through CORS:
+
+```bash
+MYTHIC_ALLOWED_ORIGINS=http://localhost:8080,https://*.ts.net
+```
 
 Canonical VM API source now lives at:
 

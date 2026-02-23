@@ -21,6 +21,8 @@ import { mythicShopBuy } from "./mythic-shop-buy.js";
 import { mythicShopStock } from "./mythic-shop-stock.js";
 import { mythicTts } from "./mythic-tts.js";
 
+const includeNarratorTest = (process.env.NODE_ENV ?? "development").trim().toLowerCase() !== "production";
+
 const handlers: FunctionHandler[] = [
   mythicApplyXp,
   mythicBootstrap,
@@ -36,7 +38,7 @@ const handlers: FunctionHandler[] = [
   mythicGenerateLoot,
   mythicJoinCampaign,
   mythicListCampaigns,
-  mythicNarratorTest,
+  ...(includeNarratorTest ? [mythicNarratorTest] : []),
   mythicInventoryEquip,
   mythicInventoryUnequip,
   mythicRecomputeCharacter,

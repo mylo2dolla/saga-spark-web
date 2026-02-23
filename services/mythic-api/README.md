@@ -72,8 +72,31 @@ journalctl -u mythic-api -f
 - `SUPABASE_PROJECT_REF`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `MYTHIC_ALLOWED_ORIGINS`
-- `OPENAI_API_KEY`
+- `OPENAI_BASE_URL` (defaults to `https://api.openai.com`)
+- `OPENAI_API_KEY` (required for `api.openai.com`; optional for local/Tailscale OpenAI-compatible gateways)
 - `DM_NARRATOR_MODE` (`ai` | `procedural` | `hybrid`, default `hybrid`)
+
+## Tailscale/local AI upstream
+
+Point the runtime at your OpenAI-compatible endpoint (with or without `/v1` in the URL):
+
+```bash
+OPENAI_BASE_URL=https://<your-node>.<your-tailnet>.ts.net
+```
+
+Optional aliases (same behavior):
+
+```bash
+TAILSCALE_AI_BASE_URL=https://<your-node>.<your-tailnet>.ts.net
+TAILSCALE_OPENAI_BASE_URL=https://<your-node>.<your-tailnet>.ts.net
+TAILSCALE_OPENAI_API_KEY=<optional>
+```
+
+Allow your app origin through CORS (wildcards supported):
+
+```bash
+MYTHIC_ALLOWED_ORIGINS=http://localhost:8080,https://*.ts.net
+```
 
 ## DM narrator mode
 

@@ -5,7 +5,7 @@ import { recordProfilesRead } from "@/ui/data/networkHealth";
 
 const DEV_DEBUG = import.meta.env.DEV;
 const AUTH_DEBUG = DEV_DEBUG && import.meta.env.VITE_DEBUG_AUTH === "true";
-const E2E_BYPASS_AUTH = import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
+const E2E_BYPASS_AUTH = DEV_DEBUG && import.meta.env.VITE_E2E_BYPASS_AUTH === "true";
 const PROFILE_TTL_MS = 60000;
 const AUTH_TIMEOUT_MS = 20000;
 const AUTH_FAILSAFE_MS = 30000;

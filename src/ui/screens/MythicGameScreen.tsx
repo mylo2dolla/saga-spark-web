@@ -3551,6 +3551,7 @@ export default function MythicGameScreen() {
                 <div>narrated_action_busy: {isNarratedActionBusy ? "true" : "false"}</div>
                 <div>state_refreshing: {isStateRefreshing ? "true" : "false"}</div>
                 <div>board_id: {board.id}</div>
+                <div>board_renderer: {boardRenderer.effective}</div>
                 <div>combat_session_id: {combatSessionId ?? "none"}</div>
                 <div>active_panel: {activePanel}</div>
                 <div>board_actions: {boardStripBaseActions.length}</div>

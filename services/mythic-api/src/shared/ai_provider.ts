@@ -1,5 +1,9 @@
 import { groqChatCompletions, groqChatCompletionsStream } from "./groq.js";
-import { openaiChatCompletions, openaiChatCompletionsStream } from "./openai.js";
+import {
+  isOpenAiRuntimeConfigured,
+  openaiChatCompletions,
+  openaiChatCompletionsStream,
+} from "./openai.js";
 
 export type LlmProvider = "openai" | "groq";
 
@@ -35,10 +39,21 @@ const normalizeProvider = (value: string | null | undefined): LlmProvider | null
 
 export const resolveProvider = (): LlmProvider => {
   const explicit = normalizeProvider(process.env.LLM_PROVIDER);
-  if (explicit) return explicit;
-  if ((process.env.OPENAI_API_KEY ?? "").trim()) return "openai";
+  if (explicit === "openai") {
+    if (!isOpenAiRuntimeConfigured()) {
+      throw new Error(
+        "LLM_PROVIDER=openai is set, but OpenAI runtime is not configured. Set OPENAI_API_KEY for api.openai.com or set OPENAI_BASE_URL to a reachable OpenAI-compatible endpoint.",
+      );
+    }
+    return "openai";
+  }
+  if (explicit === "groq") return "groq";
+
+  if (isOpenAiRuntimeConfigured()) return "openai";
   if ((process.env.GROQ_API_KEY ?? "").trim()) return "groq";
-  throw new Error("No LLM provider configured. Set OPENAI_API_KEY or GROQ_API_KEY.");
+  throw new Error(
+    "No LLM provider configured. Set OPENAI_API_KEY (or OPENAI_BASE_URL for a local/Tailscale OpenAI-compatible endpoint) or GROQ_API_KEY.",
+  );
 };
 
 export const resolveModel = (defaults: { openai: string; groq: string }): string => {
@@ -68,10 +83,10 @@ export async function aiChatCompletionsStream(payload: unknown) {
 }
 
 function ensureOpenAiConfigured() {
-  if ((process.env.OPENAI_API_KEY ?? "").trim().length > 0) return;
+  if (isOpenAiRuntimeConfigured()) return;
   throw new AiProviderError(
     "openai_not_configured",
-    "OPENAI_API_KEY is not configured for Mythic runtime.",
+    "OpenAI runtime is not configured. Set OPENAI_API_KEY for api.openai.com or set OPENAI_BASE_URL to your local/Tailscale OpenAI-compatible endpoint.",
     503,
   );
 }
