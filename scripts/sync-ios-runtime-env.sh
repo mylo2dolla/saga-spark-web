@@ -38,6 +38,7 @@ encode_xcconfig_url() {
 SUPABASE_URL="$(read_env_var "VITE_SUPABASE_URL")"
 SUPABASE_ANON_KEY="$(read_env_var "VITE_SUPABASE_ANON_KEY")"
 MYTHIC_FUNCTIONS_BASE_URL="$(read_env_var "VITE_MYTHIC_FUNCTIONS_BASE_URL")"
+APP_ENV="$(read_env_var "VITE_SAGASPARK_APP_ENV")"
 
 if [[ -z "${SUPABASE_URL}" || -z "${SUPABASE_ANON_KEY}" || -z "${MYTHIC_FUNCTIONS_BASE_URL}" ]]; then
   echo "Missing required env values in ${ENV_FILE}" >&2
@@ -48,6 +49,7 @@ fi
 SUPABASE_URL_XC="$(encode_xcconfig_url "${SUPABASE_URL}")"
 MYTHIC_FUNCTIONS_BASE_URL_XC="$(encode_xcconfig_url "${MYTHIC_FUNCTIONS_BASE_URL}")"
 SUPABASE_REDIRECT_URL_XC='sagasparkpad:$(SLASH)$(SLASH)auth/callback'
+APP_ENV_XC="${APP_ENV:-dev}"
 
 mkdir -p "${APP_CONFIG_DIR}"
 
@@ -59,6 +61,7 @@ MYTHIC_FUNCTIONS_BASE_URL = ${MYTHIC_FUNCTIONS_BASE_URL_XC}
 SUPABASE_REDIRECT_URL = ${SUPABASE_REDIRECT_URL_XC}
 DEFAULT_CAMPAIGN_ID = saga-spark-ipad
 LEVELUPKIT_ENABLE_ANONYMOUS_AUTH = YES
+APP_ENV = ${APP_ENV_XC}
 XC
 
 echo "Wrote ${OUTPUT_FILE}"

@@ -39,6 +39,8 @@
 	<string>$(LEVELUPKIT_FORCE_DEV_QUICKSTART)</string>
 	<key>LEVELUPKIT_ENABLE_ANONYMOUS_AUTH</key>
 	<string>$(LEVELUPKIT_ENABLE_ANONYMOUS_AUTH)</string>
+	<key>APP_ENV</key>
+	<string>$(APP_ENV)</string>
 	<key>MYTHIC_FUNCTIONS_BASE_URL</key>
 	<string>$(MYTHIC_FUNCTIONS_BASE_URL)</string>
 	<key>SUPABASE_ANON_KEY</key>
