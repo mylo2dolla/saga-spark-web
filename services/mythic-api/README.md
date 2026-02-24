@@ -74,6 +74,7 @@ journalctl -u mythic-api -f
 - `MYTHIC_ALLOWED_ORIGINS`
 - `OPENAI_BASE_URL` (defaults to `https://api.openai.com`)
 - `OPENAI_API_KEY` (required for `api.openai.com`; optional for local/Tailscale OpenAI-compatible gateways)
+- `OPENAI_API_KEY_FILE` (optional file path; preferred in production)
 - `DM_NARRATOR_MODE` (`ai` | `procedural` | `hybrid`, default `hybrid`)
 
 ## Tailscale/local AI upstream
@@ -90,6 +91,7 @@ Optional aliases (same behavior):
 TAILSCALE_AI_BASE_URL=https://<your-node>.<your-tailnet>.ts.net
 TAILSCALE_OPENAI_BASE_URL=https://<your-node>.<your-tailnet>.ts.net
 TAILSCALE_OPENAI_API_KEY=<optional>
+TAILSCALE_OPENAI_API_KEY_FILE=/run/mythic-secrets/openai_api_key
 ```
 
 Allow your app origin through CORS (wildcards supported):
@@ -97,6 +99,23 @@ Allow your app origin through CORS (wildcards supported):
 ```bash
 MYTHIC_ALLOWED_ORIGINS=http://localhost:8080,https://*.ts.net
 ```
+
+### Production secret file mount
+
+`docker-compose.yml` mounts `./secrets` into the container at `/run/mythic-secrets` (read-only).
+Store your API key in:
+
+```bash
+services/mythic-api/secrets/openai_api_key
+```
+
+Then set:
+
+```bash
+OPENAI_API_KEY_FILE=/run/mythic-secrets/openai_api_key
+```
+
+You can leave `OPENAI_API_KEY` empty when using `OPENAI_API_KEY_FILE`.
 
 ### macOS Keychain launcher
 

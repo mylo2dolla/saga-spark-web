@@ -29,6 +29,7 @@ supabase/.temp/
 .vercel
 .env*.local
 services/mythic-api/.env
+services/mythic-api/secrets/
 apps/SagaSparkPad/Config/SagaSparkPad.local.xcconfig
 
 # Playwright CLI snapshots generated during smoke runs

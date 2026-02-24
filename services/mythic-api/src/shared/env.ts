@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 function splitCsv(value: string | undefined): string[] {
   if (!value) return [];
   return value
@@ -12,6 +14,36 @@ function readFirstSet(keys: string[]): string | null {
   for (const key of keys) {
     const value = (process.env[key] ?? "").trim();
     if (value.length > 0) return value;
+  }
+  return null;
+}
+
+type SecretCandidate = {
+  valueKey: string;
+  fileKey: string;
+};
+
+function readSecretFromEnvOrFile(candidate: SecretCandidate): string | null {
+  const direct = (process.env[candidate.valueKey] ?? "").trim();
+  if (direct.length > 0) return direct;
+
+  const filePath = (process.env[candidate.fileKey] ?? "").trim();
+  if (!filePath) return null;
+
+  try {
+    const fromFile = readFileSync(filePath, "utf8").trim();
+    return fromFile.length > 0 ? fromFile : null;
+  } catch (error) {
+    throw new Error(
+      `${candidate.fileKey} is set but could not be read (${filePath}): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+function readFirstSecretSet(candidates: SecretCandidate[]): string | null {
+  for (const candidate of candidates) {
+    const value = readSecretFromEnvOrFile(candidate);
+    if (value) return value;
   }
   return null;
 }
@@ -64,7 +96,11 @@ export function getConfig(): MythicApiConfig {
 
   const mythicTurnSalt = (process.env.MYTHIC_TURN_SALT ?? "").trim();
   const dmNarratorMode = parseDmNarratorMode(process.env.DM_NARRATOR_MODE) ?? "hybrid";
-  const openaiApiKey = readFirstSet(["OPENAI_API_KEY", "TAILSCALE_OPENAI_API_KEY", "LLM_API_KEY"]);
+  const openaiApiKey = readFirstSecretSet([
+    { valueKey: "OPENAI_API_KEY", fileKey: "OPENAI_API_KEY_FILE" },
+    { valueKey: "TAILSCALE_OPENAI_API_KEY", fileKey: "TAILSCALE_OPENAI_API_KEY_FILE" },
+    { valueKey: "LLM_API_KEY", fileKey: "LLM_API_KEY_FILE" },
+  ]);
   const openaiBaseUrl = readFirstSet([
     "OPENAI_BASE_URL",
     "TAILSCALE_OPENAI_BASE_URL",

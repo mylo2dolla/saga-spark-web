@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com";
 const DEFAULT_OPENAI_CHAT_TIMEOUT_MS = 45_000;
 const DEFAULT_OPENAI_TTS_TIMEOUT_MS = 30_000;
@@ -10,11 +12,16 @@ const OPENAI_BASE_URL_ENV_KEYS = [
   "LLM_BASE_URL",
 ] as const;
 
-const OPENAI_API_KEY_ENV_KEYS = [
-  "OPENAI_API_KEY",
-  "TAILSCALE_OPENAI_API_KEY",
-  "LLM_API_KEY",
-] as const;
+type SecretCandidate = {
+  valueKey: string;
+  fileKey: string;
+};
+
+const OPENAI_API_KEY_CANDIDATES: SecretCandidate[] = [
+  { valueKey: "OPENAI_API_KEY", fileKey: "OPENAI_API_KEY_FILE" },
+  { valueKey: "TAILSCALE_OPENAI_API_KEY", fileKey: "TAILSCALE_OPENAI_API_KEY_FILE" },
+  { valueKey: "LLM_API_KEY", fileKey: "LLM_API_KEY_FILE" },
+];
 
 const clampTimeoutMs = (value: string | null | undefined, fallback: number) => {
   const raw = (value ?? "").trim();
@@ -44,6 +51,31 @@ const readFirstSet = (keys: readonly string[]): string | null => {
   for (const key of keys) {
     const value = (process.env[key] ?? "").trim();
     if (value.length > 0) return value;
+  }
+  return null;
+};
+
+const readSecretFromEnvOrFile = (candidate: SecretCandidate): string | null => {
+  const direct = (process.env[candidate.valueKey] ?? "").trim();
+  if (direct.length > 0) return direct;
+
+  const filePath = (process.env[candidate.fileKey] ?? "").trim();
+  if (!filePath) return null;
+
+  try {
+    const fromFile = readFileSync(filePath, "utf8").trim();
+    return fromFile.length > 0 ? fromFile : null;
+  } catch (error) {
+    throw new Error(
+      `${candidate.fileKey} is set but could not be read (${filePath}): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+};
+
+const readFirstSecretSet = (candidates: SecretCandidate[]): string | null => {
+  for (const candidate of candidates) {
+    const value = readSecretFromEnvOrFile(candidate);
+    if (value) return value;
   }
   return null;
 };
@@ -79,7 +111,7 @@ export interface OpenAiRuntimeConfig {
 export function resolveOpenAiRuntimeConfig(): OpenAiRuntimeConfig {
   const rawBaseUrl = readFirstSet(OPENAI_BASE_URL_ENV_KEYS) ?? DEFAULT_OPENAI_BASE_URL;
   const baseUrl = normalizeOpenAiBaseUrl(rawBaseUrl);
-  const apiKey = readFirstSet(OPENAI_API_KEY_ENV_KEYS);
+  const apiKey = readFirstSecretSet(OPENAI_API_KEY_CANDIDATES);
   const host = new URL(baseUrl).hostname.toLowerCase();
   const requiresApiKey = host === OPENAI_DEFAULT_HOST;
   return { apiKey, baseUrl, requiresApiKey };

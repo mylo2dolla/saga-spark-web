@@ -4,6 +4,8 @@ services:
     container_name: mythic-api
     env_file:
       - .env
+    volumes:
+      - ./secrets:/run/mythic-secrets:ro
     ports:
       - "3001:3001"
     restart: unless-stopped
